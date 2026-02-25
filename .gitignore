@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+
+# build output
+contracts/build/
+ui/.next/
+ui/out/
+
+# environment
+.env
+.env.*
+!.env.example
+
+# editor / OS
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# typescript
+*.tsbuildinfo
+
+# test / coverage
+coverage/
+
+# misc
+*.log

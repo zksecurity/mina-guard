@@ -1,0 +1,13 @@
+{
+  "name": "mina-guard",
+  "private": true,
+  "workspaces": [
+    "contracts",
+    "ui"
+  ],
+  "scripts": {
+    "test": "npm run test --workspace=contracts",
+    "dev": "npm run dev --workspace=ui",
+    "build": "npm run build --workspace=contracts && npm run build --workspace=ui"
+  }
+}

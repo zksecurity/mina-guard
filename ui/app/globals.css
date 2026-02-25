@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --safe-green: #12FF80;
+  --safe-dark: #121312;
+  --safe-gray: #1C1C1C;
+  --safe-border: #303033;
+  --safe-text: #A1A3A7;
+}
+
+body {
+  background-color: var(--safe-dark);
+  color: #ffffff;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--safe-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--safe-border);
+  border-radius: 3px;
+}
+
+/* Safe-style card hover */
+.card-hover {
+  @apply transition-colors duration-150;
+}
+.card-hover:hover {
+  background-color: rgba(18, 255, 128, 0.04);
+}
+
+/* Truncate address */
+.address-truncate {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
