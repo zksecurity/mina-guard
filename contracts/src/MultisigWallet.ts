@@ -29,7 +29,7 @@ export class MultisigWallet extends SmartContract {
   @state(Field) threshold = State<Field>();
   @state(Field) numOwners = State<Field>();
   @state(Field) txNonce = State<Field>();
-  @state(Field) voteRoot = State<Field>();
+  @state(Field) voteNullifierRoot = State<Field>();
   @state(Field) approvalRoot = State<Field>();
   @state(Field) guardRoot = State<Field>();
   @state(Field) configNonce = State<Field>();
@@ -79,7 +79,7 @@ export class MultisigWallet extends SmartContract {
     this.numOwners.set(numOwners);
     // Initialize Merkle roots to empty MerkleMap root
     this.approvalRoot.set(emptyMapRoot);
-    this.voteRoot.set(emptyMapRoot);
+    this.voteNullifierRoot.set(emptyMapRoot);
     this.guardRoot.set(emptyMapRoot);
   }
 
@@ -95,7 +95,7 @@ export class MultisigWallet extends SmartContract {
 
     // Verify proposer is an owner
     const key = ownerKey(proposer);
-    const [computedRoot, computedKey] = ownerWitness.computeRootAndKeyV2(
+    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(
       Field(1)
     );
     computedRoot.assertEquals(ownersRoot, 'Not an owner');
@@ -132,7 +132,7 @@ export class MultisigWallet extends SmartContract {
     ownerWitness: MerkleMapWitness,
     approvalWitness: MerkleMapWitness,
     currentApprovalCount: Field,
-    voteWitness: MerkleMapWitness
+    voteNullifierWitness: MerkleMapWitness
   ) {
     // Verify wallet is initialized
     const ownersRoot = this.ownersRoot.getAndRequireEquals();
@@ -141,7 +141,7 @@ export class MultisigWallet extends SmartContract {
     // Verify approver is an owner
     const key = ownerKey(approver);
     const [computedOwnerRoot, computedOwnerKey] =
-      ownerWitness.computeRootAndKeyV2(Field(1));
+      ownerWitness.computeRootAndKey(Field(1));
     computedOwnerRoot.assertEquals(ownersRoot, 'Not an owner');
     computedOwnerKey.assertEquals(key, 'Owner key mismatch');
 
@@ -149,21 +149,21 @@ export class MultisigWallet extends SmartContract {
     signature.verify(approver, [txHash]).assertTrue('Invalid signature');
 
     // Prevent double approval: verify this owner has NOT voted on this tx yet
-    const voteKey = Poseidon.hash([txId, ...approver.toFields()]);
-    const voteRoot = this.voteRoot.getAndRequireEquals();
+    const voteNullifierKey = Poseidon.hash([txId, ...approver.toFields()]);
+    const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
     const [computedVoteRoot, computedVoteKey] =
-      voteWitness.computeRootAndKeyV2(Field(0));
-    computedVoteRoot.assertEquals(voteRoot, 'Vote root mismatch');
-    computedVoteKey.assertEquals(voteKey, 'Vote key mismatch');
+      voteNullifierWitness.computeRootAndKey(Field(0));
+    computedVoteRoot.assertEquals(voteNullifierRoot, 'Vote nullifier root mismatch');
+    computedVoteKey.assertEquals(voteNullifierKey, 'Vote nullifier key mismatch');
 
-    // Record the vote (set value to 1)
-    const [newVoteRoot] = voteWitness.computeRootAndKeyV2(Field(1));
-    this.voteRoot.set(newVoteRoot);
+    // Record the vote nullifier (set value to 1)
+    const [newVoteRoot] = voteNullifierWitness.computeRootAndKey(Field(1));
+    this.voteNullifierRoot.set(newVoteRoot);
 
     // Verify current approval count via witness
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKeyV2(currentApprovalCount);
+      approvalWitness.computeRootAndKey(currentApprovalCount);
     computedApprovalRoot.assertEquals(
       approvalRoot,
       'Approval root mismatch'
@@ -173,7 +173,7 @@ export class MultisigWallet extends SmartContract {
     // Increment approval count
     const newApprovalCount = currentApprovalCount.add(1);
     const [newApprovalRoot] =
-      approvalWitness.computeRootAndKeyV2(newApprovalCount);
+      approvalWitness.computeRootAndKey(newApprovalCount);
     this.approvalRoot.set(newApprovalRoot);
 
     // Emit approval event
@@ -205,7 +205,7 @@ export class MultisigWallet extends SmartContract {
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const txId = proposal.nonce;
     const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKeyV2(approvalCount);
+      approvalWitness.computeRootAndKey(approvalCount);
     computedApprovalRoot.assertEquals(
       approvalRoot,
       'Approval root mismatch'
@@ -219,7 +219,7 @@ export class MultisigWallet extends SmartContract {
     this.send({ to: proposal.to, amount: proposal.amount });
 
     // Clear approval (set to a sentinel value to mark as executed)
-    const [newApprovalRoot] = approvalWitness.computeRootAndKeyV2(
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(
       Field(0).sub(1) // Max field as "executed" marker
     );
     this.approvalRoot.set(newApprovalRoot);
@@ -256,7 +256,7 @@ export class MultisigWallet extends SmartContract {
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const txId = proposal.nonce;
     const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKeyV2(approvalCount);
+      approvalWitness.computeRootAndKey(approvalCount);
     computedApprovalRoot.assertEquals(
       approvalRoot,
       'Approval root mismatch'
@@ -276,7 +276,7 @@ export class MultisigWallet extends SmartContract {
     // Verify new owner is NOT already in the map (value should be 0)
     const newOwnerMerkleKey = ownerKey(newOwner);
     const [currentOwnerRoot, computedNewOwnerKey] =
-      newOwnerWitness.computeRootAndKeyV2(Field(0));
+      newOwnerWitness.computeRootAndKey(Field(0));
     currentOwnerRoot.assertEquals(ownersRoot, 'Owner root mismatch');
     computedNewOwnerKey.assertEquals(
       newOwnerMerkleKey,
@@ -284,7 +284,7 @@ export class MultisigWallet extends SmartContract {
     );
 
     // Add new owner (set value to 1)
-    const [newOwnersRoot] = newOwnerWitness.computeRootAndKeyV2(Field(1));
+    const [newOwnersRoot] = newOwnerWitness.computeRootAndKey(Field(1));
     this.ownersRoot.set(newOwnersRoot);
 
     // Increment owner count
@@ -292,7 +292,7 @@ export class MultisigWallet extends SmartContract {
     this.numOwners.set(numOwners.add(1));
 
     // Mark proposal as executed in approval map
-    const [newApprovalRoot] = approvalWitness.computeRootAndKeyV2(
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(
       Field(0).sub(1)
     );
     this.approvalRoot.set(newApprovalRoot);
@@ -332,7 +332,7 @@ export class MultisigWallet extends SmartContract {
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const txId = proposal.nonce;
     const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKeyV2(approvalCount);
+      approvalWitness.computeRootAndKey(approvalCount);
     computedApprovalRoot.assertEquals(
       approvalRoot,
       'Approval root mismatch'
@@ -355,7 +355,7 @@ export class MultisigWallet extends SmartContract {
     // Verify owner IS in the map (value should be 1)
     const removeOwnerMerkleKey = ownerKey(ownerToRemove);
     const [currentOwnerRoot, computedRemoveKey] =
-      ownerToRemoveWitness.computeRootAndKeyV2(Field(1));
+      ownerToRemoveWitness.computeRootAndKey(Field(1));
     currentOwnerRoot.assertEquals(ownersRoot, 'Owner root mismatch');
     computedRemoveKey.assertEquals(
       removeOwnerMerkleKey,
@@ -370,7 +370,7 @@ export class MultisigWallet extends SmartContract {
     );
 
     // Remove owner (set value to 0)
-    const [newOwnersRoot] = ownerToRemoveWitness.computeRootAndKeyV2(
+    const [newOwnersRoot] = ownerToRemoveWitness.computeRootAndKey(
       Field(0)
     );
     this.ownersRoot.set(newOwnersRoot);
@@ -379,7 +379,7 @@ export class MultisigWallet extends SmartContract {
     this.numOwners.set(numOwners.sub(1));
 
     // Mark proposal as executed
-    const [newApprovalRoot] = approvalWitness.computeRootAndKeyV2(
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(
       Field(0).sub(1)
     );
     this.approvalRoot.set(newApprovalRoot);
@@ -418,7 +418,7 @@ export class MultisigWallet extends SmartContract {
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const txId = proposal.nonce;
     const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKeyV2(approvalCount);
+      approvalWitness.computeRootAndKey(approvalCount);
     computedApprovalRoot.assertEquals(
       approvalRoot,
       'Approval root mismatch'
@@ -450,7 +450,7 @@ export class MultisigWallet extends SmartContract {
     this.threshold.set(newThreshold);
 
     // Mark proposal as executed
-    const [newApprovalRoot] = approvalWitness.computeRootAndKeyV2(
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(
       Field(0).sub(1)
     );
     this.approvalRoot.set(newApprovalRoot);
@@ -489,7 +489,7 @@ export class MultisigWallet extends SmartContract {
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const txId = proposal.nonce;
     const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKeyV2(approvalCount);
+      approvalWitness.computeRootAndKey(approvalCount);
     computedApprovalRoot.assertEquals(
       approvalRoot,
       'Approval root mismatch'
@@ -511,16 +511,16 @@ export class MultisigWallet extends SmartContract {
     // Verify guard is not already registered (value = 0)
     const guardRoot = this.guardRoot.getAndRequireEquals();
     const [computedGuardRoot, computedGuardKey] =
-      guardWitness.computeRootAndKeyV2(Field(0));
+      guardWitness.computeRootAndKey(Field(0));
     computedGuardRoot.assertEquals(guardRoot, 'Guard root mismatch');
     computedGuardKey.assertEquals(guardHash, 'Guard key mismatch');
 
     // Register guard (set value to 1)
-    const [newGuardRoot] = guardWitness.computeRootAndKeyV2(Field(1));
+    const [newGuardRoot] = guardWitness.computeRootAndKey(Field(1));
     this.guardRoot.set(newGuardRoot);
 
     // Mark proposal as executed
-    const [newApprovalRoot] = approvalWitness.computeRootAndKeyV2(
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(
       Field(0).sub(1)
     );
     this.approvalRoot.set(newApprovalRoot);

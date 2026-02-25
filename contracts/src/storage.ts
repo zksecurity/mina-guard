@@ -59,6 +59,8 @@ export class MultisigStorage {
   // Track which owners approved which tx: txId -> Set<ownerKeyString>
   approvalDetails: Map<string, Set<string>>;
 
+  voteNullifiers: MerkleMap;
+
   constructor() {
     this.owners = new MerkleMap();
     this.ownerKeys = [];
@@ -74,6 +76,8 @@ export class MultisigStorage {
     this.guardKeys = [];
 
     this.approvalDetails = new Map();
+
+    this.voteNullifiers = new MerkleMap();
   }
 
   // ── Owner management ───────────────────────────────────────────
@@ -160,6 +164,23 @@ export class MultisigStorage {
 
   getApprovers(txId: Field): string[] {
     return Array.from(this.approvalDetails.get(txId.toString()) ?? []);
+  }
+
+  // ── Nullifiers ─────────────────────────────────────────────────────
+  initVoteNullifier(nullifier: Field) {
+    this.voteNullifiers.set(nullifier, Field(0));
+  }
+
+  storeVoteNullifier(nullifier: Field) {
+    this.voteNullifiers.set(nullifier, Field(1));
+  }
+
+  getVoteNullifierWitness(nullifier: Field) {
+    return this.voteNullifiers.getWitness(nullifier);
+  }
+
+  isVoteNullified(nullifier: Field) {
+    return this.voteNullifiers.get(nullifier).equals(Field(1));
   }
 
   // ── Guards ─────────────────────────────────────────────────────

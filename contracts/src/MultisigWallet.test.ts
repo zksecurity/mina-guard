@@ -13,6 +13,9 @@ import { MultisigWallet } from './MultisigWallet.js';
 import { TransactionProposal, TxType, ownerKey } from './types.js';
 import { MultisigStorage } from './storage.js';
 
+import { beforeEach, describe, expect, it } from 'bun:test';
+
+
 describe('MultisigWallet', () => {
   let deployerKey: PrivateKey;
   let deployerAccount: PublicKey;
@@ -110,7 +113,7 @@ describe('MultisigWallet', () => {
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();
-    }).rejects.toThrow();
+    }).toThrow();
   });
 
   // ── Propose ─────────────────────────────────────────────────────
@@ -168,7 +171,7 @@ describe('MultisigWallet', () => {
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();
-    }).rejects.toThrow();
+    }).toThrow();
   });
 
   // ── Approve ─────────────────────────────────────────────────────
@@ -206,6 +209,10 @@ describe('MultisigWallet', () => {
     const sig1 = Signature.create(owner1Key, [txHash]);
     const approvalWitness1 = storage.getApprovalWitness(txId);
 
+    const voteNullifierKey1 = Poseidon.hash([txId, ...owner1.toFields()]);
+    const voteNullifierWitness1 =
+      storage.getVoteNullifierWitness(voteNullifierKey1);
+
     const approve1Txn = await Mina.transaction(owner1, async () => {
       await zkApp.approveTx(
         txId,
@@ -214,19 +221,25 @@ describe('MultisigWallet', () => {
         owner1,
         storage.getOwnerWitness(owner1),
         approvalWitness1,
-        Field(0) // current count = 0
+        Field(0), // current count = 0
+        voteNullifierWitness1
       );
     });
     await approve1Txn.prove();
     await approve1Txn.sign([owner1Key, zkAppKey]).send();
 
     // Update off-chain storage
+    storage.storeVoteNullifier(voteNullifierKey1);
     storage.setApprovalCount(txId, Field(1));
     storage.recordApproval(txId, owner1);
 
     // Owner2 approves
     const sig2 = Signature.create(owner2Key, [txHash]);
     const approvalWitness2 = storage.getApprovalWitness(txId);
+
+    const voteNullifierKey2 = Poseidon.hash([txId, ...owner2.toFields()]);
+    const voteNullifierWitness2 =
+      storage.getVoteNullifierWitness(voteNullifierKey2);
 
     const approve2Txn = await Mina.transaction(owner2, async () => {
       await zkApp.approveTx(
@@ -236,13 +249,15 @@ describe('MultisigWallet', () => {
         owner2,
         storage.getOwnerWitness(owner2),
         approvalWitness2,
-        Field(1) // current count = 1
+        Field(1), // current count = 1
+        voteNullifierWitness2
       );
     });
     await approve2Txn.prove();
     await approve2Txn.sign([owner2Key, zkAppKey]).send();
 
     // Update off-chain storage
+    storage.storeVoteNullifier(voteNullifierKey2);
     storage.setApprovalCount(txId, Field(2));
     storage.recordApproval(txId, owner2);
 
@@ -294,6 +309,10 @@ describe('MultisigWallet', () => {
     const txId = Field(0);
     storage.setApprovalCount(txId, Field(0));
 
+    const voteNullifierKey1 = Poseidon.hash([txId, ...owner1.toFields()]);
+    const voteNullifierWitness1 =
+      storage.getVoteNullifierWitness(voteNullifierKey1);
+
     // Approve from owner1
     const sig1 = Signature.create(owner1Key, [txHash]);
     const approve1Txn = await Mina.transaction(owner1, async () => {
@@ -304,12 +323,18 @@ describe('MultisigWallet', () => {
         owner1,
         storage.getOwnerWitness(owner1),
         storage.getApprovalWitness(txId),
-        Field(0)
+        Field(0),
+        voteNullifierWitness1
       );
     });
     await approve1Txn.prove();
     await approve1Txn.sign([owner1Key, zkAppKey]).send();
+    storage.storeVoteNullifier(voteNullifierKey1);
     storage.setApprovalCount(txId, Field(1));
+
+    const voteNullifierKey2 = Poseidon.hash([txId, ...owner2.toFields()]);
+    const voteNullifierWitness2 =
+      storage.getVoteNullifierWitness(voteNullifierKey2);
 
     // Approve from owner2
     const sig2 = Signature.create(owner2Key, [txHash]);
@@ -321,11 +346,13 @@ describe('MultisigWallet', () => {
         owner2,
         storage.getOwnerWitness(owner2),
         storage.getApprovalWitness(txId),
-        Field(1)
+        Field(1),
+        voteNullifierWitness2
       );
     });
     await approve2Txn.prove();
     await approve2Txn.sign([owner2Key, zkAppKey]).send();
+    storage.storeVoteNullifier(voteNullifierKey2);
     storage.setApprovalCount(txId, Field(2));
 
     // Get balance before execution
@@ -375,6 +402,9 @@ describe('MultisigWallet', () => {
     const txHash = proposal.hash();
     storage.setApprovalCount(txId, Field(0));
 
+    const voteNullifierKey = Poseidon.hash([txId, ...owner1.toFields()]);
+    const voteNullifierWitness = storage.getVoteNullifierWitness(voteNullifierKey);
+
     // Only 1 approval
     const sig1 = Signature.create(owner1Key, [txHash]);
     const approve1Txn = await Mina.transaction(owner1, async () => {
@@ -385,11 +415,13 @@ describe('MultisigWallet', () => {
         owner1,
         storage.getOwnerWitness(owner1),
         storage.getApprovalWitness(txId),
-        Field(0)
+        Field(0),
+        voteNullifierWitness
       );
     });
     await approve1Txn.prove();
     await approve1Txn.sign([owner1Key, zkAppKey]).send();
+    storage.storeVoteNullifier(voteNullifierKey);
     storage.setApprovalCount(txId, Field(1));
 
     // Try to execute with only 1 approval (threshold = 2)
@@ -406,7 +438,7 @@ describe('MultisigWallet', () => {
       );
       await executeTxn.prove();
       await executeTxn.sign([deployerKey, zkAppKey]).send();
-    }).rejects.toThrow();
+    }).toThrow();
   });
 
   // ── Change Threshold ────────────────────────────────────────────
@@ -439,6 +471,10 @@ describe('MultisigWallet', () => {
     const txId = Field(0);
     storage.setApprovalCount(txId, Field(0));
 
+    const voteNullifierKey1 = Poseidon.hash([txId, ...owner1.toFields()]);
+    const voteNullifierWitness1 =
+      storage.getVoteNullifierWitness(voteNullifierKey1);
+
     // Approve from owner1
     const sig1 = Signature.create(owner1Key, [txHash]);
     const approve1Txn = await Mina.transaction(owner1, async () => {
@@ -449,12 +485,18 @@ describe('MultisigWallet', () => {
         owner1,
         storage.getOwnerWitness(owner1),
         storage.getApprovalWitness(txId),
-        Field(0)
+        Field(0),
+        voteNullifierWitness1
       );
     });
     await approve1Txn.prove();
     await approve1Txn.sign([owner1Key, zkAppKey]).send();
+    storage.storeVoteNullifier(voteNullifierKey1);
     storage.setApprovalCount(txId, Field(1));
+
+    const voteNullifierKey2 = Poseidon.hash([txId, ...owner2.toFields()]);
+    const voteNullifierWitness2 =
+      storage.getVoteNullifierWitness(voteNullifierKey2);
 
     // Approve from owner2
     const sig2 = Signature.create(owner2Key, [txHash]);
@@ -466,11 +508,13 @@ describe('MultisigWallet', () => {
         owner2,
         storage.getOwnerWitness(owner2),
         storage.getApprovalWitness(txId),
-        Field(1)
+        Field(1),
+        voteNullifierWitness2
       );
     });
     await approve2Txn.prove();
     await approve2Txn.sign([owner2Key, zkAppKey]).send();
+    storage.storeVoteNullifier(voteNullifierKey2);
     storage.setApprovalCount(txId, Field(2));
 
     // Execute threshold change
@@ -521,6 +565,10 @@ describe('MultisigWallet', () => {
     const txId = Field(0);
     storage.setApprovalCount(txId, Field(0));
 
+    const voteNullifierKey1 = Poseidon.hash([txId, ...owner1.toFields()]);
+    const voteNullifierWitness1 =
+      storage.getVoteNullifierWitness(voteNullifierKey1);
+
     // Approve from owner1
     const sig1 = Signature.create(owner1Key, [txHash]);
     const approve1Txn = await Mina.transaction(owner1, async () => {
@@ -531,12 +579,18 @@ describe('MultisigWallet', () => {
         owner1,
         storage.getOwnerWitness(owner1),
         storage.getApprovalWitness(txId),
-        Field(0)
+        Field(0),
+        voteNullifierWitness1
       );
     });
     await approve1Txn.prove();
     await approve1Txn.sign([owner1Key, zkAppKey]).send();
+    storage.storeVoteNullifier(voteNullifierKey1);
     storage.setApprovalCount(txId, Field(1));
+
+    const voteNullifierKey2 = Poseidon.hash([txId, ...owner2.toFields()]);
+    const voteNullifierWitness2 =
+      storage.getVoteNullifierWitness(voteNullifierKey2);
 
     // Approve from owner2
     const sig2 = Signature.create(owner2Key, [txHash]);
@@ -548,11 +602,13 @@ describe('MultisigWallet', () => {
         owner2,
         storage.getOwnerWitness(owner2),
         storage.getApprovalWitness(txId),
-        Field(1)
+        Field(1),
+        voteNullifierWitness2
       );
     });
     await approve2Txn.prove();
     await approve2Txn.sign([owner2Key, zkAppKey]).send();
+    storage.storeVoteNullifier(voteNullifierKey2);
     storage.setApprovalCount(txId, Field(2));
 
     // Execute add owner
