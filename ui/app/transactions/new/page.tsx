@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAppContext } from '../../layout';
+import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ProposalForm, { ProposalData } from '@/components/ProposalForm';
 import { Transaction } from '@/lib/types';

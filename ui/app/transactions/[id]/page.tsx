@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useAppContext } from '../../layout';
+import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ApprovalProgress from '@/components/ApprovalProgress';
 import {
