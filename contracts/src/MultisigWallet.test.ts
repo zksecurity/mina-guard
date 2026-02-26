@@ -61,7 +61,7 @@ describe('MultisigWallet', () => {
     storage.addOwner(owner3);
   });
 
-  async function deployAndSetup(threshold: number = 2) {
+  async function deployAndSetup(threshold = 2) {
     // Deploy
     const deployTxn = await Mina.transaction(deployerAccount, async () => {
       AccountUpdate.fundNewAccount(deployerAccount);
@@ -92,7 +92,7 @@ describe('MultisigWallet', () => {
     await setupTxn.sign([deployerKey, zkAppKey]).send();
   }
 
-  // ── Deployment & Setup ──────────────────────────────────────────
+  // -- Deployment & Setup ------------------------------------------
 
   it('should deploy and setup with owners and threshold', async () => {
     await deployAndSetup(2);
@@ -116,7 +116,7 @@ describe('MultisigWallet', () => {
     }).toThrow();
   });
 
-  // ── Propose ─────────────────────────────────────────────────────
+  // -- Propose -----------------------------------------------------
 
   it('should allow owner to propose a transfer', async () => {
     await deployAndSetup(2);
@@ -174,7 +174,7 @@ describe('MultisigWallet', () => {
     }).toThrow();
   });
 
-  // ── Approve ─────────────────────────────────────────────────────
+  // -- Approve -----------------------------------------------------
 
   it('should allow owners to approve a transaction', async () => {
     await deployAndSetup(2);
@@ -264,7 +264,7 @@ describe('MultisigWallet', () => {
     expect(storage.getApprovalCount(txId)).toEqual(Field(2));
   });
 
-  // ── Execute ─────────────────────────────────────────────────────
+  // -- Execute -----------------------------------------------------
 
   it('should execute a transfer after threshold approvals', async () => {
     await deployAndSetup(2);
@@ -441,7 +441,7 @@ describe('MultisigWallet', () => {
     }).toThrow();
   });
 
-  // ── Change Threshold ────────────────────────────────────────────
+  // -- Change Threshold --------------------------------------------
 
   it('should change threshold via multisig approval', async () => {
     await deployAndSetup(2);
@@ -532,7 +532,7 @@ describe('MultisigWallet', () => {
     expect(zkApp.threshold.get()).toEqual(Field(3));
   });
 
-  // ── Add Owner ───────────────────────────────────────────────────
+  // -- Add Owner ---------------------------------------------------
 
   it('should add a new owner via multisig approval', async () => {
     await deployAndSetup(2);
@@ -639,7 +639,7 @@ describe('MultisigWallet', () => {
     expect(zkApp.ownersRoot.get()).toEqual(storage.owners.getRoot());
   });
 
-  // ── Serialization ───────────────────────────────────────────────
+  // -- Serialization -----------------------------------------------
 
   it('should serialize and deserialize storage', () => {
     storage.addPendingTx(Field(0), Field(123));

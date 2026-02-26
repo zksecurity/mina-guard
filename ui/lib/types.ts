@@ -1,4 +1,4 @@
-// ── UI Types ─────────────────────────────────────────────────────────
+// -- UI Types ---------------------------------------------------------
 
 export type TxStatus = 'pending' | 'executed' | 'failed';
 export type TxType =

@@ -5,7 +5,6 @@ import {
   method,
   Field,
   PublicKey,
-  UInt64,
   Permissions,
   MerkleMapWitness,
   Poseidon,
@@ -24,7 +23,7 @@ import {
 } from './types.js';
 
 export class MultisigWallet extends SmartContract {
-  // ── On-chain State (8 Fields) ────────────────────────────────────
+  // -- On-chain State (8 Fields) ------------------------------------
   @state(Field) ownersRoot = State<Field>();
   @state(Field) threshold = State<Field>();
   @state(Field) numOwners = State<Field>();
@@ -34,7 +33,7 @@ export class MultisigWallet extends SmartContract {
   @state(Field) guardRoot = State<Field>();
   @state(Field) configNonce = State<Field>();
 
-  // ── Events ───────────────────────────────────────────────────────
+  // -- Events -------------------------------------------------------
   events = {
     proposal: ProposalEvent,
     approval: ApprovalEvent,
@@ -43,7 +42,7 @@ export class MultisigWallet extends SmartContract {
     thresholdChange: ThresholdChangeEvent,
   };
 
-  // ── Deploy ───────────────────────────────────────────────────────
+  // -- Deploy -------------------------------------------------------
   async deploy() {
     await super.deploy();
     this.account.permissions.set({
@@ -56,7 +55,7 @@ export class MultisigWallet extends SmartContract {
 
   // super.init() already initializes all @state fields to Field(0)
 
-  // ── Setup: one-time initialization with owners and threshold ────
+  // -- Setup: one-time initialization with owners and threshold ----
   @method async setup(
     ownersRoot: Field,
     threshold: Field,
@@ -83,7 +82,7 @@ export class MultisigWallet extends SmartContract {
     this.guardRoot.set(emptyMapRoot);
   }
 
-  // ── Propose: owner proposes a new transaction ───────────────────
+  // -- Propose: owner proposes a new transaction -------------------
   @method async propose(
     proposal: TransactionProposal,
     ownerWitness: MerkleMapWitness,
@@ -123,7 +122,7 @@ export class MultisigWallet extends SmartContract {
     });
   }
 
-  // ── Approve: owner approves a pending transaction ───────────────
+  // -- Approve: owner approves a pending transaction ---------------
   @method async approveTx(
     txId: Field,
     txHash: Field,
@@ -184,7 +183,7 @@ export class MultisigWallet extends SmartContract {
     });
   }
 
-  // ── Execute: execute a transaction once threshold is met ────────
+  // -- Execute: execute a transaction once threshold is met --------
   @method async execute(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
@@ -233,7 +232,7 @@ export class MultisigWallet extends SmartContract {
     });
   }
 
-  // ── Add Owner: requires multisig approval ──────────────────────
+  // -- Add Owner: requires multisig approval ----------------------
   @method async addOwner(
     proposal: TransactionProposal,
     newOwner: PublicKey,
@@ -309,7 +308,7 @@ export class MultisigWallet extends SmartContract {
     });
   }
 
-  // ── Remove Owner: requires multisig approval ──────────────────
+  // -- Remove Owner: requires multisig approval ------------------
   @method async removeOwner(
     proposal: TransactionProposal,
     ownerToRemove: PublicKey,
@@ -396,7 +395,7 @@ export class MultisigWallet extends SmartContract {
     });
   }
 
-  // ── Change Threshold: requires multisig approval ──────────────
+  // -- Change Threshold: requires multisig approval --------------
   @method async changeThreshold(
     proposal: TransactionProposal,
     newThreshold: Field,
@@ -466,7 +465,7 @@ export class MultisigWallet extends SmartContract {
     });
   }
 
-  // ── Register Guard/Module: requires multisig approval ──────────
+  // -- Register Guard/Module: requires multisig approval ----------
   @method async registerGuard(
     proposal: TransactionProposal,
     guardHash: Field,

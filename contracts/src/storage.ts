@@ -7,7 +7,7 @@ import { ownerKey } from './types.js';
  * For MVP, this is an in-memory store that can be serialized to JSON.
  */
 
-// ── Serialization helpers ────────────────────────────────────────────
+// -- Serialization helpers --------------------------------------------
 
 export interface SerializedMerkleMap {
   entries: Record<string, string>; // key (Field.toString) -> value (Field.toString)
@@ -40,7 +40,7 @@ export function deserializeMerkleMap(data: SerializedMerkleMap): {
   return { map, keys };
 }
 
-// ── MultisigStorage: manages all off-chain MerkleMap state ──────────
+// -- MultisigStorage: manages all off-chain MerkleMap state ----------
 
 export class MultisigStorage {
   owners: MerkleMap;
@@ -80,7 +80,7 @@ export class MultisigStorage {
     this.voteNullifiers = new MerkleMap();
   }
 
-  // ── Owner management ───────────────────────────────────────────
+  // -- Owner management -------------------------------------------
 
   addOwner(owner: PublicKey): void {
     const key = ownerKey(owner);
@@ -108,7 +108,7 @@ export class MultisigStorage {
     return this.owners.getWitness(key);
   }
 
-  // ── Pending transactions ───────────────────────────────────────
+  // -- Pending transactions ---------------------------------------
 
   addPendingTx(nonce: Field, txHash: Field): void {
     this.pendingTxs.set(nonce, txHash);
@@ -126,7 +126,7 @@ export class MultisigStorage {
     return this.pendingTxs.getWitness(nonce);
   }
 
-  // ── Approvals ──────────────────────────────────────────────────
+  // -- Approvals --------------------------------------------------
 
   getApprovalCount(txId: Field): Field {
     return this.approvals.get(txId);
@@ -166,7 +166,7 @@ export class MultisigStorage {
     return Array.from(this.approvalDetails.get(txId.toString()) ?? []);
   }
 
-  // ── Nullifiers ─────────────────────────────────────────────────────
+  // -- Nullifiers -----------------------------------------------------
   initVoteNullifier(nullifier: Field) {
     this.voteNullifiers.set(nullifier, Field(0));
   }
@@ -183,7 +183,7 @@ export class MultisigStorage {
     return this.voteNullifiers.get(nullifier).equals(Field(1));
   }
 
-  // ── Guards ─────────────────────────────────────────────────────
+  // -- Guards -----------------------------------------------------
 
   addGuard(guardHash: Field): void {
     this.guards.set(guardHash, Field(1));
@@ -194,7 +194,7 @@ export class MultisigStorage {
     return this.guards.getWitness(guardHash);
   }
 
-  // ── Serialization ──────────────────────────────────────────────
+  // -- Serialization ----------------------------------------------
 
   serialize(): string {
     return JSON.stringify({

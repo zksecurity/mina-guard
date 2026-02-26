@@ -6,8 +6,9 @@
     "ui"
   ],
   "scripts": {
-    "test": "npm run test --workspace=contracts",
-    "dev": "npm run dev --workspace=ui",
-    "build": "npm run build --workspace=contracts && npm run build --workspace=ui"
+    "test": "bun run --filter contracts test",
+    "dev": "bun run --filter ui dev",
+    "build": "bun run --filter contracts --filter ui build",
+    "typecheck": "bun run --filter contracts typecheck"
   }
 }
