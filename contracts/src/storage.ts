@@ -1,4 +1,4 @@
-import { Field, MerkleMap, PublicKey, Poseidon } from 'o1js';
+import { Field, MerkleMap, PublicKey } from 'o1js';
 import { ownerKey } from './types.js';
 
 /**

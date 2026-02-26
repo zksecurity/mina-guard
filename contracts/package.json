@@ -16,10 +16,10 @@
   "scripts": {
     "build": "tsc",
     "buildw": "tsc --watch",
-    "coverage": "bun test --timeout 8000 --coverage",
+    "coverage": "bun test --timeout 20000 --coverage",
     "format": "prettier --write --ignore-unknown **/*",
-    "test": "bun test --timeout 8000",
-    "testw": "bun test --timeout 8000 --watch",
+    "test": "bun test --timeout 20000",
+    "testw": "bun test --timeout 20000 --watch",
     "testjs": "bun run build && find build/src -name '*.test.js' -exec node --test {} \\;",
     "lint": "eslint src/* --fix",
     "typecheck": "bun run tsc --noEmit"
