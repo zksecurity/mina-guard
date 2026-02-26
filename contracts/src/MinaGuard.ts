@@ -1,0 +1,571 @@
+import {
+  SmartContract,
+  state,
+  State,
+  method,
+  Field,
+  PublicKey,
+  Permissions,
+  MerkleMap,
+  MerkleMapWitness,
+  Poseidon,
+  Signature,
+  Struct,
+  UInt64,
+} from 'o1js';
+
+// -- Constants ---------------------------------------------------------------
+
+export const EXECUTED_SENTINEL = Field(0).sub(1);
+export const EMPTY_MERKLE_MAP_ROOT = new MerkleMap().getRoot();
+
+export const TxType = {
+  TRANSFER: Field(0),
+  ADD_OWNER: Field(1),
+  REMOVE_OWNER: Field(2),
+  CHANGE_THRESHOLD: Field(3),
+};
+
+// -- Helper ------------------------------------------------------------------
+
+export function ownerKey(owner: PublicKey): Field {
+  return Poseidon.hash(owner.toFields());
+}
+
+// -- Types -------------------------------------------------------------------
+
+export class TransactionProposal extends Struct({
+  to: PublicKey,
+  amount: UInt64,
+  tokenId: Field,
+  txType: Field,
+  data: Field,
+  nonce: Field,
+  configNonce: Field,
+  expiryBlock: Field,
+}) {
+  hash(): Field {
+    return Poseidon.hash([
+      ...this.to.toFields(),
+      ...this.amount.toFields(),
+      this.tokenId,
+      this.txType,
+      this.data,
+      this.nonce,
+      this.configNonce,
+      this.expiryBlock,
+    ]);
+  }
+}
+
+// -- Witness Wrappers --------------------------------------------------------
+
+export class OwnerWitness extends Struct({
+  witness: MerkleMapWitness,
+}) {}
+
+export class ApprovalWitness extends Struct({
+  witness: MerkleMapWitness,
+}) {}
+
+export class VoteNullifierWitness extends Struct({
+  witness: MerkleMapWitness,
+}) {}
+
+// -- Signature ---------------------------------------------------------------
+
+export class SignedApproval extends Struct({
+  signature: Signature,
+  owner: PublicKey,
+}) {}
+
+// -- Events ------------------------------------------------------------------
+
+export class ProposalEvent extends Struct({
+  txHash: Field,
+  proposer: PublicKey,
+  nonce: Field,
+}) {}
+
+export class ApprovalEvent extends Struct({
+  txHash: Field,
+  approver: PublicKey,
+  approvalCount: Field,
+}) {}
+
+export class ExecutionEvent extends Struct({
+  txHash: Field,
+  to: PublicKey,
+  amount: UInt64,
+  txType: Field,
+}) {}
+
+export class OwnerChangeEvent extends Struct({
+  owner: PublicKey,
+  added: Field,
+  newNumOwners: Field,
+}) {}
+
+export class ThresholdChangeEvent extends Struct({
+  oldThreshold: Field,
+  newThreshold: Field,
+}) {}
+
+// -- Contract ----------------------------------------------------------------
+
+export class MinaGuard extends SmartContract {
+  @state(Field) ownersRoot = State<Field>();
+  @state(Field) threshold = State<Field>();
+  @state(Field) numOwners = State<Field>();
+  @state(Field) txNonce = State<Field>();
+  @state(Field) voteNullifierRoot = State<Field>();
+  @state(Field) approvalRoot = State<Field>();
+  @state(Field) configNonce = State<Field>();
+
+  events = {
+    proposal: ProposalEvent,
+    approval: ApprovalEvent,
+    execution: ExecutionEvent,
+    ownerChange: OwnerChangeEvent,
+    thresholdChange: ThresholdChangeEvent,
+  };
+
+  async deploy() {
+    await super.deploy();
+    this.account.permissions.set({
+      ...Permissions.default(),
+      editState: Permissions.proofOrSignature(),
+      send: Permissions.proofOrSignature(),
+      receive: Permissions.none(),
+    });
+  }
+
+  @method async setup(
+    ownersRoot: Field,
+    threshold: Field,
+    numOwners: Field
+  ) {
+    const currentRoot = this.ownersRoot.getAndRequireEquals();
+    currentRoot.assertEquals(Field(0), 'Already initialized');
+
+    threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
+    numOwners.assertGreaterThanOrEqual(
+      threshold,
+      'Owners must be >= threshold'
+    );
+
+    this.ownersRoot.set(ownersRoot);
+    this.threshold.set(threshold);
+    this.numOwners.set(numOwners);
+    this.approvalRoot.set(EMPTY_MERKLE_MAP_ROOT);
+    this.voteNullifierRoot.set(EMPTY_MERKLE_MAP_ROOT);
+  }
+
+  @method async propose(
+    proposal: TransactionProposal,
+    ownerWitness: MerkleMapWitness,
+    proposer: PublicKey
+  ) {
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+
+    const key = ownerKey(proposer);
+    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(
+      Field(1)
+    );
+    computedRoot.assertEquals(ownersRoot, 'Not an owner');
+    computedKey.assertEquals(key, 'Owner key mismatch');
+
+    const currentNonce = this.txNonce.getAndRequireEquals();
+    proposal.nonce.assertEquals(currentNonce, 'Nonce mismatch');
+
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
+    proposal.configNonce.assertEquals(
+      currentConfigNonce,
+      'Config nonce mismatch'
+    );
+
+    const txHash = proposal.hash();
+
+    this.txNonce.set(currentNonce.add(1));
+
+    this.emitEvent('proposal', {
+      txHash,
+      proposer,
+      nonce: proposal.nonce,
+    });
+  }
+
+  @method async proposeAndApprove(
+    proposal: TransactionProposal,
+    ownerWitness: MerkleMapWitness,
+    proposer: PublicKey,
+    signature: Signature,
+    voteNullifierWitness: MerkleMapWitness,
+    approvalWitness: MerkleMapWitness
+  ) {
+    // --- propose logic ---
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+
+    const key = ownerKey(proposer);
+    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(
+      Field(1)
+    );
+    computedRoot.assertEquals(ownersRoot, 'Not an owner');
+    computedKey.assertEquals(key, 'Owner key mismatch');
+
+    const currentNonce = this.txNonce.getAndRequireEquals();
+    proposal.nonce.assertEquals(currentNonce, 'Nonce mismatch');
+
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
+    proposal.configNonce.assertEquals(
+      currentConfigNonce,
+      'Config nonce mismatch'
+    );
+
+    const txHash = proposal.hash();
+
+    this.txNonce.set(currentNonce.add(1));
+
+    // --- approval logic ---
+    signature.verify(proposer, [txHash]).assertTrue('Invalid signature');
+
+    // Vote nullifier
+    const voteNullifierKey = Poseidon.hash([txHash, ...proposer.toFields()]);
+    const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
+    const [computedVoteRoot, computedVoteKey] =
+      voteNullifierWitness.computeRootAndKey(Field(0));
+    computedVoteRoot.assertEquals(
+      voteNullifierRoot,
+      'Vote nullifier root mismatch'
+    );
+    computedVoteKey.assertEquals(
+      voteNullifierKey,
+      'Vote nullifier key mismatch'
+    );
+
+    const [newVoteRoot] = voteNullifierWitness.computeRootAndKey(Field(1));
+    this.voteNullifierRoot.set(newVoteRoot);
+
+    // Approval count: must start at 0 for a new proposal
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(Field(0));
+    computedApprovalRoot.assertEquals(
+      approvalRoot,
+      'Approval root mismatch'
+    );
+    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(Field(1));
+    this.approvalRoot.set(newApprovalRoot);
+
+    this.emitEvent('proposal', {
+      txHash,
+      proposer,
+      nonce: proposal.nonce,
+    });
+
+    this.emitEvent('approval', {
+      txHash,
+      approver: proposer,
+      approvalCount: Field(1),
+    });
+  }
+
+  @method async approveTx(
+    proposal: TransactionProposal,
+    signature: Signature,
+    approver: PublicKey,
+    ownerWitness: MerkleMapWitness,
+    approvalWitness: MerkleMapWitness,
+    currentApprovalCount: Field,
+    voteNullifierWitness: MerkleMapWitness
+  ) {
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+
+    const key = ownerKey(approver);
+    const [computedOwnerRoot, computedOwnerKey] =
+      ownerWitness.computeRootAndKey(Field(1));
+    computedOwnerRoot.assertEquals(ownersRoot, 'Not an owner');
+    computedOwnerKey.assertEquals(key, 'Owner key mismatch');
+
+    const txHash = proposal.hash();
+    signature.verify(approver, [txHash]).assertTrue('Invalid signature');
+
+    // Prevent approval on already-executed proposals
+    currentApprovalCount
+      .equals(EXECUTED_SENTINEL)
+      .assertFalse('Proposal already executed');
+
+    // Vote nullifier: keyed by hash(txHash, approver)
+    const voteNullifierKey = Poseidon.hash([txHash, ...approver.toFields()]);
+    const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
+    const [computedVoteRoot, computedVoteKey] =
+      voteNullifierWitness.computeRootAndKey(Field(0));
+    computedVoteRoot.assertEquals(
+      voteNullifierRoot,
+      'Vote nullifier root mismatch'
+    );
+    computedVoteKey.assertEquals(
+      voteNullifierKey,
+      'Vote nullifier key mismatch'
+    );
+
+    const [newVoteRoot] = voteNullifierWitness.computeRootAndKey(Field(1));
+    this.voteNullifierRoot.set(newVoteRoot);
+
+    // Approval count: keyed by txHash
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(currentApprovalCount);
+    computedApprovalRoot.assertEquals(
+      approvalRoot,
+      'Approval root mismatch'
+    );
+    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+
+    const newApprovalCount = currentApprovalCount.add(1);
+    const [newApprovalRoot] =
+      approvalWitness.computeRootAndKey(newApprovalCount);
+    this.approvalRoot.set(newApprovalRoot);
+
+    this.emitEvent('approval', {
+      txHash,
+      approver,
+      approvalCount: newApprovalCount,
+    });
+  }
+
+  @method async execute(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    approvalCount: Field
+  ) {
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+
+    proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
+
+    const txHash = proposal.hash();
+
+    // Verify config nonce
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
+    proposal.configNonce.assertEquals(
+      currentConfigNonce,
+      'Config nonce mismatch - governance changed since proposal'
+    );
+
+    // Check expiry (0 = no expiry)
+    const noExpiry = proposal.expiryBlock.equals(Field(0));
+    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
+    const notExpired = blockchainLength.value.lessThanOrEqual(
+      proposal.expiryBlock
+    );
+    noExpiry.or(notExpired).assertTrue('Proposal expired');
+
+    // Verify threshold
+    const threshold = this.threshold.getAndRequireEquals();
+    approvalCount.assertGreaterThanOrEqual(
+      threshold,
+      'Insufficient approvals'
+    );
+
+    // Verify approval count via witness (keyed by txHash)
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(approvalCount);
+    computedApprovalRoot.assertEquals(
+      approvalRoot,
+      'Approval root mismatch'
+    );
+    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+
+    // Execute transfer
+    this.send({ to: proposal.to, amount: proposal.amount });
+
+    // Mark as executed
+    const [newApprovalRoot] =
+      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+    this.approvalRoot.set(newApprovalRoot);
+
+    this.emitEvent('execution', {
+      txHash,
+      to: proposal.to,
+      amount: proposal.amount,
+      txType: proposal.txType,
+    });
+  }
+
+  @method async executeOwnerChange(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    approvalCount: Field,
+    ownerPubKey: PublicKey,
+    ownerWitness: MerkleMapWitness
+  ) {
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+
+    // Must be ADD_OWNER or REMOVE_OWNER
+    const isAdd = proposal.txType.equals(TxType.ADD_OWNER);
+    const isRemove = proposal.txType.equals(TxType.REMOVE_OWNER);
+    isAdd.or(isRemove).assertTrue('Not an owner change tx');
+
+    const txHash = proposal.hash();
+
+    // Verify config nonce
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
+    proposal.configNonce.assertEquals(
+      currentConfigNonce,
+      'Config nonce mismatch'
+    );
+
+    // Check expiry
+    const noExpiry = proposal.expiryBlock.equals(Field(0));
+    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
+    const notExpired = blockchainLength.value.lessThanOrEqual(
+      proposal.expiryBlock
+    );
+    noExpiry.or(notExpired).assertTrue('Proposal expired');
+
+    // Verify threshold
+    const threshold = this.threshold.getAndRequireEquals();
+    approvalCount.assertGreaterThanOrEqual(
+      threshold,
+      'Insufficient approvals'
+    );
+
+    // Verify approval witness (keyed by txHash)
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(approvalCount);
+    computedApprovalRoot.assertEquals(
+      approvalRoot,
+      'Approval root mismatch'
+    );
+    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+
+    // Verify proposal data matches owner
+    const ownerHash = ownerKey(ownerPubKey);
+    proposal.data.assertEquals(ownerHash, 'Data does not match owner');
+
+    const numOwners = this.numOwners.getAndRequireEquals();
+
+    // For ADD: owner must NOT be in map (value = 0)
+    // For REMOVE: owner must be in map (value = 1)
+    const expectedValue = isRemove.toField(); // 0 for add, 1 for remove
+    const [computedOwnerRoot, computedOwnerKey] =
+      ownerWitness.computeRootAndKey(expectedValue);
+    computedOwnerRoot.assertEquals(ownersRoot, 'Owner root mismatch');
+    computedOwnerKey.assertEquals(ownerHash, 'Owner key mismatch');
+
+    // For REMOVE: ensure numOwners - 1 >= threshold
+    // For ADD: this check trivially passes since numOwners + 1 >= threshold
+    const newNumOwners = numOwners.add(isAdd.toField()).sub(isRemove.toField());
+    newNumOwners.assertGreaterThanOrEqual(
+      threshold,
+      'Cannot remove: would go below threshold'
+    );
+
+    // Update owner map: ADD sets to 1, REMOVE sets to 0
+    const newValue = isAdd.toField(); // 1 for add, 0 for remove
+    const [newOwnersRoot] = ownerWitness.computeRootAndKey(newValue);
+    this.ownersRoot.set(newOwnersRoot);
+    this.numOwners.set(newNumOwners);
+
+    // Mark as executed
+    const [newApprovalRoot] =
+      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+    this.approvalRoot.set(newApprovalRoot);
+
+    // Increment config nonce
+    this.configNonce.set(currentConfigNonce.add(1));
+
+    this.emitEvent('ownerChange', {
+      owner: ownerPubKey,
+      added: isAdd.toField(),
+      newNumOwners,
+    });
+  }
+
+  @method async executeThresholdChange(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    approvalCount: Field,
+    newThreshold: Field
+  ) {
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+
+    proposal.txType.assertEquals(
+      TxType.CHANGE_THRESHOLD,
+      'Not a threshold change tx'
+    );
+
+    const txHash = proposal.hash();
+
+    // Verify config nonce
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
+    proposal.configNonce.assertEquals(
+      currentConfigNonce,
+      'Config nonce mismatch'
+    );
+
+    // Check expiry
+    const noExpiry = proposal.expiryBlock.equals(Field(0));
+    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
+    const notExpired = blockchainLength.value.lessThanOrEqual(
+      proposal.expiryBlock
+    );
+    noExpiry.or(notExpired).assertTrue('Proposal expired');
+
+    // Verify threshold (using current)
+    const currentThreshold = this.threshold.getAndRequireEquals();
+    approvalCount.assertGreaterThanOrEqual(
+      currentThreshold,
+      'Insufficient approvals'
+    );
+
+    // Verify approval witness (keyed by txHash)
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(approvalCount);
+    computedApprovalRoot.assertEquals(
+      approvalRoot,
+      'Approval root mismatch'
+    );
+    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+
+    // Verify data matches new threshold
+    proposal.data.assertEquals(
+      newThreshold,
+      'Data does not match new threshold'
+    );
+
+    // Validate new threshold
+    newThreshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
+    const numOwners = this.numOwners.getAndRequireEquals();
+    numOwners.assertGreaterThanOrEqual(
+      newThreshold,
+      'Threshold cannot exceed owner count'
+    );
+
+    this.threshold.set(newThreshold);
+
+    // Mark as executed
+    const [newApprovalRoot] =
+      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+    this.approvalRoot.set(newApprovalRoot);
+
+    // Increment config nonce
+    this.configNonce.set(currentConfigNonce.add(1));
+
+    this.emitEvent('thresholdChange', {
+      oldThreshold: currentThreshold,
+      newThreshold,
+    });
+  }
+}
