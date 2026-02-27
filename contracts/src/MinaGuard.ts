@@ -86,19 +86,19 @@ export class SignedApproval extends Struct({
 // -- Events ------------------------------------------------------------------
 
 export class ProposalEvent extends Struct({
-  txHash: Field,
+  proposalHash: Field,
   proposer: PublicKey,
   nonce: Field,
 }) { }
 
 export class ApprovalEvent extends Struct({
-  txHash: Field,
+  proposalHash: Field,
   approver: PublicKey,
   approvalCount: Field,
 }) { }
 
 export class ExecutionEvent extends Struct({
-  txHash: Field,
+  proposalHash: Field,
   to: PublicKey,
   amount: UInt64,
   txType: Field,
@@ -125,7 +125,7 @@ export class MinaGuard extends SmartContract {
   @state(Field) ownersRoot = State<Field>();
   @state(Field) threshold = State<Field>();
   @state(Field) numOwners = State<Field>();
-  @state(Field) txNonce = State<Field>();
+  @state(Field) proposalNonce = State<Field>();
   @state(Field) voteNullifierRoot = State<Field>();
   @state(Field) approvalRoot = State<Field>();
   @state(Field) configNonce = State<Field>();
@@ -190,7 +190,7 @@ export class MinaGuard extends SmartContract {
     computedRoot.assertEquals(ownersRoot, 'Not an owner');
     computedKey.assertEquals(key, 'Owner key mismatch');
 
-    const currentNonce = this.txNonce.getAndRequireEquals();
+    const currentNonce = this.proposalNonce.getAndRequireEquals();
     proposal.nonce.assertEquals(currentNonce, 'Nonce mismatch');
 
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
@@ -202,12 +202,12 @@ export class MinaGuard extends SmartContract {
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
 
-    const txHash = proposal.hash();
+    const proposalHash = proposal.hash();
 
-    this.txNonce.set(currentNonce.add(1));
+    this.proposalNonce.set(currentNonce.add(1));
 
     this.emitEvent('proposal', {
-      txHash,
+      proposalHash,
       proposer,
       nonce: proposal.nonce,
     });
@@ -232,7 +232,7 @@ export class MinaGuard extends SmartContract {
     computedRoot.assertEquals(ownersRoot, 'Not an owner');
     computedKey.assertEquals(key, 'Owner key mismatch');
 
-    const currentNonce = this.txNonce.getAndRequireEquals();
+    const currentNonce = this.proposalNonce.getAndRequireEquals();
     proposal.nonce.assertEquals(currentNonce, 'Nonce mismatch');
 
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
@@ -244,15 +244,15 @@ export class MinaGuard extends SmartContract {
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
 
-    const txHash = proposal.hash();
+    const proposalHash = proposal.hash();
 
-    this.txNonce.set(currentNonce.add(1));
+    this.proposalNonce.set(currentNonce.add(1));
 
     // --- approval logic ---
-    signature.verify(proposer, [txHash]).assertTrue('Invalid signature');
+    signature.verify(proposer, [proposalHash]).assertTrue('Invalid signature');
 
     // Vote nullifier
-    const voteNullifierKey = Poseidon.hash([txHash, ...proposer.toFields()]);
+    const voteNullifierKey = Poseidon.hash([proposalHash, ...proposer.toFields()]);
     const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
     const [computedVoteRoot, computedVoteKey] =
       voteNullifierWitness.computeRootAndKey(Field(0));
@@ -276,19 +276,19 @@ export class MinaGuard extends SmartContract {
       approvalRoot,
       'Approval root mismatch'
     );
-    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
     const [newApprovalRoot] = approvalWitness.computeRootAndKey(Field(1));
     this.approvalRoot.set(newApprovalRoot);
 
     this.emitEvent('proposal', {
-      txHash,
+      proposalHash,
       proposer,
       nonce: proposal.nonce,
     });
 
     this.emitEvent('approval', {
-      txHash,
+      proposalHash,
       approver: proposer,
       approvalCount: Field(1),
     });
@@ -315,16 +315,16 @@ export class MinaGuard extends SmartContract {
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
 
-    const txHash = proposal.hash();
-    signature.verify(approver, [txHash]).assertTrue('Invalid signature');
+    const proposalHash = proposal.hash();
+    signature.verify(approver, [proposalHash]).assertTrue('Invalid signature');
 
     // Prevent approval on already-executed proposals
     currentApprovalCount
       .equals(EXECUTED_SENTINEL)
       .assertFalse('Proposal already executed');
 
-    // Vote nullifier: keyed by hash(txHash, approver)
-    const voteNullifierKey = Poseidon.hash([txHash, ...approver.toFields()]);
+    // Vote nullifier: keyed by hash(proposalHash, approver)
+    const voteNullifierKey = Poseidon.hash([proposalHash, ...approver.toFields()]);
     const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
     const [computedVoteRoot, computedVoteKey] =
       voteNullifierWitness.computeRootAndKey(Field(0));
@@ -340,7 +340,7 @@ export class MinaGuard extends SmartContract {
     const [newVoteRoot] = voteNullifierWitness.computeRootAndKey(Field(1));
     this.voteNullifierRoot.set(newVoteRoot);
 
-    // Approval count: keyed by txHash
+    // Approval count: keyed by proposalHash
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const [computedApprovalRoot, computedApprovalKey] =
       approvalWitness.computeRootAndKey(currentApprovalCount);
@@ -348,7 +348,7 @@ export class MinaGuard extends SmartContract {
       approvalRoot,
       'Approval root mismatch'
     );
-    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
     const newApprovalCount = currentApprovalCount.add(1);
     const [newApprovalRoot] =
@@ -356,7 +356,7 @@ export class MinaGuard extends SmartContract {
     this.approvalRoot.set(newApprovalRoot);
 
     this.emitEvent('approval', {
-      txHash,
+      proposalHash,
       approver,
       approvalCount: newApprovalCount,
     });
@@ -372,7 +372,7 @@ export class MinaGuard extends SmartContract {
 
     proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
 
-    const txHash = proposal.hash();
+    const proposalHash = proposal.hash();
 
     // Verify config nonce
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
@@ -399,7 +399,7 @@ export class MinaGuard extends SmartContract {
       'Insufficient approvals'
     );
 
-    // Verify approval count via witness (keyed by txHash)
+    // Verify approval count via witness (keyed by proposalHash)
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const [computedApprovalRoot, computedApprovalKey] =
       approvalWitness.computeRootAndKey(approvalCount);
@@ -407,7 +407,7 @@ export class MinaGuard extends SmartContract {
       approvalRoot,
       'Approval root mismatch'
     );
-    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
     // Execute transfer
     this.send({ to: proposal.to, amount: proposal.amount });
@@ -418,7 +418,7 @@ export class MinaGuard extends SmartContract {
     this.approvalRoot.set(newApprovalRoot);
 
     this.emitEvent('execution', {
-      txHash,
+      proposalHash,
       to: proposal.to,
       amount: proposal.amount,
       txType: proposal.txType,
@@ -440,7 +440,7 @@ export class MinaGuard extends SmartContract {
     const isRemove = proposal.txType.equals(TxType.REMOVE_OWNER);
     isAdd.or(isRemove).assertTrue('Not an owner change tx');
 
-    const txHash = proposal.hash();
+    const proposalHash = proposal.hash();
 
     // Verify config nonce
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
@@ -467,7 +467,7 @@ export class MinaGuard extends SmartContract {
       'Insufficient approvals'
     );
 
-    // Verify approval witness (keyed by txHash)
+    // Verify approval witness (keyed by proposalHash)
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const [computedApprovalRoot, computedApprovalKey] =
       approvalWitness.computeRootAndKey(approvalCount);
@@ -475,7 +475,7 @@ export class MinaGuard extends SmartContract {
       approvalRoot,
       'Approval root mismatch'
     );
-    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
     // Verify proposal data matches owner
     const ownerHash = ownerKey(ownerPubKey);
@@ -534,7 +534,7 @@ export class MinaGuard extends SmartContract {
       'Not a threshold change tx'
     );
 
-    const txHash = proposal.hash();
+    const proposalHash = proposal.hash();
 
     // Verify config nonce
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
@@ -561,7 +561,7 @@ export class MinaGuard extends SmartContract {
       'Insufficient approvals'
     );
 
-    // Verify approval witness (keyed by txHash)
+    // Verify approval witness (keyed by proposalHash)
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const [computedApprovalRoot, computedApprovalKey] =
       approvalWitness.computeRootAndKey(approvalCount);
@@ -569,7 +569,7 @@ export class MinaGuard extends SmartContract {
       approvalRoot,
       'Approval root mismatch'
     );
-    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
     // Verify data matches new threshold
     proposal.data.assertEquals(
@@ -615,7 +615,7 @@ export class MinaGuard extends SmartContract {
       'Not a delegate tx'
     );
 
-    const txHash = proposal.hash();
+    const proposalHash = proposal.hash();
 
     // Verify config nonce
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
@@ -642,7 +642,7 @@ export class MinaGuard extends SmartContract {
       'Insufficient approvals'
     );
 
-    // Verify approval witness (keyed by txHash)
+    // Verify approval witness (keyed by proposalHash)
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
     const [computedApprovalRoot, computedApprovalKey] =
       approvalWitness.computeRootAndKey(approvalCount);
@@ -650,7 +650,7 @@ export class MinaGuard extends SmartContract {
       approvalRoot,
       'Approval root mismatch'
     );
-    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
     // Un-delegation: data == 0 means delegate to self
     // Delegation: data must match hash of delegate pubkey

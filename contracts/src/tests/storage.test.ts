@@ -63,43 +63,43 @@ describe('OwnerStore', () => {
 describe('ApprovalStore', () => {
   it('should track approval counts', () => {
     const store = new ApprovalStore();
-    const txHash = Field(12345);
+    const proposalHash = Field(12345);
 
-    store.setCount(txHash, Field(0));
-    expect(store.getCount(txHash)).toEqual(Field(0));
+    store.setCount(proposalHash, Field(0));
+    expect(store.getCount(proposalHash)).toEqual(Field(0));
 
-    store.setCount(txHash, Field(2));
-    expect(store.getCount(txHash)).toEqual(Field(2));
+    store.setCount(proposalHash, Field(2));
+    expect(store.getCount(proposalHash)).toEqual(Field(2));
   });
 
   it('should track executed status', () => {
     const store = new ApprovalStore();
-    const txHash = Field(12345);
+    const proposalHash = Field(12345);
 
-    store.setCount(txHash, Field(2));
-    expect(store.isExecuted(txHash)).toBe(false);
+    store.setCount(proposalHash, Field(2));
+    expect(store.isExecuted(proposalHash)).toBe(false);
 
-    store.setCount(txHash, EXECUTED_SENTINEL);
-    expect(store.isExecuted(txHash)).toBe(true);
+    store.setCount(proposalHash, EXECUTED_SENTINEL);
+    expect(store.isExecuted(proposalHash)).toBe(true);
   });
 
   it('should generate valid witness', () => {
     const store = new ApprovalStore();
-    const txHash = Field(12345);
-    store.setCount(txHash, Field(3));
+    const proposalHash = Field(12345);
+    store.setCount(proposalHash, Field(3));
 
-    const witness = store.getWitness(txHash);
+    const witness = store.getWitness(proposalHash);
     const [root] = witness.computeRootAndKey(Field(3));
     expect(root).toEqual(store.getRoot());
   });
 
   it('should not duplicate keys', () => {
     const store = new ApprovalStore();
-    const txHash = Field(12345);
+    const proposalHash = Field(12345);
 
-    store.setCount(txHash, Field(1));
-    store.setCount(txHash, Field(2));
-    store.setCount(txHash, Field(3));
+    store.setCount(proposalHash, Field(1));
+    store.setCount(proposalHash, Field(2));
+    store.setCount(proposalHash, Field(3));
 
     expect(store.keys.length).toBe(1);
   });
@@ -122,46 +122,46 @@ describe('ApprovalStore', () => {
 describe('VoteNullifierStore', () => {
   it('should track nullification', () => {
     const store = new VoteNullifierStore();
-    const txHash = Field(12345);
+    const proposalHash = Field(12345);
     const approver = PrivateKey.random().toPublicKey();
 
-    expect(store.isNullified(txHash, approver)).toBe(false);
+    expect(store.isNullified(proposalHash, approver)).toBe(false);
 
-    store.nullify(txHash, approver);
-    expect(store.isNullified(txHash, approver)).toBe(true);
+    store.nullify(proposalHash, approver);
+    expect(store.isNullified(proposalHash, approver)).toBe(true);
   });
 
   it('should handle different approvers independently', () => {
     const store = new VoteNullifierStore();
-    const txHash = Field(12345);
+    const proposalHash = Field(12345);
     const approver1 = PrivateKey.random().toPublicKey();
     const approver2 = PrivateKey.random().toPublicKey();
 
-    store.nullify(txHash, approver1);
+    store.nullify(proposalHash, approver1);
 
-    expect(store.isNullified(txHash, approver1)).toBe(true);
-    expect(store.isNullified(txHash, approver2)).toBe(false);
+    expect(store.isNullified(proposalHash, approver1)).toBe(true);
+    expect(store.isNullified(proposalHash, approver2)).toBe(false);
   });
 
-  it('should handle different txHashes independently', () => {
+  it('should handle different proposalHashes independently', () => {
     const store = new VoteNullifierStore();
-    const txHash1 = Field(111);
-    const txHash2 = Field(222);
+    const proposalHash1 = Field(111);
+    const proposalHash2 = Field(222);
     const approver = PrivateKey.random().toPublicKey();
 
-    store.nullify(txHash1, approver);
+    store.nullify(proposalHash1, approver);
 
-    expect(store.isNullified(txHash1, approver)).toBe(true);
-    expect(store.isNullified(txHash2, approver)).toBe(false);
+    expect(store.isNullified(proposalHash1, approver)).toBe(true);
+    expect(store.isNullified(proposalHash2, approver)).toBe(false);
   });
 
   it('should generate valid witness', () => {
     const store = new VoteNullifierStore();
-    const txHash = Field(12345);
+    const proposalHash = Field(12345);
     const approver = PrivateKey.random().toPublicKey();
 
     // Before nullification, value should be 0
-    const witness = store.getWitness(txHash, approver);
+    const witness = store.getWitness(proposalHash, approver);
     const [root] = witness.computeRootAndKey(Field(0));
     expect(root).toEqual(store.getRoot());
   });

@@ -23,12 +23,12 @@ describe('MinaGuard - Delegate', () => {
     const blockProducer = PrivateKey.random().toPublicKey();
 
     const proposal = createDelegateProposal(blockProducer, Field(0), Field(0));
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
-    const approvalWitness = ctx.approvalStore.getWitness(txHash);
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const txn = await Mina.transaction(ctx.deployerAccount, async () => {
       await ctx.zkApp.executeDelegate(
         proposal,
@@ -50,11 +50,11 @@ describe('MinaGuard - Delegate', () => {
     // First delegate to someone
     const blockProducer = PrivateKey.random().toPublicKey();
     const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0));
-    const txHash1 = await proposeTransaction(ctx, proposal1, 0);
+    const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
     await approveTransaction(ctx, proposal1, 0);
     await approveTransaction(ctx, proposal1, 1);
 
-    const approvalWitness1 = ctx.approvalStore.getWitness(txHash1);
+    const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash1);
     const txn1 = await Mina.transaction(ctx.deployerAccount, async () => {
       await ctx.zkApp.executeDelegate(
         proposal1,
@@ -68,15 +68,15 @@ describe('MinaGuard - Delegate', () => {
 
     // Mark executed in off-chain store
     const { EXECUTED_SENTINEL } = await import('../MinaGuard.js');
-    ctx.approvalStore.setCount(txHash1, EXECUTED_SENTINEL);
+    ctx.approvalStore.setCount(proposalHash1, EXECUTED_SENTINEL);
 
     // Now un-delegate
     const proposal2 = createUndelegateProposal(Field(1), Field(0));
-    const txHash2 = await proposeTransaction(ctx, proposal2, 0);
+    const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
     await approveTransaction(ctx, proposal2, 0);
     await approveTransaction(ctx, proposal2, 1);
 
-    const approvalWitness2 = ctx.approvalStore.getWitness(txHash2);
+    const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash2);
     // Pass any PublicKey for delegate param — contract ignores it for un-delegation
     const dummyDelegate = PrivateKey.random().toPublicKey();
     const txn2 = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -99,13 +99,13 @@ describe('MinaGuard - Delegate', () => {
   it('should reject delegation with insufficient approvals', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
     const proposal = createDelegateProposal(blockProducer, Field(0), Field(0));
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     // Only 1 approval (threshold = 2)
     await approveTransaction(ctx, proposal, 0);
 
     await expect(async () => {
-      const approvalWitness = ctx.approvalStore.getWitness(txHash);
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
         await ctx.zkApp.executeDelegate(
           proposal,
@@ -124,14 +124,14 @@ describe('MinaGuard - Delegate', () => {
     const wrongDelegate = PrivateKey.random().toPublicKey();
 
     const proposal = createDelegateProposal(blockProducer, Field(0), Field(0));
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     // Pass a different delegate than what's in the proposal data
     await expect(async () => {
-      const approvalWitness = ctx.approvalStore.getWitness(txHash);
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
         await ctx.zkApp.executeDelegate(
           proposal,

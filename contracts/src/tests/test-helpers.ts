@@ -244,12 +244,12 @@ export async function proposeTransaction(
   await txn.prove();
   await txn.sign([proposer.key, zkAppKey]).send();
 
-  const txHash = proposal.hash();
+  const proposalHash = proposal.hash();
 
   // Initialize approval count to 0
-  ctx.approvalStore.setCount(txHash, Field(0));
+  ctx.approvalStore.setCount(proposalHash, Field(0));
 
-  return txHash;
+  return proposalHash;
 }
 
 export async function proposeAndApproveTransaction(
@@ -259,12 +259,12 @@ export async function proposeAndApproveTransaction(
 ): Promise<Field> {
   const { zkApp, zkAppKey, ownerStore, approvalStore, nullifierStore, owners } = ctx;
   const proposer = owners[proposerIndex];
-  const txHash = proposal.hash();
+  const proposalHash = proposal.hash();
 
   const ownerWitness = ownerStore.getWitness(proposer.pub);
-  const sig = Signature.create(proposer.key, [txHash]);
-  const nullifierWitness = nullifierStore.getWitness(txHash, proposer.pub);
-  const approvalWitness = approvalStore.getWitness(txHash);
+  const sig = Signature.create(proposer.key, [proposalHash]);
+  const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer.pub);
+  const approvalWitness = approvalStore.getWitness(proposalHash);
 
   const txn = await Mina.transaction(proposer.pub, async () => {
     await zkApp.proposeAndApprove(
@@ -280,10 +280,10 @@ export async function proposeAndApproveTransaction(
   await txn.sign([proposer.key, zkAppKey]).send();
 
   // Update off-chain stores
-  nullifierStore.nullify(txHash, proposer.pub);
-  approvalStore.setCount(txHash, Field(1));
+  nullifierStore.nullify(proposalHash, proposer.pub);
+  approvalStore.setCount(proposalHash, Field(1));
 
-  return txHash;
+  return proposalHash;
 }
 
 export async function approveTransaction(
@@ -293,13 +293,13 @@ export async function approveTransaction(
 ): Promise<void> {
   const { zkApp, zkAppKey, ownerStore, approvalStore, nullifierStore, owners } = ctx;
   const approver = owners[approverIndex];
-  const txHash = proposal.hash();
+  const proposalHash = proposal.hash();
 
-  const sig = Signature.create(approver.key, [txHash]);
-  const currentCount = approvalStore.getCount(txHash);
+  const sig = Signature.create(approver.key, [proposalHash]);
+  const currentCount = approvalStore.getCount(proposalHash);
   const ownerWitness = ownerStore.getWitness(approver.pub);
-  const approvalWitness = approvalStore.getWitness(txHash);
-  const nullifierWitness = nullifierStore.getWitness(txHash, approver.pub);
+  const approvalWitness = approvalStore.getWitness(proposalHash);
+  const nullifierWitness = nullifierStore.getWitness(proposalHash, approver.pub);
 
   const txn = await Mina.transaction(approver.pub, async () => {
     await zkApp.approveProposal(
@@ -316,9 +316,9 @@ export async function approveTransaction(
   await txn.sign([approver.key, zkAppKey]).send();
 
   // Update off-chain stores
-  nullifierStore.nullify(txHash, approver.pub);
+  nullifierStore.nullify(proposalHash, approver.pub);
   const newCount = Field(Number(currentCount.toString()) + 1);
-  approvalStore.setCount(txHash, newCount);
+  approvalStore.setCount(proposalHash, newCount);
 }
 
 export function getBalance(address: PublicKey): UInt64 {

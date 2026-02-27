@@ -29,7 +29,7 @@ describe('MinaGuard - Propose', () => {
 
     await proposeTransaction(ctx, proposal, 0);
 
-    expect(ctx.zkApp.txNonce.get()).toEqual(Field(1));
+    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
   });
 
   it('should reject proposal from non-owner', async () => {
@@ -121,13 +121,13 @@ describe('MinaGuard - Propose', () => {
       Field(0)
     );
 
-    const txHash = await proposeAndApproveTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeAndApproveTransaction(ctx, proposal, 0);
 
-    expect(ctx.zkApp.txNonce.get()).toEqual(Field(1));
+    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
     // Approval count should be 1 in off-chain store
-    expect(ctx.approvalStore.getCount(txHash)).toEqual(Field(1));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(1));
     // Nullifier should be set
-    expect(ctx.nullifierStore.isNullified(txHash, ctx.owners[0].pub)).toBe(true);
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
 
   it('should increment nonce across multiple proposals', async () => {
@@ -137,12 +137,12 @@ describe('MinaGuard - Propose', () => {
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
     );
     await proposeTransaction(ctx, proposal1, 0);
-    expect(ctx.zkApp.txNonce.get()).toEqual(Field(1));
+    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
 
     const proposal2 = createTransferProposal(
       recipient, UInt64.from(2_000_000_000), Field(1), Field(0)
     );
     await proposeTransaction(ctx, proposal2, 1);
-    expect(ctx.zkApp.txNonce.get()).toEqual(Field(2));
+    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(2));
   });
 });

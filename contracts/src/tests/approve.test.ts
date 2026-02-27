@@ -23,12 +23,12 @@ describe('MinaGuard - Approve', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 0);
 
-    expect(ctx.approvalStore.getCount(txHash)).toEqual(Field(1));
-    expect(ctx.nullifierStore.isNullified(txHash, ctx.owners[0].pub)).toBe(true);
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(1));
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
 
   it('should allow multiple owners to approve same proposal', async () => {
@@ -36,14 +36,14 @@ describe('MinaGuard - Approve', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
-    expect(ctx.approvalStore.getCount(txHash)).toEqual(Field(2));
-    expect(ctx.nullifierStore.isNullified(txHash, ctx.owners[0].pub)).toBe(true);
-    expect(ctx.nullifierStore.isNullified(txHash, ctx.owners[1].pub)).toBe(true);
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
   });
 
   it('should prevent double-voting (vote nullifier)', async () => {
@@ -66,13 +66,13 @@ describe('MinaGuard - Approve', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     // Sign with wrong key (owner2's key but claiming to be owner1)
-    const wrongSig = Signature.create(ctx.owners[1].key, [txHash]);
+    const wrongSig = Signature.create(ctx.owners[1].key, [proposalHash]);
     const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
-    const approvalWitness = ctx.approvalStore.getWitness(txHash);
-    const nullifierWitness = ctx.nullifierStore.getWitness(txHash, ctx.owners[0].pub);
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, ctx.owners[0].pub);
 
     await expect(async () => {
       const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
@@ -96,13 +96,13 @@ describe('MinaGuard - Approve', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     const nonOwner = PrivateKey.random();
-    const sig = Signature.create(nonOwner, [txHash]);
+    const sig = Signature.create(nonOwner, [proposalHash]);
     const fakeWitness = ctx.ownerStore.getWitness(nonOwner.toPublicKey());
-    const approvalWitness = ctx.approvalStore.getWitness(txHash);
-    const nullifierWitness = ctx.nullifierStore.getWitness(txHash, nonOwner.toPublicKey());
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, nonOwner.toPublicKey());
 
     await expect(async () => {
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -137,14 +137,14 @@ describe('MinaGuard - Approve', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     // Get 2 approvals and execute
     await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     // Execute
-    const approvalWitness = ctx.approvalStore.getWitness(txHash);
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
       await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
     });
@@ -152,7 +152,7 @@ describe('MinaGuard - Approve', () => {
     await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
 
     // Mark executed in off-chain store
-    ctx.approvalStore.setCount(txHash, EXECUTED_SENTINEL);
+    ctx.approvalStore.setCount(proposalHash, EXECUTED_SENTINEL);
 
     // Try to approve after execution - should fail
     await expect(async () => {
