@@ -176,6 +176,41 @@ export function createThresholdProposal(
   });
 }
 
+export function createDelegateProposal(
+  delegate: PublicKey,
+  nonce: Field,
+  configNonce: Field,
+  expiryBlock = Field(0)
+): TransactionProposal {
+  return new TransactionProposal({
+    to: PublicKey.empty(),
+    amount: UInt64.from(0),
+    tokenId: Field(0),
+    txType: TxType.SET_DELEGATE,
+    data: ownerKey(delegate),
+    nonce,
+    configNonce,
+    expiryBlock,
+  });
+}
+
+export function createUndelegateProposal(
+  nonce: Field,
+  configNonce: Field,
+  expiryBlock = Field(0)
+): TransactionProposal {
+  return new TransactionProposal({
+    to: PublicKey.empty(),
+    amount: UInt64.from(0),
+    tokenId: Field(0),
+    txType: TxType.SET_DELEGATE,
+    data: Field(0),
+    nonce,
+    configNonce,
+    expiryBlock,
+  });
+}
+
 // -- Transaction Helpers -----------------------------------------------------
 
 export async function proposeTransaction(

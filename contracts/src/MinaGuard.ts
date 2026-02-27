@@ -9,6 +9,7 @@ import {
   MerkleMap,
   MerkleMapWitness,
   Poseidon,
+  Provable,
   Signature,
   Struct,
   UInt64,
@@ -24,6 +25,7 @@ export const TxType = {
   ADD_OWNER: Field(1),
   REMOVE_OWNER: Field(2),
   CHANGE_THRESHOLD: Field(3),
+  SET_DELEGATE: Field(4),
 };
 
 // -- Helper ------------------------------------------------------------------
@@ -43,6 +45,7 @@ export class TransactionProposal extends Struct({
   nonce: Field,
   configNonce: Field,
   expiryBlock: Field,
+  networkId: Field,
 }) {
   hash(): Field {
     return Poseidon.hash([
@@ -54,6 +57,7 @@ export class TransactionProposal extends Struct({
       this.nonce,
       this.configNonce,
       this.expiryBlock,
+      this.networkId,
     ]);
   }
 }
@@ -62,22 +66,22 @@ export class TransactionProposal extends Struct({
 
 export class OwnerWitness extends Struct({
   witness: MerkleMapWitness,
-}) {}
+}) { }
 
 export class ApprovalWitness extends Struct({
   witness: MerkleMapWitness,
-}) {}
+}) { }
 
 export class VoteNullifierWitness extends Struct({
   witness: MerkleMapWitness,
-}) {}
+}) { }
 
 // -- Signature ---------------------------------------------------------------
 
 export class SignedApproval extends Struct({
   signature: Signature,
   owner: PublicKey,
-}) {}
+}) { }
 
 // -- Events ------------------------------------------------------------------
 
@@ -85,31 +89,35 @@ export class ProposalEvent extends Struct({
   txHash: Field,
   proposer: PublicKey,
   nonce: Field,
-}) {}
+}) { }
 
 export class ApprovalEvent extends Struct({
   txHash: Field,
   approver: PublicKey,
   approvalCount: Field,
-}) {}
+}) { }
 
 export class ExecutionEvent extends Struct({
   txHash: Field,
   to: PublicKey,
   amount: UInt64,
   txType: Field,
-}) {}
+}) { }
 
 export class OwnerChangeEvent extends Struct({
   owner: PublicKey,
   added: Field,
   newNumOwners: Field,
-}) {}
+}) { }
 
 export class ThresholdChangeEvent extends Struct({
   oldThreshold: Field,
   newThreshold: Field,
-}) {}
+}) { }
+
+export class DelegateEvent extends Struct({
+  delegate: PublicKey,
+}) { }
 
 // -- Contract ----------------------------------------------------------------
 
@@ -128,6 +136,7 @@ export class MinaGuard extends SmartContract {
     execution: ExecutionEvent,
     ownerChange: OwnerChangeEvent,
     thresholdChange: ThresholdChangeEvent,
+    delegate: DelegateEvent,
   };
 
   async deploy() {
@@ -137,6 +146,7 @@ export class MinaGuard extends SmartContract {
       editState: Permissions.proofOrSignature(),
       send: Permissions.proofOrSignature(),
       receive: Permissions.none(),
+      setDelegate: Permissions.proofOrSignature(),
     });
   }
 
@@ -566,6 +576,78 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('thresholdChange', {
       oldThreshold: currentThreshold,
       newThreshold,
+    });
+  }
+
+  @method async executeDelegate(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    approvalCount: Field,
+    delegate: PublicKey
+  ) {
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+
+    proposal.txType.assertEquals(
+      TxType.SET_DELEGATE,
+      'Not a delegate tx'
+    );
+
+    const txHash = proposal.hash();
+
+    // Verify config nonce
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
+    proposal.configNonce.assertEquals(
+      currentConfigNonce,
+      'Config nonce mismatch'
+    );
+
+    // Check expiry
+    const noExpiry = proposal.expiryBlock.equals(Field(0));
+    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
+    const notExpired = blockchainLength.value.lessThanOrEqual(
+      proposal.expiryBlock
+    );
+    noExpiry.or(notExpired).assertTrue('Proposal expired');
+
+    // Verify threshold
+    const threshold = this.threshold.getAndRequireEquals();
+    approvalCount.assertGreaterThanOrEqual(
+      threshold,
+      'Insufficient approvals'
+    );
+
+    // Verify approval witness (keyed by txHash)
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(approvalCount);
+    computedApprovalRoot.assertEquals(
+      approvalRoot,
+      'Approval root mismatch'
+    );
+    computedApprovalKey.assertEquals(txHash, 'Approval key mismatch');
+
+    // Un-delegation: data == 0 means delegate to self
+    // Delegation: data must match hash of delegate pubkey
+    const isUndelegate = proposal.data.equals(Field(0));
+    const delegateHash = ownerKey(delegate);
+    isUndelegate
+      .or(proposal.data.equals(delegateHash))
+      .assertTrue('Data does not match delegate');
+
+    // Set delegate: self for un-delegation, delegate pubkey otherwise
+    const targetDelegate = Provable.if(isUndelegate, PublicKey, this.address, delegate);
+    this.account.delegate.set(targetDelegate);
+
+    // Mark as executed
+    const [newApprovalRoot] =
+      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+    this.approvalRoot.set(newApprovalRoot);
+
+    // TODO: re-evaluate whether delegation should invalidate pending proposals (increment configNonce)
+
+    this.emitEvent('delegate', {
+      delegate: targetDelegate,
     });
   }
 }

@@ -1,5 +1,5 @@
 import { Field, Mina, PrivateKey, UInt64 } from 'o1js';
-import { EXECUTED_SENTINEL } from '../MinaGuard.js';
+import { EXECUTED_SENTINEL, ownerKey } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -9,6 +9,7 @@ import {
   fundAccount,
   getBalance,
   type TestContext,
+  createAddOwnerProposal,
 } from './test-helpers.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
@@ -101,7 +102,7 @@ describe('MinaGuard - Execute', () => {
     }).toThrow();
   });
 
-  it('should reject execution with wrong configNonce', async () => {
+  it('should reject execution with wrong configNonce 1', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     // Create proposal with wrong configNonce
     const proposal = createTransferProposal(
@@ -116,6 +117,51 @@ describe('MinaGuard - Execute', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+    }).toThrow();
+  });
+
+  it('should reject execution with wrong configNonce 2', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    await fundAccount(ctx, recipient);
+
+    // 1. Propose and approve a transfer with configNonce=0
+    const proposal = createTransferProposal(
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+    );
+    const txHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    // 2. Perform a governance change (add owner) to bump configNonce to 1
+    const newOwner = PrivateKey.random().toPublicKey();
+    const addOwnerProposal = createAddOwnerProposal(newOwner, Field(1), Field(0));
+    const govTxHash = await proposeTransaction(ctx, addOwnerProposal, 0);
+    await approveTransaction(ctx, addOwnerProposal, 0);
+    await approveTransaction(ctx, addOwnerProposal, 1);
+
+    const ownerMerkleWitness = ctx.ownerStore.map.getWitness(ownerKey(newOwner));
+    const govApprovalWitness = ctx.approvalStore.getWitness(govTxHash);
+    const govTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeOwnerChange(
+        addOwnerProposal, govApprovalWitness, Field(2), newOwner, ownerMerkleWitness
+      );
+    });
+    await govTxn.prove();
+    await govTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    ctx.ownerStore.add(newOwner);
+    ctx.approvalStore.setCount(govTxHash, EXECUTED_SENTINEL);
+
+    // configNonce is now 1, but the transfer proposal was created with configNonce=0
+    expect(ctx.zkApp.configNonce.get()).toEqual(Field(1));
+
+    // 3. Try to execute the old transfer proposal, should fail at execute's configNonce check
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(txHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
     }).toThrow();
   });
 

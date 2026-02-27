@@ -14,5 +14,6 @@ export {
   ExecutionEvent,
   OwnerChangeEvent,
   ThresholdChangeEvent,
+  DelegateEvent,
 } from './MinaGuard.js';
 export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';
