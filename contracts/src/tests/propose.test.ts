@@ -91,6 +91,27 @@ describe('MinaGuard - Propose', () => {
     }).toThrow();
   });
 
+  it('should reject proposal with wrong networkId', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient,
+      UInt64.from(1_000_000_000),
+      Field(0),
+      Field(0),
+      Field(0),
+      Field(99) // wrong networkId
+    );
+
+    await expect(async () => {
+      const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
+        await ctx.zkApp.propose(proposal, ownerWitness, ctx.owners[0].pub);
+      });
+      await txn.prove();
+      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+    }).toThrow();
+  });
+
   it('should allow proposeAndApprove', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(

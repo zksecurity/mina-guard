@@ -31,7 +31,8 @@ describe('MinaGuard - Setup', () => {
         await ctx.zkApp.setup(
           ctx.ownerStore.getRoot(),
           Field(2),
-          Field(3)
+          Field(3),
+          Field(1)
         );
       });
       await txn.prove();
@@ -52,7 +53,7 @@ describe('MinaGuard - Setup', () => {
 
     await expect(async () => {
       const txn = await Mina.transaction(deployerAccount, async () => {
-        await zkApp.setup(ownerStore.getRoot(), Field(0), Field(3));
+        await zkApp.setup(ownerStore.getRoot(), Field(0), Field(3), Field(1));
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();
@@ -71,7 +72,7 @@ describe('MinaGuard - Setup', () => {
 
     await expect(async () => {
       const txn = await Mina.transaction(deployerAccount, async () => {
-        await zkApp.setup(ownerStore.getRoot(), Field(5), Field(3));
+        await zkApp.setup(ownerStore.getRoot(), Field(5), Field(3), Field(1));
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();

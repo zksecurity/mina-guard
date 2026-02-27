@@ -327,6 +327,7 @@ describe('MinaGuard - Governance', () => {
         nonce: Field(1),
         configNonce: Field(0), // old configNonce
         expiryBlock: Field(0),
+        networkId: Field(1),
       });
 
       await expect(async () => {

@@ -129,6 +129,7 @@ export class MinaGuard extends SmartContract {
   @state(Field) voteNullifierRoot = State<Field>();
   @state(Field) approvalRoot = State<Field>();
   @state(Field) configNonce = State<Field>();
+  @state(Field) networkId = State<Field>();
 
   events = {
     proposal: ProposalEvent,
@@ -153,7 +154,8 @@ export class MinaGuard extends SmartContract {
   @method async setup(
     ownersRoot: Field,
     threshold: Field,
-    numOwners: Field
+    numOwners: Field,
+    networkId: Field
   ) {
     const currentRoot = this.ownersRoot.getAndRequireEquals();
     currentRoot.assertEquals(Field(0), 'Already initialized');
@@ -169,6 +171,7 @@ export class MinaGuard extends SmartContract {
     this.numOwners.set(numOwners);
     this.approvalRoot.set(EMPTY_MERKLE_MAP_ROOT);
     this.voteNullifierRoot.set(EMPTY_MERKLE_MAP_ROOT);
+    this.networkId.set(networkId);
   }
 
   @method async propose(
@@ -194,6 +197,9 @@ export class MinaGuard extends SmartContract {
       currentConfigNonce,
       'Config nonce mismatch'
     );
+
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
 
     const txHash = proposal.hash();
 
@@ -233,6 +239,9 @@ export class MinaGuard extends SmartContract {
       currentConfigNonce,
       'Config nonce mismatch'
     );
+
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
 
     const txHash = proposal.hash();
 
@@ -302,6 +311,9 @@ export class MinaGuard extends SmartContract {
     computedOwnerRoot.assertEquals(ownersRoot, 'Not an owner');
     computedOwnerKey.assertEquals(key, 'Owner key mismatch');
 
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+
     const txHash = proposal.hash();
     signature.verify(approver, [txHash]).assertTrue('Invalid signature');
 
@@ -368,6 +380,9 @@ export class MinaGuard extends SmartContract {
       'Config nonce mismatch - governance changed since proposal'
     );
 
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+
     // Check expiry (0 = no expiry)
     const noExpiry = proposal.expiryBlock.equals(Field(0));
     const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
@@ -432,6 +447,9 @@ export class MinaGuard extends SmartContract {
       currentConfigNonce,
       'Config nonce mismatch'
     );
+
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
 
     // Check expiry
     const noExpiry = proposal.expiryBlock.equals(Field(0));
@@ -524,6 +542,9 @@ export class MinaGuard extends SmartContract {
       'Config nonce mismatch'
     );
 
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+
     // Check expiry
     const noExpiry = proposal.expiryBlock.equals(Field(0));
     const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
@@ -601,6 +622,9 @@ export class MinaGuard extends SmartContract {
       currentConfigNonce,
       'Config nonce mismatch'
     );
+
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
 
     // Check expiry
     const noExpiry = proposal.expiryBlock.equals(Field(0));

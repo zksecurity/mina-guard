@@ -27,6 +27,7 @@ export interface TestContext {
   ownerStore: OwnerStore;
   approvalStore: ApprovalStore;
   nullifierStore: VoteNullifierStore;
+  networkId: Field;
 }
 
 // -- Setup Helpers -----------------------------------------------------------
@@ -55,6 +56,7 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
 
   const approvalStore = new ApprovalStore();
   const nullifierStore = new VoteNullifierStore();
+  const networkId = Field(1);
 
   return {
     zkApp,
@@ -66,6 +68,7 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
     ownerStore,
     approvalStore,
     nullifierStore,
+    networkId,
   };
 }
 
@@ -94,7 +97,8 @@ export async function deployAndSetup(
     await zkApp.setup(
       ownerStore.getRoot(),
       Field(threshold),
-      Field(owners.length)
+      Field(owners.length),
+      ctx.networkId
     );
   });
   await setupTxn.prove();
@@ -108,7 +112,8 @@ export function createTransferProposal(
   amount: UInt64,
   nonce: Field,
   configNonce: Field,
-  expiryBlock = Field(0)
+  expiryBlock = Field(0),
+  networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
     to,
@@ -119,6 +124,7 @@ export function createTransferProposal(
     nonce,
     configNonce,
     expiryBlock,
+    networkId,
   });
 }
 
@@ -126,7 +132,8 @@ export function createAddOwnerProposal(
   newOwner: PublicKey,
   nonce: Field,
   configNonce: Field,
-  expiryBlock = Field(0)
+  expiryBlock = Field(0),
+  networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
     to: PublicKey.empty(),
@@ -137,6 +144,7 @@ export function createAddOwnerProposal(
     nonce,
     configNonce,
     expiryBlock,
+    networkId,
   });
 }
 
@@ -144,7 +152,8 @@ export function createRemoveOwnerProposal(
   ownerToRemove: PublicKey,
   nonce: Field,
   configNonce: Field,
-  expiryBlock = Field(0)
+  expiryBlock = Field(0),
+  networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
     to: PublicKey.empty(),
@@ -155,6 +164,7 @@ export function createRemoveOwnerProposal(
     nonce,
     configNonce,
     expiryBlock,
+    networkId,
   });
 }
 
@@ -162,7 +172,8 @@ export function createThresholdProposal(
   newThreshold: Field,
   nonce: Field,
   configNonce: Field,
-  expiryBlock = Field(0)
+  expiryBlock = Field(0),
+  networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
     to: PublicKey.empty(),
@@ -173,6 +184,7 @@ export function createThresholdProposal(
     nonce,
     configNonce,
     expiryBlock,
+    networkId,
   });
 }
 
@@ -180,7 +192,8 @@ export function createDelegateProposal(
   delegate: PublicKey,
   nonce: Field,
   configNonce: Field,
-  expiryBlock = Field(0)
+  expiryBlock = Field(0),
+  networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
     to: PublicKey.empty(),
@@ -191,13 +204,15 @@ export function createDelegateProposal(
     nonce,
     configNonce,
     expiryBlock,
+    networkId,
   });
 }
 
 export function createUndelegateProposal(
   nonce: Field,
   configNonce: Field,
-  expiryBlock = Field(0)
+  expiryBlock = Field(0),
+  networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
     to: PublicKey.empty(),
@@ -208,6 +223,7 @@ export function createUndelegateProposal(
     nonce,
     configNonce,
     expiryBlock,
+    networkId,
   });
 }
 
