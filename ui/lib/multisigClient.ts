@@ -1,4 +1,4 @@
-// ── Multisig Contract Client ─────────────────────────────────────────
+// -- Multisig Contract Client -----------------------------------------
 // Bridges the o1js smart contract with the web UI.
 // o1js is lazily loaded due to its large WASM bundle (~40MB).
 

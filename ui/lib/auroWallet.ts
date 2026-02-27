@@ -1,4 +1,4 @@
-// ── Auro Wallet Integration ──────────────────────────────────────────
+// -- Auro Wallet Integration ------------------------------------------
 
 declare global {
   interface Window {
@@ -96,7 +96,7 @@ export async function signMessage(message: string): Promise<{
 export function onAccountChange(
   handler: (accounts: string[]) => void
 ): () => void {
-  if (!isAuroInstalled()) return () => {};
+  if (!isAuroInstalled()) return () => { };
   const wrappedHandler = (...args: unknown[]) =>
     handler(args[0] as string[]);
   window.mina!.on('accountsChanged', wrappedHandler);
@@ -107,7 +107,7 @@ export function onAccountChange(
 export function onNetworkChange(
   handler: (network: { chainId: string; name: string }) => void
 ): () => void {
-  if (!isAuroInstalled()) return () => {};
+  if (!isAuroInstalled()) return () => { };
   const wrappedHandler = (...args: unknown[]) =>
     handler(args[0] as { chainId: string; name: string });
   window.mina!.on('chainChanged', wrappedHandler);

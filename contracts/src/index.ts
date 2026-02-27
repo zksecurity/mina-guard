@@ -1,17 +1,19 @@
-export { MultisigWallet } from './MultisigWallet.js';
 export {
+  MinaGuard,
   TransactionProposal,
   TxType,
   ownerKey,
+  EXECUTED_SENTINEL,
+  EMPTY_MERKLE_MAP_ROOT,
   OwnerWitness,
   ApprovalWitness,
-  PendingTxWitness,
-  GuardWitness,
+  VoteNullifierWitness,
   SignedApproval,
   ProposalEvent,
   ApprovalEvent,
   ExecutionEvent,
   OwnerChangeEvent,
   ThresholdChangeEvent,
-} from './types.js';
-export { MultisigStorage } from './storage.js';
+  DelegateEvent,
+} from './MinaGuard.js';
+export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';

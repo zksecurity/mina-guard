@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useAppContext } from '../layout';
+import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import TransactionList from '@/components/TransactionList';
 import Link from 'next/link';

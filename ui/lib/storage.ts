@@ -1,4 +1,4 @@
-// ── Off-chain Storage (localStorage-backed for MVP) ──────────────────
+// -- Off-chain Storage (localStorage-backed for MVP) ------------------
 
 import { Transaction, MultisigState, TxStatus } from './types';
 
@@ -8,7 +8,7 @@ function getKey(walletAddress: string, suffix: string): string {
   return `${STORAGE_KEY_PREFIX}${walletAddress}-${suffix}`;
 }
 
-// ── Transactions ─────────────────────────────────────────────────────
+// -- Transactions -----------------------------------------------------
 
 export function getTransactions(walletAddress: string): Transaction[] {
   if (typeof window === 'undefined') return [];
@@ -56,7 +56,7 @@ export function getTransactionsByStatus(
   return getTransactions(walletAddress).filter((t) => t.status === status);
 }
 
-// ── Multisig State ───────────────────────────────────────────────────
+// -- Multisig State ---------------------------------------------------
 
 export function getMultisigState(
   walletAddress: string
@@ -77,7 +77,7 @@ export function saveMultisigState(
   localStorage.setItem(key, JSON.stringify(state));
 }
 
-// ── Merkle Data (raw JSON of MerkleMap serialization) ────────────────
+// -- Merkle Data (raw JSON of MerkleMap serialization) ----------------
 
 export function getMerkleData(walletAddress: string): string | null {
   if (typeof window === 'undefined') return null;
@@ -94,7 +94,7 @@ export function saveMerkleData(
   localStorage.setItem(key, data);
 }
 
-// ── Clear all data for a wallet ──────────────────────────────────────
+// -- Clear all data for a wallet --------------------------------------
 
 export function clearWalletData(walletAddress: string): void {
   if (typeof window === 'undefined') return;
