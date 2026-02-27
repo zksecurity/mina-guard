@@ -274,7 +274,7 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  @method async approveTx(
+  @method async approveProposal(
     proposal: TransactionProposal,
     signature: Signature,
     approver: PublicKey,
@@ -339,7 +339,7 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  @method async execute(
+  @method async executeTransfer(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
     approvalCount: Field

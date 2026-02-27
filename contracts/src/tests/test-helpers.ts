@@ -251,7 +251,7 @@ export async function approveTransaction(
   const nullifierWitness = nullifierStore.getWitness(txHash, approver.pub);
 
   const txn = await Mina.transaction(approver.pub, async () => {
-    await zkApp.approveTx(
+    await zkApp.approveProposal(
       proposal,
       sig,
       approver.pub,

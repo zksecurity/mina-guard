@@ -38,7 +38,7 @@ describe('MinaGuard - Execute', () => {
 
     const approvalWitness = ctx.approvalStore.getWitness(txHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.execute(proposal, approvalWitness, Field(2));
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
@@ -60,7 +60,7 @@ describe('MinaGuard - Execute', () => {
     await expect(async () => {
       const approvalWitness = ctx.approvalStore.getWitness(txHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.execute(proposal, approvalWitness, Field(1));
+        await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(1));
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
@@ -84,7 +84,7 @@ describe('MinaGuard - Execute', () => {
     // Execute first time
     const approvalWitness1 = ctx.approvalStore.getWitness(txHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.execute(proposal, approvalWitness1, Field(2));
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness1, Field(2));
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
@@ -94,7 +94,7 @@ describe('MinaGuard - Execute', () => {
     await expect(async () => {
       const approvalWitness2 = ctx.approvalStore.getWitness(txHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.execute(proposal, approvalWitness2, Field(2));
+        await ctx.zkApp.executeTransfer(proposal, approvalWitness2, Field(2));
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
@@ -136,7 +136,7 @@ describe('MinaGuard - Execute', () => {
     // Execute from deployer (not an owner)
     const approvalWitness = ctx.approvalStore.getWitness(txHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.execute(proposal, approvalWitness, Field(2));
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();

@@ -76,7 +76,7 @@ describe('MinaGuard - Approve', () => {
 
     await expect(async () => {
       const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.approveTx(
+        await ctx.zkApp.approveProposal(
           proposal,
           wrongSig,
           ctx.owners[0].pub,
@@ -106,7 +106,7 @@ describe('MinaGuard - Approve', () => {
 
     await expect(async () => {
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.approveTx(
+        await ctx.zkApp.approveProposal(
           proposal,
           sig,
           nonOwner.toPublicKey(),
@@ -146,7 +146,7 @@ describe('MinaGuard - Approve', () => {
     // Execute
     const approvalWitness = ctx.approvalStore.getWitness(txHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.execute(proposal, approvalWitness, Field(2));
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
