@@ -151,6 +151,7 @@ export class MinaGuard extends SmartContract {
     });
   }
 
+  // TODO: verify if we need an additional check here, to avoid front-running
   @method async setup(
     ownersRoot: Field,
     threshold: Field,
