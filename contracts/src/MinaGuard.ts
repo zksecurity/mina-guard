@@ -76,13 +76,6 @@ export class VoteNullifierWitness extends Struct({
   witness: MerkleMapWitness,
 }) { }
 
-// -- Signature ---------------------------------------------------------------
-
-export class SignedApproval extends Struct({
-  signature: Signature,
-  owner: PublicKey,
-}) { }
-
 // -- Events ------------------------------------------------------------------
 
 export class ProposalEvent extends Struct({
