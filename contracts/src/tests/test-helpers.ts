@@ -113,6 +113,7 @@ export function createTransferProposal(
   amount: UInt64,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -126,6 +127,7 @@ export function createTransferProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -133,6 +135,7 @@ export function createAddOwnerProposal(
   newOwner: PublicKey,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -146,6 +149,7 @@ export function createAddOwnerProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -153,6 +157,7 @@ export function createRemoveOwnerProposal(
   ownerToRemove: PublicKey,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -166,6 +171,7 @@ export function createRemoveOwnerProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -173,6 +179,7 @@ export function createThresholdProposal(
   newThreshold: Field,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -186,6 +193,7 @@ export function createThresholdProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -193,6 +201,7 @@ export function createDelegateProposal(
   delegate: PublicKey,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -206,12 +215,14 @@ export function createDelegateProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
 export function createUndelegateProposal(
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -225,6 +236,7 @@ export function createUndelegateProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 

@@ -24,7 +24,8 @@ describe('MinaGuard - Propose', () => {
       recipient,
       UInt64.from(1_000_000_000),
       Field(0),
-      Field(0)
+      Field(0),
+      ctx.zkAppAddress
     );
 
     await proposeTransaction(ctx, proposal, 0);
@@ -39,7 +40,8 @@ describe('MinaGuard - Propose', () => {
       recipient,
       UInt64.from(1_000_000_000),
       Field(0),
-      Field(0)
+      Field(0),
+      ctx.zkAppAddress
     );
 
     const fakeWitness = ctx.ownerStore.getWitness(nonOwner.toPublicKey());
@@ -60,7 +62,8 @@ describe('MinaGuard - Propose', () => {
       recipient,
       UInt64.from(1_000_000_000),
       Field(5), // wrong nonce
-      Field(0)
+      Field(0),
+      ctx.zkAppAddress
     );
 
     await expect(async () => {
@@ -80,7 +83,8 @@ describe('MinaGuard - Propose', () => {
       recipient,
       UInt64.from(1_000_000_000),
       Field(0),
-      Field(99) // wrong configNonce
+      Field(99), // wrong configNonce
+      ctx.zkAppAddress
     );
 
     await expect(async () => {
@@ -101,8 +105,31 @@ describe('MinaGuard - Propose', () => {
       UInt64.from(1_000_000_000),
       Field(0),
       Field(0),
+      ctx.zkAppAddress,
       Field(0),
       Field(99) // wrong networkId
+    );
+
+    await expect(async () => {
+      const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
+      const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
+        await ctx.zkApp.propose(proposal, ownerWitness, ctx.owners[0].pub, approvalWitness);
+      });
+      await txn.prove();
+      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+    }).toThrow();
+  });
+
+  it('should reject proposal with wrong guardAddress', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const wrongGuard = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient,
+      UInt64.from(1_000_000_000),
+      Field(0),
+      Field(0),
+      wrongGuard
     );
 
     await expect(async () => {
@@ -122,7 +149,8 @@ describe('MinaGuard - Propose', () => {
       recipient,
       UInt64.from(1_000_000_000),
       Field(0),
-      Field(0)
+      Field(0),
+      ctx.zkAppAddress
     );
 
     const proposalHash = await proposeAndApproveTransaction(ctx, proposal, 0);
@@ -138,13 +166,13 @@ describe('MinaGuard - Propose', () => {
     const recipient = PrivateKey.random().toPublicKey();
 
     const proposal1 = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal1, 0);
     expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
 
     const proposal2 = createTransferProposal(
-      recipient, UInt64.from(2_000_000_000), Field(1), Field(0)
+      recipient, UInt64.from(2_000_000_000), Field(1), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal2, 1);
     expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(2));

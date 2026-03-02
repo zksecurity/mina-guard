@@ -47,6 +47,7 @@ export class TransactionProposal extends Struct({
   configNonce: Field,
   expiryBlock: Field,
   networkId: Field,
+  guardAddress: PublicKey,
 }) {
   hash(): Field {
     return Poseidon.hash([
@@ -59,6 +60,7 @@ export class TransactionProposal extends Struct({
       this.configNonce,
       this.expiryBlock,
       this.networkId,
+      ...this.guardAddress.toFields(),
     ]);
   }
 }
@@ -197,6 +199,7 @@ export class MinaGuard extends SmartContract {
 
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
 
     const proposalHash = proposal.hash();
 
@@ -249,6 +252,7 @@ export class MinaGuard extends SmartContract {
 
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
 
     const proposalHash = proposal.hash();
 
@@ -321,6 +325,7 @@ export class MinaGuard extends SmartContract {
 
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
 
     const proposalHash = proposal.hash();
     signature.verify(approver, [proposalHash]).assertTrue('Invalid signature');
@@ -394,6 +399,7 @@ export class MinaGuard extends SmartContract {
 
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
 
     // Check expiry (0 = no expiry)
     const noExpiry = proposal.expiryBlock.equals(Field(0));
@@ -467,6 +473,7 @@ export class MinaGuard extends SmartContract {
 
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
 
     // Check expiry
     const noExpiry = proposal.expiryBlock.equals(Field(0));
@@ -566,6 +573,7 @@ export class MinaGuard extends SmartContract {
 
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
 
     // Check expiry
     const noExpiry = proposal.expiryBlock.equals(Field(0));
@@ -652,6 +660,7 @@ export class MinaGuard extends SmartContract {
 
     const currentNetworkId = this.networkId.getAndRequireEquals();
     proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
 
     // Check expiry
     const noExpiry = proposal.expiryBlock.equals(Field(0));

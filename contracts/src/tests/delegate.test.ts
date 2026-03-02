@@ -22,7 +22,7 @@ describe('MinaGuard - Delegate', () => {
   it('should delegate to a block producer via multisig', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
 
-    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0));
+    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 0);
@@ -49,7 +49,7 @@ describe('MinaGuard - Delegate', () => {
   it('should un-delegate (delegate to self) via multisig', async () => {
     // First delegate to someone
     const blockProducer = PrivateKey.random().toPublicKey();
-    const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0));
+    const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
     await approveTransaction(ctx, proposal1, 0);
     await approveTransaction(ctx, proposal1, 1);
@@ -71,7 +71,7 @@ describe('MinaGuard - Delegate', () => {
     ctx.approvalStore.setCount(proposalHash1, EXECUTED_MARKER);
 
     // Now un-delegate
-    const proposal2 = createUndelegateProposal(Field(1), Field(0));
+    const proposal2 = createUndelegateProposal(Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
     await approveTransaction(ctx, proposal2, 0);
     await approveTransaction(ctx, proposal2, 1);
@@ -98,7 +98,7 @@ describe('MinaGuard - Delegate', () => {
 
   it('should reject delegation with insufficient approvals', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
-    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0));
+    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     // Only 1 approval (threshold = 2)
@@ -123,7 +123,7 @@ describe('MinaGuard - Delegate', () => {
     const blockProducer = PrivateKey.random().toPublicKey();
     const wrongDelegate = PrivateKey.random().toPublicKey();
 
-    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0));
+    const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     await approveTransaction(ctx, proposal, 0);

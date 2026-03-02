@@ -28,7 +28,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0)
+      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -51,7 +51,7 @@ describe('MinaGuard - Execute', () => {
   it('should reject execution with insufficient approvals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -75,7 +75,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0)
+      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -115,7 +115,7 @@ describe('MinaGuard - Execute', () => {
     const recipient = PrivateKey.random().toPublicKey();
     // Create proposal with wrong configNonce
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(99)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(99), ctx.zkAppAddress
     );
 
     // Can't even propose this since configNonce mismatch happens at propose time
@@ -136,7 +136,7 @@ describe('MinaGuard - Execute', () => {
 
     // 1. Propose and approve a transfer with configNonce=0
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 0);
@@ -144,7 +144,7 @@ describe('MinaGuard - Execute', () => {
 
     // 2. Perform a governance change (add owner) to bump configNonce to 1
     const newOwner = PrivateKey.random().toPublicKey();
-    const addOwnerProposal = createAddOwnerProposal(newOwner, Field(1), Field(0));
+    const addOwnerProposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
     const govTxHash = await proposeTransaction(ctx, addOwnerProposal, 0);
     await approveTransaction(ctx, addOwnerProposal, 0);
     await approveTransaction(ctx, addOwnerProposal, 1);
@@ -182,7 +182,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0)
+      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
