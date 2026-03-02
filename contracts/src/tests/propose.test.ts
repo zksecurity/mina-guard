@@ -66,7 +66,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Not an owner');
   });
 
   it('should reject proposal with wrong nonce', async () => {
@@ -99,7 +99,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Nonce mismatch');
   });
 
   it('should reject proposal with wrong configNonce', async () => {
@@ -132,7 +132,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Config nonce mismatch');
   });
 
   it('should reject proposal with wrong networkId', async () => {
@@ -167,7 +167,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Network ID mismatch');
   });
 
   it('should reject proposal with wrong guardAddress', async () => {
@@ -201,7 +201,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Field.assertEquals()');
   });
 
   it('should increment nonce across multiple proposals', async () => {

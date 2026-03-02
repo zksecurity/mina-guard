@@ -111,7 +111,7 @@ describe('MinaGuard - Delegate', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Insufficient approvals');
   });
 
   it('should reject if proposal data does not match delegate pubkey', async () => {
@@ -135,6 +135,6 @@ describe('MinaGuard - Delegate', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Data does not match delegate');
   });
 });

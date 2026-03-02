@@ -58,7 +58,7 @@ describe('MinaGuard - Approve', () => {
     // Try to approve again from same owner.
     await expect(async () => {
       await approveTransaction(ctx, proposal, 0);
-    }).toThrow();
+    }).toThrow('Vote nullifier root mismatch');
   });
 
   it('should reject invalid signature', async () => {
@@ -88,7 +88,7 @@ describe('MinaGuard - Approve', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[1].key, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Invalid signature');
   });
 
   it('should reject approval from non-owner', async () => {
@@ -118,7 +118,7 @@ describe('MinaGuard - Approve', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Not an owner');
   });
 
   it('should reject approval on executed proposal', async () => {
@@ -156,6 +156,6 @@ describe('MinaGuard - Approve', () => {
     // Try to approve after execution - should fail
     await expect(async () => {
       await approveTransaction(ctx, proposal, 2);
-    }).toThrow();
+    }).toThrow('Proposal already executed');
   });
 });

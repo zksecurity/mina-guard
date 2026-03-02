@@ -36,7 +36,7 @@ describe('MinaGuard - Setup', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Already initialized');
   });
 
   it('should reject threshold = 0', async () => {
@@ -56,7 +56,7 @@ describe('MinaGuard - Setup', () => {
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Threshold must be > 0');
   });
 
   it('should reject numOwners < threshold', async () => {
@@ -75,7 +75,7 @@ describe('MinaGuard - Setup', () => {
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Owners must be >= threshold');
   });
 
   // TODO: fix

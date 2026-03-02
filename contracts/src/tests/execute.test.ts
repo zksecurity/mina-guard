@@ -63,7 +63,7 @@ describe('MinaGuard - Execute', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Insufficient approvals');
   });
 
   it('should prevent re-execution of same proposal', async () => {
@@ -136,7 +136,7 @@ describe('MinaGuard - Execute', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Config nonce mismatch');
   });
 
   it('should reject execution with wrong configNonce 2', async () => {
@@ -179,7 +179,7 @@ describe('MinaGuard - Execute', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow('Config nonce mismatch - governance changed since proposal');
   });
 
   it('should allow anyone to trigger execution (not just owners)', async () => {

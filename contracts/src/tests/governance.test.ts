@@ -79,7 +79,7 @@ describe('MinaGuard - Governance', () => {
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-      }).toThrow();
+      }).toThrow('Owner root mismatch');
     });
 
     it('should increment configNonce after adding owner', async () => {
@@ -176,7 +176,7 @@ describe('MinaGuard - Governance', () => {
         });
         await txn2.prove();
         await txn2.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-      }).toThrow();
+      }).toThrow('Cannot remove: would go below threshold');
     });
 
     it('should reject removing a non-existent owner', async () => {
@@ -197,7 +197,7 @@ describe('MinaGuard - Governance', () => {
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-      }).toThrow();
+      }).toThrow('Owner root mismatch');
     });
   });
 
@@ -238,7 +238,7 @@ describe('MinaGuard - Governance', () => {
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-      }).toThrow();
+      }).toThrow('Threshold must be > 0');
     });
 
     it('should reject threshold above numOwners', async () => {
@@ -257,7 +257,7 @@ describe('MinaGuard - Governance', () => {
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-      }).toThrow();
+      }).toThrow('Threshold cannot exceed owner count');
     });
 
     it('should increment configNonce after threshold change', async () => {
@@ -330,7 +330,7 @@ describe('MinaGuard - Governance', () => {
         });
         await txn.prove();
         await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
-      }).toThrow();
+      }).toThrow('Config nonce mismatch');
     });
   });
 });
