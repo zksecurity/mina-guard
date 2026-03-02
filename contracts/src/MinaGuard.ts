@@ -135,12 +135,14 @@ export class MinaGuard extends SmartContract {
 
   async deploy() {
     await super.deploy();
+    // TODO: review permissions
     this.account.permissions.set({
-      ...Permissions.default(),
-      editState: Permissions.proofOrSignature(),
-      send: Permissions.proofOrSignature(),
+      ...Permissions.allImpossible(),
+      editState: Permissions.proof(),
+      send: Permissions.proof(),
       receive: Permissions.none(),
-      setDelegate: Permissions.proofOrSignature(),
+      setDelegate: Permissions.proof(),
+      setPermissions: Permissions.proof(),
     });
   }
 
