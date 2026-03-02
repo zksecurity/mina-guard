@@ -178,54 +178,6 @@ export class MinaGuard extends SmartContract {
     proposal: TransactionProposal,
     ownerWitness: MerkleMapWitness,
     proposer: PublicKey,
-    approvalWitness: MerkleMapWitness
-  ) {
-    const ownersRoot = this.ownersRoot.getAndRequireEquals();
-    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
-
-    const key = ownerKey(proposer);
-    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(Field(1));
-    computedRoot.assertEquals(ownersRoot, 'Not an owner');
-    computedKey.assertEquals(key, 'Owner key mismatch');
-
-    const currentNonce = this.proposalNonce.getAndRequireEquals();
-    proposal.nonce.assertEquals(currentNonce, 'Nonce mismatch');
-
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    proposal.configNonce.assertEquals(
-      currentConfigNonce,
-      'Config nonce mismatch'
-    );
-
-    const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
-
-    const proposalHash = proposal.hash();
-
-    this.proposalNonce.set(currentNonce.add(1));
-
-    // Register proposal in the approval map (slot must be empty)
-    const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(Field(0));
-    computedApprovalRoot.assertEquals(approvalRoot, 'Approval root mismatch');
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
-
-    const [newApprovalRoot] = approvalWitness.computeRootAndKey(PROPOSED_MARKER);
-    this.approvalRoot.set(newApprovalRoot);
-
-    this.emitEvent('proposal', {
-      proposalHash,
-      proposer,
-      nonce: proposal.nonce,
-    });
-  }
-
-  @method async proposeAndApprove(
-    proposal: TransactionProposal,
-    ownerWitness: MerkleMapWitness,
-    proposer: PublicKey,
     signature: Signature,
     voteNullifierWitness: MerkleMapWitness,
     approvalWitness: MerkleMapWitness

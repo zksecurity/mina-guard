@@ -1,4 +1,4 @@
-import { Field, Mina, PrivateKey, UInt64, PublicKey } from 'o1js';
+import { Field, Mina, PrivateKey, Signature, UInt64, PublicKey } from 'o1js';
 import { EXECUTED_MARKER, ownerKey, TransactionProposal, TxType } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
@@ -29,8 +29,6 @@ describe('MinaGuard - Governance', () => {
 
       const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const newOwnerMerkleWitness = ctx.ownerStore.map.getWitness(
@@ -62,8 +60,6 @@ describe('MinaGuard - Governance', () => {
 
       const proposal = createAddOwnerProposal(existingOwner, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const ownerMerkleWitness = ctx.ownerStore.map.getWitness(
@@ -91,8 +87,6 @@ describe('MinaGuard - Governance', () => {
 
       const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -118,8 +112,6 @@ describe('MinaGuard - Governance', () => {
 
       const proposal = createRemoveOwnerProposal(ownerToRemove, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const ownerMerkleWitness = ctx.ownerStore.map.getWitness(
@@ -151,7 +143,6 @@ describe('MinaGuard - Governance', () => {
       const ownerToRemove1 = ctx.owners[2].pub;
       const proposal1 = createRemoveOwnerProposal(ownerToRemove1, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
-      await approveTransaction(ctx, proposal1, 0);
       await approveTransaction(ctx, proposal1, 1);
 
       const ownerWitness1 = ctx.ownerStore.map.getWitness(ownerKey(ownerToRemove1));
@@ -172,7 +163,6 @@ describe('MinaGuard - Governance', () => {
         ownerToRemove2, Field(1), Field(1), ctx.zkAppAddress // configNonce is now 1
       );
       const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
-      await approveTransaction(ctx, proposal2, 0);
       await approveTransaction(ctx, proposal2, 1);
 
       const ownerWitness2 = ctx.ownerStore.map.getWitness(ownerKey(ownerToRemove2));
@@ -194,8 +184,6 @@ describe('MinaGuard - Governance', () => {
 
       const proposal = createRemoveOwnerProposal(nonOwner, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const ownerMerkleWitness = ctx.ownerStore.map.getWitness(ownerKey(nonOwner));
@@ -220,8 +208,6 @@ describe('MinaGuard - Governance', () => {
       const newThreshold = Field(3);
       const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -240,8 +226,6 @@ describe('MinaGuard - Governance', () => {
       const newThreshold = Field(0);
       const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -261,8 +245,6 @@ describe('MinaGuard - Governance', () => {
       const newThreshold = Field(10); // Only 3 owners
       const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -282,8 +264,6 @@ describe('MinaGuard - Governance', () => {
       const newThreshold = Field(1);
       const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-      await approveTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -303,7 +283,6 @@ describe('MinaGuard - Governance', () => {
       const newThreshold = Field(1);
       const thresholdProposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash1 = await proposeTransaction(ctx, thresholdProposal, 0);
-      await approveTransaction(ctx, thresholdProposal, 0);
       await approveTransaction(ctx, thresholdProposal, 1);
 
       const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash1);
@@ -333,9 +312,21 @@ describe('MinaGuard - Governance', () => {
 
       await expect(async () => {
         const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+        const sig = Signature.create(ctx.owners[0].key, [oldProposal.hash()]);
+        const nullifierWitness = ctx.nullifierStore.getWitness(
+          oldProposal.hash(),
+          ctx.owners[0].pub
+        );
         const approvalWitness = ctx.approvalStore.getWitness(oldProposal.hash());
         const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-          await ctx.zkApp.propose(oldProposal, ownerWitness, ctx.owners[0].pub, approvalWitness);
+          await ctx.zkApp.propose(
+            oldProposal,
+            ownerWitness,
+            ctx.owners[0].pub,
+            sig,
+            nullifierWitness,
+            approvalWitness
+          );
         });
         await txn.prove();
         await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();

@@ -4,7 +4,6 @@ import {
   setupLocalBlockchain,
   deployAndSetup,
   proposeTransaction,
-  proposeAndApproveTransaction,
   createTransferProposal,
   type TestContext,
 } from './test-helpers.js';
@@ -18,7 +17,7 @@ describe('MinaGuard - Propose', () => {
     await deployAndSetup(ctx, 2);
   });
 
-  it('should allow owner to propose a transfer', async () => {
+  it('should allow owner to propose and auto-approve a transfer', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
       recipient,
@@ -28,9 +27,11 @@ describe('MinaGuard - Propose', () => {
       ctx.zkAppAddress
     );
 
-    await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
 
   it('should reject proposal from non-owner', async () => {
@@ -45,11 +46,23 @@ describe('MinaGuard - Propose', () => {
     );
 
     const fakeWitness = ctx.ownerStore.getWitness(nonOwner.toPublicKey());
+    const signature = Signature.create(nonOwner, [proposal.hash()]);
+    const nullifierWitness = ctx.nullifierStore.getWitness(
+      proposal.hash(),
+      nonOwner.toPublicKey()
+    );
     const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
 
     await expect(async () => {
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.propose(proposal, fakeWitness, nonOwner.toPublicKey(), approvalWitness);
+        await ctx.zkApp.propose(
+          proposal,
+          fakeWitness,
+          nonOwner.toPublicKey(),
+          signature,
+          nullifierWitness,
+          approvalWitness
+        );
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
@@ -68,9 +81,21 @@ describe('MinaGuard - Propose', () => {
 
     await expect(async () => {
       const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const nullifierWitness = ctx.nullifierStore.getWitness(
+        proposal.hash(),
+        ctx.owners[0].pub
+      );
       const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
       const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.propose(proposal, ownerWitness, ctx.owners[0].pub, approvalWitness);
+        await ctx.zkApp.propose(
+          proposal,
+          ownerWitness,
+          ctx.owners[0].pub,
+          signature,
+          nullifierWitness,
+          approvalWitness
+        );
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
@@ -89,9 +114,21 @@ describe('MinaGuard - Propose', () => {
 
     await expect(async () => {
       const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const nullifierWitness = ctx.nullifierStore.getWitness(
+        proposal.hash(),
+        ctx.owners[0].pub
+      );
       const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
       const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.propose(proposal, ownerWitness, ctx.owners[0].pub, approvalWitness);
+        await ctx.zkApp.propose(
+          proposal,
+          ownerWitness,
+          ctx.owners[0].pub,
+          signature,
+          nullifierWitness,
+          approvalWitness
+        );
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
@@ -112,9 +149,21 @@ describe('MinaGuard - Propose', () => {
 
     await expect(async () => {
       const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const nullifierWitness = ctx.nullifierStore.getWitness(
+        proposal.hash(),
+        ctx.owners[0].pub
+      );
       const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
       const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.propose(proposal, ownerWitness, ctx.owners[0].pub, approvalWitness);
+        await ctx.zkApp.propose(
+          proposal,
+          ownerWitness,
+          ctx.owners[0].pub,
+          signature,
+          nullifierWitness,
+          approvalWitness
+        );
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
@@ -134,32 +183,25 @@ describe('MinaGuard - Propose', () => {
 
     await expect(async () => {
       const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const nullifierWitness = ctx.nullifierStore.getWitness(
+        proposal.hash(),
+        ctx.owners[0].pub
+      );
       const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
       const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.propose(proposal, ownerWitness, ctx.owners[0].pub, approvalWitness);
+        await ctx.zkApp.propose(
+          proposal,
+          ownerWitness,
+          ctx.owners[0].pub,
+          signature,
+          nullifierWitness,
+          approvalWitness
+        );
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
     }).toThrow();
-  });
-
-  it('should allow proposeAndApprove', async () => {
-    const recipient = PrivateKey.random().toPublicKey();
-    const proposal = createTransferProposal(
-      recipient,
-      UInt64.from(1_000_000_000),
-      Field(0),
-      Field(0),
-      ctx.zkAppAddress
-    );
-
-    const proposalHash = await proposeAndApproveTransaction(ctx, proposal, 0);
-
-    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
-    // Approval count should be PROPOSED_MARKER + 1 = 2 in off-chain store
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
-    // Nullifier should be set
-    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
 
   it('should increment nonce across multiple proposals', async () => {

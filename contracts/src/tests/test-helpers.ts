@@ -247,41 +247,17 @@ export async function proposeTransaction(
   proposal: TransactionProposal,
   proposerIndex: number
 ): Promise<Field> {
-  const { zkApp, zkAppKey, ownerStore, owners } = ctx;
-  const proposer = owners[proposerIndex];
-
-  const proposalHash = proposal.hash();
-
-  const ownerWitness = ownerStore.getWitness(proposer.pub);
-  const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-  const txn = await Mina.transaction(proposer.pub, async () => {
-    await zkApp.propose(proposal, ownerWitness, proposer.pub, approvalWitness);
-  });
-  await txn.prove();
-  await txn.sign([proposer.key, zkAppKey]).send();
-
-  // Mark as proposed (PROPOSED_MARKER = 1)
-  ctx.approvalStore.setCount(proposalHash, PROPOSED_MARKER);
-
-  return proposalHash;
-}
-
-export async function proposeAndApproveTransaction(
-  ctx: TestContext,
-  proposal: TransactionProposal,
-  proposerIndex: number
-): Promise<Field> {
   const { zkApp, zkAppKey, ownerStore, approvalStore, nullifierStore, owners } = ctx;
   const proposer = owners[proposerIndex];
+
   const proposalHash = proposal.hash();
 
   const ownerWitness = ownerStore.getWitness(proposer.pub);
   const sig = Signature.create(proposer.key, [proposalHash]);
   const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer.pub);
   const approvalWitness = approvalStore.getWitness(proposalHash);
-
   const txn = await Mina.transaction(proposer.pub, async () => {
-    await zkApp.proposeAndApprove(
+    await zkApp.propose(
       proposal,
       ownerWitness,
       proposer.pub,
@@ -293,7 +269,7 @@ export async function proposeAndApproveTransaction(
   await txn.prove();
   await txn.sign([proposer.key, zkAppKey]).send();
 
-  // Update off-chain stores: PROPOSED_MARKER + 1 approval = 2
+  // Update off-chain stores: proposer auto-approves in propose()
   nullifierStore.nullify(proposalHash, proposer.pub);
   approvalStore.setCount(proposalHash, PROPOSED_MARKER.add(1));
 

@@ -25,10 +25,10 @@ describe('MinaGuard - Approve', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
 
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
-    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(3));
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
   });
 
   it('should allow multiple owners to approve same proposal', async () => {
@@ -38,12 +38,13 @@ describe('MinaGuard - Approve', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(3));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(4));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[2].pub)).toBe(true);
   });
 
   it('should prevent double-voting (vote nullifier)', async () => {
@@ -53,9 +54,8 @@ describe('MinaGuard - Approve', () => {
     );
     await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
-
-    // Try to approve again from same owner
+    // Proposer was already auto-approved in proposeTransaction().
+    // Try to approve again from same owner.
     await expect(async () => {
       await approveTransaction(ctx, proposal, 0);
     }).toThrow();
@@ -68,26 +68,26 @@ describe('MinaGuard - Approve', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Sign with wrong key (owner2's key but claiming to be owner1)
-    const wrongSig = Signature.create(ctx.owners[1].key, [proposalHash]);
-    const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+    // Sign with wrong key (owner3's key but claiming to be owner2)
+    const wrongSig = Signature.create(ctx.owners[2].key, [proposalHash]);
+    const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[1].pub);
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-    const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, ctx.owners[0].pub);
+    const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, ctx.owners[1].pub);
 
     await expect(async () => {
-      const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
+      const txn = await Mina.transaction(ctx.owners[1].pub, async () => {
         await ctx.zkApp.approveProposal(
           proposal,
           wrongSig,
-          ctx.owners[0].pub,
+          ctx.owners[1].pub,
           ownerWitness,
           approvalWitness,
-          Field(1),
+          Field(2),
           nullifierWitness
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+      await txn.sign([ctx.owners[1].key, ctx.zkAppKey]).send();
     }).toThrow();
   });
 
@@ -112,7 +112,7 @@ describe('MinaGuard - Approve', () => {
           nonOwner.toPublicKey(),
           fakeWitness,
           approvalWitness,
-          Field(1),
+          Field(2),
           nullifierWitness
         );
       });
@@ -139,8 +139,7 @@ describe('MinaGuard - Approve', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Get 2 approvals and execute
-    await approveTransaction(ctx, proposal, 0);
+    // Get threshold approvals and execute
     await approveTransaction(ctx, proposal, 1);
 
     // Execute

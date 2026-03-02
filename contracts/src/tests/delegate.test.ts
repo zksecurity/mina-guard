@@ -24,8 +24,6 @@ describe('MinaGuard - Delegate', () => {
 
     const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -51,7 +49,6 @@ describe('MinaGuard - Delegate', () => {
     const blockProducer = PrivateKey.random().toPublicKey();
     const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
-    await approveTransaction(ctx, proposal1, 0);
     await approveTransaction(ctx, proposal1, 1);
 
     const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash1);
@@ -73,11 +70,10 @@ describe('MinaGuard - Delegate', () => {
     // Now un-delegate
     const proposal2 = createUndelegateProposal(Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
-    await approveTransaction(ctx, proposal2, 0);
     await approveTransaction(ctx, proposal2, 1);
 
     const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash2);
-    // Pass any PublicKey for delegate param — contract ignores it for un-delegation
+    // Pass any PublicKey for delegate param - contract ignores it for un-delegation
     const dummyDelegate = PrivateKey.random().toPublicKey();
     const txn2 = await Mina.transaction(ctx.deployerAccount, async () => {
       await ctx.zkApp.executeDelegate(
@@ -101,8 +97,7 @@ describe('MinaGuard - Delegate', () => {
     const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Only 1 approval (threshold = 2)
-    await approveTransaction(ctx, proposal, 0);
+    // Only proposer approval exists (threshold = 2)
 
     await expect(async () => {
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -125,8 +120,6 @@ describe('MinaGuard - Delegate', () => {
 
     const proposal = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
-
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     // Pass a different delegate than what's in the proposal data

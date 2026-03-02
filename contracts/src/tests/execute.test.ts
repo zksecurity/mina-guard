@@ -1,4 +1,4 @@
-import { Field, Mina, PrivateKey, UInt64 } from 'o1js';
+import { Field, Mina, PrivateKey, Signature, UInt64 } from 'o1js';
 import { EXECUTED_MARKER, ownerKey } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
@@ -32,7 +32,6 @@ describe('MinaGuard - Execute', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     const balanceBefore = getBalance(recipient);
@@ -55,8 +54,7 @@ describe('MinaGuard - Execute', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Only 1 approval (threshold = 2)
-    await approveTransaction(ctx, proposal, 0);
+    // Only proposer approval exists (threshold = 2)
 
     await expect(async () => {
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -79,7 +77,6 @@ describe('MinaGuard - Execute', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     // Execute first time
@@ -121,9 +118,21 @@ describe('MinaGuard - Execute', () => {
     // Can't even propose this since configNonce mismatch happens at propose time
     await expect(async () => {
       const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const sig = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const nullifierWitness = ctx.nullifierStore.getWitness(
+        proposal.hash(),
+        ctx.owners[0].pub
+      );
       const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
       const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.propose(proposal, ownerWitness, ctx.owners[0].pub, approvalWitness);
+        await ctx.zkApp.propose(
+          proposal,
+          ownerWitness,
+          ctx.owners[0].pub,
+          sig,
+          nullifierWitness,
+          approvalWitness
+        );
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
@@ -139,14 +148,12 @@ describe('MinaGuard - Execute', () => {
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     // 2. Perform a governance change (add owner) to bump configNonce to 1
     const newOwner = PrivateKey.random().toPublicKey();
     const addOwnerProposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
     const govTxHash = await proposeTransaction(ctx, addOwnerProposal, 0);
-    await approveTransaction(ctx, addOwnerProposal, 0);
     await approveTransaction(ctx, addOwnerProposal, 1);
 
     const ownerMerkleWitness = ctx.ownerStore.map.getWitness(ownerKey(newOwner));
@@ -186,7 +193,6 @@ describe('MinaGuard - Execute', () => {
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
     // Execute from deployer (not an owner)
