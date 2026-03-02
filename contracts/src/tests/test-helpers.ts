@@ -12,6 +12,7 @@ import {
   TransactionProposal,
   TxType,
   ownerKey,
+  PROPOSED_MARKER,
 } from '../MinaGuard.js';
 import { OwnerStore, ApprovalStore, VoteNullifierStore } from '../storage.js';
 
@@ -237,17 +238,18 @@ export async function proposeTransaction(
   const { zkApp, zkAppKey, ownerStore, owners } = ctx;
   const proposer = owners[proposerIndex];
 
+  const proposalHash = proposal.hash();
+
   const ownerWitness = ownerStore.getWitness(proposer.pub);
+  const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
   const txn = await Mina.transaction(proposer.pub, async () => {
-    await zkApp.propose(proposal, ownerWitness, proposer.pub);
+    await zkApp.propose(proposal, ownerWitness, proposer.pub, approvalWitness);
   });
   await txn.prove();
   await txn.sign([proposer.key, zkAppKey]).send();
 
-  const proposalHash = proposal.hash();
-
-  // Initialize approval count to 0
-  ctx.approvalStore.setCount(proposalHash, Field(0));
+  // Mark as proposed (PROPOSED_MARKER = 1)
+  ctx.approvalStore.setCount(proposalHash, PROPOSED_MARKER);
 
   return proposalHash;
 }
@@ -279,9 +281,9 @@ export async function proposeAndApproveTransaction(
   await txn.prove();
   await txn.sign([proposer.key, zkAppKey]).send();
 
-  // Update off-chain stores
+  // Update off-chain stores: PROPOSED_MARKER + 1 approval = 2
   nullifierStore.nullify(proposalHash, proposer.pub);
-  approvalStore.setCount(proposalHash, Field(1));
+  approvalStore.setCount(proposalHash, PROPOSED_MARKER.add(1));
 
   return proposalHash;
 }

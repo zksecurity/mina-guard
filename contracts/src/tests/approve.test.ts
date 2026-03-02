@@ -1,5 +1,5 @@
 import { Field, Mina, PrivateKey, Signature, UInt64, AccountUpdate } from 'o1js';
-import { EXECUTED_SENTINEL } from '../MinaGuard.js';
+import { EXECUTED_MARKER } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -27,7 +27,7 @@ describe('MinaGuard - Approve', () => {
 
     await approveTransaction(ctx, proposal, 0);
 
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(1));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
 
@@ -41,7 +41,7 @@ describe('MinaGuard - Approve', () => {
     await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
 
-    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(3));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
   });
@@ -82,7 +82,7 @@ describe('MinaGuard - Approve', () => {
           ctx.owners[0].pub,
           ownerWitness,
           approvalWitness,
-          Field(0),
+          Field(1),
           nullifierWitness
         );
       });
@@ -112,7 +112,7 @@ describe('MinaGuard - Approve', () => {
           nonOwner.toPublicKey(),
           fakeWitness,
           approvalWitness,
-          Field(0),
+          Field(1),
           nullifierWitness
         );
       });
@@ -146,13 +146,13 @@ describe('MinaGuard - Approve', () => {
     // Execute
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
     });
     await executeTxn.prove();
     await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
 
     // Mark executed in off-chain store
-    ctx.approvalStore.setCount(proposalHash, EXECUTED_SENTINEL);
+    ctx.approvalStore.setCount(proposalHash, EXECUTED_MARKER);
 
     // Try to approve after execution - should fail
     await expect(async () => {

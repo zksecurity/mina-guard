@@ -3,7 +3,7 @@ export {
   TransactionProposal,
   TxType,
   ownerKey,
-  EXECUTED_SENTINEL,
+  EXECUTED_MARKER,
   EMPTY_MERKLE_MAP_ROOT,
   OwnerWitness,
   ApprovalWitness,

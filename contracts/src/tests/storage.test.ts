@@ -1,6 +1,6 @@
 import { Field, PrivateKey } from 'o1js';
 import { OwnerStore, ApprovalStore, VoteNullifierStore } from '../storage.js';
-import { EXECUTED_SENTINEL } from '../MinaGuard.js';
+import { EXECUTED_MARKER } from '../MinaGuard.js';
 import { describe, expect, it } from 'bun:test';
 
 describe('OwnerStore', () => {
@@ -79,7 +79,7 @@ describe('ApprovalStore', () => {
     store.setCount(proposalHash, Field(2));
     expect(store.isExecuted(proposalHash)).toBe(false);
 
-    store.setCount(proposalHash, EXECUTED_SENTINEL);
+    store.setCount(proposalHash, EXECUTED_MARKER);
     expect(store.isExecuted(proposalHash)).toBe(true);
   });
 

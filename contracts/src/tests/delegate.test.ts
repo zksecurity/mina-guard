@@ -33,7 +33,7 @@ describe('MinaGuard - Delegate', () => {
       await ctx.zkApp.executeDelegate(
         proposal,
         approvalWitness,
-        Field(2),
+        Field(3),
         blockProducer
       );
     });
@@ -59,7 +59,7 @@ describe('MinaGuard - Delegate', () => {
       await ctx.zkApp.executeDelegate(
         proposal1,
         approvalWitness1,
-        Field(2),
+        Field(3),
         blockProducer
       );
     });
@@ -67,8 +67,8 @@ describe('MinaGuard - Delegate', () => {
     await txn1.sign([ctx.deployerKey, ctx.zkAppKey]).send();
 
     // Mark executed in off-chain store
-    const { EXECUTED_SENTINEL } = await import('../MinaGuard.js');
-    ctx.approvalStore.setCount(proposalHash1, EXECUTED_SENTINEL);
+    const { EXECUTED_MARKER } = await import('../MinaGuard.js');
+    ctx.approvalStore.setCount(proposalHash1, EXECUTED_MARKER);
 
     // Now un-delegate
     const proposal2 = createUndelegateProposal(Field(1), Field(0));
@@ -83,7 +83,7 @@ describe('MinaGuard - Delegate', () => {
       await ctx.zkApp.executeDelegate(
         proposal2,
         approvalWitness2,
-        Field(2),
+        Field(3),
         dummyDelegate
       );
     });
@@ -110,7 +110,7 @@ describe('MinaGuard - Delegate', () => {
         await ctx.zkApp.executeDelegate(
           proposal,
           approvalWitness,
-          Field(1),
+          Field(2),
           blockProducer
         );
       });
@@ -136,7 +136,7 @@ describe('MinaGuard - Delegate', () => {
         await ctx.zkApp.executeDelegate(
           proposal,
           approvalWitness,
-          Field(2),
+          Field(3),
           wrongDelegate
         );
       });

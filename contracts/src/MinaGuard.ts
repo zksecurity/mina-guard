@@ -17,7 +17,8 @@ import {
 
 // -- Constants ---------------------------------------------------------------
 
-export const EXECUTED_SENTINEL = Field(0).sub(1);
+export const PROPOSED_MARKER = Field(1);
+export const EXECUTED_MARKER = Field(0).sub(1);
 export const EMPTY_MERKLE_MAP_ROOT = new MerkleMap().getRoot();
 
 export const TxType = {
@@ -137,7 +138,8 @@ export class MinaGuard extends SmartContract {
     await super.deploy();
     // TODO: review permissions
     this.account.permissions.set({
-      ...Permissions.allImpossible(),
+      // ...Permissions.allImpossible(),
+      ...Permissions.default(),
       editState: Permissions.proof(),
       send: Permissions.proof(),
       receive: Permissions.none(),
@@ -173,15 +175,14 @@ export class MinaGuard extends SmartContract {
   @method async propose(
     proposal: TransactionProposal,
     ownerWitness: MerkleMapWitness,
-    proposer: PublicKey
+    proposer: PublicKey,
+    approvalWitness: MerkleMapWitness
   ) {
     const ownersRoot = this.ownersRoot.getAndRequireEquals();
     ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
 
     const key = ownerKey(proposer);
-    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(
-      Field(1)
-    );
+    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(Field(1));
     computedRoot.assertEquals(ownersRoot, 'Not an owner');
     computedKey.assertEquals(key, 'Owner key mismatch');
 
@@ -200,6 +201,16 @@ export class MinaGuard extends SmartContract {
     const proposalHash = proposal.hash();
 
     this.proposalNonce.set(currentNonce.add(1));
+
+    // Register proposal in the approval map (slot must be empty)
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(Field(0));
+    computedApprovalRoot.assertEquals(approvalRoot, 'Approval root mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(PROPOSED_MARKER);
+    this.approvalRoot.set(newApprovalRoot);
 
     this.emitEvent('proposal', {
       proposalHash,
@@ -273,7 +284,8 @@ export class MinaGuard extends SmartContract {
     );
     computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
-    const [newApprovalRoot] = approvalWitness.computeRootAndKey(Field(1));
+    // PROPOSED_MARKER (1) + 1 approval = 2
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(PROPOSED_MARKER.add(1));
     this.approvalRoot.set(newApprovalRoot);
 
     this.emitEvent('proposal', {
@@ -313,10 +325,14 @@ export class MinaGuard extends SmartContract {
     const proposalHash = proposal.hash();
     signature.verify(approver, [proposalHash]).assertTrue('Invalid signature');
 
-    // Prevent approval on already-executed proposals
+    // Ensure the proposal was actually proposed (marker >= 1) and not already executed
     currentApprovalCount
-      .equals(EXECUTED_SENTINEL)
+      .equals(EXECUTED_MARKER)
       .assertFalse('Proposal already executed');
+    currentApprovalCount.assertGreaterThanOrEqual(
+      PROPOSED_MARKER,
+      'Proposal not found'
+    );
 
     // Vote nullifier: keyed by hash(proposalHash, approver)
     const voteNullifierKey = Poseidon.hash([proposalHash, ...approver.toFields()]);
@@ -387,9 +403,9 @@ export class MinaGuard extends SmartContract {
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
 
-    // Verify threshold
+    // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
-    approvalCount.assertGreaterThanOrEqual(
+    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
       threshold,
       'Insufficient approvals'
     );
@@ -409,7 +425,7 @@ export class MinaGuard extends SmartContract {
 
     // Mark as executed
     const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
     this.approvalRoot.set(newApprovalRoot);
 
     this.emitEvent('execution', {
@@ -455,9 +471,9 @@ export class MinaGuard extends SmartContract {
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
 
-    // Verify threshold
+    // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
-    approvalCount.assertGreaterThanOrEqual(
+    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
       threshold,
       'Insufficient approvals'
     );
@@ -502,7 +518,7 @@ export class MinaGuard extends SmartContract {
 
     // Mark as executed
     const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
     this.approvalRoot.set(newApprovalRoot);
 
     // Increment config nonce
@@ -549,9 +565,9 @@ export class MinaGuard extends SmartContract {
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
 
-    // Verify threshold (using current)
+    // Verify threshold (using current, approvalCount includes PROPOSED_MARKER offset)
     const currentThreshold = this.threshold.getAndRequireEquals();
-    approvalCount.assertGreaterThanOrEqual(
+    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
       currentThreshold,
       'Insufficient approvals'
     );
@@ -584,7 +600,7 @@ export class MinaGuard extends SmartContract {
 
     // Mark as executed
     const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
     this.approvalRoot.set(newApprovalRoot);
 
     // Increment config nonce
@@ -630,9 +646,9 @@ export class MinaGuard extends SmartContract {
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
 
-    // Verify threshold
+    // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
-    approvalCount.assertGreaterThanOrEqual(
+    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
       threshold,
       'Insufficient approvals'
     );
@@ -661,7 +677,7 @@ export class MinaGuard extends SmartContract {
 
     // Mark as executed
     const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_SENTINEL);
+      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
     this.approvalRoot.set(newApprovalRoot);
 
     // TODO: re-evaluate whether delegation should invalidate pending proposals (increment configNonce)
