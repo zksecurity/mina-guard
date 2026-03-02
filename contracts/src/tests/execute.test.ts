@@ -95,11 +95,20 @@ describe('MinaGuard - Execute', () => {
     await expect(async () => {
       const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash);
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.executeTransfer(proposal, approvalWitness2, Field(2));
+        await ctx.zkApp.executeTransfer(proposal, approvalWitness2, Field(10));
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+    }).toThrow("Approval root mismatch");
+
+    await expect(async () => {
+      const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransfer(proposal, approvalWitness2, EXECUTED_MARKER);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    }).toThrow("Proposal already executed");
   });
 
   it('should reject execution with wrong configNonce 1', async () => {

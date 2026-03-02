@@ -403,6 +403,11 @@ export class MinaGuard extends SmartContract {
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
 
+    // Prevent re-execution
+    approvalCount
+      .equals(EXECUTED_MARKER)
+      .assertFalse('Proposal already executed');
+
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
     approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
@@ -470,6 +475,11 @@ export class MinaGuard extends SmartContract {
       proposal.expiryBlock
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
+
+    // Prevent re-execution
+    approvalCount
+      .equals(EXECUTED_MARKER)
+      .assertFalse('Proposal already executed');
 
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
@@ -565,6 +575,11 @@ export class MinaGuard extends SmartContract {
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
 
+    // Prevent re-execution
+    approvalCount
+      .equals(EXECUTED_MARKER)
+      .assertFalse('Proposal already executed');
+
     // Verify threshold (using current, approvalCount includes PROPOSED_MARKER offset)
     const currentThreshold = this.threshold.getAndRequireEquals();
     approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
@@ -645,6 +660,11 @@ export class MinaGuard extends SmartContract {
       proposal.expiryBlock
     );
     noExpiry.or(notExpired).assertTrue('Proposal expired');
+
+    // Prevent re-execution
+    approvalCount
+      .equals(EXECUTED_MARKER)
+      .assertFalse('Proposal already executed');
 
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
