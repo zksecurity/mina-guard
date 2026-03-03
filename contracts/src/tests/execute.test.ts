@@ -1,5 +1,6 @@
 import { Field, Mina, PrivateKey, Signature, UInt64 } from 'o1js';
-import { EXECUTED_MARKER, ownerKey } from '../MinaGuard.js';
+import { EXECUTED_MARKER } from '../MinaGuard.js';
+import { ownerKey } from '../utils.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -11,6 +12,7 @@ import {
   type TestContext,
   createAddOwnerProposal,
 } from './test-helpers.js';
+import { BatchVerifySigsProof, BatchVerifyInput, BatchVerifyOutput } from '../BatchVerifyProgram.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 describe('MinaGuard - Execute', () => {
@@ -231,5 +233,184 @@ describe('MinaGuard - Execute', () => {
     const balanceAfter = getBalance(recipient);
     const received = balanceAfter.sub(UInt64.from(1_000_000));
     expect(received).toEqual(UInt64.from(1_000_000_000));
+  });
+});
+
+describe('MinaGuard - Execute Transfer BatchSig', () => {
+  let ctx: TestContext;
+
+  beforeEach(async () => {
+    ctx = await setupLocalBlockchain();
+    await deployAndSetup(ctx, 2);
+  });
+
+  async function makeDummyProof(proposalHash: Field, ownersRoot: Field, approvalCount: Field) {
+    return await BatchVerifySigsProof.dummy(
+      new BatchVerifyInput({ proposalHash, ownersRoot }),
+      new BatchVerifyOutput({ approvalCount, approverHash: Field(0) }),
+      1
+    );
+  }
+
+  it('should execute transfer with valid batch proof', async () => {
+    const recipientKey = PrivateKey.random();
+    const recipient = recipientKey.toPublicKey();
+    await fundAccount(ctx, recipient);
+
+    const transferAmount = UInt64.from(1_000_000_000);
+    const proposal = createTransferProposal(
+      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+
+    const balanceBefore = getBalance(recipient);
+
+    const ownersRoot = ctx.ownerStore.getRoot();
+    const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(2));
+
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, dummyProof);
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+
+    const balanceAfter = getBalance(recipient);
+    expect(balanceAfter.sub(balanceBefore)).toEqual(transferAmount);
+  });
+
+  it('should reject with insufficient approvals in proof', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+
+    const ownersRoot = ctx.ownerStore.getRoot();
+    const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(1));
+
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, dummyProof);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Insufficient approvals');
+  });
+
+  it('should reject with wrong proposal hash in proof', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+    );
+    await proposeTransaction(ctx, proposal, 0);
+
+    const ownersRoot = ctx.ownerStore.getRoot();
+    const wrongHash = Field(999);
+    const dummyProof = await makeDummyProof(wrongHash, ownersRoot, Field(2));
+
+    await expect(async () => {
+      const proposalHash = proposal.hash();
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, dummyProof);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow();
+  });
+
+  it('should reject with wrong owners root in proof', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+
+    const wrongOwnersRoot = Field(12345);
+    const dummyProof = await makeDummyProof(proposalHash, wrongOwnersRoot, Field(2));
+
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, dummyProof);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow();
+  });
+
+  it('should prevent re-execution', async () => {
+    const recipientKey = PrivateKey.random();
+    const recipient = recipientKey.toPublicKey();
+    await fundAccount(ctx, recipient);
+
+    const transferAmount = UInt64.from(1_000_000_000);
+    const proposal = createTransferProposal(
+      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+
+    const ownersRoot = ctx.ownerStore.getRoot();
+    const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(2));
+
+    // Execute first time
+    const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash);
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness1, dummyProof);
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+    ctx.approvalStore.setCount(proposalHash, EXECUTED_MARKER);
+
+    // Try to execute again
+    await expect(async () => {
+      const dummyProof2 = await makeDummyProof(proposalHash, ownersRoot, Field(2));
+      const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash);
+      const txn2 = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness2, dummyProof2);
+      });
+      await txn2.prove();
+      await txn2.sign([ctx.deployerKey]).send();
+    }).toThrow('Approval root mismatch');
+  });
+
+  it('should reject if proposal not proposed', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = proposal.hash();
+
+    const ownersRoot = ctx.ownerStore.getRoot();
+    const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(2));
+
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, dummyProof);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Approval root mismatch');
+  });
+
+  it('should reject wrong txType', async () => {
+    const newOwner = PrivateKey.random().toPublicKey();
+    const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+
+    const ownersRoot = ctx.ownerStore.getRoot();
+    const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(2));
+
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, dummyProof);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Not a transfer tx');
   });
 });

@@ -17,6 +17,8 @@ import {
 
 import { ownerKey } from './utils';
 
+import { BatchVerifyInput, BatchVerifySigsProof } from './BatchVerifyProgram';
+
 // -- Constants ---------------------------------------------------------------
 
 export const PROPOSED_MARKER = Field(1);
@@ -395,6 +397,56 @@ export class MinaGuard extends SmartContract {
       txType: proposal.txType,
     });
   }
+
+  @method async executeTransferBatchSig(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    proof: BatchVerifySigsProof,
+  ) {
+
+    const ownersRoot = this.getInitializedOwnersRoot();
+    proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
+    this.assertProposalConfigNetworkAndGuard(
+      proposal,
+      'Config nonce mismatch - governance changed since proposal'
+    );
+
+    this.assertProposalNotExpired(proposal);
+
+    // Verify recursive proof that proves there exist approvalCount valid signatures from owners
+    proof.verify();
+
+    // Assert proof preconditions
+    const proposalHash = proposal.hash();
+    proof.publicInput.assertEquals(new BatchVerifyInput({proposalHash: proposalHash, ownersRoot: ownersRoot}));
+
+    
+    // TODO: Should we expect an explicit approval signature from the caller of `execute` as well?
+
+    // Verify it has been proposed, but has no other approvals. Implicitly,
+    // this also checks that it hasn't been executed (PROPOSED_MARKER != EXECUTED_MARKER)
+    // The +1 accommodates for the auto-approval from the proposer
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, PROPOSED_MARKER.add(Field(1)));
+
+    const threshold = this.threshold.getAndRequireEquals();
+    // Bypass the normal threshold verification (skip PROPOSED_MARKER handling)
+    proof.publicOutput.approvalCount.assertGreaterThanOrEqual(threshold, 'Insufficient approvals');
+
+    // Execute transfer
+    this.send({ to: proposal.to, amount: proposal.amount });
+
+    // Mark as executed
+    this.markExecuted(approvalWitness);
+
+    this.emitEvent('execution', {
+      proposalHash,
+      to: proposal.to,
+      amount: proposal.amount,
+      txType: proposal.txType,
+    });
+
+  }
+
 
   @method async executeOwnerChange(
     proposal: TransactionProposal,

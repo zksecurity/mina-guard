@@ -1,5 +1,5 @@
 import { Field, Mina, PrivateKey, UInt64 } from 'o1js';
-import { ownerKey } from '../MinaGuard.js';
+import { ownerKey } from '../utils.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,

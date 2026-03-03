@@ -1,5 +1,6 @@
 import { Field, Mina, PrivateKey, Signature, UInt64, PublicKey } from 'o1js';
-import { EXECUTED_MARKER, ownerKey, TransactionProposal, TxType } from '../MinaGuard.js';
+import { EXECUTED_MARKER, TransactionProposal, TxType } from '../MinaGuard.js';
+import { ownerKey } from '../utils.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,

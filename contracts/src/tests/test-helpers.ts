@@ -11,10 +11,11 @@ import {
   MinaGuard,
   TransactionProposal,
   TxType,
-  ownerKey,
   PROPOSED_MARKER,
 } from '../MinaGuard.js';
 import { OwnerStore, ApprovalStore, VoteNullifierStore } from '../storage.js';
+
+import { ownerKey } from '../utils.js';
 
 // -- Types -------------------------------------------------------------------
 
