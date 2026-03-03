@@ -3,29 +3,29 @@ import { Field, MerkleMapWitness, PublicKey, SelfProof, Signature, Struct, ZkPro
 import { ownerKey } from "./utils";
 
 class BatchVerifyInput extends Struct({ proposalHash: Field, ownersRoot: Field }) {
-    assertEquals(other: BatchVerifyInput) {
-        this.proposalHash.assertEquals(other.proposalHash);
-        this.ownersRoot.assertEquals(other.ownersRoot);
-    }
+  assertEquals(other: BatchVerifyInput) {
+    this.proposalHash.assertEquals(other.proposalHash);
+    this.ownersRoot.assertEquals(other.ownersRoot);
+  }
 }
 class BatchVerifyOutput extends Struct({ approvalCount: Field, approverHash: Field }) { }
 
 function verifyApproval(
-    input: BatchVerifyInput,
-    sig: Signature,
-    approver: PublicKey,
-    ownerWitness: MerkleMapWitness
+  input: BatchVerifyInput,
+  sig: Signature,
+  approver: PublicKey,
+  ownerWitness: MerkleMapWitness
 ): Field {
-    let approverHash = ownerKey(approver);
+  let approverHash = ownerKey(approver);
 
-    // Verify that approver is in the owner set
-    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(Field(1));
-    computedRoot.assertEquals(input.ownersRoot, 'Not an owner');
-    computedKey.assertEquals(approverHash, 'Owner key mismatch');
+  // Verify that approver is in the owner set
+  const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(Field(1));
+  computedRoot.assertEquals(input.ownersRoot, 'Not an owner');
+  computedKey.assertEquals(approverHash, 'Owner key mismatch');
 
-    sig.verify(approver, [input.proposalHash]).assertTrue('Invalid signature');
+  sig.verify(approver, [input.proposalHash]).assertTrue('Invalid signature');
 
-    return approverHash;
+  return approverHash;
 }
 
 
@@ -39,51 +39,51 @@ function verifyApproval(
  * 
  */
 const BatchVerifySigs = ZkProgram({
-    name: 'batch-verify-sigs',
-    publicInput: BatchVerifyInput,
-    publicOutput: BatchVerifyOutput,
+  name: 'batch-verify-sigs',
+  publicInput: BatchVerifyInput,
+  publicOutput: BatchVerifyOutput,
 
-    methods: {
-        firstVerification: {
-            privateInputs: [Signature, PublicKey, MerkleMapWitness],
-            async method(input: BatchVerifyInput, sig: Signature, approver: PublicKey,
-                ownerWitness: MerkleMapWitness) {
+  methods: {
+    firstVerification: {
+      privateInputs: [Signature, PublicKey, MerkleMapWitness],
+      async method(input: BatchVerifyInput, sig: Signature, approver: PublicKey,
+        ownerWitness: MerkleMapWitness) {
 
-                const approverHash = verifyApproval(input, sig, approver, ownerWitness);
+        const approverHash = verifyApproval(input, sig, approver, ownerWitness);
 
-                return {
-                    publicOutput: new BatchVerifyOutput({
-                        approvalCount: Field(1),
-                        approverHash: approverHash
-                    })
-                }
-            }
-        },
-        addVerification: {
-            privateInputs: [SelfProof, Signature, PublicKey, MerkleMapWitness],
-            async method(input: BatchVerifyInput, prev: SelfProof<BatchVerifyInput, BatchVerifyOutput>,
-                sig: Signature, approver: PublicKey, ownerWitness: MerkleMapWitness) {
-
-                prev.verify();
-
-                prev.publicInput.assertEquals(input);
-
-                const approverHash = verifyApproval(input, sig, approver, ownerWitness);
-
-                // To prevent duplicate signatures, enforce ascending order of hashes of public keys
-                prev.publicOutput.approverHash.assertLessThan(approverHash);
-
-                return {
-                    publicOutput: new BatchVerifyOutput({
-                        approvalCount: prev.publicOutput.approvalCount.add(Field(1)),
-                        approverHash: approverHash
-                    })
-                };
-            }
+        return {
+          publicOutput: new BatchVerifyOutput({
+            approvalCount: Field(1),
+            approverHash: approverHash
+          })
         }
+      }
+    },
+    addVerification: {
+      privateInputs: [SelfProof, Signature, PublicKey, MerkleMapWitness],
+      async method(input: BatchVerifyInput, prev: SelfProof<BatchVerifyInput, BatchVerifyOutput>,
+        sig: Signature, approver: PublicKey, ownerWitness: MerkleMapWitness) {
+
+        prev.verify();
+
+        prev.publicInput.assertEquals(input);
+
+        const approverHash = verifyApproval(input, sig, approver, ownerWitness);
+
+        // To prevent duplicate signatures, enforce ascending order of hashes of public keys
+        prev.publicOutput.approverHash.assertLessThan(approverHash);
+
+        return {
+          publicOutput: new BatchVerifyOutput({
+            approvalCount: prev.publicOutput.approvalCount.add(Field(1)),
+            approverHash: approverHash
+          })
+        };
+      }
     }
+  }
 });
 
 export class BatchVerifySigsProof extends ZkProgram.Proof(BatchVerifySigs) { }
 
-export { BatchVerifyInput, BatchVerifyOutput };
+export { BatchVerifyInput, BatchVerifyOutput, BatchVerifySigs };
