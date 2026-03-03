@@ -12,6 +12,7 @@ import {
   TransactionProposal,
   TxType,
   ownerKey,
+  PROPOSED_MARKER,
 } from '../MinaGuard.js';
 import { OwnerStore, ApprovalStore, VoteNullifierStore } from '../storage.js';
 
@@ -112,6 +113,7 @@ export function createTransferProposal(
   amount: UInt64,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -125,6 +127,7 @@ export function createTransferProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -132,6 +135,7 @@ export function createAddOwnerProposal(
   newOwner: PublicKey,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -145,6 +149,7 @@ export function createAddOwnerProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -152,6 +157,7 @@ export function createRemoveOwnerProposal(
   ownerToRemove: PublicKey,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -165,6 +171,7 @@ export function createRemoveOwnerProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -172,6 +179,7 @@ export function createThresholdProposal(
   newThreshold: Field,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -185,6 +193,7 @@ export function createThresholdProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -192,6 +201,7 @@ export function createDelegateProposal(
   delegate: PublicKey,
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -205,12 +215,14 @@ export function createDelegateProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
 export function createUndelegateProposal(
   nonce: Field,
   configNonce: Field,
+  guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
@@ -224,6 +236,7 @@ export function createUndelegateProposal(
     configNonce,
     expiryBlock,
     networkId,
+    guardAddress,
   });
 }
 
@@ -234,40 +247,17 @@ export async function proposeTransaction(
   proposal: TransactionProposal,
   proposerIndex: number
 ): Promise<Field> {
-  const { zkApp, zkAppKey, ownerStore, owners } = ctx;
+  const { zkApp, ownerStore, approvalStore, nullifierStore, owners } = ctx;
   const proposer = owners[proposerIndex];
 
-  const ownerWitness = ownerStore.getWitness(proposer.pub);
-  const txn = await Mina.transaction(proposer.pub, async () => {
-    await zkApp.propose(proposal, ownerWitness, proposer.pub);
-  });
-  await txn.prove();
-  await txn.sign([proposer.key, zkAppKey]).send();
-
-  const txHash = proposal.hash();
-
-  // Initialize approval count to 0
-  ctx.approvalStore.setCount(txHash, Field(0));
-
-  return txHash;
-}
-
-export async function proposeAndApproveTransaction(
-  ctx: TestContext,
-  proposal: TransactionProposal,
-  proposerIndex: number
-): Promise<Field> {
-  const { zkApp, zkAppKey, ownerStore, approvalStore, nullifierStore, owners } = ctx;
-  const proposer = owners[proposerIndex];
-  const txHash = proposal.hash();
+  const proposalHash = proposal.hash();
 
   const ownerWitness = ownerStore.getWitness(proposer.pub);
-  const sig = Signature.create(proposer.key, [txHash]);
-  const nullifierWitness = nullifierStore.getWitness(txHash, proposer.pub);
-  const approvalWitness = approvalStore.getWitness(txHash);
-
+  const sig = Signature.create(proposer.key, [proposalHash]);
+  const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer.pub);
+  const approvalWitness = approvalStore.getWitness(proposalHash);
   const txn = await Mina.transaction(proposer.pub, async () => {
-    await zkApp.proposeAndApprove(
+    await zkApp.propose(
       proposal,
       ownerWitness,
       proposer.pub,
@@ -277,13 +267,13 @@ export async function proposeAndApproveTransaction(
     );
   });
   await txn.prove();
-  await txn.sign([proposer.key, zkAppKey]).send();
+  await txn.sign([proposer.key]).send();
 
-  // Update off-chain stores
-  nullifierStore.nullify(txHash, proposer.pub);
-  approvalStore.setCount(txHash, Field(1));
+  // Update off-chain stores: proposer auto-approves in propose()
+  nullifierStore.nullify(proposalHash, proposer.pub);
+  approvalStore.setCount(proposalHash, PROPOSED_MARKER.add(1));
 
-  return txHash;
+  return proposalHash;
 }
 
 export async function approveTransaction(
@@ -291,15 +281,15 @@ export async function approveTransaction(
   proposal: TransactionProposal,
   approverIndex: number
 ): Promise<void> {
-  const { zkApp, zkAppKey, ownerStore, approvalStore, nullifierStore, owners } = ctx;
+  const { zkApp, ownerStore, approvalStore, nullifierStore, owners } = ctx;
   const approver = owners[approverIndex];
-  const txHash = proposal.hash();
+  const proposalHash = proposal.hash();
 
-  const sig = Signature.create(approver.key, [txHash]);
-  const currentCount = approvalStore.getCount(txHash);
+  const sig = Signature.create(approver.key, [proposalHash]);
+  const currentCount = approvalStore.getCount(proposalHash);
   const ownerWitness = ownerStore.getWitness(approver.pub);
-  const approvalWitness = approvalStore.getWitness(txHash);
-  const nullifierWitness = nullifierStore.getWitness(txHash, approver.pub);
+  const approvalWitness = approvalStore.getWitness(proposalHash);
+  const nullifierWitness = nullifierStore.getWitness(proposalHash, approver.pub);
 
   const txn = await Mina.transaction(approver.pub, async () => {
     await zkApp.approveProposal(
@@ -313,12 +303,12 @@ export async function approveTransaction(
     );
   });
   await txn.prove();
-  await txn.sign([approver.key, zkAppKey]).send();
+  await txn.sign([approver.key]).send();
 
   // Update off-chain stores
-  nullifierStore.nullify(txHash, approver.pub);
+  nullifierStore.nullify(proposalHash, approver.pub);
   const newCount = Field(Number(currentCount.toString()) + 1);
-  approvalStore.setCount(txHash, newCount);
+  approvalStore.setCount(proposalHash, newCount);
 }
 
 export function getBalance(address: PublicKey): UInt64 {

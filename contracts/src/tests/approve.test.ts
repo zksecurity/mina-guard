@@ -1,5 +1,5 @@
 import { Field, Mina, PrivateKey, Signature, UInt64, AccountUpdate } from 'o1js';
-import { EXECUTED_SENTINEL } from '../MinaGuard.js';
+import { EXECUTED_MARKER } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -21,88 +21,88 @@ describe('MinaGuard - Approve', () => {
   it('should allow owner to approve with valid signature', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
 
-    expect(ctx.approvalStore.getCount(txHash)).toEqual(Field(1));
-    expect(ctx.nullifierStore.isNullified(txHash, ctx.owners[0].pub)).toBe(true);
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(3));
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
   });
 
   it('should allow multiple owners to approve same proposal', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
+    await approveTransaction(ctx, proposal, 2);
 
-    expect(ctx.approvalStore.getCount(txHash)).toEqual(Field(2));
-    expect(ctx.nullifierStore.isNullified(txHash, ctx.owners[0].pub)).toBe(true);
-    expect(ctx.nullifierStore.isNullified(txHash, ctx.owners[1].pub)).toBe(true);
+    expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(4));
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[1].pub)).toBe(true);
+    expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[2].pub)).toBe(true);
   });
 
   it('should prevent double-voting (vote nullifier)', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal, 0);
 
-    await approveTransaction(ctx, proposal, 0);
-
-    // Try to approve again from same owner
+    // Proposer was already auto-approved in proposeTransaction().
+    // Try to approve again from same owner.
     await expect(async () => {
       await approveTransaction(ctx, proposal, 0);
-    }).toThrow();
+    }).toThrow('Vote nullifier root mismatch');
   });
 
   it('should reject invalid signature', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Sign with wrong key (owner2's key but claiming to be owner1)
-    const wrongSig = Signature.create(ctx.owners[1].key, [txHash]);
-    const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
-    const approvalWitness = ctx.approvalStore.getWitness(txHash);
-    const nullifierWitness = ctx.nullifierStore.getWitness(txHash, ctx.owners[0].pub);
+    // Sign with wrong key (owner3's key but claiming to be owner2)
+    const wrongSig = Signature.create(ctx.owners[2].key, [proposalHash]);
+    const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[1].pub);
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, ctx.owners[1].pub);
 
     await expect(async () => {
-      const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
+      const txn = await Mina.transaction(ctx.owners[1].pub, async () => {
         await ctx.zkApp.approveProposal(
           proposal,
           wrongSig,
-          ctx.owners[0].pub,
+          ctx.owners[1].pub,
           ownerWitness,
           approvalWitness,
-          Field(0),
+          Field(2),
           nullifierWitness
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
-    }).toThrow();
+      await txn.sign([ctx.owners[1].key]).send();
+    }).toThrow('Invalid signature');
   });
 
   it('should reject approval from non-owner', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     const nonOwner = PrivateKey.random();
-    const sig = Signature.create(nonOwner, [txHash]);
+    const sig = Signature.create(nonOwner, [proposalHash]);
     const fakeWitness = ctx.ownerStore.getWitness(nonOwner.toPublicKey());
-    const approvalWitness = ctx.approvalStore.getWitness(txHash);
-    const nullifierWitness = ctx.nullifierStore.getWitness(txHash, nonOwner.toPublicKey());
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, nonOwner.toPublicKey());
 
     await expect(async () => {
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -112,13 +112,13 @@ describe('MinaGuard - Approve', () => {
           nonOwner.toPublicKey(),
           fakeWitness,
           approvalWitness,
-          Field(0),
+          Field(2),
           nullifierWitness
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
-    }).toThrow();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Not an owner');
   });
 
   it('should reject approval on executed proposal', async () => {
@@ -135,28 +135,27 @@ describe('MinaGuard - Approve', () => {
     await fundTxn.sign([ctx.deployerKey]).send();
 
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0)
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    const txHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    // Get 2 approvals and execute
-    await approveTransaction(ctx, proposal, 0);
+    // Get threshold approvals and execute
     await approveTransaction(ctx, proposal, 1);
 
     // Execute
-    const approvalWitness = ctx.approvalStore.getWitness(txHash);
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
     });
     await executeTxn.prove();
-    await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await executeTxn.sign([ctx.deployerKey]).send();
 
     // Mark executed in off-chain store
-    ctx.approvalStore.setCount(txHash, EXECUTED_SENTINEL);
+    ctx.approvalStore.setCount(proposalHash, EXECUTED_MARKER);
 
     // Try to approve after execution - should fail
     await expect(async () => {
       await approveTransaction(ctx, proposal, 2);
-    }).toThrow();
+    }).toThrow('Proposal already executed');
   });
 });

@@ -104,23 +104,23 @@ export class ApprovalStore {
     this.keys = [];
   }
 
-  getCount(txHash: Field): Field {
-    return this.map.get(txHash);
+  getCount(proposalHash: Field): Field {
+    return this.map.get(proposalHash);
   }
 
-  setCount(txHash: Field, count: Field): void {
-    this.map.set(txHash, count);
-    if (!this.keys.find((k) => k.toString() === txHash.toString())) {
-      this.keys.push(txHash);
+  setCount(proposalHash: Field, count: Field): void {
+    this.map.set(proposalHash, count);
+    if (!this.keys.find((k) => k.toString() === proposalHash.toString())) {
+      this.keys.push(proposalHash);
     }
   }
 
-  getWitness(txHash: Field) {
-    return this.map.getWitness(txHash);
+  getWitness(proposalHash: Field) {
+    return this.map.getWitness(proposalHash);
   }
 
-  isExecuted(txHash: Field): boolean {
-    return this.map.get(txHash).toString() === Field(0).sub(1).toString();
+  isExecuted(proposalHash: Field): boolean {
+    return this.map.get(proposalHash).toString() === Field(0).sub(1).toString();
   }
 
   getRoot(): Field {
@@ -152,20 +152,20 @@ export class VoteNullifierStore {
     this.map = new MerkleMap();
   }
 
-  private nullifierKey(txHash: Field, approver: PublicKey): Field {
-    return Poseidon.hash([txHash, ...approver.toFields()]);
+  private nullifierKey(proposalHash: Field, approver: PublicKey): Field {
+    return Poseidon.hash([proposalHash, ...approver.toFields()]);
   }
 
-  isNullified(txHash: Field, approver: PublicKey): boolean {
-    return this.map.get(this.nullifierKey(txHash, approver)).toString() === '1';
+  isNullified(proposalHash: Field, approver: PublicKey): boolean {
+    return this.map.get(this.nullifierKey(proposalHash, approver)).toString() === '1';
   }
 
-  nullify(txHash: Field, approver: PublicKey): void {
-    this.map.set(this.nullifierKey(txHash, approver), Field(1));
+  nullify(proposalHash: Field, approver: PublicKey): void {
+    this.map.set(this.nullifierKey(proposalHash, approver), Field(1));
   }
 
-  getWitness(txHash: Field, approver: PublicKey) {
-    return this.map.getWitness(this.nullifierKey(txHash, approver));
+  getWitness(proposalHash: Field, approver: PublicKey) {
+    return this.map.getWitness(this.nullifierKey(proposalHash, approver));
   }
 
   getRoot(): Field {

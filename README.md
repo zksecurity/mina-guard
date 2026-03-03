@@ -1,4 +1,4 @@
-# Mina Guard — Multisig Wallet on Mina
+# Mina Guard - Multisig Wallet on Mina
 
 A multisig (multi-signature) wallet built on [Mina Protocol](https://minaprotocol.com/) using [o1js](https://docs.minaprotocol.com/zkapps/o1js). Owners collectively manage funds through configurable approval thresholds, with all authorization verified via zero-knowledge proofs.
 
@@ -13,14 +13,14 @@ ui/          → Next.js 14 web interface with Auro Wallet integration
 
 ### Smart Contract
 
-The `MultisigWallet` contract stores eight on-chain fields — owner set (Merkle root), threshold, owner count, tx nonce, vote/approval roots, guard root, and config nonce. All ownership and vote checks use MerkleMap witnesses so the contract scales without on-chain storage growth.
+The `MultisigWallet` contract stores eight on-chain fields - owner set (Merkle root), threshold, owner count, tx nonce, vote/approval roots, guard root, and config nonce. All ownership and vote checks use MerkleMap witnesses so the contract scales without on-chain storage growth.
 
 **Supported operations:**
 
 | Method | Description |
 |---|---|
 | `setup` | One-time initialization with owners and threshold |
-| `propose` | Owner proposes a new transaction |
+| `propose` | Owner proposes and signs/approves a new transaction in one call |
 | `approveTx` | Owner approves a pending transaction (double-vote prevented) |
 | `execute` | Execute a transfer once threshold is met |
 | `addOwner` / `removeOwner` | Add or remove an owner (requires multisig approval) |
