@@ -8,7 +8,6 @@ export {
   OwnerWitness,
   ApprovalWitness,
   VoteNullifierWitness,
-  SignedApproval,
   ProposalEvent,
   ApprovalEvent,
   ExecutionEvent,

@@ -150,6 +150,74 @@ export class MinaGuard extends SmartContract {
     });
   }
 
+  private getInitializedOwnersRoot(): Field {
+    const ownersRoot = this.ownersRoot.getAndRequireEquals();
+    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+    return ownersRoot;
+  }
+
+  private assertOwnerMembership(
+    owner: PublicKey,
+    ownerWitness: MerkleMapWitness,
+    ownersRoot: Field
+  ): void {
+    const key = ownerKey(owner);
+    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(Field(1));
+    computedRoot.assertEquals(ownersRoot, 'Not an owner');
+    computedKey.assertEquals(key, 'Owner key mismatch');
+  }
+
+  private assertProposalConfigNetworkAndGuard(
+    proposal: TransactionProposal,
+    configNonceMessage: string
+  ): void {
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
+    proposal.configNonce.assertEquals(currentConfigNonce, configNonceMessage);
+
+    const currentNetworkId = this.networkId.getAndRequireEquals();
+    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
+    proposal.guardAddress.assertEquals(this.address);
+  }
+
+  private assertProposalNotExpired(proposal: TransactionProposal): void {
+    const noExpiry = proposal.expiryBlock.equals(Field(0));
+    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
+    const notExpired = blockchainLength.value.lessThanOrEqual(proposal.expiryBlock);
+    noExpiry.or(notExpired).assertTrue('Proposal expired');
+  }
+
+  private assertNotExecuted(approvalCount: Field): void {
+    approvalCount.equals(EXECUTED_MARKER).assertFalse('Proposal already executed');
+  }
+
+  private assertProposalExists(approvalCount: Field): void {
+    approvalCount.assertGreaterThanOrEqual(PROPOSED_MARKER, 'Proposal not found');
+  }
+
+  private assertThresholdSatisfied(approvalCount: Field, threshold: Field): void {
+    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
+      threshold,
+      'Insufficient approvals'
+    );
+  }
+
+  private assertApprovalWitnessValue(
+    proposalHash: Field,
+    approvalWitness: MerkleMapWitness,
+    expectedValue: Field
+  ): void {
+    const approvalRoot = this.approvalRoot.getAndRequireEquals();
+    const [computedApprovalRoot, computedApprovalKey] =
+      approvalWitness.computeRootAndKey(expectedValue);
+    computedApprovalRoot.assertEquals(approvalRoot, 'Approval root mismatch');
+    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+  }
+
+  private markExecuted(approvalWitness: MerkleMapWitness): void {
+    const [newApprovalRoot] = approvalWitness.computeRootAndKey(EXECUTED_MARKER);
+    this.approvalRoot.set(newApprovalRoot);
+  }
+
   // TODO: verify if we need an additional check here, to avoid front-running
   @method async setup(
     ownersRoot: Field,
@@ -183,28 +251,13 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness
   ) {
     // --- propose logic ---
-    const ownersRoot = this.ownersRoot.getAndRequireEquals();
-    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
-
-    const key = ownerKey(proposer);
-    const [computedRoot, computedKey] = ownerWitness.computeRootAndKey(
-      Field(1)
-    );
-    computedRoot.assertEquals(ownersRoot, 'Not an owner');
-    computedKey.assertEquals(key, 'Owner key mismatch');
+    const ownersRoot = this.getInitializedOwnersRoot();
+    this.assertOwnerMembership(proposer, ownerWitness, ownersRoot);
 
     const currentNonce = this.proposalNonce.getAndRequireEquals();
     proposal.nonce.assertEquals(currentNonce, 'Nonce mismatch');
 
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    proposal.configNonce.assertEquals(
-      currentConfigNonce,
-      'Config nonce mismatch'
-    );
-
-    const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
+    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
 
     const proposalHash = proposal.hash();
 
@@ -231,14 +284,7 @@ export class MinaGuard extends SmartContract {
     this.voteNullifierRoot.set(newVoteRoot);
 
     // Approval count: must start at 0 for a new proposal
-    const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(Field(0));
-    computedApprovalRoot.assertEquals(
-      approvalRoot,
-      'Approval root mismatch'
-    );
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, Field(0));
 
     // PROPOSED_MARKER (1) + 1 approval = 2
     const [newApprovalRoot] = approvalWitness.computeRootAndKey(PROPOSED_MARKER.add(1));
@@ -266,30 +312,16 @@ export class MinaGuard extends SmartContract {
     currentApprovalCount: Field,
     voteNullifierWitness: MerkleMapWitness
   ) {
-    const ownersRoot = this.ownersRoot.getAndRequireEquals();
-    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
-
-    const key = ownerKey(approver);
-    const [computedOwnerRoot, computedOwnerKey] =
-      ownerWitness.computeRootAndKey(Field(1));
-    computedOwnerRoot.assertEquals(ownersRoot, 'Not an owner');
-    computedOwnerKey.assertEquals(key, 'Owner key mismatch');
-
-    const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
+    const ownersRoot = this.getInitializedOwnersRoot();
+    this.assertOwnerMembership(approver, ownerWitness, ownersRoot);
+    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
 
     const proposalHash = proposal.hash();
     signature.verify(approver, [proposalHash]).assertTrue('Invalid signature');
 
     // Ensure the proposal was actually proposed (marker >= 1) and not already executed
-    currentApprovalCount
-      .equals(EXECUTED_MARKER)
-      .assertFalse('Proposal already executed');
-    currentApprovalCount.assertGreaterThanOrEqual(
-      PROPOSED_MARKER,
-      'Proposal not found'
-    );
+    this.assertNotExecuted(currentApprovalCount);
+    this.assertProposalExists(currentApprovalCount);
 
     // Vote nullifier: keyed by hash(proposalHash, approver)
     const voteNullifierKey = Poseidon.hash([proposalHash, ...approver.toFields()]);
@@ -309,14 +341,11 @@ export class MinaGuard extends SmartContract {
     this.voteNullifierRoot.set(newVoteRoot);
 
     // Approval count: keyed by proposalHash
-    const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(currentApprovalCount);
-    computedApprovalRoot.assertEquals(
-      approvalRoot,
-      'Approval root mismatch'
+    this.assertApprovalWitnessValue(
+      proposalHash,
+      approvalWitness,
+      currentApprovalCount
     );
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
 
     const newApprovalCount = currentApprovalCount.add(1);
     const [newApprovalRoot] =
@@ -335,66 +364,33 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness,
     approvalCount: Field
   ) {
-    const ownersRoot = this.ownersRoot.getAndRequireEquals();
-    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+    this.getInitializedOwnersRoot();
 
     proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
 
     const proposalHash = proposal.hash();
 
-    // Verify config nonce
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    proposal.configNonce.assertEquals(
-      currentConfigNonce,
+    this.assertProposalConfigNetworkAndGuard(
+      proposal,
       'Config nonce mismatch - governance changed since proposal'
     );
 
-    const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
-
-    // Check expiry (0 = no expiry)
-    const noExpiry = proposal.expiryBlock.equals(Field(0));
-    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
-    const notExpired = blockchainLength.value.lessThanOrEqual(
-      proposal.expiryBlock
-    );
-    noExpiry.or(notExpired).assertTrue('Proposal expired');
-
-    // Prevent re-execution
-    approvalCount
-      .equals(EXECUTED_MARKER)
-      .assertFalse('Proposal already executed');
-
-    approvalCount.assertGreaterThanOrEqual(
-      PROPOSED_MARKER,
-      'Proposal not found'
-    );
+    this.assertProposalNotExpired(proposal);
+    this.assertNotExecuted(approvalCount);
+    this.assertProposalExists(approvalCount);
 
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
-    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
-      threshold,
-      'Insufficient approvals'
-    );
+    this.assertThresholdSatisfied(approvalCount, threshold);
 
     // Verify approval count via witness (keyed by proposalHash)
-    const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(approvalCount);
-    computedApprovalRoot.assertEquals(
-      approvalRoot,
-      'Approval root mismatch'
-    );
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
     // Execute transfer
     this.send({ to: proposal.to, amount: proposal.amount });
 
     // Mark as executed
-    const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
-    this.approvalRoot.set(newApprovalRoot);
+    this.markExecuted(approvalWitness);
 
     this.emitEvent('execution', {
       proposalHash,
@@ -411,8 +407,7 @@ export class MinaGuard extends SmartContract {
     ownerPubKey: PublicKey,
     ownerWitness: MerkleMapWitness
   ) {
-    const ownersRoot = this.ownersRoot.getAndRequireEquals();
-    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+    const ownersRoot = this.getInitializedOwnersRoot();
 
     // Must be ADD_OWNER or REMOVE_OWNER
     const isAdd = proposal.txType.equals(TxType.ADD_OWNER);
@@ -421,51 +416,17 @@ export class MinaGuard extends SmartContract {
 
     const proposalHash = proposal.hash();
 
-    // Verify config nonce
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    proposal.configNonce.assertEquals(
-      currentConfigNonce,
-      'Config nonce mismatch'
-    );
-
-    const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
-
-    // Check expiry
-    const noExpiry = proposal.expiryBlock.equals(Field(0));
-    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
-    const notExpired = blockchainLength.value.lessThanOrEqual(
-      proposal.expiryBlock
-    );
-    noExpiry.or(notExpired).assertTrue('Proposal expired');
-
-    // Prevent re-execution
-    approvalCount
-      .equals(EXECUTED_MARKER)
-      .assertFalse('Proposal already executed');
-
-    approvalCount.assertGreaterThanOrEqual(
-      PROPOSED_MARKER,
-      'Proposal not found'
-    );
+    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalNotExpired(proposal);
+    this.assertNotExecuted(approvalCount);
+    this.assertProposalExists(approvalCount);
 
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
-    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
-      threshold,
-      'Insufficient approvals'
-    );
+    this.assertThresholdSatisfied(approvalCount, threshold);
 
     // Verify approval witness (keyed by proposalHash)
-    const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(approvalCount);
-    computedApprovalRoot.assertEquals(
-      approvalRoot,
-      'Approval root mismatch'
-    );
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
     // Verify proposal data matches owner
     const ownerHash = ownerKey(ownerPubKey);
@@ -496,11 +457,10 @@ export class MinaGuard extends SmartContract {
     this.numOwners.set(newNumOwners);
 
     // Mark as executed
-    const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
-    this.approvalRoot.set(newApprovalRoot);
+    this.markExecuted(approvalWitness);
 
     // Increment config nonce
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
     this.emitEvent('ownerChange', {
@@ -516,8 +476,7 @@ export class MinaGuard extends SmartContract {
     approvalCount: Field,
     newThreshold: Field
   ) {
-    const ownersRoot = this.ownersRoot.getAndRequireEquals();
-    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+    this.getInitializedOwnersRoot();
 
     proposal.txType.assertEquals(
       TxType.CHANGE_THRESHOLD,
@@ -526,51 +485,17 @@ export class MinaGuard extends SmartContract {
 
     const proposalHash = proposal.hash();
 
-    // Verify config nonce
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    proposal.configNonce.assertEquals(
-      currentConfigNonce,
-      'Config nonce mismatch'
-    );
-
-    const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
-
-    // Check expiry
-    const noExpiry = proposal.expiryBlock.equals(Field(0));
-    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
-    const notExpired = blockchainLength.value.lessThanOrEqual(
-      proposal.expiryBlock
-    );
-    noExpiry.or(notExpired).assertTrue('Proposal expired');
-
-    // Prevent re-execution
-    approvalCount
-      .equals(EXECUTED_MARKER)
-      .assertFalse('Proposal already executed');
-
-    approvalCount.assertGreaterThanOrEqual(
-      PROPOSED_MARKER,
-      'Proposal not found'
-    );
+    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalNotExpired(proposal);
+    this.assertNotExecuted(approvalCount);
+    this.assertProposalExists(approvalCount);
 
     // Verify threshold (using current, approvalCount includes PROPOSED_MARKER offset)
     const currentThreshold = this.threshold.getAndRequireEquals();
-    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
-      currentThreshold,
-      'Insufficient approvals'
-    );
+    this.assertThresholdSatisfied(approvalCount, currentThreshold);
 
     // Verify approval witness (keyed by proposalHash)
-    const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(approvalCount);
-    computedApprovalRoot.assertEquals(
-      approvalRoot,
-      'Approval root mismatch'
-    );
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
     // Verify data matches new threshold
     proposal.data.assertEquals(
@@ -589,11 +514,10 @@ export class MinaGuard extends SmartContract {
     this.threshold.set(newThreshold);
 
     // Mark as executed
-    const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
-    this.approvalRoot.set(newApprovalRoot);
+    this.markExecuted(approvalWitness);
 
     // Increment config nonce
+    const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
     this.emitEvent('thresholdChange', {
@@ -608,8 +532,7 @@ export class MinaGuard extends SmartContract {
     approvalCount: Field,
     delegate: PublicKey
   ) {
-    const ownersRoot = this.ownersRoot.getAndRequireEquals();
-    ownersRoot.assertNotEquals(Field(0), 'Wallet not initialized');
+    this.getInitializedOwnersRoot();
 
     proposal.txType.assertEquals(
       TxType.SET_DELEGATE,
@@ -618,51 +541,17 @@ export class MinaGuard extends SmartContract {
 
     const proposalHash = proposal.hash();
 
-    // Verify config nonce
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    proposal.configNonce.assertEquals(
-      currentConfigNonce,
-      'Config nonce mismatch'
-    );
-
-    const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
-
-    // Check expiry
-    const noExpiry = proposal.expiryBlock.equals(Field(0));
-    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
-    const notExpired = blockchainLength.value.lessThanOrEqual(
-      proposal.expiryBlock
-    );
-    noExpiry.or(notExpired).assertTrue('Proposal expired');
-
-    // Prevent re-execution
-    approvalCount
-      .equals(EXECUTED_MARKER)
-      .assertFalse('Proposal already executed');
-
-    approvalCount.assertGreaterThanOrEqual(
-      PROPOSED_MARKER,
-      'Proposal not found'
-    );
+    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalNotExpired(proposal);
+    this.assertNotExecuted(approvalCount);
+    this.assertProposalExists(approvalCount);
 
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
-    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
-      threshold,
-      'Insufficient approvals'
-    );
+    this.assertThresholdSatisfied(approvalCount, threshold);
 
     // Verify approval witness (keyed by proposalHash)
-    const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(approvalCount);
-    computedApprovalRoot.assertEquals(
-      approvalRoot,
-      'Approval root mismatch'
-    );
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
     // Un-delegation: data == 0 means delegate to self
     // Delegation: data must match hash of delegate pubkey
@@ -677,9 +566,7 @@ export class MinaGuard extends SmartContract {
     this.account.delegate.set(targetDelegate);
 
     // Mark as executed
-    const [newApprovalRoot] =
-      approvalWitness.computeRootAndKey(EXECUTED_MARKER);
-    this.approvalRoot.set(newApprovalRoot);
+    this.markExecuted(approvalWitness);
 
     // TODO: re-evaluate whether delegation should invalidate pending proposals (increment configNonce)
 
