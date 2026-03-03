@@ -366,6 +366,11 @@ export class MinaGuard extends SmartContract {
       .equals(EXECUTED_MARKER)
       .assertFalse('Proposal already executed');
 
+    approvalCount.assertGreaterThanOrEqual(
+      PROPOSED_MARKER,
+      'Proposal not found'
+    );
+
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
     approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
@@ -439,6 +444,11 @@ export class MinaGuard extends SmartContract {
     approvalCount
       .equals(EXECUTED_MARKER)
       .assertFalse('Proposal already executed');
+
+    approvalCount.assertGreaterThanOrEqual(
+      PROPOSED_MARKER,
+      'Proposal not found'
+    );
 
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();
@@ -540,6 +550,11 @@ export class MinaGuard extends SmartContract {
       .equals(EXECUTED_MARKER)
       .assertFalse('Proposal already executed');
 
+    approvalCount.assertGreaterThanOrEqual(
+      PROPOSED_MARKER,
+      'Proposal not found'
+    );
+
     // Verify threshold (using current, approvalCount includes PROPOSED_MARKER offset)
     const currentThreshold = this.threshold.getAndRequireEquals();
     approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
@@ -626,6 +641,11 @@ export class MinaGuard extends SmartContract {
     approvalCount
       .equals(EXECUTED_MARKER)
       .assertFalse('Proposal already executed');
+
+    approvalCount.assertGreaterThanOrEqual(
+      PROPOSED_MARKER,
+      'Proposal not found'
+    );
 
     // Verify threshold (approvalCount includes PROPOSED_MARKER offset)
     const threshold = this.threshold.getAndRequireEquals();

@@ -82,6 +82,29 @@ describe('MinaGuard - Governance', () => {
       }).toThrow('Owner root mismatch');
     });
 
+    it('should reject unproposed owner change with approvalCount = 0', async () => {
+      const newOwner = PrivateKey.random().toPublicKey();
+      const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
+      const proposalHash = proposal.hash();
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const ownerWitness = ctx.ownerStore.map.getWitness(ownerKey(newOwner));
+      const ownersRootBefore = ctx.zkApp.ownersRoot.get();
+      const numOwnersBefore = ctx.zkApp.numOwners.get();
+
+      await expect(async () => {
+        const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+          await ctx.zkApp.executeOwnerChange(
+            proposal, approvalWitness, Field(0), newOwner, ownerWitness
+          );
+        });
+        await txn.prove();
+        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      }).toThrow('Proposal not found');
+
+      expect(ctx.zkApp.ownersRoot.get()).toEqual(ownersRootBefore);
+      expect(ctx.zkApp.numOwners.get()).toEqual(numOwnersBefore);
+    });
+
     it('should increment configNonce after adding owner', async () => {
       const newOwner = PrivateKey.random().toPublicKey();
 
@@ -239,6 +262,26 @@ describe('MinaGuard - Governance', () => {
         await txn.prove();
         await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
       }).toThrow('Threshold must be > 0');
+    });
+
+    it('should reject unproposed threshold change with approvalCount = 0', async () => {
+      const newThreshold = Field(1);
+      const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
+      const proposalHash = proposal.hash();
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const thresholdBefore = ctx.zkApp.threshold.get();
+
+      await expect(async () => {
+        const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+          await ctx.zkApp.executeThresholdChange(
+            proposal, approvalWitness, Field(0), newThreshold
+          );
+        });
+        await txn.prove();
+        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      }).toThrow('Proposal not found');
+
+      expect(ctx.zkApp.threshold.get()).toEqual(thresholdBefore);
     });
 
     it('should reject threshold above numOwners', async () => {

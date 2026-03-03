@@ -114,6 +114,32 @@ describe('MinaGuard - Delegate', () => {
     }).toThrow('Insufficient approvals');
   });
 
+  it('should reject unproposed delegate execution with approvalCount = 0', async () => {
+    const blockProducer = PrivateKey.random().toPublicKey();
+    const proposal = createDelegateProposal(
+      blockProducer, Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = proposal.hash();
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const delegateBefore = Mina.getAccount(ctx.zkAppAddress).delegate;
+
+    await expect(async () => {
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeDelegate(
+          proposal,
+          approvalWitness,
+          Field(0),
+          blockProducer
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    }).toThrow('Proposal not found');
+
+    const delegateAfter = Mina.getAccount(ctx.zkAppAddress).delegate;
+    expect(delegateAfter).toEqual(delegateBefore);
+  });
+
   it('should reject if proposal data does not match delegate pubkey', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
     const wrongDelegate = PrivateKey.random().toPublicKey();

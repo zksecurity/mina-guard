@@ -66,6 +66,31 @@ describe('MinaGuard - Execute', () => {
     }).toThrow('Insufficient approvals');
   });
 
+  it('should reject unproposed transfer execution with approvalCount = 0', async () => {
+    const recipientKey = PrivateKey.random();
+    const recipient = recipientKey.toPublicKey();
+    await fundAccount(ctx, recipient);
+
+    const transferAmount = UInt64.from(1_000_000_000);
+    const proposal = createTransferProposal(
+      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = proposal.hash();
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const balanceBefore = getBalance(recipient);
+
+    await expect(async () => {
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(0));
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    }).toThrow('Proposal not found');
+
+    const balanceAfter = getBalance(recipient);
+    expect(balanceAfter.sub(balanceBefore)).toEqual(UInt64.from(0));
+  });
+
   it('should prevent re-execution of same proposal', async () => {
     const recipientKey = PrivateKey.random();
     const recipient = recipientKey.toPublicKey();
