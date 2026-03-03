@@ -46,7 +46,7 @@ describe('MinaGuard - Governance', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
 
       expect(ctx.zkApp.numOwners.get()).toEqual(Field(4));
 
@@ -78,7 +78,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn.prove();
-        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+        await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Owner root mismatch');
     });
 
@@ -98,7 +98,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn.prove();
-        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+        await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Proposal not found');
 
       expect(ctx.zkApp.ownersRoot.get()).toEqual(ownersRootBefore);
@@ -121,7 +121,7 @@ describe('MinaGuard - Governance', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
 
       expect(ctx.zkApp.configNonce.get()).toEqual(Field(1));
     });
@@ -152,7 +152,7 @@ describe('MinaGuard - Governance', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
 
       expect(ctx.zkApp.numOwners.get()).toEqual(Field(2));
 
@@ -176,7 +176,7 @@ describe('MinaGuard - Governance', () => {
         );
       });
       await txn1.prove();
-      await txn1.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn1.sign([ctx.deployerKey]).send();
       ctx.ownerStore.remove(ownerToRemove1);
       ctx.approvalStore.setCount(proposalHash1, EXECUTED_MARKER);
 
@@ -198,7 +198,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn2.prove();
-        await txn2.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+        await txn2.sign([ctx.deployerKey]).send();
       }).toThrow('Cannot remove: would go below threshold');
     });
 
@@ -219,7 +219,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn.prove();
-        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+        await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Owner root mismatch');
     });
   });
@@ -240,7 +240,7 @@ describe('MinaGuard - Governance', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
 
       expect(ctx.zkApp.threshold.get()).toEqual(Field(3));
     });
@@ -260,7 +260,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn.prove();
-        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+        await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Threshold must be > 0');
     });
 
@@ -278,7 +278,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn.prove();
-        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+        await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Proposal not found');
 
       expect(ctx.zkApp.threshold.get()).toEqual(thresholdBefore);
@@ -299,7 +299,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn.prove();
-        await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+        await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Threshold cannot exceed owner count');
     });
 
@@ -316,7 +316,7 @@ describe('MinaGuard - Governance', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
 
       expect(ctx.zkApp.configNonce.get()).toEqual(Field(1));
     });
@@ -335,7 +335,7 @@ describe('MinaGuard - Governance', () => {
         );
       });
       await txn1.prove();
-      await txn1.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn1.sign([ctx.deployerKey]).send();
       ctx.approvalStore.setCount(proposalHash1, EXECUTED_MARKER);
 
       // Now try to propose with old configNonce (0) - should fail
@@ -372,7 +372,7 @@ describe('MinaGuard - Governance', () => {
           );
         });
         await txn.prove();
-        await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+        await txn.sign([ctx.owners[0].key]).send();
       }).toThrow('Config nonce mismatch');
     });
   });

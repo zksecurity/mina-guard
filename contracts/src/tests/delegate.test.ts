@@ -36,7 +36,7 @@ describe('MinaGuard - Delegate', () => {
       );
     });
     await txn.prove();
-    await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await txn.sign([ctx.deployerKey]).send();
 
     // Verify delegate was set
     const delegate = Mina.getAccount(ctx.zkAppAddress).delegate;
@@ -61,7 +61,7 @@ describe('MinaGuard - Delegate', () => {
       );
     });
     await txn1.prove();
-    await txn1.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await txn1.sign([ctx.deployerKey]).send();
 
     // Mark executed in off-chain store
     const { EXECUTED_MARKER } = await import('../MinaGuard.js');
@@ -84,7 +84,7 @@ describe('MinaGuard - Delegate', () => {
       );
     });
     await txn2.prove();
-    await txn2.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await txn2.sign([ctx.deployerKey]).send();
 
     // Verify delegate was set back to self
     const delegate = Mina.getAccount(ctx.zkAppAddress).delegate;
@@ -110,7 +110,7 @@ describe('MinaGuard - Delegate', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Insufficient approvals');
   });
 
@@ -133,7 +133,7 @@ describe('MinaGuard - Delegate', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Proposal not found');
 
     const delegateAfter = Mina.getAccount(ctx.zkAppAddress).delegate;
@@ -160,7 +160,7 @@ describe('MinaGuard - Delegate', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Data does not match delegate');
   });
 });

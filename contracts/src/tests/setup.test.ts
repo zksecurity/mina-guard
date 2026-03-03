@@ -35,7 +35,7 @@ describe('MinaGuard - Setup', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Already initialized');
   });
 
@@ -74,7 +74,7 @@ describe('MinaGuard - Setup', () => {
         await zkApp.setup(ownerStore.getRoot(), Field(5), Field(3), Field(1));
       });
       await txn.prove();
-      await txn.sign([deployerKey, zkAppKey]).send();
+      await txn.sign([deployerKey]).send();
     }).toThrow('Owners must be >= threshold');
   });
 

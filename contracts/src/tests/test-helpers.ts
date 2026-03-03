@@ -247,7 +247,7 @@ export async function proposeTransaction(
   proposal: TransactionProposal,
   proposerIndex: number
 ): Promise<Field> {
-  const { zkApp, zkAppKey, ownerStore, approvalStore, nullifierStore, owners } = ctx;
+  const { zkApp, ownerStore, approvalStore, nullifierStore, owners } = ctx;
   const proposer = owners[proposerIndex];
 
   const proposalHash = proposal.hash();
@@ -267,7 +267,7 @@ export async function proposeTransaction(
     );
   });
   await txn.prove();
-  await txn.sign([proposer.key, zkAppKey]).send();
+  await txn.sign([proposer.key]).send();
 
   // Update off-chain stores: proposer auto-approves in propose()
   nullifierStore.nullify(proposalHash, proposer.pub);
@@ -281,7 +281,7 @@ export async function approveTransaction(
   proposal: TransactionProposal,
   approverIndex: number
 ): Promise<void> {
-  const { zkApp, zkAppKey, ownerStore, approvalStore, nullifierStore, owners } = ctx;
+  const { zkApp, ownerStore, approvalStore, nullifierStore, owners } = ctx;
   const approver = owners[approverIndex];
   const proposalHash = proposal.hash();
 
@@ -303,7 +303,7 @@ export async function approveTransaction(
     );
   });
   await txn.prove();
-  await txn.sign([approver.key, zkAppKey]).send();
+  await txn.sign([approver.key]).send();
 
   // Update off-chain stores
   nullifierStore.nullify(proposalHash, approver.pub);

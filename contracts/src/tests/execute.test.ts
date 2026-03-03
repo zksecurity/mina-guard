@@ -41,7 +41,7 @@ describe('MinaGuard - Execute', () => {
       await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
     });
     await executeTxn.prove();
-    await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await executeTxn.sign([ctx.deployerKey]).send();
 
     const balanceAfter = getBalance(recipient);
     expect(balanceAfter.sub(balanceBefore)).toEqual(transferAmount);
@@ -62,7 +62,7 @@ describe('MinaGuard - Execute', () => {
         await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(2));
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Insufficient approvals');
   });
 
@@ -84,7 +84,7 @@ describe('MinaGuard - Execute', () => {
         await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(0));
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Proposal not found');
 
     const balanceAfter = getBalance(recipient);
@@ -110,7 +110,7 @@ describe('MinaGuard - Execute', () => {
       await ctx.zkApp.executeTransfer(proposal, approvalWitness1, Field(3));
     });
     await executeTxn.prove();
-    await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await executeTxn.sign([ctx.deployerKey]).send();
     ctx.approvalStore.setCount(proposalHash, EXECUTED_MARKER);
 
     // Try to execute again
@@ -120,7 +120,7 @@ describe('MinaGuard - Execute', () => {
         await ctx.zkApp.executeTransfer(proposal, approvalWitness2, Field(10));
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow("Approval root mismatch");
 
     await expect(async () => {
@@ -129,7 +129,7 @@ describe('MinaGuard - Execute', () => {
         await ctx.zkApp.executeTransfer(proposal, approvalWitness2, EXECUTED_MARKER);
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow("Proposal already executed");
   });
 
@@ -160,7 +160,7 @@ describe('MinaGuard - Execute', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+      await txn.sign([ctx.owners[0].key]).send();
     }).toThrow('Config nonce mismatch');
   });
 
@@ -189,7 +189,7 @@ describe('MinaGuard - Execute', () => {
       );
     });
     await govTxn.prove();
-    await govTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await govTxn.sign([ctx.deployerKey]).send();
     ctx.ownerStore.add(newOwner);
     ctx.approvalStore.setCount(govTxHash, EXECUTED_MARKER);
 
@@ -203,7 +203,7 @@ describe('MinaGuard - Execute', () => {
         await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Config nonce mismatch - governance changed since proposal');
   });
 
@@ -226,7 +226,7 @@ describe('MinaGuard - Execute', () => {
       await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
     });
     await executeTxn.prove();
-    await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await executeTxn.sign([ctx.deployerKey]).send();
 
     const balanceAfter = getBalance(recipient);
     const received = balanceAfter.sub(UInt64.from(1_000_000));

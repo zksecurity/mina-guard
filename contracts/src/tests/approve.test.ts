@@ -87,7 +87,7 @@ describe('MinaGuard - Approve', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[1].key, ctx.zkAppKey]).send();
+      await txn.sign([ctx.owners[1].key]).send();
     }).toThrow('Invalid signature');
   });
 
@@ -117,7 +117,7 @@ describe('MinaGuard - Approve', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Not an owner');
   });
 
@@ -148,7 +148,7 @@ describe('MinaGuard - Approve', () => {
       await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
     });
     await executeTxn.prove();
-    await executeTxn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+    await executeTxn.sign([ctx.deployerKey]).send();
 
     // Mark executed in off-chain store
     ctx.approvalStore.setCount(proposalHash, EXECUTED_MARKER);

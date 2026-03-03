@@ -65,7 +65,7 @@ describe('MinaGuard - Propose', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.deployerKey, ctx.zkAppKey]).send();
+      await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Not an owner');
   });
 
@@ -98,7 +98,7 @@ describe('MinaGuard - Propose', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+      await txn.sign([ctx.owners[0].key]).send();
     }).toThrow('Nonce mismatch');
   });
 
@@ -131,7 +131,7 @@ describe('MinaGuard - Propose', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+      await txn.sign([ctx.owners[0].key]).send();
     }).toThrow('Config nonce mismatch');
   });
 
@@ -166,7 +166,7 @@ describe('MinaGuard - Propose', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+      await txn.sign([ctx.owners[0].key]).send();
     }).toThrow('Network ID mismatch');
   });
 
@@ -200,7 +200,7 @@ describe('MinaGuard - Propose', () => {
         );
       });
       await txn.prove();
-      await txn.sign([ctx.owners[0].key, ctx.zkAppKey]).send();
+      await txn.sign([ctx.owners[0].key]).send();
     }).toThrow('Field.assertEquals()');
   });
 
