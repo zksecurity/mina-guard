@@ -15,6 +15,8 @@ import {
   UInt64,
 } from 'o1js';
 
+import { ownerKey } from './utils';
+
 // -- Constants ---------------------------------------------------------------
 
 export const PROPOSED_MARKER = Field(1);
@@ -28,12 +30,6 @@ export const TxType = {
   CHANGE_THRESHOLD: Field(3),
   SET_DELEGATE: Field(4),
 };
-
-// -- Helper ------------------------------------------------------------------
-
-export function ownerKey(owner: PublicKey): Field {
-  return Poseidon.hash(owner.toFields());
-}
 
 // -- Types -------------------------------------------------------------------
 

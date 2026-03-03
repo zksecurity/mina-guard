@@ -1,5 +1,5 @@
 import { Field, MerkleMap, PublicKey, Poseidon } from 'o1js';
-import { ownerKey } from './MinaGuard.js';
+import { ownerKey } from './utils.js';
 
 // -- Serialization helpers ---------------------------------------------------
 

@@ -2,7 +2,6 @@ export {
   MinaGuard,
   TransactionProposal,
   TxType,
-  ownerKey,
   EXECUTED_MARKER,
   EMPTY_MERKLE_MAP_ROOT,
   OwnerWitness,
@@ -15,4 +14,7 @@ export {
   ThresholdChangeEvent,
   DelegateEvent,
 } from './MinaGuard.js';
+
+export { ownerKey } from './utils.js';
+
 export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';
