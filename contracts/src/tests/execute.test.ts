@@ -261,7 +261,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     const proposal = createTransferProposal(
       recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
     );
-    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = proposal.hash();
 
     const balanceBefore = getBalance(recipient);
 
@@ -274,6 +274,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     });
     await txn.prove();
     await txn.sign([ctx.deployerKey]).send();
+    ctx.approvalStore.setCount(proposalHash, EXECUTED_MARKER);
 
     const balanceAfter = getBalance(recipient);
     expect(balanceAfter.sub(balanceBefore)).toEqual(transferAmount);
@@ -284,7 +285,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = proposal.hash();
 
     const ownersRoot = ctx.ownerStore.getRoot();
     const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(1));
@@ -304,8 +305,6 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    await proposeTransaction(ctx, proposal, 0);
-
     const ownersRoot = ctx.ownerStore.getRoot();
     const wrongHash = Field(999);
     const dummyProof = await makeDummyProof(wrongHash, ownersRoot, Field(2));
@@ -326,7 +325,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     const proposal = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
-    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = proposal.hash();
 
     const wrongOwnersRoot = Field(12345);
     const dummyProof = await makeDummyProof(proposalHash, wrongOwnersRoot, Field(2));
@@ -350,7 +349,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     const proposal = createTransferProposal(
       recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
     );
-    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = proposal.hash();
 
     const ownersRoot = ctx.ownerStore.getRoot();
     const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(2));
@@ -376,30 +375,10 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     }).toThrow('Approval root mismatch');
   });
 
-  it('should reject if proposal not proposed', async () => {
-    const recipient = PrivateKey.random().toPublicKey();
-    const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
-    );
-    const proposalHash = proposal.hash();
-
-    const ownersRoot = ctx.ownerStore.getRoot();
-    const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(2));
-
-    await expect(async () => {
-      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, dummyProof);
-      });
-      await txn.prove();
-      await txn.sign([ctx.deployerKey]).send();
-    }).toThrow('Approval root mismatch');
-  });
-
   it('should reject wrong txType', async () => {
     const newOwner = PrivateKey.random().toPublicKey();
     const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
-    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    const proposalHash = proposal.hash();
 
     const ownersRoot = ctx.ownerStore.getRoot();
     const dummyProof = await makeDummyProof(proposalHash, ownersRoot, Field(2));

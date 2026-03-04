@@ -98,6 +98,14 @@ export class ExecutionEvent extends Struct({
   txType: Field,
 }) { }
 
+export class ExecutionBatchEvent extends Struct({
+  proposalHash: Field,
+  to: PublicKey,
+  amount: UInt64,
+  txType: Field,
+  approverChain: Field,
+}) { }
+
 export class OwnerChangeEvent extends Struct({
   owner: PublicKey,
   added: Field,
@@ -129,6 +137,7 @@ export class MinaGuard extends SmartContract {
     proposal: ProposalEvent,
     approval: ApprovalEvent,
     execution: ExecutionEvent,
+    executionBatch: ExecutionBatchEvent,
     ownerChange: OwnerChangeEvent,
     thresholdChange: ThresholdChangeEvent,
     delegate: DelegateEvent,
@@ -418,15 +427,10 @@ export class MinaGuard extends SmartContract {
 
     // Assert proof preconditions
     const proposalHash = proposal.hash();
-    proof.publicInput.assertEquals(new BatchVerifyInput({proposalHash: proposalHash, ownersRoot: ownersRoot}));
+    proof.publicInput.assertEquals(new BatchVerifyInput({ proposalHash: proposalHash, ownersRoot: ownersRoot }));
 
-    
-    // TODO: Should we expect an explicit approval signature from the caller of `execute` as well?
-
-    // Verify it has been proposed, but has no other approvals. Implicitly,
-    // this also checks that it hasn't been executed (PROPOSED_MARKER != EXECUTED_MARKER)
-    // The +1 accommodates for the auto-approval from the proposer
-    this.assertApprovalWitnessValue(proposalHash, approvalWitness, PROPOSED_MARKER.add(Field(1)));
+    // Verify that this proposal has not been initialized, and has not been executed (EXECUTED_MARKER != 0)
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, Field(0));
 
     const threshold = this.threshold.getAndRequireEquals();
     // Bypass the normal threshold verification (skip PROPOSED_MARKER handling)
@@ -438,11 +442,12 @@ export class MinaGuard extends SmartContract {
     // Mark as executed
     this.markExecuted(approvalWitness);
 
-    this.emitEvent('execution', {
+    this.emitEvent('executionBatch', {
       proposalHash,
       to: proposal.to,
       amount: proposal.amount,
       txType: proposal.txType,
+      approverChain: proof.publicOutput.approverChain
     });
 
   }
