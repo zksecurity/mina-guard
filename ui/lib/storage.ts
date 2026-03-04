@@ -1,105 +1,26 @@
-// -- Off-chain Storage (localStorage-backed for MVP) ------------------
+// -- UI Local Storage Utilities ---------------------------------------
 
-import { Transaction, MultisigState, TxStatus } from './types';
+const STORAGE_KEY_PREFIX = 'mina-guard-ui-';
 
-const STORAGE_KEY_PREFIX = 'mina-multisig-';
-
-function getKey(walletAddress: string, suffix: string): string {
-  return `${STORAGE_KEY_PREFIX}${walletAddress}-${suffix}`;
+/** Builds namespaced localStorage key names for UI preferences. */
+function getKey(suffix: string): string {
+  return `${STORAGE_KEY_PREFIX}${suffix}`;
 }
 
-// -- Transactions -----------------------------------------------------
-
-export function getTransactions(walletAddress: string): Transaction[] {
-  if (typeof window === 'undefined') return [];
-  const key = getKey(walletAddress, 'transactions');
-  const data = localStorage.getItem(key);
-  if (!data) return [];
-  return JSON.parse(data) as Transaction[];
-}
-
-export function saveTransactions(
-  walletAddress: string,
-  transactions: Transaction[]
-): void {
+/** Persists selected contract address for restoring UI context on reload. */
+export function saveSelectedContract(address: string): void {
   if (typeof window === 'undefined') return;
-  const key = getKey(walletAddress, 'transactions');
-  localStorage.setItem(key, JSON.stringify(transactions));
+  localStorage.setItem(getKey('selected-contract'), address);
 }
 
-export function addTransaction(
-  walletAddress: string,
-  tx: Transaction
-): void {
-  const txs = getTransactions(walletAddress);
-  txs.push(tx);
-  saveTransactions(walletAddress, txs);
-}
-
-export function updateTransaction(
-  walletAddress: string,
-  txId: string,
-  updates: Partial<Transaction>
-): void {
-  const txs = getTransactions(walletAddress);
-  const idx = txs.findIndex((t) => t.id === txId);
-  if (idx >= 0) {
-    txs[idx] = { ...txs[idx], ...updates };
-    saveTransactions(walletAddress, txs);
-  }
-}
-
-export function getTransactionsByStatus(
-  walletAddress: string,
-  status: TxStatus
-): Transaction[] {
-  return getTransactions(walletAddress).filter((t) => t.status === status);
-}
-
-// -- Multisig State ---------------------------------------------------
-
-export function getMultisigState(
-  walletAddress: string
-): MultisigState | null {
+/** Restores previously selected contract address preference if present. */
+export function getSelectedContract(): string | null {
   if (typeof window === 'undefined') return null;
-  const key = getKey(walletAddress, 'state');
-  const data = localStorage.getItem(key);
-  if (!data) return null;
-  return JSON.parse(data) as MultisigState;
+  return localStorage.getItem(getKey('selected-contract'));
 }
 
-export function saveMultisigState(
-  walletAddress: string,
-  state: MultisigState
-): void {
+/** Clears all UI preference entries managed by this module. */
+export function clearUiStorage(): void {
   if (typeof window === 'undefined') return;
-  const key = getKey(walletAddress, 'state');
-  localStorage.setItem(key, JSON.stringify(state));
-}
-
-// -- Merkle Data (raw JSON of MerkleMap serialization) ----------------
-
-export function getMerkleData(walletAddress: string): string | null {
-  if (typeof window === 'undefined') return null;
-  const key = getKey(walletAddress, 'merkle');
-  return localStorage.getItem(key);
-}
-
-export function saveMerkleData(
-  walletAddress: string,
-  data: string
-): void {
-  if (typeof window === 'undefined') return;
-  const key = getKey(walletAddress, 'merkle');
-  localStorage.setItem(key, data);
-}
-
-// -- Clear all data for a wallet --------------------------------------
-
-export function clearWalletData(walletAddress: string): void {
-  if (typeof window === 'undefined') return;
-  const suffixes = ['transactions', 'state', 'merkle'];
-  for (const suffix of suffixes) {
-    localStorage.removeItem(getKey(walletAddress, suffix));
-  }
+  localStorage.removeItem(getKey('selected-contract'));
 }

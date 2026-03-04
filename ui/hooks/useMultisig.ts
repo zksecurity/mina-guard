@@ -1,82 +1,104 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { MultisigState } from '@/lib/types';
-import {
-  getMultisigState,
-  saveMultisigState,
-} from '@/lib/storage';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fetchContract, fetchContracts, fetchIndexerStatus, fetchOwners } from '@/lib/api';
+import { ContractSummary, IndexerStatus, OwnerRecord } from '@/lib/types';
+import { getSelectedContract, saveSelectedContract } from '@/lib/storage';
 
-// Demo multisig state for UI development
-// In production, this reads from the Mina blockchain via o1js
-const DEMO_STATE: MultisigState = {
-  address: 'B62qpRzFVjd56FiHnNfxokVbcHMQLT119My1FEdSq8ss7KomLiSZcan',
-  ownersRoot: '0',
-  threshold: 2,
-  numOwners: 3,
-  txNonce: 0,
-  owners: [
-    'B62qpRzFVjd56FiHnNfxokVbcHMQLT119My1FEdSq8ss7KomLiSZcan',
-    'B62qjsVMsLjG75MViqXznhVGs3pGA1HfpqzxGDDMPaLQe11DEHiCJSN',
-    'B62qkUHaJUHERZuCHQhXCQ8xsGBqyYSgjQsKnKN5HhSJecakuJ4pYyk',
-  ],
-  balance: '10000000000',
-  configNonce: 0,
-};
-
-export function useMultisig(walletAddress: string | null) {
-  const [state, setState] = useState<MultisigState | null>(null);
+/** Polls backend contract/indexer endpoints and manages selected contract state. */
+export function useMultisig() {
+  const [contracts, setContracts] = useState<ContractSummary[]>([]);
+  const [owners, setOwners] = useState<OwnerRecord[]>([]);
+  const [indexerStatus, setIndexerStatus] = useState<IndexerStatus | null>(null);
+  const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isCompiling, setIsCompiling] = useState(false);
 
-  // Load multisig state
-  useEffect(() => {
-    if (!walletAddress) {
-      setState(null);
-      return;
-    }
+  const selectedContract = useMemo(() => {
+    if (!selectedAddress) return contracts[0] ?? null;
+    return contracts.find((c) => c.address === selectedAddress) ?? contracts[0] ?? null;
+  }, [contracts, selectedAddress]);
 
-    setIsLoading(true);
-    // Try to load from localStorage, fall back to demo state
-    const saved = getMultisigState(walletAddress);
-    if (saved) {
-      setState(saved);
-    } else {
-      // Initialize with demo state
-      setState(DEMO_STATE);
-      saveMultisigState(walletAddress, DEMO_STATE);
-    }
-    setIsLoading(false);
-  }, [walletAddress]);
-
+  /** Pulls latest contract list and indexer status from backend. */
   const refreshState = useCallback(async () => {
-    if (!walletAddress || !state) return;
     setIsLoading(true);
     try {
-      // In production: fetch on-chain state via o1js
-      // For now, reload from localStorage
-      const saved = getMultisigState(walletAddress);
-      if (saved) setState(saved);
+      const [contractRows, status] = await Promise.all([
+        fetchContracts(),
+        fetchIndexerStatus(),
+      ]);
+
+      setContracts(contractRows);
+      setIndexerStatus(status);
+
+      const resolvedAddress =
+        selectedAddress && contractRows.some((c) => c.address === selectedAddress)
+          ? selectedAddress
+          : contractRows[0]?.address ?? null;
+
+      setSelectedAddress(resolvedAddress);
+      if (resolvedAddress) {
+        saveSelectedContract(resolvedAddress);
+      }
+
+      if (resolvedAddress) {
+        const [freshContract, ownerRows] = await Promise.all([
+          fetchContract(resolvedAddress),
+          fetchOwners(resolvedAddress),
+        ]);
+
+        setOwners(ownerRows.filter((o) => o.active));
+
+        if (freshContract) {
+          setContracts((prev) => {
+            const existing = prev.filter((c) => c.address !== freshContract.address);
+            return [freshContract, ...existing];
+          });
+        }
+      } else {
+        setOwners([]);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [walletAddress, state]);
+  }, [selectedAddress]);
 
-  const updateState = useCallback(
-    (updates: Partial<MultisigState>) => {
-      if (!walletAddress || !state) return;
-      const newState = { ...state, ...updates };
-      setState(newState);
-      saveMultisigState(walletAddress, newState);
-    },
-    [walletAddress, state]
-  );
+  /** Changes selected contract and refreshes owner list for the new address. */
+  const selectContract = useCallback(async (address: string) => {
+    setSelectedAddress(address);
+    saveSelectedContract(address);
+    const [freshContract, ownerRows] = await Promise.all([
+      fetchContract(address),
+      fetchOwners(address),
+    ]);
+
+    if (freshContract) {
+      setContracts((prev) => {
+        const next = prev.filter((item) => item.address !== freshContract.address);
+        return [freshContract, ...next];
+      });
+    }
+
+    setOwners(ownerRows.filter((o) => o.active));
+  }, []);
+
+  useEffect(() => {
+    const saved = getSelectedContract();
+    if (saved) setSelectedAddress(saved);
+    void refreshState();
+    const interval = setInterval(() => {
+      void refreshState();
+    }, 15_000);
+
+    return () => clearInterval(interval);
+  }, [refreshState]);
 
   return {
-    state,
+    state: selectedContract,
+    contracts,
+    owners,
+    indexerStatus,
     isLoading,
-    isCompiling,
     refreshState,
-    updateState,
+    selectContract,
   };
 }

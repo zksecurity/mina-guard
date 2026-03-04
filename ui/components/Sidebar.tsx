@@ -7,8 +7,10 @@ import { truncateAddress } from '@/lib/types';
 interface SidebarProps {
   walletAddress: string | null;
   multisigAddress: string | null;
+  contracts: string[];
   pendingTxCount: number;
   network: string | null;
+  onSelectContract?: (address: string) => void;
 }
 
 const navItems = [
@@ -41,50 +43,71 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    href: '/deploy',
+    label: 'Deploy',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0-12l-3 3m3-3l3 3" />
+      </svg>
+    ),
+  },
 ];
 
+/** Sidebar navigation including contract selector and wallet/network context chips. */
 export default function Sidebar({
   walletAddress,
   multisigAddress,
+  contracts,
   pendingTxCount,
   network,
+  onSelectContract,
 }: SidebarProps) {
   const pathname = usePathname();
 
   return (
-    <aside className="w-[230px] min-h-screen bg-safe-dark border-r border-safe-border flex flex-col">
-      {/* Logo / Brand */}
+    <aside className="w-[240px] min-h-screen bg-safe-dark border-r border-safe-border flex flex-col">
       <div className="p-4 border-b border-safe-border">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-safe-green rounded-full flex items-center justify-center">
             <span className="text-safe-dark font-bold text-sm">M</span>
           </div>
           <div>
-            <h1 className="text-sm font-semibold">Mina Safe</h1>
+            <h1 className="text-sm font-semibold">MinaGuard</h1>
             <span className="text-[10px] text-safe-text">Multisig Wallet</span>
           </div>
         </div>
       </div>
 
-      {/* Multisig Address */}
-      {multisigAddress && (
+      {walletAddress && (
         <div className="px-4 py-3 border-b border-safe-border">
-          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-1">
-            Wallet
-          </p>
-          <p className="text-xs font-mono" title={multisigAddress}>
-            {truncateAddress(multisigAddress)}
+          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-1">Wallet</p>
+          <p className="text-xs font-mono" title={walletAddress}>
+            {truncateAddress(walletAddress)}
           </p>
         </div>
       )}
 
-      {/* Navigation */}
+      {contracts.length > 0 && (
+        <div className="px-4 py-3 border-b border-safe-border">
+          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-1">Contract</p>
+          <select
+            value={multisigAddress ?? ''}
+            onChange={(e) => onSelectContract?.(e.target.value)}
+            className="w-full bg-safe-gray border border-safe-border rounded-lg px-2 py-1.5 text-xs font-mono"
+          >
+            {contracts.map((address) => (
+              <option key={address} value={address}>
+                {truncateAddress(address, 8)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <nav className="flex-1 py-2">
         {navItems.map((item) => {
-          const isActive =
-            item.href === '/'
-              ? pathname === '/'
-              : pathname.startsWith(item.href);
+          const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
 
           return (
             <Link
@@ -108,17 +131,10 @@ export default function Sidebar({
         })}
       </nav>
 
-      {/* Network indicator */}
       <div className="p-4 border-t border-safe-border">
         <div className="flex items-center gap-2">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              network ? 'bg-safe-green' : 'bg-red-500'
-            }`}
-          />
-          <span className="text-xs text-safe-text">
-            {network ?? 'Not connected'}
-          </span>
+          <div className={`w-2 h-2 rounded-full ${network ? 'bg-safe-green' : 'bg-red-500'}`} />
+          <span className="text-xs text-safe-text">{network ?? 'Not connected'}</span>
         </div>
       </div>
     </aside>

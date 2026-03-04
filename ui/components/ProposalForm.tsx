@@ -1,25 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { TxType } from '@/lib/types';
+import { NewProposalInput, TxType } from '@/lib/types';
 
 interface ProposalFormProps {
   owners: string[];
   currentThreshold: number;
   numOwners: number;
-  onSubmit: (data: ProposalData) => void;
+  onSubmit: (data: NewProposalInput) => void;
   isSubmitting: boolean;
 }
 
-export interface ProposalData {
-  txType: TxType;
-  to: string;
-  amount: string;
-  newOwner?: string;
-  removeOwnerAddress?: string;
-  newThreshold?: number;
-}
-
+/** Dynamic proposal form that maps UI inputs to MinaGuard tx type payloads. */
 export default function ProposalForm({
   owners,
   currentThreshold,
@@ -32,35 +24,39 @@ export default function ProposalForm({
   const [amount, setAmount] = useState('');
   const [newOwner, setNewOwner] = useState('');
   const [removeOwnerAddress, setRemoveOwnerAddress] = useState('');
-  const [newThreshold, setNewThreshold] = useState(currentThreshold);
+  const [newThreshold, setNewThreshold] = useState(Math.max(1, currentThreshold));
+  const [delegate, setDelegate] = useState('');
+  const [undelegate, setUndelegate] = useState(false);
+  const [expiryBlock, setExpiryBlock] = useState('0');
 
+  /** Emits normalized form payload according to the selected transaction type. */
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
     onSubmit({
       txType,
-      to,
-      amount,
+      to: txType === 'transfer' ? to : undefined,
+      amount: txType === 'transfer' ? amount : undefined,
       newOwner: txType === 'addOwner' ? newOwner : undefined,
-      removeOwnerAddress:
-        txType === 'removeOwner' ? removeOwnerAddress : undefined,
-      newThreshold:
-        txType === 'changeThreshold' ? newThreshold : undefined,
+      removeOwnerAddress: txType === 'removeOwner' ? removeOwnerAddress : undefined,
+      newThreshold: txType === 'changeThreshold' ? newThreshold : undefined,
+      delegate: txType === 'setDelegate' && !undelegate ? delegate : undefined,
+      undelegate: txType === 'setDelegate' ? undelegate : undefined,
+      expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
     });
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Transaction Type Selector */}
       <div>
-        <label className="block text-sm text-safe-text mb-2">
-          Transaction Type
-        </label>
+        <label className="block text-sm text-safe-text mb-2">Transaction Type</label>
         <div className="grid grid-cols-2 gap-2">
           {[
             { value: 'transfer', label: 'Send MINA' },
             { value: 'addOwner', label: 'Add Owner' },
             { value: 'removeOwner', label: 'Remove Owner' },
             { value: 'changeThreshold', label: 'Change Threshold' },
+            { value: 'setDelegate', label: 'Set Delegate' },
           ].map((type) => (
             <button
               key={type.value}
@@ -78,63 +74,41 @@ export default function ProposalForm({
         </div>
       </div>
 
-      {/* Transfer Fields */}
       {txType === 'transfer' && (
         <>
-          <div>
-            <label className="block text-sm text-safe-text mb-2">
-              Recipient Address
-            </label>
-            <input
-              type="text"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="B62q..."
-              className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-safe-text mb-2">
-              Amount (MINA)
-            </label>
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.0"
-              step="0.000000001"
-              min="0"
-              className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
-              required
-            />
-          </div>
+          <FormInput
+            label="Recipient Address"
+            value={to}
+            onChange={setTo}
+            placeholder="B62q..."
+            mono
+            required
+          />
+          <FormInput
+            label="Amount (MINA)"
+            value={amount}
+            onChange={setAmount}
+            placeholder="0.0"
+            required
+            inputMode="decimal"
+          />
         </>
       )}
 
-      {/* Add Owner Fields */}
       {txType === 'addOwner' && (
-        <div>
-          <label className="block text-sm text-safe-text mb-2">
-            New Owner Address
-          </label>
-          <input
-            type="text"
-            value={newOwner}
-            onChange={(e) => setNewOwner(e.target.value)}
-            placeholder="B62q..."
-            className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
-            required
-          />
-        </div>
+        <FormInput
+          label="New Owner Address"
+          value={newOwner}
+          onChange={setNewOwner}
+          placeholder="B62q..."
+          mono
+          required
+        />
       )}
 
-      {/* Remove Owner Fields */}
       {txType === 'removeOwner' && (
         <div>
-          <label className="block text-sm text-safe-text mb-2">
-            Select Owner to Remove
-          </label>
+          <label className="block text-sm text-safe-text mb-2">Select Owner to Remove</label>
           <div className="space-y-2">
             {owners.map((owner) => (
               <label
@@ -155,87 +129,117 @@ export default function ProposalForm({
                 />
                 <div
                   className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                    removeOwnerAddress === owner
-                      ? 'border-red-400'
-                      : 'border-safe-border'
+                    removeOwnerAddress === owner ? 'border-red-400' : 'border-safe-border'
                   }`}
                 >
-                  {removeOwnerAddress === owner && (
-                    <div className="w-2 h-2 rounded-full bg-red-400" />
-                  )}
+                  {removeOwnerAddress === owner && <div className="w-2 h-2 rounded-full bg-red-400" />}
                 </div>
-                <span className="text-sm font-mono text-safe-text">
-                  {owner}
-                </span>
+                <span className="text-sm font-mono text-safe-text">{owner}</span>
               </label>
             ))}
           </div>
           {numOwners - 1 < currentThreshold && (
             <p className="text-xs text-red-400 mt-2">
-              Cannot remove: would go below threshold ({currentThreshold})
+              Removing one owner would break current threshold constraints.
             </p>
           )}
         </div>
       )}
 
-      {/* Change Threshold Fields */}
       {txType === 'changeThreshold' && (
         <div>
-          <label className="block text-sm text-safe-text mb-2">
-            New Threshold
-          </label>
+          <label className="block text-sm text-safe-text mb-2">New Threshold</label>
           <div className="flex items-center gap-4">
             <input
               type="range"
               min="1"
-              max={numOwners}
+              max={Math.max(1, numOwners)}
               value={newThreshold}
-              onChange={(e) => setNewThreshold(parseInt(e.target.value))}
+              onChange={(e) => setNewThreshold(parseInt(e.target.value, 10))}
               className="flex-1 accent-safe-green"
             />
             <span className="text-2xl font-mono text-safe-green min-w-[3ch] text-center">
               {newThreshold}
             </span>
-            <span className="text-sm text-safe-text">
-              of {numOwners} owners
-            </span>
+            <span className="text-sm text-safe-text">of {numOwners} owners</span>
           </div>
         </div>
       )}
 
-      {/* Submit */}
+      {txType === 'setDelegate' && (
+        <div className="space-y-3">
+          <label className="inline-flex items-center gap-2 text-sm text-safe-text">
+            <input
+              type="checkbox"
+              checked={undelegate}
+              onChange={(e) => setUndelegate(e.target.checked)}
+            />
+            Undelegate (set delegate to contract self)
+          </label>
+          {!undelegate && (
+            <FormInput
+              label="Delegate Address"
+              value={delegate}
+              onChange={setDelegate}
+              placeholder="B62q..."
+              mono
+              required
+            />
+          )}
+        </div>
+      )}
+
+      <FormInput
+        label="Expiry Block (0 = no expiry)"
+        value={expiryBlock}
+        onChange={setExpiryBlock}
+        placeholder="0"
+        inputMode="numeric"
+      />
+
       <button
         type="submit"
         disabled={isSubmitting}
-        className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+        className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50"
       >
-        {isSubmitting ? (
-          <>
-            <svg
-              className="animate-spin h-4 w-4"
-              viewBox="0 0 24 24"
-              fill="none"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
-            Creating Proposal...
-          </>
-        ) : (
-          'Submit Proposal'
-        )}
+        {isSubmitting ? 'Submitting Proposal...' : 'Submit Proposal'}
       </button>
     </form>
+  );
+}
+
+/** Shared text input primitive for proposal form field sections. */
+function FormInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  required,
+  mono,
+  inputMode,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  required?: boolean;
+  mono?: boolean;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
+}) {
+  return (
+    <div>
+      <label className="block text-sm text-safe-text mb-2">{label}</label>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        inputMode={inputMode}
+        className={`w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors ${
+          mono ? 'font-mono' : ''
+        }`}
+        required={required}
+      />
+    </div>
   );
 }

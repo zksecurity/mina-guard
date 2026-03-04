@@ -1,22 +1,23 @@
 'use client';
 
-import { Transaction } from '@/lib/types';
+import { Proposal } from '@/lib/types';
 import TransactionCard from './TransactionCard';
 
 interface TransactionListProps {
-  transactions: Transaction[];
+  proposals: Proposal[];
   threshold: number;
   owners: string[];
   emptyMessage?: string;
 }
 
+/** Renders a proposal list with empty-state fallback. */
 export default function TransactionList({
-  transactions,
+  proposals,
   threshold,
   owners,
-  emptyMessage = 'No transactions yet',
+  emptyMessage = 'No proposals yet',
 }: TransactionListProps) {
-  if (transactions.length === 0) {
+  if (proposals.length === 0) {
     return (
       <div className="text-center py-12">
         <svg
@@ -39,10 +40,10 @@ export default function TransactionList({
 
   return (
     <div className="space-y-2">
-      {transactions.map((tx) => (
+      {proposals.map((proposal) => (
         <TransactionCard
-          key={tx.id}
-          tx={tx}
+          key={proposal.proposalHash}
+          proposal={proposal}
           threshold={threshold}
           owners={owners}
         />
