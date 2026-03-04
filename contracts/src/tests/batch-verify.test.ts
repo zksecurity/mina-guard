@@ -32,7 +32,7 @@ describe('BatchVerifySigs', () => {
       ownersRoot: store.getRoot(),
     });
 
-    const sig = Signature.create(owner, [proposalHash]);
+    const sig = Signature.create(owner, [proposalHash, store.getRoot()]);
     const witness = store.getWitness(owner.toPublicKey());
 
     const { proof } = await BatchVerifySigs.firstVerification(input, sig, owner.toPublicKey(), witness);
@@ -59,18 +59,18 @@ describe('BatchVerifySigs', () => {
 
     const [first, second] = sortByHash([ownerA, ownerB]);
 
-    const sig1 = Signature.create(first, [proposalHash]);
+    const sig1 = Signature.create(first, [proposalHash, store.getRoot()]);
     const w1 = store.getWitness(first.toPublicKey());
     const { proof: proof1 } = await BatchVerifySigs.firstVerification(input, sig1, first.toPublicKey(), w1);
 
-    const sig2 = Signature.create(second, [proposalHash]);
+    const sig2 = Signature.create(second, [proposalHash, store.getRoot()]);
     const w2 = store.getWitness(second.toPublicKey());
     const { proof: proof2 } = await BatchVerifySigs.addVerification(input, proof1, sig2, second.toPublicKey(), w2);
 
     expect(proof2.publicOutput.approvalCount).toEqual(Field(2));
     expect(proof2.publicOutput.approverHash).toEqual(ownerKey(second.toPublicKey()));
     expect(proof2.publicOutput.approverChain).toEqual(
-      Poseidon.hash([ownerKey(first.toPublicKey()), ...second.toPublicKey().toFields()])
+      Poseidon.hash([ownerKey(first.toPublicKey()), ownerKey(second.toPublicKey())])
     );
     expect(await BatchVerifySigs.verify(proof2)).toBe(true);
   }, TIMEOUT);
@@ -89,22 +89,22 @@ describe('BatchVerifySigs', () => {
 
     const sorted = sortByHash(owners);
 
-    const sig1 = Signature.create(sorted[0], [proposalHash]);
+    const sig1 = Signature.create(sorted[0], [proposalHash, store.getRoot()]);
     const w1 = store.getWitness(sorted[0].toPublicKey());
     const { proof: proof1 } = await BatchVerifySigs.firstVerification(input, sig1, sorted[0].toPublicKey(), w1);
 
-    const sig2 = Signature.create(sorted[1], [proposalHash]);
+    const sig2 = Signature.create(sorted[1], [proposalHash, store.getRoot()]);
     const w2 = store.getWitness(sorted[1].toPublicKey());
     const { proof: proof2 } = await BatchVerifySigs.addVerification(input, proof1, sig2, sorted[1].toPublicKey(), w2);
 
-    const sig3 = Signature.create(sorted[2], [proposalHash]);
+    const sig3 = Signature.create(sorted[2], [proposalHash, store.getRoot()]);
     const w3 = store.getWitness(sorted[2].toPublicKey());
     const { proof: proof3 } = await BatchVerifySigs.addVerification(input, proof2, sig3, sorted[2].toPublicKey(), w3);
 
     expect(proof3.publicOutput.approvalCount).toEqual(Field(3));
     const chain1 = ownerKey(sorted[0].toPublicKey());
-    const chain2 = Poseidon.hash([chain1, ...sorted[1].toPublicKey().toFields()]);
-    const chain3 = Poseidon.hash([chain2, ...sorted[2].toPublicKey().toFields()]);
+    const chain2 = Poseidon.hash([chain1, ownerKey(sorted[1].toPublicKey())]);
+    const chain3 = Poseidon.hash([chain2, ownerKey(sorted[2].toPublicKey())]);
     expect(proof3.publicOutput.approverChain).toEqual(chain3);
     expect(await BatchVerifySigs.verify(proof3)).toBe(true);
   }, TIMEOUT);
@@ -121,7 +121,7 @@ describe('BatchVerifySigs', () => {
       ownersRoot: store.getRoot(),
     });
 
-    const sig = Signature.create(owner, [proposalHash]);
+    const sig = Signature.create(owner, [proposalHash, store.getRoot()]);
     const witness = store.getWitness(owner.toPublicKey());
 
     const { proof: proof1 } = await BatchVerifySigs.firstVerification(input, sig, owner.toPublicKey(), witness);
@@ -144,7 +144,7 @@ describe('BatchVerifySigs', () => {
       ownersRoot: store.getRoot(),
     });
 
-    const sig = Signature.create(nonOwner, [proposalHash]);
+    const sig = Signature.create(nonOwner, [proposalHash, store.getRoot()]);
     const witness = store.getWitness(nonOwner.toPublicKey());
 
     await expect(async () => {
@@ -166,7 +166,7 @@ describe('BatchVerifySigs', () => {
     });
 
     // Sign with wrong key
-    const sig = Signature.create(wrongKey, [proposalHash]);
+    const sig = Signature.create(wrongKey, [proposalHash, store.getRoot()]);
     const witness = store.getWitness(owner.toPublicKey());
 
     await expect(async () => {
@@ -190,7 +190,7 @@ describe('BatchVerifySigs', () => {
       ownersRoot: wrongStore.getRoot(),
     });
 
-    const sig = Signature.create(owner, [proposalHash]);
+    const sig = Signature.create(owner, [proposalHash, store.getRoot()]);
     const witness = store.getWitness(owner.toPublicKey());
 
     await expect(async () => {
@@ -211,20 +211,20 @@ describe('BatchVerifySigs', () => {
     });
 
     // Proof with signers [A, B]
-    const sigA1 = Signature.create(owners[0], [proposalHash]);
+    const sigA1 = Signature.create(owners[0], [proposalHash, store.getRoot()]);
     const wA1 = store.getWitness(owners[0].toPublicKey());
     const { proof: pA1 } = await BatchVerifySigs.firstVerification(input, sigA1, owners[0].toPublicKey(), wA1);
 
-    const sigB = Signature.create(owners[1], [proposalHash]);
+    const sigB = Signature.create(owners[1], [proposalHash, store.getRoot()]);
     const wB = store.getWitness(owners[1].toPublicKey());
     const { proof: proofAB } = await BatchVerifySigs.addVerification(input, pA1, sigB, owners[1].toPublicKey(), wB);
 
     // Proof with signers [A, C]
-    const sigA2 = Signature.create(owners[0], [proposalHash]);
+    const sigA2 = Signature.create(owners[0], [proposalHash, store.getRoot()]);
     const wA2 = store.getWitness(owners[0].toPublicKey());
     const { proof: pA2 } = await BatchVerifySigs.firstVerification(input, sigA2, owners[0].toPublicKey(), wA2);
 
-    const sigC = Signature.create(owners[2], [proposalHash]);
+    const sigC = Signature.create(owners[2], [proposalHash, store.getRoot()]);
     const wC = store.getWitness(owners[2].toPublicKey());
     const { proof: proofAC } = await BatchVerifySigs.addVerification(input, pA2, sigC, owners[2].toPublicKey(), wC);
 
@@ -247,12 +247,12 @@ describe('BatchVerifySigs', () => {
     const input1 = new BatchVerifyInput({ proposalHash: hash1, ownersRoot: store.getRoot() });
     const input2 = new BatchVerifyInput({ proposalHash: hash2, ownersRoot: store.getRoot() });
 
-    const sig1 = Signature.create(first, [hash1]);
+    const sig1 = Signature.create(first, [hash1, store.getRoot()]);
     const w1 = store.getWitness(first.toPublicKey());
     const { proof: proof1 } = await BatchVerifySigs.firstVerification(input1, sig1, first.toPublicKey(), w1);
 
     // Try to chain with a different proposal hash
-    const sig2 = Signature.create(second, [hash2]);
+    const sig2 = Signature.create(second, [hash2, store.getRoot()]);
     const w2 = store.getWitness(second.toPublicKey());
 
     await expect(async () => {

@@ -7,6 +7,10 @@ class BatchVerifyInput extends Struct({ proposalHash: Field, ownersRoot: Field }
     this.proposalHash.assertEquals(other.proposalHash);
     this.ownersRoot.assertEquals(other.ownersRoot);
   }
+
+  toFields(): Field[] {
+    return [this.proposalHash, this.ownersRoot];
+  }
 }
 class BatchVerifyOutput extends Struct({ approvalCount: Field, approverHash: Field, approverChain: Field }) { }
 
@@ -23,7 +27,7 @@ function verifyApproval(
   computedRoot.assertEquals(input.ownersRoot, 'Not an owner');
   computedKey.assertEquals(approverHash, 'Owner key mismatch');
 
-  sig.verify(approver, [input.proposalHash]).assertTrue('Invalid signature');
+  sig.verify(approver, input.toFields()).assertTrue('Invalid signature');
 
   return approverHash;
 }
@@ -56,8 +60,6 @@ const BatchVerifySigs = ZkProgram({
             approvalCount: Field(1),
             approverHash: approverHash,
             // First signer inits the chain.
-            // NOTE: If ownerKey function changes, this will need to change for consistency
-            // with other method. As it stands, this is fine.
             approverChain: approverHash
           })
         }
@@ -81,7 +83,8 @@ const BatchVerifySigs = ZkProgram({
           publicOutput: new BatchVerifyOutput({
             approvalCount: prev.publicOutput.approvalCount.add(Field(1)),
             approverHash: approverHash,
-            approverChain: Poseidon.hash([prev.publicOutput.approverChain, ...approver.toFields()])
+            // Chain will be c_{i+1} = H(c_i, H(p_{i+1}))
+            approverChain: Poseidon.hash([prev.publicOutput.approverChain, approverHash])
           })
         };
       }
