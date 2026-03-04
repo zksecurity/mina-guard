@@ -1,34 +1,46 @@
 'use client';
 
 import { createContext, useContext } from 'react';
-import { WalletState, MultisigState, Transaction } from '@/lib/types';
+import {
+  ContractSummary,
+  IndexerStatus,
+  OwnerRecord,
+  Proposal,
+  WalletState,
+} from '@/lib/types';
 
+/** Shared app context contract for wallet, contract index data, and refresh actions. */
 export interface AppContextType {
   wallet: WalletState;
-  multisig: MultisigState | null;
-  transactions: Transaction[];
+  multisig: ContractSummary | null;
+  contracts: ContractSummary[];
+  owners: OwnerRecord[];
+  proposals: Proposal[];
   pendingCount: number;
+  indexerStatus: IndexerStatus | null;
   connect: () => void;
   disconnect: () => void;
   isLoading: boolean;
   auroInstalled: boolean;
-  addTransaction: (tx: Transaction) => void;
-  updateTransaction: (txId: string, updates: Partial<Transaction>) => void;
-  refreshMultisig: () => void;
+  refreshMultisig: () => Promise<void>;
+  selectContract: (address: string) => Promise<void>;
 }
 
 export const AppContext = createContext<AppContextType>({
   wallet: { connected: false, address: null, network: null },
   multisig: null,
-  transactions: [],
+  contracts: [],
+  owners: [],
+  proposals: [],
   pendingCount: 0,
+  indexerStatus: null,
   connect: () => {},
   disconnect: () => {},
   isLoading: false,
   auroInstalled: false,
-  addTransaction: () => {},
-  updateTransaction: () => {},
-  refreshMultisig: () => {},
+  refreshMultisig: async () => {},
+  selectContract: async () => {},
 });
 
+/** Hook wrapper for typed context consumption in client components. */
 export const useAppContext = () => useContext(AppContext);

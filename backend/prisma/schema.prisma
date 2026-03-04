@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Contract {
+  id             Int       @id @default(autoincrement())
+  address        String    @unique
+  networkId      String?
+  ownersRoot     String?
+  threshold      Int?
+  numOwners      Int?
+  configNonce    Int?
+  proposalNonce  Int?
+  isValid        Boolean   @default(true)
+  invalidReason  String?
+  discoveredAt   DateTime  @default(now())
+  lastSyncedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  owners         Owner[]
+  proposals      Proposal[]
+  events         EventRaw[]
+}
+
+model Owner {
+  id         Int       @id @default(autoincrement())
+  contractId Int
+  address    String
+  ownerHash  String?
+  index      Int?
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  contract   Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, address])
+  @@index([contractId, active])
+}
+
+model Proposal {
+  id              Int       @id @default(autoincrement())
+  contractId      Int
+  proposalHash    String
+  proposer        String?
+  toAddress       String?
+  amount          String?
+  tokenId         String?
+  txType          String?
+  data            String?
+  nonce           String?
+  configNonce     String?
+  expiryBlock     String?
+  networkId       String?
+  guardAddress    String?
+  status          String    @default("pending")
+  approvalCount   Int       @default(0)
+  createdAtBlock  Int?
+  executedAtBlock Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  contract        Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  approvals       Approval[]
+
+  @@unique([contractId, proposalHash])
+  @@index([contractId, status])
+}
+
+model Approval {
+  id          Int      @id @default(autoincrement())
+  proposalId  Int
+  approver    String
+  approvalRaw String?
+  blockHeight Int?
+  createdAt   DateTime @default(now())
+  proposal    Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, approver])
+}
+
+model EventRaw {
+  id          Int       @id @default(autoincrement())
+  contractId  Int?
+  blockHeight Int
+  txHash      String?
+  eventType   String
+  payload     String
+  fingerprint String    @unique
+  createdAt   DateTime  @default(now())
+  contract    Contract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+
+  @@index([contractId, blockHeight])
+}
+
+model IndexerCursor {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

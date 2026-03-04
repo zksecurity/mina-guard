@@ -3,12 +3,16 @@
   "private": true,
   "workspaces": [
     "contracts",
-    "ui"
+    "ui",
+    "backend",
+    "dev-helpers"
   ],
   "scripts": {
     "test": "bun run --filter contracts test",
     "dev": "bun run --filter ui dev",
+    "dev:backend": "bun run --filter backend dev",
     "build": "bun run --filter contracts --filter ui build",
-    "typecheck": "bun run --filter contracts typecheck"
+    "build:backend": "bun run --filter backend build",
+    "typecheck": "bun run --filter contracts typecheck && bun run --filter backend build"
   }
 }

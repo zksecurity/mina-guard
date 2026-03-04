@@ -7,20 +7,25 @@ import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext } from '@/lib/app-context';
 
+/** Root-level provider that wires wallet state with backend-indexed contract data. */
 function AppProvider({ children }: { children: React.ReactNode }) {
-  const { wallet, isLoading, auroInstalled, connect, disconnect } =
+  const { wallet, isLoading: walletLoading, auroInstalled, connect, disconnect } =
     useWallet();
 
   const {
     state: multisig,
+    contracts,
+    owners,
+    indexerStatus,
+    isLoading: multisigLoading,
     refreshState: refreshMultisig,
-  } = useMultisig(wallet.address);
+    selectContract,
+  } = useMultisig();
 
   const {
-    transactions,
+    proposals,
+    isLoading: proposalsLoading,
     pendingCount,
-    addTransaction,
-    updateTransaction,
   } = useTransactions(multisig?.address ?? null);
 
   return (
@@ -28,23 +33,29 @@ function AppProvider({ children }: { children: React.ReactNode }) {
       value={{
         wallet,
         multisig,
-        transactions,
+        contracts,
+        owners,
+        proposals,
         pendingCount,
+        indexerStatus,
         connect,
         disconnect,
-        isLoading,
+        isLoading: walletLoading || multisigLoading || proposalsLoading,
         auroInstalled,
-        addTransaction,
-        updateTransaction,
         refreshMultisig,
+        selectContract,
       }}
     >
       <div className="flex min-h-screen">
         <Sidebar
           walletAddress={wallet.address}
           multisigAddress={multisig?.address ?? null}
+          contracts={contracts.map((c) => c.address)}
           pendingTxCount={pendingCount}
           network={wallet.network}
+          onSelectContract={(address) => {
+            void selectContract(address);
+          }}
         />
         <main className="flex-1 min-h-screen">{children}</main>
       </div>
@@ -52,6 +63,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** App router root layout entrypoint. */
 export default function RootLayout({
   children,
 }: {
