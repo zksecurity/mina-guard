@@ -1,4 +1,4 @@
-import { Field, MerkleMapWitness, PublicKey, SelfProof, Signature, Struct, ZkProgram } from "o1js";
+import { Field, MerkleMapWitness, Poseidon, PublicKey, SelfProof, Signature, Struct, ZkProgram } from "o1js";
 
 import { ownerKey } from "./utils";
 
@@ -8,7 +8,7 @@ class BatchVerifyInput extends Struct({ proposalHash: Field, ownersRoot: Field }
     this.ownersRoot.assertEquals(other.ownersRoot);
   }
 }
-class BatchVerifyOutput extends Struct({ approvalCount: Field, approverHash: Field }) { }
+class BatchVerifyOutput extends Struct({ approvalCount: Field, approverHash: Field, approverChain: Field }) { }
 
 function verifyApproval(
   input: BatchVerifyInput,
@@ -54,7 +54,11 @@ const BatchVerifySigs = ZkProgram({
         return {
           publicOutput: new BatchVerifyOutput({
             approvalCount: Field(1),
-            approverHash: approverHash
+            approverHash: approverHash,
+            // First signer inits the chain.
+            // NOTE: If ownerKey function changes, this will need to change for consistency
+            // with other method. As it stands, this is fine.
+            approverChain: approverHash
           })
         }
       }
@@ -76,7 +80,8 @@ const BatchVerifySigs = ZkProgram({
         return {
           publicOutput: new BatchVerifyOutput({
             approvalCount: prev.publicOutput.approvalCount.add(Field(1)),
-            approverHash: approverHash
+            approverHash: approverHash,
+            approverChain: Poseidon.hash([prev.publicOutput.approverChain, ...approver.toFields()])
           })
         };
       }

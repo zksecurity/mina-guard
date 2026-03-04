@@ -1,4 +1,4 @@
-import { Field, PrivateKey, Signature } from 'o1js';
+import { Field, Poseidon, PrivateKey, Signature } from 'o1js';
 import { BatchVerifySigs, BatchVerifyInput } from '../BatchVerifyProgram.js';
 import { ownerKey } from '../utils.js';
 import { OwnerStore } from '../storage.js';
@@ -39,6 +39,7 @@ describe('BatchVerifySigs', () => {
 
     expect(proof.publicOutput.approvalCount).toEqual(Field(1));
     expect(proof.publicOutput.approverHash).toEqual(ownerKey(owner.toPublicKey()));
+    expect(proof.publicOutput.approverChain).toEqual(ownerKey(owner.toPublicKey()));
     expect(await BatchVerifySigs.verify(proof)).toBe(true);
   }, TIMEOUT);
 
@@ -68,6 +69,9 @@ describe('BatchVerifySigs', () => {
 
     expect(proof2.publicOutput.approvalCount).toEqual(Field(2));
     expect(proof2.publicOutput.approverHash).toEqual(ownerKey(second.toPublicKey()));
+    expect(proof2.publicOutput.approverChain).toEqual(
+      Poseidon.hash([ownerKey(first.toPublicKey()), ...second.toPublicKey().toFields()])
+    );
     expect(await BatchVerifySigs.verify(proof2)).toBe(true);
   }, TIMEOUT);
 
@@ -98,6 +102,10 @@ describe('BatchVerifySigs', () => {
     const { proof: proof3 } = await BatchVerifySigs.addVerification(input, proof2, sig3, sorted[2].toPublicKey(), w3);
 
     expect(proof3.publicOutput.approvalCount).toEqual(Field(3));
+    const chain1 = ownerKey(sorted[0].toPublicKey());
+    const chain2 = Poseidon.hash([chain1, ...sorted[1].toPublicKey().toFields()]);
+    const chain3 = Poseidon.hash([chain2, ...sorted[2].toPublicKey().toFields()]);
+    expect(proof3.publicOutput.approverChain).toEqual(chain3);
     expect(await BatchVerifySigs.verify(proof3)).toBe(true);
   }, TIMEOUT);
 
@@ -188,6 +196,39 @@ describe('BatchVerifySigs', () => {
     await expect(async () => {
       await BatchVerifySigs.firstVerification(input, sig, owner.toPublicKey(), witness);
     }).toThrow();
+  }, TIMEOUT);
+
+  it('should produce different chains for different signer sets', async () => {
+    const owners = sortByHash([PrivateKey.random(), PrivateKey.random(), PrivateKey.random()]);
+    const proposalHash = Field(999);
+
+    const store = new OwnerStore();
+    for (const o of owners) store.add(o.toPublicKey());
+
+    const input = new BatchVerifyInput({
+      proposalHash,
+      ownersRoot: store.getRoot(),
+    });
+
+    // Proof with signers [A, B]
+    const sigA1 = Signature.create(owners[0], [proposalHash]);
+    const wA1 = store.getWitness(owners[0].toPublicKey());
+    const { proof: pA1 } = await BatchVerifySigs.firstVerification(input, sigA1, owners[0].toPublicKey(), wA1);
+
+    const sigB = Signature.create(owners[1], [proposalHash]);
+    const wB = store.getWitness(owners[1].toPublicKey());
+    const { proof: proofAB } = await BatchVerifySigs.addVerification(input, pA1, sigB, owners[1].toPublicKey(), wB);
+
+    // Proof with signers [A, C]
+    const sigA2 = Signature.create(owners[0], [proposalHash]);
+    const wA2 = store.getWitness(owners[0].toPublicKey());
+    const { proof: pA2 } = await BatchVerifySigs.firstVerification(input, sigA2, owners[0].toPublicKey(), wA2);
+
+    const sigC = Signature.create(owners[2], [proposalHash]);
+    const wC = store.getWitness(owners[2].toPublicKey());
+    const { proof: proofAC } = await BatchVerifySigs.addVerification(input, pA2, sigC, owners[2].toPublicKey(), wC);
+
+    expect(proofAB.publicOutput.approverChain).not.toEqual(proofAC.publicOutput.approverChain);
   }, TIMEOUT);
 
   it('should reject mismatched proposal hash in recursive step', async () => {

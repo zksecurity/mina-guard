@@ -247,7 +247,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
   async function makeDummyProof(proposalHash: Field, ownersRoot: Field, approvalCount: Field) {
     return await BatchVerifySigsProof.dummy(
       new BatchVerifyInput({ proposalHash, ownersRoot }),
-      new BatchVerifyOutput({ approvalCount, approverHash: Field(0) }),
+      new BatchVerifyOutput({ approvalCount, approverHash: Field(0), approverChain: Field(0) }),
       1
     );
   }
