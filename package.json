@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "test": "bun run --filter contracts test",
+    "test:proofs": "bun run --filter contracts test:proofs",
     "dev": "bun run --filter ui dev",
     "build": "bun run --filter contracts --filter ui build",
     "typecheck": "bun run --filter contracts typecheck"

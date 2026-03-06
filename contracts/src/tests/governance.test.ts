@@ -1,5 +1,8 @@
-import { Field, Mina, PrivateKey, Signature, UInt64, PublicKey } from 'o1js';
-import { EXECUTED_MARKER, ownerKey, TransactionProposal, TxType } from '../MinaGuard.js';
+import { Field, Mina, PrivateKey, Signature, UInt64, PublicKey, Bool } from 'o1js';
+import { EXECUTED_MARKER } from '../constants.js';
+import { TransactionProposal } from '../MinaGuard.js';
+import { TxType } from '../constants.js';
+import { ownerKey } from '../utils.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -8,8 +11,11 @@ import {
   createAddOwnerProposal,
   createRemoveOwnerProposal,
   createThresholdProposal,
+  makeOwnerWitness,
+  getOwnersCommitment,
   type TestContext,
 } from './test-helpers.js';
+import { PublicKeyOption, computeOwnerChain } from '../list-commitment.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 describe('MinaGuard - Governance', () => {
@@ -31,9 +37,9 @@ describe('MinaGuard - Governance', () => {
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const newOwnerMerkleWitness = ctx.ownerStore.map.getWitness(
-        ownerKey(newOwner)
-      );
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
+      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
+      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -42,7 +48,8 @@ describe('MinaGuard - Governance', () => {
           approvalWitness,
           Field(3),
           newOwner,
-          newOwnerMerkleWitness
+          ownerWitness,
+          insertAfter
         );
       });
       await txn.prove();
@@ -50,9 +57,9 @@ describe('MinaGuard - Governance', () => {
 
       expect(ctx.zkApp.numOwners.get()).toEqual(Field(4));
 
-      // Update off-chain and verify root matches
-      ctx.ownerStore.add(newOwner);
-      expect(ctx.zkApp.ownersRoot.get()).toEqual(ctx.ownerStore.getRoot());
+      // Verify commitment matches expected
+      const expectedCommitment = computeOwnerChain([...ctx.owners.map((o) => o.pub), newOwner]);
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(expectedCommitment);
     });
 
     it('should reject adding an already-existing owner', async () => {
@@ -62,9 +69,9 @@ describe('MinaGuard - Governance', () => {
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const ownerMerkleWitness = ctx.ownerStore.map.getWitness(
-        ownerKey(existingOwner)
-      );
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
+      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
+      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -74,12 +81,13 @@ describe('MinaGuard - Governance', () => {
             approvalWitness,
             Field(3),
             existingOwner,
-            ownerMerkleWitness
+            ownerWitness,
+            insertAfter
           );
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey]).send();
-      }).toThrow('Owner root mismatch');
+      }).toThrow('Owner change not valid');
     });
 
     it('should reject unproposed owner change with approvalCount = 0', async () => {
@@ -87,21 +95,21 @@ describe('MinaGuard - Governance', () => {
       const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = proposal.hash();
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-      const ownerWitness = ctx.ownerStore.map.getWitness(ownerKey(newOwner));
-      const ownersRootBefore = ctx.zkApp.ownersRoot.get();
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
+      const commitmentBefore = ctx.zkApp.ownersCommitment.get();
       const numOwnersBefore = ctx.zkApp.numOwners.get();
 
       await expect(async () => {
         const txn = await Mina.transaction(ctx.deployerAccount, async () => {
           await ctx.zkApp.executeOwnerChange(
-            proposal, approvalWitness, Field(0), newOwner, ownerWitness
+            proposal, approvalWitness, Field(0), newOwner, ownerWitness, PublicKeyOption.none()
           );
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Proposal not found');
 
-      expect(ctx.zkApp.ownersRoot.get()).toEqual(ownersRootBefore);
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(commitmentBefore);
       expect(ctx.zkApp.numOwners.get()).toEqual(numOwnersBefore);
     });
 
@@ -113,11 +121,13 @@ describe('MinaGuard - Governance', () => {
       await approveTransaction(ctx, proposal, 1);
 
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-      const ownerMerkleWitness = ctx.ownerStore.map.getWitness(ownerKey(newOwner));
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
+      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
+      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
         await ctx.zkApp.executeOwnerChange(
-          proposal, approvalWitness, Field(3), newOwner, ownerMerkleWitness
+          proposal, approvalWitness, Field(3), newOwner, ownerWitness, insertAfter
         );
       });
       await txn.prove();
@@ -137,9 +147,7 @@ describe('MinaGuard - Governance', () => {
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const ownerMerkleWitness = ctx.ownerStore.map.getWitness(
-        ownerKey(ownerToRemove)
-      );
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -148,7 +156,8 @@ describe('MinaGuard - Governance', () => {
           approvalWitness,
           Field(3),
           ownerToRemove,
-          ownerMerkleWitness
+          ownerWitness,
+          PublicKeyOption.none()
         );
       });
       await txn.prove();
@@ -156,9 +165,9 @@ describe('MinaGuard - Governance', () => {
 
       expect(ctx.zkApp.numOwners.get()).toEqual(Field(2));
 
-      // Update off-chain and verify root
-      ctx.ownerStore.remove(ownerToRemove);
-      expect(ctx.zkApp.ownersRoot.get()).toEqual(ctx.ownerStore.getRoot());
+      // Verify commitment matches expected (owners[0], owners[1])
+      const expectedCommitment = computeOwnerChain([ctx.owners[0].pub, ctx.owners[1].pub]);
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(expectedCommitment);
     });
 
     it('should reject removal if it would go below threshold', async () => {
@@ -168,16 +177,17 @@ describe('MinaGuard - Governance', () => {
       const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
       await approveTransaction(ctx, proposal1, 1);
 
-      const ownerWitness1 = ctx.ownerStore.map.getWitness(ownerKey(ownerToRemove1));
+      const ownerWitness1 = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash1);
       const txn1 = await Mina.transaction(ctx.deployerAccount, async () => {
         await ctx.zkApp.executeOwnerChange(
-          proposal1, approvalWitness1, Field(3), ownerToRemove1, ownerWitness1
+          proposal1, approvalWitness1, Field(3), ownerToRemove1, ownerWitness1, PublicKeyOption.none()
         );
       });
       await txn1.prove();
       await txn1.sign([ctx.deployerKey]).send();
-      ctx.ownerStore.remove(ownerToRemove1);
+      // Update off-chain owners list
+      ctx.owners.splice(2, 1);
       ctx.approvalStore.setCount(proposalHash1, EXECUTED_MARKER);
 
       // Now try to remove another (2 -> 1, threshold = 2, should fail)
@@ -188,13 +198,13 @@ describe('MinaGuard - Governance', () => {
       const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
       await approveTransaction(ctx, proposal2, 1);
 
-      const ownerWitness2 = ctx.ownerStore.map.getWitness(ownerKey(ownerToRemove2));
+      const ownerWitness2 = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const approvalWitness2 = ctx.approvalStore.getWitness(proposalHash2);
 
       await expect(async () => {
         const txn2 = await Mina.transaction(ctx.deployerAccount, async () => {
           await ctx.zkApp.executeOwnerChange(
-            proposal2, approvalWitness2, Field(3), ownerToRemove2, ownerWitness2
+            proposal2, approvalWitness2, Field(3), ownerToRemove2, ownerWitness2, PublicKeyOption.none()
           );
         });
         await txn2.prove();
@@ -209,18 +219,18 @@ describe('MinaGuard - Governance', () => {
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const ownerMerkleWitness = ctx.ownerStore.map.getWitness(ownerKey(nonOwner));
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
         const txn = await Mina.transaction(ctx.deployerAccount, async () => {
           await ctx.zkApp.executeOwnerChange(
-            proposal, approvalWitness, Field(3), nonOwner, ownerMerkleWitness
+            proposal, approvalWitness, Field(3), nonOwner, ownerWitness, PublicKeyOption.none()
           );
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey]).send();
-      }).toThrow('Owner root mismatch');
+      }).toThrow('Owner change not valid');
     });
   });
 
@@ -346,7 +356,7 @@ describe('MinaGuard - Governance', () => {
         tokenId: Field(0),
         txType: TxType.TRANSFER,
         data: Field(0),
-        nonce: Field(1),
+        uid: Field(1),
         configNonce: Field(0), // old configNonce
         expiryBlock: Field(0),
         networkId: Field(1),
@@ -354,7 +364,7 @@ describe('MinaGuard - Governance', () => {
       });
 
       await expect(async () => {
-        const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+        const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
         const sig = Signature.create(ctx.owners[0].key, [oldProposal.hash()]);
         const nullifierWitness = ctx.nullifierStore.getWitness(
           oldProposal.hash(),

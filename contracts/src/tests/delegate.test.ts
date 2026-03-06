@@ -1,5 +1,5 @@
 import { Field, Mina, PrivateKey, UInt64 } from 'o1js';
-import { ownerKey } from '../MinaGuard.js';
+import { ownerKey } from '../utils.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -64,7 +64,7 @@ describe('MinaGuard - Delegate', () => {
     await txn1.sign([ctx.deployerKey]).send();
 
     // Mark executed in off-chain store
-    const { EXECUTED_MARKER } = await import('../MinaGuard.js');
+    const { EXECUTED_MARKER } = await import('../constants.js');
     ctx.approvalStore.setCount(proposalHash1, EXECUTED_MARKER);
 
     // Now un-delegate
