@@ -28,6 +28,9 @@ type BatchVerifyResult = { approvalCount: Field; signerChain: Field, ownerChain:
  * - None: Empty owner slot
  * - (None, PublicKey): Owner exists but has not provided signature
  * - (Signature, PublicKey): Owner exists and has provided signature
+ * 
+ * IMPORTANT: Caller must check the returned ownerChain against the current commitment, and
+ * must handle approvalCount check.
  */
 function batchVerify(
   signatures: SignatureInputs,
