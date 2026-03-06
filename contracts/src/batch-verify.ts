@@ -34,7 +34,7 @@ type BatchVerifyResult = { approvalCount: Field; signerChain: Field, ownerChain:
  */
 function batchVerify(
   signatures: SignatureInputs,
-  message: Field[]
+  message: Field
 ): BatchVerifyResult {
   let approvalCount = Field(0);
   let signerChain = INITIAL_SIGNER_CHAIN;
@@ -48,7 +48,7 @@ function batchVerify(
     let didSign = isSigSome.and(isSome);
 
     // Verify the signature
-    let ok = sig.verify(pk, message);
+    let ok = sig.verify(pk, [message]);
 
     // update approval count if (Signature, PublicKey) was provided and verified
     let newCount = approvalCount.add(ok.toField());
@@ -59,22 +59,11 @@ function batchVerify(
     ownerChain = Provable.if(isSome, ownerChainTemp, ownerChain);
 
     // hash public key in the signer chain if didSign, to have an auditable trail of who signed
+    // NOTE: owners who provided an INVALID signature are also included in the signerChain audit trail
     let signerChainTemp = Poseidon.hash([signerChain, pk.x, pk.isOdd.toField()]);
     signerChain = Provable.if(didSign, signerChainTemp, signerChain);
   });
   return { approvalCount, signerChain, ownerChain };
 }
 
-// test circuit size
-
-let info = await Provable.constraintSystem(() => {
-  let signatures: SignatureInputs = Provable.witness(SignatureInputs, () =>
-    SignatureInputs.empty()
-  );
-  let messageHash = Provable.witness(Field, () => Field(0));
-  batchVerify(signatures, [messageHash]);
-});
-
-console.log(info.summary());
-
-export { batchVerify, BatchVerifyResult, SignatureInputs };
+export { batchVerify, BatchVerifyResult, SignatureInputs, SignatureInput, SignatureOption };

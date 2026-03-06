@@ -4,8 +4,8 @@ import {
   PublicKeyOption,
   computeOwnerChain,
   assertOwnerMembership,
-  addOwnerToChain,
-  removeOwnerFromChain,
+  addOwnerToCommitment,
+  removeOwnerFromCommitment,
 } from '../list-commitment.js';
 import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from '../constants.js';
 
@@ -132,7 +132,7 @@ describe('assertOwnerMembership', () => {
   });
 });
 
-describe('addOwnerToChain', () => {
+describe('addOwnerToCommitment', () => {
   it('returns chain matching computeOwnerChain with new owner appended', async () => {
     const owners = [keyA, keyB];
     const commitment = computeOwnerChain(owners);
@@ -140,8 +140,9 @@ describe('addOwnerToChain', () => {
     const expected = computeOwnerChain([keyA, keyB, keyC]);
 
     await Provable.runAndCheck(() => {
-      const result = addOwnerToChain(commitment, keyC, witness, after(keyB));
+      const [result, valid] = addOwnerToCommitment(commitment, keyC, witness, after(keyB));
       result.assertEquals(expected);
+      valid.assertTrue();
     });
   });
 
@@ -152,8 +153,9 @@ describe('addOwnerToChain', () => {
     const expected = computeOwnerChain([keyA, keyC, keyB]);
 
     await Provable.runAndCheck(() => {
-      const result = addOwnerToChain(commitment, keyC, witness, after(keyA));
+      const [result, valid] = addOwnerToCommitment(commitment, keyC, witness, after(keyA));
       result.assertEquals(expected);
+      valid.assertTrue();
     });
   });
 
@@ -164,61 +166,58 @@ describe('addOwnerToChain', () => {
     const expected = computeOwnerChain([keyC, keyA, keyB]);
 
     await Provable.runAndCheck(() => {
-      const result = addOwnerToChain(commitment, keyC, witness, PublicKeyOption.none());
+      const [result, valid] = addOwnerToCommitment(commitment, keyC, witness, PublicKeyOption.none());
       result.assertEquals(expected);
+      valid.assertTrue();
     });
   });
 
-  it('fails if owner already exists', async () => {
+  it('returns invalid if owner already exists', async () => {
     const owners = [keyA, keyB];
     const commitment = computeOwnerChain(owners);
     const witness = makeWitness(owners);
 
-    await expect(
-      Provable.runAndCheck(() => {
-        addOwnerToChain(commitment, keyA, witness, after(keyB));
-      })
-    ).rejects.toThrow();
+    await Provable.runAndCheck(() => {
+      const [, valid] = addOwnerToCommitment(commitment, keyA, witness, after(keyB));
+      valid.assertFalse();
+    });
   });
 
-  it('fails if owner already exists even with prepend', async () => {
+  it('returns invalid if owner already exists even with prepend', async () => {
     const owners = [keyA, keyB];
     const commitment = computeOwnerChain(owners);
     const witness = makeWitness(owners);
 
-    await expect(
-      Provable.runAndCheck(() => {
-        addOwnerToChain(commitment, keyA, witness, PublicKeyOption.none());
-      })
-    ).rejects.toThrow();
+    await Provable.runAndCheck(() => {
+      const [, valid] = addOwnerToCommitment(commitment, keyA, witness, PublicKeyOption.none());
+      valid.assertFalse();
+    });
   });
 
-  it('fails if insertAfter key not found', async () => {
+  it('returns invalid if insertAfter key not found', async () => {
     const owners = [keyA, keyB];
     const commitment = computeOwnerChain(owners);
     const witness = makeWitness(owners);
 
-    await expect(
-      Provable.runAndCheck(() => {
-        addOwnerToChain(commitment, keyC, witness, after(keyC));
-      })
-    ).rejects.toThrow();
+    await Provable.runAndCheck(() => {
+      const [, valid] = addOwnerToCommitment(commitment, keyC, witness, after(keyC));
+      valid.assertFalse();
+    });
   });
 
-  it('fails with wrong commitment', async () => {
+  it('returns invalid with wrong commitment', async () => {
     const owners = [keyA, keyB];
     const wrongCommitment = computeOwnerChain([keyA]);
     const witness = makeWitness(owners);
 
-    await expect(
-      Provable.runAndCheck(() => {
-        addOwnerToChain(wrongCommitment, keyC, witness, after(keyB));
-      })
-    ).rejects.toThrow();
+    await Provable.runAndCheck(() => {
+      const [, valid] = addOwnerToCommitment(wrongCommitment, keyC, witness, after(keyB));
+      valid.assertFalse();
+    });
   });
 });
 
-describe('removeOwnerFromChain', () => {
+describe('removeOwnerFromCommitment', () => {
   it('returns chain matching computeOwnerChain without removed owner', async () => {
     const owners = [keyA, keyB, keyC];
     const commitment = computeOwnerChain(owners);
@@ -226,8 +225,9 @@ describe('removeOwnerFromChain', () => {
     const expected = computeOwnerChain([keyA, keyC]);
 
     await Provable.runAndCheck(() => {
-      const result = removeOwnerFromChain(commitment, keyB, witness);
+      const [result, valid] = removeOwnerFromCommitment(commitment, keyB, witness);
       result.assertEquals(expected);
+      valid.assertTrue();
     });
   });
 
@@ -238,8 +238,9 @@ describe('removeOwnerFromChain', () => {
     const expected = computeOwnerChain([keyB]);
 
     await Provable.runAndCheck(() => {
-      const result = removeOwnerFromChain(commitment, keyA, witness);
+      const [result, valid] = removeOwnerFromCommitment(commitment, keyA, witness);
       result.assertEquals(expected);
+      valid.assertTrue();
     });
   });
 
@@ -250,8 +251,9 @@ describe('removeOwnerFromChain', () => {
     const expected = computeOwnerChain([keyA]);
 
     await Provable.runAndCheck(() => {
-      const result = removeOwnerFromChain(commitment, keyB, witness);
+      const [result, valid] = removeOwnerFromCommitment(commitment, keyB, witness);
       result.assertEquals(expected);
+      valid.assertTrue();
     });
   });
 
@@ -261,44 +263,42 @@ describe('removeOwnerFromChain', () => {
     const witness = makeWitness(owners);
 
     await Provable.runAndCheck(() => {
-      const result = removeOwnerFromChain(commitment, keyA, witness);
+      const [result, valid] = removeOwnerFromCommitment(commitment, keyA, witness);
       result.assertEquals(INITIAL_OWNER_CHAIN);
+      valid.assertTrue();
     });
   });
 
-  it('fails if owner does not exist', async () => {
+  it('returns invalid if owner does not exist', async () => {
     const owners = [keyA, keyB];
     const commitment = computeOwnerChain(owners);
     const witness = makeWitness(owners);
 
-    await expect(
-      Provable.runAndCheck(() => {
-        removeOwnerFromChain(commitment, keyC, witness);
-      })
-    ).rejects.toThrow();
+    await Provable.runAndCheck(() => {
+      const [, valid] = removeOwnerFromCommitment(commitment, keyC, witness);
+      valid.assertFalse();
+    });
   });
 
-  it('fails with wrong commitment', async () => {
+  it('returns invalid with wrong commitment', async () => {
     const owners = [keyA, keyB];
     const wrongCommitment = computeOwnerChain([keyA]);
     const witness = makeWitness(owners);
 
-    await expect(
-      Provable.runAndCheck(() => {
-        removeOwnerFromChain(wrongCommitment, keyB, witness);
-      })
-    ).rejects.toThrow();
+    await Provable.runAndCheck(() => {
+      const [, valid] = removeOwnerFromCommitment(wrongCommitment, keyB, witness);
+      valid.assertFalse();
+    });
   });
 
-  it('fails when witness order does not match commitment', async () => {
+  it('returns invalid when witness order does not match commitment', async () => {
     const commitment = computeOwnerChain([keyA, keyB]);
     const witness = makeWitness([keyB, keyA]);
 
-    await expect(
-      Provable.runAndCheck(() => {
-        removeOwnerFromChain(commitment, keyA, witness);
-      })
-    ).rejects.toThrow();
+    await Provable.runAndCheck(() => {
+      const [, valid] = removeOwnerFromCommitment(commitment, keyA, witness);
+      valid.assertFalse();
+    });
   });
 });
 
@@ -311,9 +311,11 @@ describe('round-trips', () => {
     const witnessWithC = makeWitness([keyA, keyB, keyC]);
 
     await Provable.runAndCheck(() => {
-      const added = addOwnerToChain(original, keyC, witness, after(keyB));
+      const [added, addValid] = addOwnerToCommitment(original, keyC, witness, after(keyB));
+      addValid.assertTrue();
       added.assertEquals(withC);
-      const removed = removeOwnerFromChain(withC, keyC, witnessWithC);
+      const [removed, remValid] = removeOwnerFromCommitment(withC, keyC, witnessWithC);
+      remValid.assertTrue();
       removed.assertEquals(original);
     });
   });
@@ -326,9 +328,11 @@ describe('round-trips', () => {
     const witnessWithoutB = makeWitness([keyA, keyC]);
 
     await Provable.runAndCheck(() => {
-      const removed = removeOwnerFromChain(original, keyB, witness);
+      const [removed, remValid] = removeOwnerFromCommitment(original, keyB, witness);
+      remValid.assertTrue();
       removed.assertEquals(withoutB);
-      const added = addOwnerToChain(withoutB, keyB, witnessWithoutB, after(keyA));
+      const [added, addValid] = addOwnerToCommitment(withoutB, keyB, witnessWithoutB, after(keyA));
+      addValid.assertTrue();
       added.assertEquals(original);
     });
   });
@@ -341,9 +345,11 @@ describe('round-trips', () => {
     const witnessWithC = makeWitness([keyC, keyA, keyB]);
 
     await Provable.runAndCheck(() => {
-      const added = addOwnerToChain(original, keyC, witness, PublicKeyOption.none());
+      const [added, addValid] = addOwnerToCommitment(original, keyC, witness, PublicKeyOption.none());
+      addValid.assertTrue();
       added.assertEquals(withC);
-      const removed = removeOwnerFromChain(withC, keyC, witnessWithC);
+      const [removed, remValid] = removeOwnerFromCommitment(withC, keyC, witnessWithC);
+      remValid.assertTrue();
       removed.assertEquals(original);
     });
   });

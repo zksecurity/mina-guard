@@ -1,8 +1,9 @@
 import { Option, Poseidon, Field, Provable, PublicKey, Bool } from "o1js";
-import { INITIAL_OWNER_CHAIN } from "./constants";
+import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from "./constants";
 
 class PublicKeyOption extends Option(PublicKey) { }
 type OwnerWitness = PublicKeyOption[];
+const OwnerWitness = Provable.Array(PublicKeyOption, MAX_OWNERS);
 
 function computeOwnerChain(owners: PublicKey[]): Field {
   let currentChain = INITIAL_OWNER_CHAIN;
@@ -48,21 +49,22 @@ function assertOwnerMembership(
  * start of the chain). When it is `some`, the new owner is inserted after
  * the specified key (which must exist in the list).
  *
- * IMPORTANT: Caller needs to check size, insertion after last element will
+ * IMPORTANT: Caller needs to check `valid` return value.
+ * Caller needs to check size, insertion after last element will
  * break the commitment in the state irreversibly.
  *
  * @param ownerCommitment
  * @param ownerToAdd
  * @param ownersWitness Array of Option<PublicKey>, order needs to match commitment
  * @param insertAfter Option<PublicKey> – none to prepend, some(pk) to insert after pk
- * @returns The chain after the insertion
+ * @returns The chain after the insertion, and a flag indicating if operation was succesfull
  */
-function addOwnerToChain(
+function addOwnerToCommitment(
   ownerCommitment: Field,
   ownerToAdd: PublicKey,
   ownersWitness: OwnerWitness,
   insertAfter: PublicKeyOption
-): Field {
+): [Field, Bool] {
 
   let currentChain = INITIAL_OWNER_CHAIN;
   let newChain = INITIAL_OWNER_CHAIN;
@@ -94,11 +96,10 @@ function addOwnerToChain(
     foundOwner = Provable.if(pk.equals(ownerToAdd).and(isSome), Bool(true), foundOwner);
   });
 
-  foundOwner.assertFalse('Owner already exists');
-  foundPosition.assertTrue('Could not locate position');
-  currentChain.assertEquals(ownerCommitment, 'Owner list mismatch');
 
-  return newChain;
+  // return the new chain and a bool to indicate if operation was valid
+  // this allows for more flexible handling by the caller
+  return [newChain, foundOwner.not().and(foundPosition).and(currentChain.equals(ownerCommitment))];
 
 }
 
@@ -106,19 +107,20 @@ function addOwnerToChain(
  * Circuit to remove an owner. Checks that:
  * - Owner to remove exists in the owners list
  * 
- * IMPORTANT: Caller needs the owner to be removed is not the only one
+ * IMPORTANT: Caller needs to check `valid` return value.
+ *  Caller needs the owner to be removed is not the only one
  * remaining.
  * 
  * @param ownerCommitment
  * @param ownerToRemove
  * @param ownersWitness Array of Option<PublicKey>, order needs to match commitment
- * @returns The chain after the removal
+ * @returns The chain after the removal, and a flag indicating if operation was succesfull
  */
-function removeOwnerFromChain(
+function removeOwnerFromCommitment(
   ownerCommitment: Field,
   ownerToRemove: PublicKey,
   ownersWitness: OwnerWitness,
-): Field {
+): [Field, Bool] {
 
   let currentChain = INITIAL_OWNER_CHAIN;
   let newChain = INITIAL_OWNER_CHAIN;
@@ -139,10 +141,12 @@ function removeOwnerFromChain(
     foundOwner = Provable.if(isPosition, Bool(true), foundOwner);
   });
 
-  foundOwner.assertTrue('Owner does not exist');
-  currentChain.assertEquals(ownerCommitment, 'Owner list mismatch');
-
-  return newChain;
+  // return the new chain and a bool to indicate if operation was valid
+  // this allows for more flexible handling by the caller
+  return [newChain, foundOwner.and(currentChain.equals(ownerCommitment))];
 }
 
-export { PublicKeyOption, computeOwnerChain, assertOwnerMembership, addOwnerToChain, removeOwnerFromChain };
+export {
+  OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership,
+  addOwnerToCommitment, removeOwnerFromCommitment
+};
