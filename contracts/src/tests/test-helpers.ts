@@ -15,6 +15,7 @@ import {
 import { TxType, PROPOSED_MARKER, MAX_OWNERS } from '../constants.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
+import { SignatureInputs, SignatureInput, SignatureOption } from '../batch-verify.js';
 
 import { ownerKey } from '../utils.js';
 
@@ -30,6 +31,46 @@ export interface TestContext {
   approvalStore: ApprovalStore;
   nullifierStore: VoteNullifierStore;
   networkId: Field;
+}
+
+// -- Batch Signature Helper --------------------------------------------------
+
+export function makeSignatureInputs(
+  ctx: TestContext,
+  proposalHash: Field,
+  signerIndices: number[]
+): SignatureInputs {
+  const inputs: SignatureInputs = [];
+  const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
+  for (let i = 0; i < ctx.owners.length; i++) {
+    const owner = ctx.owners[i];
+    const shouldSign = signerIndices.includes(i);
+    const sig = shouldSign
+      ? Signature.create(owner.key, [proposalHash])
+      : dummySig;
+    inputs.push(
+      new SignatureInput({
+        value: {
+          signature: new SignatureOption({ value: sig, isSome: Bool(shouldSign) }),
+          signer: owner.pub,
+        },
+        isSome: Bool(true),
+      })
+    );
+  }
+  const dummyPk = PublicKey.fromFields([Field(1), Field(1)]);
+  while (inputs.length < MAX_OWNERS) {
+    inputs.push(
+      new SignatureInput({
+        value: {
+          signature: new SignatureOption({ value: dummySig, isSome: Bool(false) }),
+          signer: dummyPk,
+        },
+        isSome: Bool(false),
+      })
+    );
+  }
+  return inputs;
 }
 
 // -- Owner Witness Helper ----------------------------------------------------
@@ -53,12 +94,18 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
   const deployerKey = Local.testAccounts[0].key;
   const deployerAccount = Local.testAccounts[0];
 
+  const availableAccounts = Local.testAccounts.length - 1; // reserve index 0 for deployer
   const owners: { key: PrivateKey; pub: PublicKey }[] = [];
   for (let i = 0; i < numOwners; i++) {
-    owners.push({
-      key: Local.testAccounts[i + 1].key,
-      pub: Local.testAccounts[i + 1],
-    });
+    if (i < availableAccounts) {
+      owners.push({
+        key: Local.testAccounts[i + 1].key,
+        pub: Local.testAccounts[i + 1],
+      });
+    } else {
+      const key = PrivateKey.random();
+      owners.push({ key, pub: key.toPublicKey() });
+    }
   }
 
   const zkAppKey = PrivateKey.random();

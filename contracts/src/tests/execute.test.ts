@@ -1,6 +1,5 @@
-import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64, Bool } from 'o1js';
+import { Field, Mina, PrivateKey, Signature, UInt64, Bool } from 'o1js';
 import { EXECUTED_MARKER } from '../constants.js';
-import { ownerKey } from '../utils.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -9,14 +8,13 @@ import {
   createTransferProposal,
   fundAccount,
   getBalance,
-  getOwnersCommitment,
   makeOwnerWitness,
+  makeSignatureInputs,
   type TestContext,
   createAddOwnerProposal,
 } from './test-helpers.js';
-import { SignatureInputs, SignatureInput, SignatureOption } from '../batch-verify.js';
-import { PublicKeyOption, computeOwnerChain } from '../list-commitment.js';
-import { MAX_OWNERS } from '../constants.js';
+import { PublicKeyOption } from '../list-commitment.js';
+import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 describe('MinaGuard - Execute', () => {
@@ -250,59 +248,6 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     await deployAndSetup(ctx, 2);
   });
 
-  /**
-   * Build SignatureInputs: each owner slot is present (for ownerChain),
-   * signerIndices say which ones actually sign.
-   *
-   * Non-signing owners get an INVALID signature (signed with a random key)
-   * so the test actually exercises the approval counter logic — if
-   * `Provable.if(didSign, ...)` were broken, these invalid sigs would
-   * cause the count to be wrong.
-   *
-   * Empty slots (beyond the owner list) need a valid-but-ignored signature
-   * to avoid `Field.inv: zero` in non-proof mode.
-   */
-  function makeSignatureInputs(
-    ctx: TestContext,
-    proposalHash: Field,
-    signerIndices: number[]
-  ): SignatureInputs {
-    const inputs: SignatureInputs = [];
-    const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
-    for (let i = 0; i < ctx.owners.length; i++) {
-      const owner = ctx.owners[i];
-      const shouldSign = signerIndices.includes(i);
-      // Signing owners get a real signature; non-signing owners get a
-      // non-zero dummy (just needs to not crash Field.inv during witness gen).
-      const sig = shouldSign
-        ? Signature.create(owner.key, [proposalHash])
-        : dummySig;
-      inputs.push(
-        new SignatureInput({
-          value: {
-            signature: new SignatureOption({ value: sig, isSome: Bool(shouldSign) }),
-            signer: owner.pub,
-          },
-          isSome: Bool(true),
-        })
-      );
-    }
-    // Empty slots: use same non-zero dummy sig and a dummy public key.
-    const dummyPk = PublicKey.fromFields([Field(1), Field(1)]);
-    while (inputs.length < MAX_OWNERS) {
-      inputs.push(
-        new SignatureInput({
-          value: {
-            signature: new SignatureOption({ value: dummySig, isSome: Bool(false) }),
-            signer: dummyPk,
-          },
-          isSome: Bool(false),
-        })
-      );
-    }
-    return inputs;
-  }
-
   it('should execute transfer with valid batch signatures', async () => {
     const recipientKey = PrivateKey.random();
     const recipient = recipientKey.toPublicKey();
@@ -404,6 +349,53 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     await txn.sign([ctx.deployerKey]).send();
 
     expect(ctx.zkApp.proposalCounter.get()).toEqual(counterBefore.add(1));
+  });
+
+  it('should reject with invalid signature in batch', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = proposal.hash();
+
+    const sigs = makeSignatureInputs(ctx, proposalHash, [0]); // only owner 0 signs validly
+    const wrongKey = PrivateKey.random();
+    const wrongSig = Signature.create(wrongKey, [proposalHash]);
+    sigs[1] = new SignatureInput({
+      value: {
+        signature: new SignatureOption({ value: wrongSig, isSome: Bool(true) }),
+        signer: ctx.owners[1].pub,
+      },
+      isSome: Bool(true),
+    });
+
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, sigs);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Insufficient approvals');
+  });
+
+  it('should reject with wrong configNonce', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const proposal = createTransferProposal(
+      recipient, UInt64.from(1_000_000_000), Field(0), Field(99), ctx.zkAppAddress
+    );
+    const proposalHash = proposal.hash();
+
+    const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
+
+    await expect(async () => {
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, sigs);
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Config nonce mismatch - governance changed since proposal');
   });
 
   it('should reject wrong txType', async () => {

@@ -254,8 +254,8 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness
   ) {
     // --- propose logic ---
-    const ownersRoot = this.getInitializedOwnersCommitment();
-    this.assertOwnerMembership(proposer, ownerWitness, ownersRoot);
+    const ownersCommitment = this.getInitializedOwnersCommitment();
+    this.assertOwnerMembership(proposer, ownerWitness, ownersCommitment);
 
     const currentCounter = this.proposalCounter.getAndRequireEquals();
     this.proposalCounter.set(currentCounter.add(1));
@@ -313,8 +313,8 @@ export class MinaGuard extends SmartContract {
     currentApprovalCount: Field,
     voteNullifierWitness: MerkleMapWitness
   ) {
-    const ownersRoot = this.getInitializedOwnersCommitment();
-    this.assertOwnerMembership(approver, ownerWitness, ownersRoot);
+    const ownersCommitment = this.getInitializedOwnersCommitment();
+    this.assertOwnerMembership(approver, ownerWitness, ownersCommitment);
     this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
 
     const proposalHash = proposal.hash();
