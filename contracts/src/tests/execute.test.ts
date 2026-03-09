@@ -1,4 +1,4 @@
-import { Field, Mina, PrivateKey, Signature, UInt64, Bool } from 'o1js';
+import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64, Bool } from 'o1js';
 import { EXECUTED_MARKER } from '../constants.js';
 import { ownerKey } from '../utils.js';
 import {
@@ -268,15 +268,15 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     signerIndices: number[]
   ): SignatureInputs {
     const inputs: SignatureInputs = [];
-    const junkKey = PrivateKey.random();
+    const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
     for (let i = 0; i < ctx.owners.length; i++) {
       const owner = ctx.owners[i];
       const shouldSign = signerIndices.includes(i);
-      // Signing owners get a real signature; non-signing owners get an
-      // invalid one (signed with a random key, will fail verify).
+      // Signing owners get a real signature; non-signing owners get a
+      // non-zero dummy (just needs to not crash Field.inv during witness gen).
       const sig = shouldSign
         ? Signature.create(owner.key, [proposalHash])
-        : Signature.create(junkKey, [proposalHash]);
+        : dummySig;
       inputs.push(
         new SignatureInput({
           value: {
@@ -287,15 +287,14 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
         })
       );
     }
-    // Empty slots still need a valid signature to avoid Field.inv: zero
-    // in non-proof mode. Use the first owner's key.
-    const dummySig = Signature.create(ctx.owners[0].key, [proposalHash]);
+    // Empty slots: use same non-zero dummy sig and a dummy public key.
+    const dummyPk = PublicKey.fromFields([Field(1), Field(1)]);
     while (inputs.length < MAX_OWNERS) {
       inputs.push(
         new SignatureInput({
           value: {
             signature: new SignatureOption({ value: dummySig, isSome: Bool(false) }),
-            signer: ctx.owners[0].pub,
+            signer: dummyPk,
           },
           isSome: Bool(false),
         })

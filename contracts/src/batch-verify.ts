@@ -26,11 +26,14 @@ type BatchVerifyResult = { approvalCount: Field; signerChain: Field, ownerChain:
  * Circuit to verify a batch of signatures, against a list of signers with a known Merkle list hash.
  * The pair could be:
  * - None: Empty owner slot
- * - (None, PublicKey): Owner exists but has not provided signature
+ * - (None, PublicKey): Owner exists but has not provided signature.
  * - (Signature, PublicKey): Owner exists and has provided signature
  * 
  * IMPORTANT: Caller must check the returned ownerChain against the current commitment, and
  * must handle approvalCount check.
+ * 
+ * NOTE: In practice, None values should have a dummy non-zero value (isSome still set to false),
+ * to avoid assertion errors during proof generation. See relevant test for details.
  */
 function batchVerify(
   signatures: SignatureInputs,
