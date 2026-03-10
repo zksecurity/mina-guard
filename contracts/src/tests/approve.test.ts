@@ -1,11 +1,12 @@
 import { Field, Mina, PrivateKey, Signature, UInt64, AccountUpdate } from 'o1js';
-import { EXECUTED_MARKER } from '../MinaGuard.js';
+import { EXECUTED_MARKER } from '../constants.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
   proposeTransaction,
   approveTransaction,
   createTransferProposal,
+  makeOwnerWitness,
   type TestContext,
 } from './test-helpers.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -70,7 +71,7 @@ describe('MinaGuard - Approve', () => {
 
     // Sign with wrong key (owner3's key but claiming to be owner2)
     const wrongSig = Signature.create(ctx.owners[2].key, [proposalHash]);
-    const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[1].pub);
+    const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, ctx.owners[1].pub);
 
@@ -100,7 +101,7 @@ describe('MinaGuard - Approve', () => {
 
     const nonOwner = PrivateKey.random();
     const sig = Signature.create(nonOwner, [proposalHash]);
-    const fakeWitness = ctx.ownerStore.getWitness(nonOwner.toPublicKey());
+    const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, nonOwner.toPublicKey());
 
@@ -110,7 +111,7 @@ describe('MinaGuard - Approve', () => {
           proposal,
           sig,
           nonOwner.toPublicKey(),
-          fakeWitness,
+          ownerWitness,
           approvalWitness,
           Field(2),
           nullifierWitness
@@ -118,7 +119,7 @@ describe('MinaGuard - Approve', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
-    }).toThrow('Not an owner');
+    }).toThrow('Claimed owner not a member of owners.');
   });
 
   it('should reject approval on executed proposal', async () => {
