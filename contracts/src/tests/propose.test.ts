@@ -68,7 +68,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
-    }).toThrow('Owner membership check failed');
+    }).toThrow('Claimed owner not a member of owners.');
   });
 
   it('should reject proposal with wrong configNonce', async () => {

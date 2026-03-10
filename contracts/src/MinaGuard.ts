@@ -167,7 +167,7 @@ export class MinaGuard extends SmartContract {
     ownerWitness: OwnerWitness,
     ownersCommitment: Field
   ): void {
-    assertOwnerMembership(ownersCommitment, owner, ownerWitness, Bool(true));
+    assertOwnerMembership(ownersCommitment, owner, ownerWitness);
   }
 
   private assertProposalConfigNetworkAndGuard(
@@ -222,6 +222,17 @@ export class MinaGuard extends SmartContract {
   }
 
   // TODO: verify if we need an additional check here, to avoid front-running
+
+  /** Method to initialize the contract. Cannot call twice.
+   * 
+   * IMPORTANT: Assuming an untrusted deployer, a client must compute the expected commitment
+   * themselves and cross-check with the one on chain. numOwners as well, for sync.
+   * 
+   * @param ownersCommitment 
+   * @param threshold 
+   * @param numOwners 
+   * @param networkId 
+   */
   @method async setup(
     ownersCommitment: Field,
     threshold: Field,

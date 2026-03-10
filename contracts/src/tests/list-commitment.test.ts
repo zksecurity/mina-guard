@@ -60,17 +60,7 @@ describe('assertOwnerMembership', () => {
     const witness = makeWitness(owners);
 
     await Provable.runAndCheck(() => {
-      assertOwnerMembership(commitment, keyA, witness, Bool(true));
-    });
-  });
-
-  it('passes when shouldBeOwner=false and key is NOT in list', async () => {
-    const owners = [keyA, keyB];
-    const commitment = computeOwnerChain(owners);
-    const witness = makeWitness(owners);
-
-    await Provable.runAndCheck(() => {
-      assertOwnerMembership(commitment, keyC, witness, Bool(false));
+      assertOwnerMembership(commitment, keyA, witness);
     });
   });
 
@@ -80,30 +70,18 @@ describe('assertOwnerMembership', () => {
     const witness = makeWitness(owners);
 
     await Provable.runAndCheck(() => {
-      assertOwnerMembership(commitment, keyA, witness, Bool(true));
+      assertOwnerMembership(commitment, keyA, witness);
     });
   });
 
-  it('fails when shouldBeOwner=true but key is NOT in list', async () => {
+  it('fails when key is NOT in list', async () => {
     const owners = [keyA, keyB];
     const commitment = computeOwnerChain(owners);
     const witness = makeWitness(owners);
 
     await expect(
       Provable.runAndCheck(() => {
-        assertOwnerMembership(commitment, keyC, witness, Bool(true));
-      })
-    ).rejects.toThrow();
-  });
-
-  it('fails when shouldBeOwner=false but key IS in list', async () => {
-    const owners = [keyA, keyB];
-    const commitment = computeOwnerChain(owners);
-    const witness = makeWitness(owners);
-
-    await expect(
-      Provable.runAndCheck(() => {
-        assertOwnerMembership(commitment, keyA, witness, Bool(false));
+        assertOwnerMembership(commitment, keyC, witness);
       })
     ).rejects.toThrow();
   });
@@ -115,7 +93,7 @@ describe('assertOwnerMembership', () => {
 
     await expect(
       Provable.runAndCheck(() => {
-        assertOwnerMembership(wrongCommitment, keyA, witness, Bool(true));
+        assertOwnerMembership(wrongCommitment, keyA, witness);
       })
     ).rejects.toThrow();
   });
@@ -126,7 +104,7 @@ describe('assertOwnerMembership', () => {
 
     await expect(
       Provable.runAndCheck(() => {
-        assertOwnerMembership(commitment, keyA, witness, Bool(true));
+        assertOwnerMembership(commitment, keyA, witness);
       })
     ).rejects.toThrow();
   });

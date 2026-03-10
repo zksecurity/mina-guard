@@ -16,16 +16,14 @@ function computeOwnerChain(owners: PublicKey[]): Field {
 /**
  * Circuit to check membership of a public key in the owner list.
  * 
- * @param ownerCommitment 
- * @param claimedOwner 
- * @param ownersWitness 
- * @param shouldBeOwner 
+ * @param ownerCommitment
+ * @param claimedOwner
+ * @param ownersWitness
  */
 function assertOwnerMembership(
   ownerCommitment: Field,
   claimedOwner: PublicKey,
   ownersWitness: OwnerWitness,
-  shouldBeOwner: Bool
 ) {
   let found = Bool(false);
   let currentChain = INITIAL_OWNER_CHAIN;
@@ -36,7 +34,7 @@ function assertOwnerMembership(
     found = Provable.if(claimedOwner.equals(pk).and(isSome), Bool(true), found);
 
   });
-  found.assertEquals(shouldBeOwner, 'Owner membership check failed');
+  found.assertTrue('Claimed owner not a member of owners.');
   currentChain.assertEquals(ownerCommitment, 'Owner list mismatch');
 }
 

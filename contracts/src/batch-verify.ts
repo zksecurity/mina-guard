@@ -62,9 +62,9 @@ function batchVerify(
     ownerChain = Provable.if(isSome, ownerChainTemp, ownerChain);
 
     // hash public key in the signer chain if didSign, to have an auditable trail of who signed
-    // NOTE: owners who provided an INVALID signature are also included in the signerChain audit trail
+    // NOTE: only owners who provided a valid sig are included
     let signerChainTemp = Poseidon.hash([signerChain, pk.x, pk.isOdd.toField()]);
-    signerChain = Provable.if(didSign, signerChainTemp, signerChain);
+    signerChain = Provable.if(didSign.and(ok), signerChainTemp, signerChain);
   });
   return { approvalCount, signerChain, ownerChain };
 }

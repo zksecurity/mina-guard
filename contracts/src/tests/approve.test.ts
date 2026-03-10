@@ -119,7 +119,7 @@ describe('MinaGuard - Approve', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
-    }).toThrow('Owner membership check failed');
+    }).toThrow('Claimed owner not a member of owners.');
   });
 
   it('should reject approval on executed proposal', async () => {
