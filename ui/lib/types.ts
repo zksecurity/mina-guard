@@ -50,8 +50,6 @@ export interface ContractSummary {
   numOwners: number | null;
   proposalNonce: number | null;
   configNonce: number | null;
-  isValid: boolean;
-  invalidReason: string | null;
   discoveredAt: string;
   lastSyncedAt: string | null;
 }

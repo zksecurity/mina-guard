@@ -15,6 +15,7 @@ export default function TransactionsPage() {
     multisig,
     owners,
     proposals,
+    indexerStatus,
     connect,
     disconnect,
     isLoading,
@@ -37,7 +38,7 @@ export default function TransactionsPage() {
   return (
     <div>
       <Header
-        title="Transactions"
+        title="Proposals"
         subtitle="Indexed MinaGuard proposals"
         walletAddress={wallet.address}
         connected={wallet.connected}
@@ -72,12 +73,21 @@ export default function TransactionsPage() {
                 ))}
               </div>
 
-              <Link
-                href="/transactions/new"
-                className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110 transition-all"
-              >
-                New Proposal
-              </Link>
+              {multisig.ownersRoot != null ? (
+                <Link
+                  href="/transactions/new"
+                  className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110 transition-all"
+                >
+                  New Proposal
+                </Link>
+              ) : (
+                <span
+                  title="Run Setup first to initialize the contract"
+                  className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm opacity-40 cursor-not-allowed"
+                >
+                  New Proposal
+                </span>
+              )}
             </div>
 
             <TransactionList

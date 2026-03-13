@@ -85,6 +85,12 @@ export async function fetchApprovals(
   }));
 }
 
+/** Fetches MINA token balance (in nanomina) for a wallet address. */
+export async function fetchBalance(address: string): Promise<string | null> {
+  const data = await getJson<{ balance: string }>(`/api/account/${address}/balance`);
+  return data?.balance ?? null;
+}
+
 /** Generic JSON fetch helper with null-on-error semantics for resilient polling. */
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -106,8 +112,6 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
     numOwners: asNullableNumber(input.numOwners),
     proposalNonce: asNullableNumber(input.proposalNonce),
     configNonce: asNullableNumber(input.configNonce),
-    isValid: asBoolean(input.isValid),
-    invalidReason: asNullableString(input.invalidReason),
     discoveredAt: asString(input.discoveredAt) ?? new Date(0).toISOString(),
     lastSyncedAt: asNullableString(input.lastSyncedAt),
   };

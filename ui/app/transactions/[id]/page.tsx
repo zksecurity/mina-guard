@@ -26,15 +26,14 @@ export default function TransactionDetailPage() {
     disconnect,
     isLoading,
     auroInstalled,
-    refreshMultisig,
+    startOperation,
+    isOperating,
   } = useAppContext();
 
   const proposalHash = params.id as string;
   const proposal = proposals.find((item) => item.proposalHash === proposalHash);
 
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [isActing, setIsActing] = useState(false);
 
   useEffect(() => {
     if (!multisig || !proposalHash) return;
@@ -57,68 +56,46 @@ export default function TransactionDetailPage() {
   const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved;
   const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold;
 
-  /** Submits approve transaction for currently viewed proposal hash. */
-  const handleApprove = async () => {
+  /** Submits approve transaction, navigates to Dashboard for progress/result. */
+  const handleApprove = () => {
     if (!proposal || !multisig || !wallet.address) return;
 
-    setIsActing(true);
-    setActionError(null);
-    try {
-      const txHash = await createApproveTx({
-        contractAddress: multisig.address,
-        approverAddress: wallet.address,
-        proposal,
-      });
-      if (!txHash) {
-        setActionError('Approve transaction failed.');
-      }
-      await refreshMultisig();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Approve failed');
-    } finally {
-      setIsActing(false);
-    }
+    const captured = { contractAddress: multisig.address, approverAddress: wallet.address, proposal };
+    startOperation('Building approve transaction...', (onProgress) =>
+      createApproveTx({
+        contractAddress: captured.contractAddress,
+        approverAddress: captured.approverAddress,
+        proposal: captured.proposal,
+      }, onProgress)
+    );
+    router.push('/');
   };
 
-  /** Submits execute transaction for selected proposal type and optional extra params. */
-  const handleExecute = async () => {
+  /** Submits execute transaction, navigates to Dashboard for progress/result. */
+  const handleExecute = () => {
     if (!proposal || !multisig || !wallet.address) return;
 
-    setIsActing(true);
-    setActionError(null);
+    let ownerAddress: string | undefined;
+    let delegateAddress: string | undefined;
 
-    try {
-      let ownerAddress: string | undefined;
-      let delegateAddress: string | undefined;
-
-      if ((proposal.txType === 'addOwner' || proposal.txType === 'removeOwner') && !ownerAddress) {
-        ownerAddress = window.prompt('Owner address to execute add/remove owner proposal:') ?? undefined;
-      }
-
-      if (proposal.txType === 'setDelegate' && proposal.data !== '0') {
-        delegateAddress = window.prompt('Delegate address for executeDelegate:') ?? undefined;
-      }
-
-      const txHash = await createExecuteTx({
-        contractAddress: multisig.address,
-        executorAddress: wallet.address,
-        proposal,
-        overrides: {
-          ownerAddress,
-          delegateAddress,
-        },
-      });
-
-      if (!txHash) {
-        setActionError('Execute transaction failed.');
-      }
-
-      await refreshMultisig();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Execute failed');
-    } finally {
-      setIsActing(false);
+    if (proposal.txType === 'addOwner' || proposal.txType === 'removeOwner') {
+      ownerAddress = window.prompt('Owner address to execute add/remove owner proposal:') ?? undefined;
     }
+
+    if (proposal.txType === 'setDelegate' && proposal.data !== '0') {
+      delegateAddress = window.prompt('Delegate address for executeDelegate:') ?? undefined;
+    }
+
+    const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal, overrides: { ownerAddress, delegateAddress } };
+    startOperation('Building execute transaction...', (onProgress) =>
+      createExecuteTx({
+        contractAddress: captured.contractAddress,
+        executorAddress: captured.executorAddress,
+        proposal: captured.proposal,
+        overrides: captured.overrides,
+      }, onProgress)
+    );
+    router.push('/');
   };
 
   if (!wallet.connected || !multisig) {
@@ -211,6 +188,9 @@ export default function TransactionDetailPage() {
                 <DetailRow label="Amount" value={`${formatMina(proposal.amount)} MINA`} />
               </>
             )}
+            {proposal.txType === 'changeThreshold' && (
+              <DetailRow label="New Threshold" value={proposal.data ?? '-'} />
+            )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
             <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
@@ -227,26 +207,24 @@ export default function TransactionDetailPage() {
           />
         </div>
 
-        {actionError && <p className="text-sm text-red-400">{actionError}</p>}
-
         {proposal.status === 'pending' && (
           <div className="flex gap-3">
             {canApprove && (
               <button
                 onClick={handleApprove}
-                disabled={isActing}
-                className="flex-1 bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-60"
+                disabled={isOperating}
+                className="flex-1 bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isActing ? 'Submitting...' : 'Approve Proposal'}
+                {isOperating ? 'Waiting for pending transaction...' : 'Approve Proposal'}
               </button>
             )}
             {canExecute && (
               <button
                 onClick={handleExecute}
-                disabled={isActing}
-                className="flex-1 bg-blue-500 text-white font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-60"
+                disabled={isOperating}
+                className="flex-1 bg-blue-500 text-white font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isActing ? 'Submitting...' : 'Execute Proposal'}
+                {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
               </button>
             )}
           </div>

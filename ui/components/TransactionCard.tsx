@@ -48,7 +48,7 @@ export default function TransactionCard({
                 <p className="text-xs text-safe-text mt-0.5">{formatMina(proposal.amount)} MINA transfer</p>
               )}
               {proposal.txType === 'changeThreshold' && (
-                <p className="text-xs text-safe-text mt-0.5">Threshold change request</p>
+                <p className="text-xs text-safe-text mt-0.5">Change threshold to {proposal.data ?? '?'}</p>
               )}
               {(proposal.txType === 'addOwner' || proposal.txType === 'removeOwner') && (
                 <p className="text-xs text-safe-text mt-0.5">Owner governance request</p>
