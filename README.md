@@ -17,14 +17,29 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 
 ## Development
 
+### First-time setup
+
 ```bash
 bun install
 
-# Run UI
-bun run --filter ui dev
+# Build contracts (required by backend and UI)
+bun run --filter contracts build
 
-# Run backend API/indexer
-bun run --filter backend dev
+# Set up the backend environment
+cp backend/.env.example backend/.env
+
+# Generate Prisma client
+cd backend && bunx prisma generate && cd ..
+```
+
+### Running
+
+```bash
+# Run UI (from ui/ directory)
+cd ui && bun run dev
+
+# Run backend API/indexer (from backend/ directory)
+cd backend && bun run dev
 
 # Run contract tests
 bun run --filter contracts test
