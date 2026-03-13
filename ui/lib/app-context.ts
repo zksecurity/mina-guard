@@ -9,6 +9,12 @@ import {
   WalletState,
 } from '@/lib/types';
 
+/** Banner state displayed at the top of the Dashboard after an operation completes. */
+export interface OperationBanner {
+  type: 'success' | 'error';
+  message: string;
+}
+
 /** Shared app context contract for wallet, contract index data, and refresh actions. */
 export interface AppContextType {
   wallet: WalletState;
@@ -24,6 +30,17 @@ export interface AppContextType {
   auroInstalled: boolean;
   refreshMultisig: () => Promise<void>;
   selectContract: (address: string) => Promise<void>;
+  /** Whether a worker operation is currently running. */
+  isOperating: boolean;
+  /** Spinner label shown while a worker task is in flight. */
+  operationLabel: string;
+  /** Result banner from the last completed operation. */
+  operationBanner: OperationBanner | null;
+  /** Clears the result banner. */
+  clearBanner: () => void;
+  /** Starts a worker operation: shows spinner, runs fn, shows result banner, refreshes state.
+   *  The fn receives an onProgress callback to update the spinner label mid-operation. */
+  startOperation: (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => void;
 }
 
 export const AppContext = createContext<AppContextType>({
@@ -40,6 +57,11 @@ export const AppContext = createContext<AppContextType>({
   auroInstalled: false,
   refreshMultisig: async () => {},
   selectContract: async () => {},
+  isOperating: false,
+  operationLabel: '',
+  operationBanner: null,
+  clearBanner: () => {},
+  startOperation: () => {},
 });
 
 /** Hook wrapper for typed context consumption in client components. */

@@ -1,96 +1,61 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import { useAppContext } from '@/lib/app-context';
-import { deployContract, setupContract } from '@/lib/multisigClient';
+import { deployContract, generateKeypair } from '@/lib/multisigClient';
 
-/** Deploy and setup page for initializing new MinaGuard contracts from browser wallet session. */
+/** Deploy page for initializing new MinaGuard contracts from browser wallet session. */
 export default function DeployPage() {
+  const router = useRouter();
   const {
     wallet,
     connect,
     disconnect,
     isLoading,
     auroInstalled,
-    refreshMultisig,
+    startOperation,
+    isOperating,
   } = useAppContext();
 
-  const [zkAppPrivateKey, setZkAppPrivateKey] = useState('');
-  const [existingAddress, setExistingAddress] = useState('');
-  const [ownersText, setOwnersText] = useState('');
-  const [threshold, setThreshold] = useState('2');
-  const [networkId, setNetworkId] = useState('1');
-  const [txHash, setTxHash] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [keypair, setKeypair] = useState<{ privateKey: string; publicKey: string } | null>(null);
+  const [generating, setGenerating] = useState(false);
 
-  const owners = useMemo(() => {
-    return ownersText
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-  }, [ownersText]);
-
-  /** Deploys a fresh MinaGuard contract using in-memory zkApp private key. */
-  const handleDeploy = async () => {
-    if (!wallet.address || !zkAppPrivateKey) return;
-
-    setIsSubmitting(true);
-    setError(null);
-    setTxHash(null);
-
+  const generate = useCallback(async () => {
+    setGenerating(true);
     try {
-      const hash = await deployContract({
-        feePayerAddress: wallet.address,
-        zkAppPrivateKeyBase58: zkAppPrivateKey,
-      });
-      if (!hash) {
-        setError('Deploy transaction failed.');
-        return;
-      }
-      setTxHash(hash);
-    } catch (deployError) {
-      setError(deployError instanceof Error ? deployError.message : 'Deploy failed');
+      const kp = await generateKeypair();
+      setKeypair(kp);
     } finally {
-      setIsSubmitting(false);
+      setGenerating(false);
     }
-  };
+  }, []);
 
-  /** Runs one-time setup for a deployed contract with owners, threshold, and network id. */
-  const handleSetup = async () => {
-    if (!wallet.address || !existingAddress || owners.length === 0) return;
-
-    setIsSubmitting(true);
-    setError(null);
-    setTxHash(null);
-
-    try {
-      const hash = await setupContract({
-        zkAppAddress: existingAddress,
-        feePayerAddress: wallet.address,
-        owners,
-        threshold: Number(threshold),
-        networkId,
-      });
-      if (!hash) {
-        setError('Setup transaction failed.');
-        return;
-      }
-      setTxHash(hash);
-      await refreshMultisig();
-    } catch (setupError) {
-      setError(setupError instanceof Error ? setupError.message : 'Setup failed');
-    } finally {
-      setIsSubmitting(false);
+  useEffect(() => {
+    if (wallet.connected && !keypair && !generating) {
+      generate();
     }
+  }, [wallet.connected, keypair, generating, generate]);
+
+  const handleDeploy = () => {
+    if (!wallet.address || !keypair) return;
+
+    const captured = { feePayerAddress: wallet.address, zkAppPrivateKeyBase58: keypair.privateKey };
+    startOperation('Building deploy transaction...', (onProgress) =>
+      deployContract({
+        feePayerAddress: captured.feePayerAddress,
+        zkAppPrivateKeyBase58: captured.zkAppPrivateKeyBase58,
+      }, onProgress)
+    );
+    router.push('/');
   };
 
   return (
     <div>
       <Header
-        title="Deploy / Setup"
-        subtitle="Initialize MinaGuard contracts and bootstrap owner sets"
+        title="Deploy"
+        subtitle="Deploy new MinaGuard contracts"
         walletAddress={wallet.address}
         connected={wallet.connected}
         isLoading={isLoading}
@@ -102,78 +67,45 @@ export default function DeployPage() {
       <div className="p-6 max-w-3xl space-y-6">
         {!wallet.connected ? (
           <div className="text-center py-20">
-            <p className="text-safe-text">Connect wallet to deploy or setup MinaGuard.</p>
+            <p className="text-safe-text">Connect wallet to deploy MinaGuard.</p>
           </div>
         ) : (
-          <>
-            <section className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-safe-text">Deploy Contract</h3>
-              <p className="text-xs text-safe-text">
-                zkApp private key is used only in this browser session and never sent to backend.
-              </p>
-              <input
-                type="password"
-                value={zkAppPrivateKey}
-                onChange={(e) => setZkAppPrivateKey(e.target.value.trim())}
-                placeholder="EKF... (zkApp private key)"
-                className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono"
-              />
-              <button
-                disabled={isSubmitting || !zkAppPrivateKey}
-                onClick={handleDeploy}
-                className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm disabled:opacity-60"
-              >
-                {isSubmitting ? 'Submitting...' : 'Deploy MinaGuard'}
-              </button>
-            </section>
+          <section className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-safe-text">Deploy Contract</h3>
+            <p className="text-xs text-safe-text">
+              A random keypair will be generated for the contract address. Your connected wallet pays the deployment fee.
+            </p>
 
-            <section className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-safe-text">Setup Contract</h3>
-              <input
-                type="text"
-                value={existingAddress}
-                onChange={(e) => setExistingAddress(e.target.value.trim())}
-                placeholder="Contract address (B62...)"
-                className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono"
-              />
-              <textarea
-                value={ownersText}
-                onChange={(e) => setOwnersText(e.target.value)}
-                placeholder="One owner address per line"
-                rows={6}
-                className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono"
-              />
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={threshold}
-                  onChange={(e) => setThreshold(e.target.value)}
-                  placeholder="Threshold"
-                  className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm"
-                />
-                <input
-                  type="text"
-                  value={networkId}
-                  onChange={(e) => setNetworkId(e.target.value.trim())}
-                  placeholder="Network ID"
-                  className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm"
-                />
+            {generating ? (
+              <div className="flex items-center gap-2 py-3">
+                <span className="animate-spin w-4 h-4 border-2 border-safe-green border-t-transparent rounded-full" />
+                <span className="text-sm text-safe-text">Generating keypair...</span>
               </div>
+            ) : keypair ? (
+              <div className="space-y-2">
+                <div>
+                  <p className="text-xs text-safe-text mb-1">Contract Address</p>
+                  <p className="text-sm font-mono break-all bg-safe-dark border border-safe-border rounded-lg px-3 py-2">
+                    {keypair.publicKey}
+                  </p>
+                </div>
+                <button
+                  onClick={generate}
+                  className="text-xs text-safe-green hover:underline"
+                >
+                  Regenerate
+                </button>
+              </div>
+            ) : null}
 
-              <button
-                disabled={isSubmitting || !existingAddress || owners.length === 0}
-                onClick={handleSetup}
-                className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm disabled:opacity-60"
-              >
-                {isSubmitting ? 'Submitting...' : 'Run Setup'}
-              </button>
-            </section>
-
-            {txHash && <p className="text-sm text-safe-green">Submitted tx hash: {txHash}</p>}
-            {error && <p className="text-sm text-red-400">{error}</p>}
-          </>
+            <button
+              disabled={!keypair || isOperating}
+              onClick={handleDeploy}
+              className="bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm disabled:opacity-60"
+            >
+              Deploy MinaGuard
+            </button>
+          </section>
         )}
       </div>
     </div>
