@@ -20,7 +20,7 @@ import {
   ownerKey,
   EXECUTED_MARKER,
   PROPOSED_MARKER,
-  MAX_SETUP_OWNERS,
+  MAX_OWNERS,
   SetupOwnersInput,
   OwnerStore,
   VoteNullifierStore,
@@ -398,7 +398,7 @@ const workerApi = {
     for (const owner of ownerKeys) ownerStore.add(owner);
 
     const paddedOwners = [...ownerKeys];
-    while (paddedOwners.length < MAX_SETUP_OWNERS) {
+    while (paddedOwners.length < MAX_OWNERS) {
       paddedOwners.push(PublicKey.empty());
     }
 
@@ -413,7 +413,7 @@ const workerApi = {
         Field(ownerKeys.length),
         Field(params.networkId),
         new SetupOwnersInput({
-          owners: paddedOwners.slice(0, MAX_SETUP_OWNERS),
+          owners: paddedOwners.slice(0, MAX_OWNERS),
         })
       );
     });
