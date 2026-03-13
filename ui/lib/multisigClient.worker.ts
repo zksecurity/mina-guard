@@ -57,7 +57,7 @@ interface ContractState {
   ownersCommitment: string;
   threshold: number;
   numOwners: number;
-  proposalNonce: number;
+  proposalCounter: number;
   voteNullifierRoot: string;
   approvalRoot: string;
   configNonce: number;
@@ -106,7 +106,7 @@ async function fetchContractState(
       ownersCommitment: zkApp.ownersCommitment.get().toString(),
       threshold: Number(zkApp.threshold.get().toString()),
       numOwners: Number(zkApp.numOwners.get().toString()),
-      proposalNonce: Number(zkApp.proposalNonce.get().toString()),
+      proposalCounter: Number(zkApp.proposalCounter.get().toString()),
       voteNullifierRoot: zkApp.voteNullifierRoot.get().toString(),
       approvalRoot: zkApp.approvalRoot.get().toString(),
       configNonce: Number(zkApp.configNonce.get().toString()),
@@ -289,7 +289,7 @@ async function buildProposalAndStores(params: {
     tokenId: Field(0),
     txType,
     data,
-    nonce: Field(params.contractState.proposalNonce),
+    uid: Field(params.contractState.proposalCounter),
     configNonce: Field(params.contractState.configNonce),
     expiryBlock: Field(params.input.expiryBlock ?? 0),
     networkId: Field(params.contractState.networkId),
@@ -315,7 +315,7 @@ async function buildStoresForExistingProposal(
     tokenId: Field(proposal.tokenId ?? '0'),
     txType,
     data: Field(proposal.data ?? '0'),
-    nonce: Field(proposal.nonce ?? '0'),
+    uid: Field(proposal.uid ?? '0'),
     configNonce: Field(proposal.configNonce ?? contractState.configNonce),
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
     networkId: Field(proposal.networkId ?? contractState.networkId),

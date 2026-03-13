@@ -15,7 +15,7 @@ model Contract {
   threshold      Int?
   numOwners      Int?
   configNonce    Int?
-  proposalNonce  Int?
+  proposalCounter Int?
   discoveredAt   DateTime  @default(now())
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())
@@ -50,7 +50,7 @@ model Proposal {
   tokenId         String?
   txType          String?
   data            String?
-  nonce           String?
+  uid             String?
   configNonce     String?
   expiryBlock     String?
   networkId       String?

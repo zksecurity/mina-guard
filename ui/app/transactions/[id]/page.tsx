@@ -180,7 +180,7 @@ export default function TransactionDetailPage() {
           <div className="space-y-3">
             <DetailRow label="Type" value={txLabel} />
             <DetailRow label="Proposal Hash" value={truncateAddress(proposal.proposalHash, 12)} mono />
-            <DetailRow label="Nonce" value={proposal.nonce ?? '-'} mono />
+            <DetailRow label="UID" value={proposal.uid ?? '-'} mono />
             <DetailRow label="Proposed by" value={proposal.proposer ? truncateAddress(proposal.proposer, 10) : '-'} mono />
             {proposal.txType === 'transfer' && (
               <>

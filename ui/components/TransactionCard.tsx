@@ -35,7 +35,7 @@ export default function TransactionCard({
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-lg bg-safe-gray border border-safe-border flex items-center justify-center text-safe-text">
-              <span className="text-xs font-mono">#{proposal.nonce ?? '?'}</span>
+              <span className="text-xs font-mono">#{proposal.uid ?? '?'}</span>
             </div>
             <div>
               <div className="flex items-center gap-2">

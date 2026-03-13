@@ -187,7 +187,7 @@ Tracked MinaGuard contract metadata:
 
 - identity: `id`, unique `address`
 - setup/config: `networkId`, `ownersCommitment`, `threshold`, `numOwners`
-- state: `configNonce`, `proposalNonce`, `isValid`, `invalidReason`
+- state: `configNonce`, `proposalCounter`, `isValid`, `invalidReason`
 - sync timestamps: `discoveredAt`, `lastSyncedAt`
 
 Relations: `owners`, `proposals`, `events`.

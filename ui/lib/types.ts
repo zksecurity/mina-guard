@@ -20,7 +20,7 @@ export interface Proposal {
   tokenId: string | null;
   txType: TxType | null;
   data: string | null;
-  nonce: string | null;
+  uid: string | null;
   configNonce: string | null;
   expiryBlock: string | null;
   networkId: string | null;
@@ -48,7 +48,7 @@ export interface ContractSummary {
   ownersCommitment: string | null;
   threshold: number | null;
   numOwners: number | null;
-  proposalNonce: number | null;
+  proposalCounter: number | null;
   configNonce: number | null;
   discoveredAt: string;
   lastSyncedAt: string | null;
