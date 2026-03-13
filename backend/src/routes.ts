@@ -119,6 +119,69 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json(proposals);
   }));
 
+  /**
+   * Submits proposal detail fields that are not available from on-chain events.
+   * The frontend calls this after broadcasting the propose() transaction so the
+   * indexer row (created from the ProposalEvent) gets populated with full metadata.
+   */
+  router.post('/api/contracts/:address/proposals', safe(async (req, res) => {
+    const contract = await prisma.contract.findUnique({
+      where: { address: req.params.address },
+      select: { id: true },
+    });
+
+    if (!contract) {
+      res.status(404).json({ error: 'Contract not found' });
+      return;
+    }
+
+    const body = req.body as Record<string, unknown>;
+    const proposalHash = typeof body.proposalHash === 'string' ? body.proposalHash : null;
+    if (!proposalHash) {
+      res.status(400).json({ error: 'proposalHash is required' });
+      return;
+    }
+
+    const proposal = await prisma.proposal.upsert({
+      where: {
+        contractId_proposalHash: {
+          contractId: contract.id,
+          proposalHash,
+        },
+      },
+      create: {
+        contractId: contract.id,
+        proposalHash,
+        proposer: asStringBody(body.proposer),
+        toAddress: asStringBody(body.to),
+        amount: asStringBody(body.amount),
+        tokenId: asStringBody(body.tokenId),
+        txType: asStringBody(body.txType),
+        data: asStringBody(body.data),
+        nonce: asStringBody(body.nonce),
+        configNonce: asStringBody(body.configNonce),
+        expiryBlock: asStringBody(body.expiryBlock),
+        networkId: asStringBody(body.networkId),
+        guardAddress: asStringBody(body.guardAddress),
+        status: 'pending',
+      },
+      update: {
+        toAddress: asStringBody(body.to),
+        amount: asStringBody(body.amount),
+        tokenId: asStringBody(body.tokenId),
+        txType: asStringBody(body.txType),
+        data: asStringBody(body.data),
+        nonce: asStringBody(body.nonce),
+        configNonce: asStringBody(body.configNonce),
+        expiryBlock: asStringBody(body.expiryBlock),
+        networkId: asStringBody(body.networkId),
+        guardAddress: asStringBody(body.guardAddress),
+      },
+    });
+
+    res.status(200).json(proposal);
+  }));
+
   /** Returns one proposal by contract + proposalHash identity. */
   router.get('/api/contracts/:address/proposals/:proposalHash', safe(async (req, res) => {
     const contract = await prisma.contract.findUnique({
@@ -336,4 +399,12 @@ function clampNullableInt(input: unknown): number | null {
   const value = Number(input);
   if (!Number.isFinite(value)) return null;
   return Math.max(0, Math.floor(value));
+}
+
+/** Converts request body values to nullable strings for DB persistence. */
+function asStringBody(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return null;
 }

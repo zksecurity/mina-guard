@@ -232,7 +232,7 @@ export class MinaGuardIndexer {
     await prisma.contract.update({
       where: { id: contractId },
       data: {
-        ownersRoot: asString(event.ownersRoot),
+        ownersRoot: asString(event.ownersCommitment),
         threshold: asNumber(event.threshold),
         numOwners: asNumber(event.numOwners),
         networkId: asString(event.networkId),
@@ -287,7 +287,12 @@ export class MinaGuardIndexer {
     }
   }
 
-  /** Creates or updates proposal rows from proposal lifecycle event payloads. */
+  /**
+   * Creates a proposal row from on-chain event data.
+   * ProposalEvent only contains proposalHash, proposer, and uid.
+   * Remaining proposal detail fields (to, amount, etc.) are populated
+   * via the POST /api/contracts/:address/proposals submission endpoint.
+   */
   private async applyProposalEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
     const event = chainEvent.event;
     const proposalHash = asString(event.proposalHash);
@@ -304,32 +309,10 @@ export class MinaGuardIndexer {
         contractId,
         proposalHash,
         proposer: asString(event.proposer),
-        toAddress: asString(event.to),
-        amount: asString(event.amount),
-        tokenId: asString(event.tokenId),
-        txType: asString(event.txType),
-        data: asString(event.data),
-        nonce: asString(event.nonce),
-        configNonce: asString(event.configNonce),
-        expiryBlock: asString(event.expiryBlock),
-        networkId: asString(event.networkId),
-        guardAddress: asString(event.guardAddress),
         createdAtBlock: chainEvent.blockHeight,
         status: 'pending',
       },
-      update: {
-        proposer: asString(event.proposer),
-        toAddress: asString(event.to),
-        amount: asString(event.amount),
-        tokenId: asString(event.tokenId),
-        txType: asString(event.txType),
-        data: asString(event.data),
-        nonce: asString(event.nonce),
-        configNonce: asString(event.configNonce),
-        expiryBlock: asString(event.expiryBlock),
-        networkId: asString(event.networkId),
-        guardAddress: asString(event.guardAddress),
-      },
+      update: {},
     });
   }
 

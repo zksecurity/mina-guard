@@ -408,7 +408,7 @@ const workerApi = {
 
     const tx = await Mina.transaction(feePayer, async () => {
       await zkApp.setup(
-        ownerStore.getRoot(),
+        ownerStore.getCommitment(),
         Field(params.threshold),
         Field(ownerKeys.length),
         Field(params.networkId),

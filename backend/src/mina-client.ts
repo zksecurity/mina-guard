@@ -125,7 +125,7 @@ export async function fetchOnChainState(
     const threshold = contract.threshold.get();
     const numOwners = contract.numOwners.get();
     const networkId = contract.networkId.get();
-    const ownersRoot = contract.ownersRoot.get();
+    const ownersRoot = contract.ownersCommitment.get();
     return {
       threshold: Number(threshold.toString()),
       numOwners: Number(numOwners.toString()),
