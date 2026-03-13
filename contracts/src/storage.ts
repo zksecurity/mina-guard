@@ -1,7 +1,6 @@
 import { Bool, Field, MerkleMap, PublicKey, Poseidon } from 'o1js';
-import { computeOwnerChain, PublicKeyOption } from './list-commitment.js';
+import { computeOwnerChain, PublicKeyOption, OwnerWitness } from './list-commitment.js';
 import { MAX_OWNERS } from './constants.js';
-import type { OwnerWitness } from './list-commitment.js';
 
 // -- Serialization helpers ---------------------------------------------------
 
@@ -75,13 +74,13 @@ export class OwnerStore {
   }
 
   getWitness(): OwnerWitness {
-    const witness: OwnerWitness = this.owners.map(
+    const owners = this.owners.map(
       (pk) => new PublicKeyOption({ value: pk, isSome: Bool(true) })
     );
-    while (witness.length < MAX_OWNERS) {
-      witness.push(PublicKeyOption.none());
+    while (owners.length < MAX_OWNERS) {
+      owners.push(PublicKeyOption.none());
     }
-    return witness;
+    return new OwnerWitness({ owners });
   }
 
   get length(): number {

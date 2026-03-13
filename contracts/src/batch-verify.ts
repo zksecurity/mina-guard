@@ -17,8 +17,8 @@ class SignatureInput extends Option(
 import { MAX_OWNERS, INITIAL_SIGNER_CHAIN, INITIAL_OWNER_CHAIN } from './constants';
 
 
-type SignatureInputs = SignatureInput[];
-const SignatureInputs = Provable.Array(SignatureInput, MAX_OWNERS);
+const SignatureInputsArray = Provable.Array(SignatureInput, MAX_OWNERS);
+class SignatureInputs extends Struct({ inputs: SignatureInputsArray }) { }
 
 type BatchVerifyResult = { approvalCount: Field; signerChain: Field, ownerChain: Field };
 
@@ -43,7 +43,7 @@ function batchVerify(
   let signerChain = INITIAL_SIGNER_CHAIN;
   let ownerChain = INITIAL_OWNER_CHAIN;
 
-  signatures.forEach(({ value: { signature: sigOpt, signer: pk }, isSome }) => {
+  signatures.inputs.forEach(({ value: { signature: sigOpt, signer: pk }, isSome }) => {
 
     let {value: sig, isSome: isSigSome} = sigOpt;
 

@@ -83,7 +83,12 @@ export class SetupOwnerEvent extends Struct({
   index: Field,
 }) { }
 
-/** Emitted when a new proposal is created and indexed by proposalHash. */
+/**
+ * Emitted when a new proposal is created and indexed by proposalHash.
+ * TODO: Include full TransactionProposal fields (to, amount, tokenId, txType, data,
+ * configNonce, expiryBlock, networkId, guardAddress) so the indexer can reconstruct
+ * proposal details purely from on-chain events without a separate submission endpoint.
+ */
 export class ProposalEvent extends Struct({
   proposalHash: Field,
   proposer: PublicKey,

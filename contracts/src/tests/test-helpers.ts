@@ -42,7 +42,7 @@ export function makeSignatureInputs(
   proposalHash: Field,
   signerIndices: number[]
 ): SignatureInputs {
-  const inputs: SignatureInputs = [];
+  const inputs: SignatureInput[] = [];
   const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
   for (let i = 0; i < ctx.owners.length; i++) {
     const owner = ctx.owners[i];
@@ -72,19 +72,19 @@ export function makeSignatureInputs(
       })
     );
   }
-  return inputs;
+  return new SignatureInputs({ inputs });
 }
 
 // -- Owner Witness Helper ----------------------------------------------------
 
 export function makeOwnerWitness(owners: PublicKey[]): OwnerWitness {
-  const witness: OwnerWitness = owners.map(
+  const ownerOptions = owners.map(
     (pk) => new PublicKeyOption({ value: pk, isSome: Bool(true) })
   );
-  while (witness.length < MAX_OWNERS) {
-    witness.push(PublicKeyOption.none());
+  while (ownerOptions.length < MAX_OWNERS) {
+    ownerOptions.push(PublicKeyOption.none());
   }
-  return witness;
+  return new OwnerWitness({ owners: ownerOptions });
 }
 
 // -- Setup Helpers -----------------------------------------------------------

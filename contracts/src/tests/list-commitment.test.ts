@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { Bool, PrivateKey, Provable, PublicKey } from 'o1js';
 import {
   PublicKeyOption,
+  OwnerWitness,
   computeOwnerChain,
   assertOwnerMembership,
   addOwnerToCommitment,
@@ -9,15 +10,15 @@ import {
 } from '../list-commitment.js';
 import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from '../constants.js';
 
-/** Build an OwnerWitness (PublicKeyOption[] of size MAX_OWNERS) from a plain PublicKey[]. */
-function makeWitness(owners: PublicKey[]): PublicKeyOption[] {
-  const witness: PublicKeyOption[] = owners.map(
+/** Build an OwnerWitness from a plain PublicKey[]. */
+function makeWitness(owners: PublicKey[]): OwnerWitness {
+  const ownerOptions: PublicKeyOption[] = owners.map(
     (pk) => new PublicKeyOption({ value: pk, isSome: Bool(true) })
   );
-  while (witness.length < MAX_OWNERS) {
-    witness.push(PublicKeyOption.none());
+  while (ownerOptions.length < MAX_OWNERS) {
+    ownerOptions.push(PublicKeyOption.none());
   }
-  return witness;
+  return new OwnerWitness({ owners: ownerOptions });
 }
 
 /** Shorthand to create a some(pk) option for insertAfter. */
