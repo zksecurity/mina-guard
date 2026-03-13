@@ -6,17 +6,19 @@ import {
   AccountUpdate,
   Signature,
   UInt64,
+  Bool,
 } from 'o1js';
 import {
-  MAX_SETUP_OWNERS,
   MinaGuard,
   SetupOwnersInput,
   TransactionProposal,
-  TxType,
-  ownerKey,
-  PROPOSED_MARKER,
 } from '../MinaGuard.js';
-import { OwnerStore, ApprovalStore, VoteNullifierStore } from '../storage.js';
+import { TxType, PROPOSED_MARKER, MAX_OWNERS } from '../constants.js';
+import { ApprovalStore, VoteNullifierStore } from '../storage.js';
+import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
+import { SignatureInputs, SignatureInput, SignatureOption } from '../batch-verify.js';
+
+import { ownerKey } from '../utils.js';
 
 // -- Types -------------------------------------------------------------------
 
@@ -28,10 +30,61 @@ export interface TestContext {
   deployerKey: PrivateKey;
   deployerAccount: PublicKey;
   owners: { key: PrivateKey; pub: PublicKey }[];
-  ownerStore: OwnerStore;
   approvalStore: ApprovalStore;
   nullifierStore: VoteNullifierStore;
   networkId: Field;
+}
+
+// -- Batch Signature Helper --------------------------------------------------
+
+export function makeSignatureInputs(
+  ctx: TestContext,
+  proposalHash: Field,
+  signerIndices: number[]
+): SignatureInputs {
+  const inputs: SignatureInputs = [];
+  const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
+  for (let i = 0; i < ctx.owners.length; i++) {
+    const owner = ctx.owners[i];
+    const shouldSign = signerIndices.includes(i);
+    const sig = shouldSign
+      ? Signature.create(owner.key, [proposalHash])
+      : dummySig;
+    inputs.push(
+      new SignatureInput({
+        value: {
+          signature: new SignatureOption({ value: sig, isSome: Bool(shouldSign) }),
+          signer: owner.pub,
+        },
+        isSome: Bool(true),
+      })
+    );
+  }
+  const dummyPk = PublicKey.fromFields([Field(1), Field(1)]);
+  while (inputs.length < MAX_OWNERS) {
+    inputs.push(
+      new SignatureInput({
+        value: {
+          signature: new SignatureOption({ value: dummySig, isSome: Bool(false) }),
+          signer: dummyPk,
+        },
+        isSome: Bool(false),
+      })
+    );
+  }
+  return inputs;
+}
+
+// -- Owner Witness Helper ----------------------------------------------------
+
+export function makeOwnerWitness(owners: PublicKey[]): OwnerWitness {
+  const witness: OwnerWitness = owners.map(
+    (pk) => new PublicKeyOption({ value: pk, isSome: Bool(true) })
+  );
+  while (witness.length < MAX_OWNERS) {
+    witness.push(PublicKeyOption.none());
+  }
+  return witness;
 }
 
 // -- Setup Helpers -----------------------------------------------------------
@@ -39,10 +92,10 @@ export interface TestContext {
 /** Pads the owner list to the fixed setup input length required by the contract. */
 export function toFixedSetupOwners(owners: PublicKey[]): PublicKey[] {
   const padded = [...owners];
-  while (padded.length < MAX_SETUP_OWNERS) {
+  while (padded.length < MAX_OWNERS) {
     padded.push(PublicKey.empty());
   }
-  return padded.slice(0, MAX_SETUP_OWNERS);
+  return padded.slice(0, MAX_OWNERS);
 }
 
 /** Creates and activates a local Mina blockchain test context with funded accounts. */
@@ -53,20 +106,23 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
   const deployerKey = Local.testAccounts[0].key;
   const deployerAccount = Local.testAccounts[0];
 
+  const availableAccounts = Local.testAccounts.length - 1; // reserve index 0 for deployer
   const owners: { key: PrivateKey; pub: PublicKey }[] = [];
   for (let i = 0; i < numOwners; i++) {
-    owners.push({
-      key: Local.testAccounts[i + 1].key,
-      pub: Local.testAccounts[i + 1],
-    });
+    if (i < availableAccounts) {
+      owners.push({
+        key: Local.testAccounts[i + 1].key,
+        pub: Local.testAccounts[i + 1],
+      });
+    } else {
+      const key = PrivateKey.random();
+      owners.push({ key, pub: key.toPublicKey() });
+    }
   }
 
   const zkAppKey = PrivateKey.random();
   const zkAppAddress = zkAppKey.toPublicKey();
   const zkApp = new MinaGuard(zkAppAddress);
-
-  const ownerStore = new OwnerStore();
-  for (const o of owners) ownerStore.add(o.pub);
 
   const approvalStore = new ApprovalStore();
   const nullifierStore = new VoteNullifierStore();
@@ -79,11 +135,14 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
     deployerKey,
     deployerAccount,
     owners,
-    ownerStore,
     approvalStore,
     nullifierStore,
     networkId,
   };
+}
+
+export function getOwnersCommitment(ctx: TestContext): Field {
+  return computeOwnerChain(ctx.owners.map((o) => o.pub));
 }
 
 /** Deploys MinaGuard, funds it, and performs one-time setup. */
@@ -91,15 +150,7 @@ export async function deployAndSetup(
   ctx: TestContext,
   threshold = 2
 ): Promise<void> {
-  const {
-    zkApp,
-    zkAppKey,
-    zkAppAddress,
-    deployerKey,
-    deployerAccount,
-    ownerStore,
-    owners,
-  } = ctx;
+  const { zkApp, zkAppKey, zkAppAddress, deployerKey, deployerAccount, owners } = ctx;
 
   const deployTxn = await Mina.transaction(deployerAccount, async () => {
     AccountUpdate.fundNewAccount(deployerAccount);
@@ -115,10 +166,12 @@ export async function deployAndSetup(
   await fundTxn.prove();
   await fundTxn.sign([deployerKey]).send();
 
+  const ownersCommitment = computeOwnerChain(owners.map((o) => o.pub));
   const setupOwners = toFixedSetupOwners(owners.map((o) => o.pub));
+
   const setupTxn = await Mina.transaction(deployerAccount, async () => {
     await zkApp.setup(
-      ownerStore.getRoot(),
+      ownersCommitment,
       Field(threshold),
       Field(owners.length),
       ctx.networkId,
@@ -135,7 +188,7 @@ export async function deployAndSetup(
 export function createTransferProposal(
   to: PublicKey,
   amount: UInt64,
-  nonce: Field,
+  uid: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -147,7 +200,7 @@ export function createTransferProposal(
     tokenId: Field(0),
     txType: TxType.TRANSFER,
     data: Field(0),
-    nonce,
+    uid,
     configNonce,
     expiryBlock,
     networkId,
@@ -158,7 +211,7 @@ export function createTransferProposal(
 /** Builds an add-owner governance proposal payload. */
 export function createAddOwnerProposal(
   newOwner: PublicKey,
-  nonce: Field,
+  uid: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -170,7 +223,7 @@ export function createAddOwnerProposal(
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
     data: ownerKey(newOwner),
-    nonce,
+    uid,
     configNonce,
     expiryBlock,
     networkId,
@@ -181,7 +234,7 @@ export function createAddOwnerProposal(
 /** Builds a remove-owner governance proposal payload. */
 export function createRemoveOwnerProposal(
   ownerToRemove: PublicKey,
-  nonce: Field,
+  uid: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -193,7 +246,7 @@ export function createRemoveOwnerProposal(
     tokenId: Field(0),
     txType: TxType.REMOVE_OWNER,
     data: ownerKey(ownerToRemove),
-    nonce,
+    uid,
     configNonce,
     expiryBlock,
     networkId,
@@ -204,7 +257,7 @@ export function createRemoveOwnerProposal(
 /** Builds a threshold-change governance proposal payload. */
 export function createThresholdProposal(
   newThreshold: Field,
-  nonce: Field,
+  uid: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -216,7 +269,7 @@ export function createThresholdProposal(
     tokenId: Field(0),
     txType: TxType.CHANGE_THRESHOLD,
     data: newThreshold,
-    nonce,
+    uid,
     configNonce,
     expiryBlock,
     networkId,
@@ -227,7 +280,7 @@ export function createThresholdProposal(
 /** Builds a delegate proposal payload. */
 export function createDelegateProposal(
   delegate: PublicKey,
-  nonce: Field,
+  uid: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -239,7 +292,7 @@ export function createDelegateProposal(
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: ownerKey(delegate),
-    nonce,
+    uid,
     configNonce,
     expiryBlock,
     networkId,
@@ -249,7 +302,7 @@ export function createDelegateProposal(
 
 /** Builds an un-delegate proposal payload (data=0). */
 export function createUndelegateProposal(
-  nonce: Field,
+  uid: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -261,7 +314,7 @@ export function createUndelegateProposal(
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
-    nonce,
+    uid,
     configNonce,
     expiryBlock,
     networkId,
@@ -277,12 +330,12 @@ export async function proposeTransaction(
   proposal: TransactionProposal,
   proposerIndex: number
 ): Promise<Field> {
-  const { zkApp, ownerStore, approvalStore, nullifierStore, owners } = ctx;
+  const { zkApp, approvalStore, nullifierStore, owners } = ctx;
   const proposer = owners[proposerIndex];
 
   const proposalHash = proposal.hash();
 
-  const ownerWitness = ownerStore.getWitness(proposer.pub);
+  const ownerWitness = makeOwnerWitness(owners.map((o) => o.pub));
   const sig = Signature.create(proposer.key, [proposalHash]);
   const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer.pub);
   const approvalWitness = approvalStore.getWitness(proposalHash);
@@ -311,13 +364,13 @@ export async function approveTransaction(
   proposal: TransactionProposal,
   approverIndex: number
 ): Promise<void> {
-  const { zkApp, ownerStore, approvalStore, nullifierStore, owners } = ctx;
+  const { zkApp, approvalStore, nullifierStore, owners } = ctx;
   const approver = owners[approverIndex];
   const proposalHash = proposal.hash();
 
   const sig = Signature.create(approver.key, [proposalHash]);
   const currentCount = approvalStore.getCount(proposalHash);
-  const ownerWitness = ownerStore.getWitness(approver.pub);
+  const ownerWitness = makeOwnerWitness(owners.map((o) => o.pub));
   const approvalWitness = approvalStore.getWitness(proposalHash);
   const nullifierWitness = nullifierStore.getWitness(proposalHash, approver.pub);
 

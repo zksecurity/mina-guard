@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "test": "bun run --filter contracts test",
+    "test:proofs": "bun run --filter contracts test:proofs",
     "dev": "bun run --filter ui dev",
     "dev:backend": "bun run --filter backend dev",
     "build": "bun run --filter contracts --filter ui build",

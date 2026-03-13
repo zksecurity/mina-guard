@@ -1,10 +1,12 @@
 import { Field, Mina, PrivateKey, Signature, UInt64 } from 'o1js';
-import { TransactionProposal, TxType } from '../MinaGuard.js';
+import { TransactionProposal } from '../MinaGuard.js';
+import { TxType } from '../constants.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
   proposeTransaction,
   createTransferProposal,
+  makeOwnerWitness,
   type TestContext,
 } from './test-helpers.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -29,7 +31,7 @@ describe('MinaGuard - Propose', () => {
 
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
+    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
     expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
@@ -45,7 +47,7 @@ describe('MinaGuard - Propose', () => {
       ctx.zkAppAddress
     );
 
-    const fakeWitness = ctx.ownerStore.getWitness(nonOwner.toPublicKey());
+    const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
     const signature = Signature.create(nonOwner, [proposal.hash()]);
     const nullifierWitness = ctx.nullifierStore.getWitness(
       proposal.hash(),
@@ -57,7 +59,7 @@ describe('MinaGuard - Propose', () => {
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
         await ctx.zkApp.propose(
           proposal,
-          fakeWitness,
+          ownerWitness,
           nonOwner.toPublicKey(),
           signature,
           nullifierWitness,
@@ -66,40 +68,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
-    }).toThrow('Not an owner');
-  });
-
-  it('should reject proposal with wrong nonce', async () => {
-    const recipient = PrivateKey.random().toPublicKey();
-    const proposal = createTransferProposal(
-      recipient,
-      UInt64.from(1_000_000_000),
-      Field(5), // wrong nonce
-      Field(0),
-      ctx.zkAppAddress
-    );
-
-    await expect(async () => {
-      const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
-      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
-      const nullifierWitness = ctx.nullifierStore.getWitness(
-        proposal.hash(),
-        ctx.owners[0].pub
-      );
-      const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
-      const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.propose(
-          proposal,
-          ownerWitness,
-          ctx.owners[0].pub,
-          signature,
-          nullifierWitness,
-          approvalWitness
-        );
-      });
-      await txn.prove();
-      await txn.sign([ctx.owners[0].key]).send();
-    }).toThrow('Nonce mismatch');
+    }).toThrow('Claimed owner not a member of owners.');
   });
 
   it('should reject proposal with wrong configNonce', async () => {
@@ -113,7 +82,7 @@ describe('MinaGuard - Propose', () => {
     );
 
     await expect(async () => {
-      const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
       const nullifierWitness = ctx.nullifierStore.getWitness(
         proposal.hash(),
@@ -148,7 +117,7 @@ describe('MinaGuard - Propose', () => {
     );
 
     await expect(async () => {
-      const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
       const nullifierWitness = ctx.nullifierStore.getWitness(
         proposal.hash(),
@@ -182,7 +151,7 @@ describe('MinaGuard - Propose', () => {
     );
 
     await expect(async () => {
-      const ownerWitness = ctx.ownerStore.getWitness(ctx.owners[0].pub);
+      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
       const nullifierWitness = ctx.nullifierStore.getWitness(
         proposal.hash(),
@@ -204,19 +173,19 @@ describe('MinaGuard - Propose', () => {
     }).toThrow('Field.assertEquals()');
   });
 
-  it('should increment nonce across multiple proposals', async () => {
+  it('should increment counter across multiple proposals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
 
     const proposal1 = createTransferProposal(
       recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal1, 0);
-    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(1));
+    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
 
     const proposal2 = createTransferProposal(
       recipient, UInt64.from(2_000_000_000), Field(1), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal2, 1);
-    expect(ctx.zkApp.proposalNonce.get()).toEqual(Field(2));
+    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(2));
   });
 });

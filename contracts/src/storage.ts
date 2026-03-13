@@ -1,5 +1,7 @@
-import { Field, MerkleMap, PublicKey, Poseidon } from 'o1js';
-import { ownerKey } from './MinaGuard.js';
+import { Bool, Field, MerkleMap, PublicKey, Poseidon } from 'o1js';
+import { computeOwnerChain, PublicKeyOption } from './list-commitment.js';
+import { MAX_OWNERS } from './constants.js';
+import type { OwnerWitness } from './list-commitment.js';
 
 // -- Serialization helpers ---------------------------------------------------
 
@@ -35,63 +37,73 @@ function deserializeMerkleMap(data: SerializedMerkleMap): {
 // -- OwnerStore --------------------------------------------------------------
 
 export class OwnerStore {
-  map: MerkleMap;
-  keys: Field[];
-  addresses: PublicKey[];
+  owners: PublicKey[];
 
   constructor() {
-    this.map = new MerkleMap();
-    this.keys = [];
-    this.addresses = [];
+    this.owners = [];
   }
 
   add(owner: PublicKey): void {
-    const key = ownerKey(owner);
-    this.map.set(key, Field(1));
-    this.keys.push(key);
-    this.addresses.push(owner);
+    this.owners.push(owner);
+  }
+
+  /** Insert owner after the given key. If afterOwner is null, prepend. */
+  insertAfter(owner: PublicKey, afterOwner: PublicKey | null): void {
+    if (afterOwner === null) {
+      this.owners.unshift(owner);
+      return;
+    }
+    const idx = this.owners.findIndex(
+      (o) => o.toBase58() === afterOwner.toBase58()
+    );
+    if (idx === -1) throw new Error('afterOwner not found');
+    this.owners.splice(idx + 1, 0, owner);
   }
 
   remove(owner: PublicKey): void {
-    const key = ownerKey(owner);
-    this.map.set(key, Field(0));
-    this.keys = this.keys.filter((k) => k.toString() !== key.toString());
-    this.addresses = this.addresses.filter(
-      (a) => a.toBase58() !== owner.toBase58()
+    this.owners = this.owners.filter(
+      (o) => o.toBase58() !== owner.toBase58()
     );
   }
 
   isOwner(owner: PublicKey): boolean {
-    return this.map.get(ownerKey(owner)).toString() === '1';
+    return this.owners.some((o) => o.toBase58() === owner.toBase58());
   }
 
-  getWitness(owner: PublicKey) {
-    return this.map.getWitness(ownerKey(owner));
+  getCommitment(): Field {
+    return computeOwnerChain(this.owners);
   }
 
-  getRoot(): Field {
-    return this.map.getRoot();
+  getWitness(): OwnerWitness {
+    const witness: OwnerWitness = this.owners.map(
+      (pk) => new PublicKeyOption({ value: pk, isSome: Bool(true) })
+    );
+    while (witness.length < MAX_OWNERS) {
+      witness.push(PublicKeyOption.none());
+    }
+    return witness;
+  }
+
+  get length(): number {
+    return this.owners.length;
   }
 
   serialize(): string {
     return JSON.stringify({
-      entries: serializeMerkleMap(this.map, this.keys),
-      addresses: this.addresses.map((a) => a.toBase58()),
+      owners: this.owners.map((a) => a.toBase58()),
     });
   }
 
   static deserialize(json: string): OwnerStore {
     const data = JSON.parse(json);
     const store = new OwnerStore();
-    const { map, keys } = deserializeMerkleMap(data.entries);
-    store.map = map;
-    store.keys = keys;
-    store.addresses = (data.addresses as string[]).map((a) =>
+    store.owners = (data.owners as string[]).map((a) =>
       PublicKey.fromBase58(a)
     );
     return store;
   }
 }
+
 
 // -- ApprovalStore -----------------------------------------------------------
 

@@ -1,6 +1,7 @@
 import { Field, PrivateKey } from 'o1js';
 import { OwnerStore, ApprovalStore, VoteNullifierStore } from '../storage.js';
-import { EXECUTED_MARKER } from '../MinaGuard.js';
+import { EXECUTED_MARKER } from '../constants.js';
+import { computeOwnerChain } from '../list-commitment.js';
 import { describe, expect, it } from 'bun:test';
 
 describe('OwnerStore', () => {
@@ -15,7 +16,7 @@ describe('OwnerStore', () => {
     expect(store.isOwner(owner1)).toBe(true);
     expect(store.isOwner(owner2)).toBe(true);
     expect(store.isOwner(PrivateKey.random().toPublicKey())).toBe(false);
-    expect(store.addresses.length).toBe(2);
+    expect(store.length).toBe(2);
   });
 
   it('should remove owners', () => {
@@ -29,18 +30,31 @@ describe('OwnerStore', () => {
 
     expect(store.isOwner(owner1)).toBe(false);
     expect(store.isOwner(owner2)).toBe(true);
-    expect(store.addresses.length).toBe(1);
-    expect(store.keys.length).toBe(1);
+    expect(store.length).toBe(1);
+  });
+
+  it('should compute correct commitment', () => {
+    const store = new OwnerStore();
+    const owner1 = PrivateKey.random().toPublicKey();
+    const owner2 = PrivateKey.random().toPublicKey();
+    store.add(owner1);
+    store.add(owner2);
+
+    expect(store.getCommitment()).toEqual(computeOwnerChain([owner1, owner2]));
   });
 
   it('should generate valid witness', () => {
     const store = new OwnerStore();
-    const owner = PrivateKey.random().toPublicKey();
-    store.add(owner);
+    const owner1 = PrivateKey.random().toPublicKey();
+    const owner2 = PrivateKey.random().toPublicKey();
+    store.add(owner1);
+    store.add(owner2);
 
-    const witness = store.getWitness(owner);
-    const [root, key] = witness.computeRootAndKey(Field(1));
-    expect(root).toEqual(store.getRoot());
+    const witness = store.getWitness();
+    // Witness should have MAX_OWNERS entries, first 2 filled
+    expect(witness[0].isSome.toBoolean()).toBe(true);
+    expect(witness[1].isSome.toBoolean()).toBe(true);
+    expect(witness[2].isSome.toBoolean()).toBe(false);
   });
 
   it('should serialize and deserialize', () => {
@@ -53,10 +67,34 @@ describe('OwnerStore', () => {
     const json = store.serialize();
     const restored = OwnerStore.deserialize(json);
 
-    expect(restored.getRoot()).toEqual(store.getRoot());
-    expect(restored.addresses.length).toBe(2);
+    expect(restored.getCommitment()).toEqual(store.getCommitment());
+    expect(restored.length).toBe(2);
     expect(restored.isOwner(owner1)).toBe(true);
     expect(restored.isOwner(owner2)).toBe(true);
+  });
+
+  it('should insert after a specific owner', () => {
+    const store = new OwnerStore();
+    const owner1 = PrivateKey.random().toPublicKey();
+    const owner2 = PrivateKey.random().toPublicKey();
+    const owner3 = PrivateKey.random().toPublicKey();
+    store.add(owner1);
+    store.add(owner2);
+
+    store.insertAfter(owner3, owner1);
+
+    expect(store.getCommitment()).toEqual(computeOwnerChain([owner1, owner3, owner2]));
+  });
+
+  it('should prepend when insertAfter is null', () => {
+    const store = new OwnerStore();
+    const owner1 = PrivateKey.random().toPublicKey();
+    const owner2 = PrivateKey.random().toPublicKey();
+    store.add(owner1);
+
+    store.insertAfter(owner2, null);
+
+    expect(store.getCommitment()).toEqual(computeOwnerChain([owner2, owner1]));
   });
 });
 
