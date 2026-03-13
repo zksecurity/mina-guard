@@ -11,7 +11,7 @@ model Contract {
   id             Int       @id @default(autoincrement())
   address        String    @unique
   networkId      String?
-  ownersRoot     String?
+  ownersCommitment String?
   threshold      Int?
   numOwners      Int?
   configNonce    Int?

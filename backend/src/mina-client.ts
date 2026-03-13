@@ -113,10 +113,10 @@ export async function fetchVerificationKeyHash(address: string): Promise<string 
   return hash?.toString() ?? null;
 }
 
-/** Reads on-chain MinaGuard state fields (threshold, numOwners, networkId, ownersRoot). */
+/** Reads on-chain MinaGuard state fields (threshold, numOwners, networkId, ownersCommitment). */
 export async function fetchOnChainState(
   address: string
-): Promise<{ threshold: number; numOwners: number; networkId: string; ownersRoot: string } | null> {
+): Promise<{ threshold: number; numOwners: number; networkId: string; ownersCommitment: string } | null> {
   const pub = PublicKey.fromBase58(address);
   await fetchAccount({ publicKey: pub });
   const contract = new MinaGuard(pub);
@@ -125,12 +125,12 @@ export async function fetchOnChainState(
     const threshold = contract.threshold.get();
     const numOwners = contract.numOwners.get();
     const networkId = contract.networkId.get();
-    const ownersRoot = contract.ownersCommitment.get();
+    const ownersCommitment = contract.ownersCommitment.get();
     return {
       threshold: Number(threshold.toString()),
       numOwners: Number(numOwners.toString()),
       networkId: networkId.toString(),
-      ownersRoot: ownersRoot.toString(),
+      ownersCommitment: ownersCommitment.toString(),
     };
   } catch {
     return null;

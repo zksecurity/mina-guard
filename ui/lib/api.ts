@@ -107,7 +107,7 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
   return {
     address: asString(input.address) ?? '',
     networkId: asNullableString(input.networkId),
-    ownersRoot: asNullableString(input.ownersRoot),
+    ownersCommitment: asNullableString(input.ownersCommitment),
     threshold: asNullableNumber(input.threshold),
     numOwners: asNullableNumber(input.numOwners),
     proposalNonce: asNullableNumber(input.proposalNonce),

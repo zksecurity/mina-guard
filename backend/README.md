@@ -186,7 +186,7 @@ Defined in `prisma/schema.prisma`.
 Tracked MinaGuard contract metadata:
 
 - identity: `id`, unique `address`
-- setup/config: `networkId`, `ownersRoot`, `threshold`, `numOwners`
+- setup/config: `networkId`, `ownersCommitment`, `threshold`, `numOwners`
 - state: `configNonce`, `proposalNonce`, `isValid`, `invalidReason`
 - sync timestamps: `discoveredAt`, `lastSyncedAt`
 

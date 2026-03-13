@@ -128,12 +128,16 @@ export class MinaGuardIndexer {
 
     for (const contract of contracts) {
       try {
+        console.log(`[indexer] syncing ${contract.address} blocks ${fromHeight}–${toHeight}`);
         await this.syncSingleContract(contract.id, contract.address, fromHeight, toHeight);
       } catch (error) {
-        console.warn(
+        // Re-throw so the tick() caller does NOT advance the global cursor
+        // past blocks that failed to sync.
+        console.error(
           `[indexer] sync failed for ${contract.address}:`,
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.stack : error
         );
+        throw error;
       }
     }
   }
@@ -232,7 +236,7 @@ export class MinaGuardIndexer {
     await prisma.contract.update({
       where: { id: contractId },
       data: {
-        ownersRoot: asString(event.ownersCommitment),
+        ownersCommitment: asString(event.ownersCommitment),
         threshold: asNumber(event.threshold),
         numOwners: asNumber(event.numOwners),
         networkId: asString(event.networkId),
@@ -279,7 +283,7 @@ export class MinaGuardIndexer {
               threshold: onChain.threshold,
               numOwners: onChain.numOwners,
               networkId: onChain.networkId,
-              ownersRoot: onChain.ownersRoot,
+              ownersCommitment: onChain.ownersCommitment,
             },
           });
         }

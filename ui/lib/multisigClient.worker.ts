@@ -54,7 +54,7 @@ let compilePromise: Promise<void> | null = null;
 
 /** Contract state snapshot read directly from chain. */
 interface ContractState {
-  ownersRoot: string;
+  ownersCommitment: string;
   threshold: number;
   numOwners: number;
   proposalNonce: number;
@@ -103,7 +103,7 @@ async function fetchContractState(
     await fetchAccount({ publicKey: address });
     const zkApp = new MinaGuard(address);
     return {
-      ownersRoot: zkApp.ownersRoot.get().toString(),
+      ownersCommitment: zkApp.ownersCommitment.get().toString(),
       threshold: Number(zkApp.threshold.get().toString()),
       numOwners: Number(zkApp.numOwners.get().toString()),
       proposalNonce: Number(zkApp.proposalNonce.get().toString()),

@@ -45,7 +45,7 @@ export interface OwnerRecord {
 export interface ContractSummary {
   address: string;
   networkId: string | null;
-  ownersRoot: string | null;
+  ownersCommitment: string | null;
   threshold: number | null;
   numOwners: number | null;
   proposalNonce: number | null;

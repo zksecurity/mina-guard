@@ -191,8 +191,8 @@ export default function Dashboard() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowProposal(true)}
-                disabled={multisig.ownersRoot == null}
-                title={multisig.ownersRoot == null ? 'Run Setup first to initialize the contract' : undefined}
+                disabled={multisig.ownersCommitment == null}
+                title={multisig.ownersCommitment == null ? 'Run Setup first to initialize the contract' : undefined}
                 className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 New Proposal

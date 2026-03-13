@@ -73,7 +73,7 @@ export default function TransactionsPage() {
                 ))}
               </div>
 
-              {multisig.ownersRoot != null ? (
+              {multisig.ownersCommitment != null ? (
                 <Link
                   href="/transactions/new"
                   className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110 transition-all"

@@ -70,7 +70,7 @@ export default function NewTransactionPage() {
           <div className="text-center py-20">
             <p className="text-safe-text">Connect your wallet and select a contract to create proposals.</p>
           </div>
-        ) : multisig.ownersRoot == null ? (
+        ) : multisig.ownersCommitment == null ? (
           <div className="text-center py-20">
             <p className="text-safe-text">Contract not initialized. Run Setup first before creating proposals.</p>
           </div>

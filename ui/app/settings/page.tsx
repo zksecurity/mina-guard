@@ -85,7 +85,7 @@ export default function SettingsPage() {
                 <InfoRow label="Contract" value={multisig.address} mono />
                 <InfoRow label="Network" value={wallet.network ?? 'Unknown'} />
                 <InfoRow label="Network ID" value={multisig.networkId ?? '-'} mono />
-                <InfoRow label="Owners Root" value={multisig.ownersRoot ?? '-'} mono />
+                <InfoRow label="Owners Commitment" value={multisig.ownersCommitment ?? '-'} mono />
                 <InfoRow label="Config Nonce" value={String(multisig.configNonce ?? '-')} mono />
               </div>
             </div>
