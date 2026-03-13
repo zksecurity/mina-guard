@@ -16,8 +16,6 @@ model Contract {
   numOwners      Int?
   configNonce    Int?
   proposalNonce  Int?
-  isValid        Boolean   @default(true)
-  invalidReason  String?
   discoveredAt   DateTime  @default(now())
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())

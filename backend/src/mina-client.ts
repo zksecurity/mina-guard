@@ -21,19 +21,17 @@ export function configureNetwork(config: BackendConfig): void {
   );
 }
 
-/** Fetches latest global slot since genesis from Mina endpoint. */
+/** Fetches latest block height from archive node to stay aligned with event availability. */
 export async function fetchLatestBlockHeight(config: BackendConfig): Promise<number> {
   const query = `{
-    bestChain(maxLength: 1) {
-      protocolState { consensusState { slotSinceGenesis } }
+    networkState {
+      maxBlockHeight { pendingMaxBlockHeight }
     }
   }`;
-  const response = await graphqlRequest<{ bestChain?: Array<{ protocolState?: { consensusState?: { slotSinceGenesis?: string } } }> }>(
-    query,
-    config.minaEndpoint,
-    config.minaFallbackEndpoint
-  );
-  const raw = response.bestChain?.[0]?.protocolState?.consensusState?.slotSinceGenesis;
+  const response = await graphqlRequest<{
+    networkState?: { maxBlockHeight?: { pendingMaxBlockHeight?: number } };
+  }>(query, config.archiveEndpoint, config.archiveFallbackEndpoint);
+  const raw = response.networkState?.maxBlockHeight?.pendingMaxBlockHeight;
   return Number(raw ?? '0');
 }
 
@@ -85,8 +83,8 @@ export async function discoverCandidateAddresses(
 
   const data = await graphqlRequest<CandidateResponse>(
     query,
-    config.archiveEndpoint,
-    config.archiveFallbackEndpoint
+    config.minaEndpoint,
+    config.minaFallbackEndpoint
   );
 
   const addresses = new Set<string>();
@@ -113,6 +111,30 @@ export async function fetchVerificationKeyHash(address: string): Promise<string 
     (accountResult.account as any)?.zkapp?.verificationKey?.hash ??
     (accountResult.account as any)?.verificationKey?.hash;
   return hash?.toString() ?? null;
+}
+
+/** Reads on-chain MinaGuard state fields (threshold, numOwners, networkId, ownersRoot). */
+export async function fetchOnChainState(
+  address: string
+): Promise<{ threshold: number; numOwners: number; networkId: string; ownersRoot: string } | null> {
+  const pub = PublicKey.fromBase58(address);
+  await fetchAccount({ publicKey: pub });
+  const contract = new MinaGuard(pub);
+
+  try {
+    const threshold = contract.threshold.get();
+    const numOwners = contract.numOwners.get();
+    const networkId = contract.networkId.get();
+    const ownersRoot = contract.ownersRoot.get();
+    return {
+      threshold: Number(threshold.toString()),
+      numOwners: Number(numOwners.toString()),
+      networkId: networkId.toString(),
+      ownersRoot: ownersRoot.toString(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Fetches decoded MinaGuard events for a contract within a block range. */

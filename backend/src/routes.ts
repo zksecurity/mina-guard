@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { prisma } from './db.js';
 import type { MinaGuardIndexer } from './indexer.js';
+import type { BackendConfig } from './config.js';
 
 /** Creates the read-only API router bound to shared indexer status and Prisma data. */
-export function createApiRouter(indexer: MinaGuardIndexer): Router {
+export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfig): Router {
   const router = Router();
   const safe = wrapAsyncRoute();
   router.use(requestLoggerMiddleware());
@@ -211,6 +212,34 @@ export function createApiRouter(indexer: MinaGuardIndexer): Router {
     });
 
     res.json(events);
+  }));
+
+  /** Returns MINA token balance for an account address via daemon GraphQL. */
+  router.get('/api/account/:address/balance', safe(async (req, res) => {
+    const endpoint = config?.minaEndpoint;
+    if (!endpoint) {
+      res.status(503).json({ error: 'Mina endpoint not configured' });
+      return;
+    }
+
+    const query = `{ account(publicKey: "${req.params.address}") { balance { total } } }`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!response.ok) {
+      res.status(502).json({ error: 'Daemon request failed' });
+      return;
+    }
+
+    const json = (await response.json()) as {
+      data?: { account?: { balance?: { total?: string } } };
+    };
+
+    const totalNano = json.data?.account?.balance?.total ?? '0';
+    res.json({ balance: totalNano });
   }));
 
   router.use((error: unknown, req: any, res: any, _next: any) => {

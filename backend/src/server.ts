@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
-  app.use(createApiRouter(indexer));
+  app.use(createApiRouter(indexer, config));
 
   const server = app.listen(config.port, () => {
     console.log(`[backend] listening on http://localhost:${config.port}`);

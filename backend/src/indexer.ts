@@ -5,6 +5,7 @@ import {
   discoverCandidateAddresses,
   fetchDecodedContractEvents,
   fetchLatestBlockHeight,
+  fetchOnChainState,
   fetchVerificationKeyHash,
   type ChainEvent,
 } from './mina-client.js';
@@ -75,22 +76,19 @@ export class MinaGuardIndexer {
       const indexedHeight = await this.getIndexedHeight();
       this.status.indexedHeight = indexedHeight;
 
-      if (latestHeight <= indexedHeight) {
-        this.status.lastSuccessfulRunAt = new Date().toISOString();
-        this.status.lastError = null;
-        return;
-      }
-
       const fromHeight = indexedHeight + 1;
       const toHeight = latestHeight;
-      const blockWindow = Math.max(1, Math.min(500, toHeight - fromHeight + 1));
 
-      await this.discoverContracts(blockWindow);
-      await this.syncKnownContracts(fromHeight, toHeight);
-      await this.deriveExpiredProposals(latestHeight);
+      // Scan bestChain for new contract deployments
+      await this.discoverContracts(Math.max(1, Math.min(290, latestHeight)));
 
-      await this.setIndexedHeight(toHeight);
-      this.status.indexedHeight = toHeight;
+      if (toHeight >= fromHeight) {
+        await this.syncKnownContracts(fromHeight, toHeight);
+        await this.deriveExpiredProposals(latestHeight);
+        await this.setIndexedHeight(toHeight);
+        this.status.indexedHeight = toHeight;
+      }
+
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
     } catch (error) {
@@ -117,10 +115,7 @@ export class MinaGuardIndexer {
       }
 
       await prisma.contract.create({
-        data: {
-          address,
-          isValid: true,
-        },
+        data: { address },
       });
     }
 
@@ -129,19 +124,16 @@ export class MinaGuardIndexer {
 
   /** Indexes events for all tracked contracts across the requested block range. */
   private async syncKnownContracts(fromHeight: number, toHeight: number): Promise<void> {
-    const contracts = await prisma.contract.findMany({ where: { isValid: true } });
+    const contracts = await prisma.contract.findMany();
 
     for (const contract of contracts) {
       try {
         await this.syncSingleContract(contract.id, contract.address, fromHeight, toHeight);
       } catch (error) {
-        await prisma.contract.update({
-          where: { id: contract.id },
-          data: {
-            isValid: false,
-            invalidReason: error instanceof Error ? error.message : 'Unknown sync failure',
-          },
-        });
+        console.warn(
+          `[indexer] sync failed for ${contract.address}:`,
+          error instanceof Error ? error.message : error
+        );
       }
     }
   }
@@ -154,6 +146,22 @@ export class MinaGuardIndexer {
     toHeight: number
   ): Promise<void> {
     const events = await fetchDecodedContractEvents(address, fromHeight, toHeight);
+
+    // Sort so 'proposal' events are processed before 'approval'/'execution' within
+    // the same batch. The contract's propose() emits both proposal and approval events
+    // in a single tx, but the archive may return them in arbitrary order. Processing
+    // proposal first ensures the Proposal row exists when the approval is applied.
+    const eventOrder: Record<string, number> = {
+      deployed: 0,
+      setup: 1,
+      setupOwner: 2,
+      ownerChange: 3,
+      thresholdChange: 4,
+      proposal: 5,
+      approval: 6,
+      execution: 7,
+    };
+    events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
 
     for (const chainEvent of events) {
       const fingerprint = this.fingerprintEvent(address, chainEvent);
@@ -251,13 +259,32 @@ export class MinaGuardIndexer {
         contractId,
         address: ownerAddress,
         index: asNumber(event.index),
-        active: asBoolean(event.active, true),
+        active: true,
       },
       update: {
         index: asNumber(event.index),
-        active: asBoolean(event.active, true),
+        active: true,
       },
     });
+
+    // Derive threshold/numOwners from on-chain state when no setup event was emitted.
+    {
+      const contract = await prisma.contract.findUnique({ where: { id: contractId } });
+      if (contract && contract.threshold == null) {
+        const onChain = await fetchOnChainState(contract.address);
+        if (onChain) {
+          await prisma.contract.update({
+            where: { id: contractId },
+            data: {
+              threshold: onChain.threshold,
+              numOwners: onChain.numOwners,
+              networkId: onChain.networkId,
+              ownersRoot: onChain.ownersRoot,
+            },
+          });
+        }
+      }
+    }
   }
 
   /** Creates or updates proposal rows from proposal lifecycle event payloads. */
@@ -486,13 +513,4 @@ function asNumber(value: unknown): number | null {
   if (!asText) return null;
   const parsed = Number(asText);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-/** Converts unknown values into boolean with explicit fallback default. */
-function asBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === 'boolean') return value;
-  const text = asString(value);
-  if (text === '1' || text === 'true') return true;
-  if (text === '0' || text === 'false') return false;
-  return fallback;
 }
