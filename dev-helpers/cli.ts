@@ -7,6 +7,7 @@ import {
   type VkHashAddressOptions,
 } from './commands/vk-hash-address.ts';
 import { runVkHashCompile } from './commands/vk-hash-compile.ts';
+import { runFundAccounts } from './commands/fund-accounts.ts';
 
 /** Dispatches `vk-hash <mode>` CLI invocations to the right handler. */
 async function handleVkHashCommand(
@@ -89,6 +90,13 @@ async function main(): Promise<void> {
     .option('--private-key <privateKey>', 'Private key (EK...)')
     .action(async (mode: string, options: { privateKey?: string }) => {
       await handleKeyCommand(mode, options);
+    });
+
+  program
+    .command('lightnet-fund')
+    .description('Fund all public keys from .env via lightnet account manager')
+    .action(async () => {
+      await runFundAccounts();
     });
 
   await program.parseAsync(process.argv);

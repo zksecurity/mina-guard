@@ -257,6 +257,14 @@ This makes it easy to correlate request lifecycle and failures in local/dev logs
 
 ## Error Handling and Troubleshooting
 
+### Reset the database
+
+To wipe all data and recreate tables from the schema:
+
+```bash
+bun prisma db push --force-reset
+```
+
 ### `P2021` table missing
 
 If Prisma throws `P2021` (`table does not exist`), schema was not applied to the current database.
@@ -284,6 +292,52 @@ Check `GET /api/indexer/status`:
 - `lastError` for failure reason
 - `latestChainHeight` vs `indexedHeight` for lag
 - server logs for GraphQL/network errors
+
+## Local Development with Lightnet
+
+### Prerequisites
+
+- [zkApp CLI](https://docs.minaprotocol.com/zkapps/how-to-write-a-zkapp) installed (`zk` command available)
+- Lightnet running locally: `zk lightnet start`
+
+### 1. Generate signer keys
+
+From `dev-helpers/`:
+
+```bash
+bun run cli.ts key gen
+```
+
+Run this once per signer. Copy the output keys into `dev-helpers/.env` (see `.env.example` for the format).
+
+### 2. Fund signer accounts
+
+Once `dev-helpers/.env` has the signer public keys populated:
+
+```bash
+bun run cli.ts lightnet-fund
+```
+
+This acquires funded accounts from the lightnet account manager and transfers MINA to each public key listed in `.env`. It runs all transfers in parallel (one funder per target) and waits for confirmation.
+
+Environment variables (optional overrides):
+
+| Variable | Default | Description |
+|---|---|---|
+| `LIGHTNET_ACCOUNT_MANAGER` | `http://127.0.0.1:8181` | Lightnet account manager URL |
+| `MINA_ENDPOINT` | `http://127.0.0.1:8080/graphql` | Mina GraphQL endpoint |
+
+### 3. Deploy a contract
+
+Open the UI at `http://localhost:3000/deploy`. A fresh keypair is auto-generated for the contract address. Fill in the signers and threshold, then submit the deploy transaction.
+
+### 4. Start the backend
+
+```bash
+bun run --filter backend dev
+```
+
+The indexer will pick up the deployed contract and begin syncing events.
 
 ## Notes
 
