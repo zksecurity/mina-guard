@@ -50,6 +50,11 @@ function proxiedProgress(onProgress?: OnProgress) {
   return Comlink.proxy((step: string) => onProgress?.(step));
 }
 
+/** Initializes the worker early so compilation starts before the first user action. */
+export function warmupWorker() {
+  getWorkerApi();
+}
+
 /** Generates a random zkApp keypair in the worker (where o1js is loaded). */
 export async function generateKeypair(): Promise<{ privateKey: string; publicKey: string }> {
   return getWorkerApi().generateKeypair();

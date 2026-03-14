@@ -1,15 +1,18 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext, type OperationBanner } from '@/lib/app-context';
+import { warmupWorker } from '@/lib/multisigClient';
 
 /** Root-level provider that wires wallet state with backend-indexed contract data. */
 function AppProvider({ children }: { children: React.ReactNode }) {
+  useEffect(() => { warmupWorker(); }, []);
+
   const { wallet, isLoading: walletLoading, auroInstalled, connect, disconnect } =
     useWallet();
 
