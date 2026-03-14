@@ -14,8 +14,6 @@ import {
   PrivateKey,
   Signature,
 } from 'o1js';
-import type { Cache as CompileCache, CacheHeader } from 'o1js';
-
 import {
   MinaGuard,
   TransactionProposal,
@@ -35,7 +33,7 @@ import {
   type Proposal,
   normalizeTxType,
 } from '@/lib/types';
-import { fetchAllEvents, submitProposalMetadata } from './api';
+import { fetchAllEvents } from './api';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
 type SendTxFn = (txJson: string) => Promise<string | null>;
@@ -52,87 +50,6 @@ type ProgressFn = (step: string) => void;
 // const ARCHIVE_ENDPOINT = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
 const MINA_ENDPOINT = 'http://127.0.0.1:8080/graphql';
 const ARCHIVE_ENDPOINT = 'http://127.0.0.1:8282';
-
-// ---------------------------------------------------------------------------
-// IndexedDB-backed compile cache
-// ---------------------------------------------------------------------------
-
-const IDB_NAME = 'mina-guard-compile-cache';
-const IDB_STORE = 'artifacts';
-
-function openCacheDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(IDB_STORE);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function idbSet(key: string, value: { uniqueId: string; data: Uint8Array }): Promise<void> {
-  return openCacheDb().then(
-    (db) =>
-      new Promise((resolve, reject) => {
-        const tx = db.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).put(value, key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      })
-  );
-}
-
-/** In-memory mirror populated from IndexedDB before compile. */
-const memoryCache = new Map<string, { uniqueId: string; data: Uint8Array }>();
-
-async function populateMemoryCache(): Promise<void> {
-  try {
-    const db = await openCacheDb();
-    const tx = db.transaction(IDB_STORE, 'readonly');
-    const store = tx.objectStore(IDB_STORE);
-    const allKeys: string[] = await new Promise((resolve, reject) => {
-      const req = store.getAllKeys();
-      req.onsuccess = () => resolve(req.result as string[]);
-      req.onerror = () => reject(req.error);
-    });
-    const entries = await Promise.all(
-      allKeys.map(
-        (key) =>
-          new Promise<[string, { uniqueId: string; data: Uint8Array }]>((resolve, reject) => {
-            const req = store.get(key);
-            req.onsuccess = () => resolve([key, req.result]);
-            req.onerror = () => reject(req.error);
-          })
-      )
-    );
-    for (const [key, value] of entries) {
-      if (value) memoryCache.set(key, value);
-    }
-  } catch (err) {
-    console.warn('[CompileCache] Failed to populate from IndexedDB:', err);
-  }
-}
-
-/** Lagrange basis entries use a WASM method disabled on the web — skip them. */
-function isLagrangeBasis(header: CacheHeader): boolean {
-  return header.persistentId.startsWith('lagrange-basis');
-}
-
-const idbCache: CompileCache = {
-  read(header: CacheHeader) {
-    if (isLagrangeBasis(header)) return undefined;
-    const entry = memoryCache.get(header.persistentId);
-    if (entry && entry.uniqueId === header.uniqueId) return entry.data;
-    return undefined;
-  },
-  write(header: CacheHeader, value: Uint8Array) {
-    if (isLagrangeBasis(header)) return;
-    memoryCache.set(header.persistentId, { uniqueId: header.uniqueId, data: value });
-    idbSet(header.persistentId, { uniqueId: header.uniqueId, data: value }).catch(() => {});
-  },
-  canWrite: true,
-};
 
 let compilePromise: Promise<void> | null = null;
 
@@ -165,8 +82,7 @@ async function compileContract(): Promise<boolean> {
 
   compilePromise = (async () => {
     configureNetwork();
-    await populateMemoryCache();
-    await MinaGuard.compile({ cache: idbCache });
+    await MinaGuard.compile();
   })();
 
   try {
@@ -353,10 +269,17 @@ async function buildProposalAndStores(params: {
   const { ownerStore, approvalStore, nullifierStore } =
     await rebuildStoresFromBackend(params.contractAddress);
 
-  const to =
-    params.input.txType === 'transfer' && params.input.to
-      ? PublicKey.fromBase58(params.input.to)
-      : PublicKey.empty();
+  const to = (() => {
+    if (params.input.txType === 'transfer' && params.input.to)
+      return PublicKey.fromBase58(params.input.to);
+    if (params.input.txType === 'addOwner' && params.input.newOwner)
+      return PublicKey.fromBase58(params.input.newOwner);
+    if (params.input.txType === 'removeOwner' && params.input.removeOwnerAddress)
+      return PublicKey.fromBase58(params.input.removeOwnerAddress);
+    if (params.input.txType === 'setDelegate' && params.input.delegate)
+      return PublicKey.fromBase58(params.input.delegate);
+    return PublicKey.empty();
+  })();
 
   const amount =
     params.input.txType === 'transfer'
@@ -569,24 +492,6 @@ const workerApi = {
     progressFn('Submitting transaction...');
     const proposeHash = await sendFn(serializeTx(tx));
 
-    if (proposeHash) {
-      const proposalHashStr = proposalHash.toString();
-      await submitProposalMetadata(params.contractAddress, {
-        proposalHash: proposalHashStr,
-        proposer: params.proposerAddress,
-        to: params.input.to ?? null,
-        amount: proposal.amount.toString(),
-        tokenId: proposal.tokenId.toString(),
-        txType: params.input.txType,
-        data: proposal.data.toString(),
-        uid: proposal.uid.toString(),
-        configNonce: proposal.configNonce.toString(),
-        expiryBlock: proposal.expiryBlock.toString(),
-        networkId: proposal.networkId.toString(),
-        guardAddress: params.contractAddress,
-      });
-    }
-
     return proposeHash;
   },
 
@@ -657,7 +562,6 @@ const workerApi = {
       contractAddress: string;
       executorAddress: string;
       proposal: Proposal;
-      overrides?: { ownerAddress?: string; delegateAddress?: string };
     },
     sendFn: SendTxFn,
     progressFn: ProgressFn
@@ -699,12 +603,12 @@ const workerApi = {
       }
 
       if (txType === 'addOwner' || txType === 'removeOwner') {
-        if (!params.overrides?.ownerAddress) {
+        if (!params.proposal.toAddress) {
           throw new Error(
-            'ownerAddress override is required for owner change execution'
+            'Proposal toAddress is required for owner change execution'
           );
         }
-        const owner = PublicKey.fromBase58(params.overrides.ownerAddress);
+        const owner = PublicKey.fromBase58(params.proposal.toAddress);
         // TODO: Allow the caller to specify an insertAfter index instead of always appending
         const insertAfter =
           txType === 'addOwner' && ownerStore.length > 0
@@ -735,7 +639,7 @@ const workerApi = {
         const delegate =
           params.proposal.data === '0'
             ? PublicKey.empty()
-            : PublicKey.fromBase58(params.overrides?.delegateAddress ?? '');
+            : PublicKey.fromBase58(params.proposal.toAddress ?? '');
         await contract.executeDelegate(
           proposalStruct,
           approvalStore.getWitness(proposalHash),

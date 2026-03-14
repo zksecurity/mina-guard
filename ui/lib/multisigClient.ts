@@ -10,12 +10,6 @@ import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
 
-/** Execution parameter overrides required for non-transfer execution methods. */
-export interface ExecuteOverrides {
-  ownerAddress?: string;
-  delegateAddress?: string;
-}
-
 /** Optional callback to receive step-based progress updates from the worker. */
 export type OnProgress = (step: string) => void;
 
@@ -115,7 +109,6 @@ export async function createExecuteTx(params: {
   contractAddress: string;
   executorAddress: string;
   proposal: Proposal;
-  overrides?: ExecuteOverrides;
 }, onProgress?: OnProgress): Promise<string | null> {
   return getWorkerApi().createExecuteTx(params, proxiedSendTx(), proxiedProgress(onProgress));
 }
