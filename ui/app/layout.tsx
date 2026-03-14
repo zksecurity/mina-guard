@@ -101,7 +101,6 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     >
       <div className="flex min-h-screen">
         <Sidebar
-          walletAddress={wallet.address}
           multisigAddress={multisig?.address ?? null}
           contracts={contracts.map((c) => c.address)}
           pendingTxCount={pendingCount}

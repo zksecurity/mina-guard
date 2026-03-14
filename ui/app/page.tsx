@@ -44,6 +44,7 @@ export default function Dashboard() {
 
   // Wallet balance
   const [balance, setBalance] = useState<string | null>(null);
+  const [copiedAddress, setCopiedAddress] = useState(false);
 
   useEffect(() => {
     if (!multisig?.address) return;
@@ -148,8 +149,29 @@ export default function Dashboard() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Contract</p>
-                <p className="text-sm font-mono">{truncateAddress(multisig.address, 10)}</p>
+                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Address</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-mono">{truncateAddress(multisig.address, 10)}</p>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(multisig.address);
+                      setCopiedAddress(true);
+                      setTimeout(() => setCopiedAddress(false), 1500);
+                    }}
+                    title="Copy address"
+                    className="text-safe-text hover:text-white transition-colors"
+                  >
+                    {copiedAddress ? (
+                      <svg className="w-3.5 h-3.5 text-safe-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
 
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">

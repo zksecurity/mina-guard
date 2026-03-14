@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import { truncateAddress } from '@/lib/types';
 
 interface SidebarProps {
-  walletAddress: string | null;
   multisigAddress: string | null;
   contracts: string[];
   pendingTxCount: number;
@@ -56,7 +55,6 @@ const navItems = [
 
 /** Sidebar navigation including contract selector and wallet/network context chips. */
 export default function Sidebar({
-  walletAddress,
   multisigAddress,
   contracts,
   pendingTxCount,
@@ -79,18 +77,9 @@ export default function Sidebar({
         </div>
       </div>
 
-      {walletAddress && (
-        <div className="px-4 py-3 border-b border-safe-border">
-          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-1">Wallet</p>
-          <p className="text-xs font-mono" title={walletAddress}>
-            {truncateAddress(walletAddress)}
-          </p>
-        </div>
-      )}
-
       {contracts.length > 0 && (
         <div className="px-4 py-3 border-b border-safe-border">
-          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-1">Contract</p>
+          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-1">Wallet</p>
           <select
             value={multisigAddress ?? ''}
             onChange={(e) => onSelectContract?.(e.target.value)}
