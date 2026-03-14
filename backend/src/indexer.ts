@@ -131,7 +131,6 @@ export class MinaGuardIndexer {
 
     for (const contract of contracts) {
       try {
-        console.log(`[indexer] syncing ${contract.address} blocks ${fromHeight}–${toHeight}`);
         await this.syncSingleContract(contract.id, contract.address, fromHeight, toHeight);
       } catch (error) {
         // Re-throw so the tick() caller does NOT advance the global cursor
@@ -296,9 +295,8 @@ export class MinaGuardIndexer {
 
   /**
    * Creates a proposal row from on-chain event data.
-   * ProposalEvent only contains proposalHash, proposer, and uid.
-   * Remaining proposal detail fields (to, amount, etc.) are populated
-   * via the POST /api/contracts/:address/proposals submission endpoint.
+   * ProposalEvent includes all TransactionProposal fields so the indexer
+   * can reconstruct full proposal details purely from on-chain events.
    */
   private async applyProposalEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
     const event = chainEvent.event;
@@ -316,10 +314,31 @@ export class MinaGuardIndexer {
         contractId,
         proposalHash,
         proposer: asString(event.proposer),
+        toAddress: asString(event.to),
+        amount: asString(event.amount),
+        tokenId: asString(event.tokenId),
+        txType: asString(event.txType),
+        data: asString(event.data),
+        uid: asString(event.uid),
+        configNonce: asString(event.configNonce),
+        expiryBlock: asString(event.expiryBlock),
+        networkId: asString(event.networkId),
+        guardAddress: asString(event.guardAddress),
         createdAtBlock: chainEvent.blockHeight,
         status: 'pending',
       },
-      update: {},
+      update: {
+        toAddress: asString(event.to),
+        amount: asString(event.amount),
+        tokenId: asString(event.tokenId),
+        txType: asString(event.txType),
+        data: asString(event.data),
+        uid: asString(event.uid),
+        configNonce: asString(event.configNonce),
+        expiryBlock: asString(event.expiryBlock),
+        networkId: asString(event.networkId),
+        guardAddress: asString(event.guardAddress),
+      },
     });
   }
 

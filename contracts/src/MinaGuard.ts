@@ -12,6 +12,7 @@ import {
   Provable,
   Signature,
   Struct,
+  UInt32,
   UInt64,
 } from 'o1js';
 
@@ -85,14 +86,22 @@ export class SetupOwnerEvent extends Struct({
 
 /**
  * Emitted when a new proposal is created and indexed by proposalHash.
- * TODO: Include full TransactionProposal fields (to, amount, tokenId, txType, data,
- * configNonce, expiryBlock, networkId, guardAddress) so the indexer can reconstruct
- * proposal details purely from on-chain events without a separate submission endpoint.
+ * Includes all TransactionProposal fields so the indexer can reconstruct
+ * proposal details purely from on-chain events.
  */
 export class ProposalEvent extends Struct({
   proposalHash: Field,
   proposer: PublicKey,
+  to: PublicKey,
+  amount: UInt64,
+  tokenId: Field,
+  txType: Field,
+  data: Field,
   uid: Field,
+  configNonce: Field,
+  expiryBlock: Field,
+  networkId: Field,
+  guardAddress: PublicKey,
 }) { }
 
 /** Emitted whenever a valid owner approval is recorded. */
@@ -237,7 +246,14 @@ export class MinaGuard extends SmartContract {
   /** Asserts optional expiry block has not passed. */
   private assertProposalNotExpired(proposal: TransactionProposal): void {
     const noExpiry = proposal.expiryBlock.equals(Field(0));
-    const blockchainLength = this.network.blockchainLength.getAndRequireEquals();
+    const blockchainLength = this.network.blockchainLength.get();
+    // Use a range precondition so the tx isn't rejected when the block advances
+    // between proof generation and inclusion. For proposals with an expiry, the
+    // upper bound is the expiry block; for no-expiry proposals it's uncapped.
+    this.network.blockchainLength.requireBetween(
+      UInt32.from(0),
+      Provable.if(noExpiry, UInt32, UInt32.MAXINT(), UInt32.Unsafe.fromField(proposal.expiryBlock))
+    );
     const notExpired = blockchainLength.value.lessThanOrEqual(proposal.expiryBlock);
     noExpiry.or(notExpired).assertTrue('Proposal expired');
   }
@@ -373,7 +389,16 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('proposal', {
       proposalHash,
       proposer,
+      to: proposal.to,
+      amount: proposal.amount,
+      tokenId: proposal.tokenId,
+      txType: proposal.txType,
+      data: proposal.data,
       uid: proposal.uid,
+      configNonce: proposal.configNonce,
+      expiryBlock: proposal.expiryBlock,
+      networkId: proposal.networkId,
+      guardAddress: proposal.guardAddress,
     });
 
     this.emitEvent('approval', {

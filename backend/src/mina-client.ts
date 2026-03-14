@@ -144,7 +144,8 @@ export async function fetchDecodedContractEvents(
   toHeight: number
 ): Promise<ChainEvent[]> {
   const contract = new MinaGuard(PublicKey.fromBase58(address));
-  const rawEvents = await contract.fetchEvents(UInt32.from(fromHeight), UInt32.from(toHeight));
+  // TODO: restore toHeight once archive node supports upper-bound filtering
+  const rawEvents = await contract.fetchEvents(UInt32.from(fromHeight));
 
   return rawEvents.map((entry) => ({
     type: entry.type,
