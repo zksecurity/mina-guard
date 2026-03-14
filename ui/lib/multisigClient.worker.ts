@@ -14,6 +14,7 @@ import {
   PrivateKey,
   Signature,
 } from 'o1js';
+import type { Cache as CompileCache, CacheHeader } from 'o1js';
 
 import {
   MinaGuard,
@@ -34,7 +35,7 @@ import {
   type Proposal,
   normalizeTxType,
 } from '@/lib/types';
-import { fetchAllEvents } from './api';
+import { fetchAllEvents, submitProposalMetadata } from './api';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
 type SendTxFn = (txJson: string) => Promise<string | null>;
@@ -51,6 +52,87 @@ type ProgressFn = (step: string) => void;
 // const ARCHIVE_ENDPOINT = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
 const MINA_ENDPOINT = 'http://127.0.0.1:8080/graphql';
 const ARCHIVE_ENDPOINT = 'http://127.0.0.1:8282';
+
+// ---------------------------------------------------------------------------
+// IndexedDB-backed compile cache
+// ---------------------------------------------------------------------------
+
+const IDB_NAME = 'mina-guard-compile-cache';
+const IDB_STORE = 'artifacts';
+
+function openCacheDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbSet(key: string, value: { uniqueId: string; data: Uint8Array }): Promise<void> {
+  return openCacheDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+
+/** In-memory mirror populated from IndexedDB before compile. */
+const memoryCache = new Map<string, { uniqueId: string; data: Uint8Array }>();
+
+async function populateMemoryCache(): Promise<void> {
+  try {
+    const db = await openCacheDb();
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const store = tx.objectStore(IDB_STORE);
+    const allKeys: string[] = await new Promise((resolve, reject) => {
+      const req = store.getAllKeys();
+      req.onsuccess = () => resolve(req.result as string[]);
+      req.onerror = () => reject(req.error);
+    });
+    const entries = await Promise.all(
+      allKeys.map(
+        (key) =>
+          new Promise<[string, { uniqueId: string; data: Uint8Array }]>((resolve, reject) => {
+            const req = store.get(key);
+            req.onsuccess = () => resolve([key, req.result]);
+            req.onerror = () => reject(req.error);
+          })
+      )
+    );
+    for (const [key, value] of entries) {
+      if (value) memoryCache.set(key, value);
+    }
+  } catch (err) {
+    console.warn('[CompileCache] Failed to populate from IndexedDB:', err);
+  }
+}
+
+/** Lagrange basis entries use a WASM method disabled on the web — skip them. */
+function isLagrangeBasis(header: CacheHeader): boolean {
+  return header.persistentId.startsWith('lagrange-basis');
+}
+
+const idbCache: CompileCache = {
+  read(header: CacheHeader) {
+    if (isLagrangeBasis(header)) return undefined;
+    const entry = memoryCache.get(header.persistentId);
+    if (entry && entry.uniqueId === header.uniqueId) return entry.data;
+    return undefined;
+  },
+  write(header: CacheHeader, value: Uint8Array) {
+    if (isLagrangeBasis(header)) return;
+    memoryCache.set(header.persistentId, { uniqueId: header.uniqueId, data: value });
+    idbSet(header.persistentId, { uniqueId: header.uniqueId, data: value }).catch(() => {});
+  },
+  canWrite: true,
+};
 
 let compilePromise: Promise<void> | null = null;
 
@@ -83,7 +165,8 @@ async function compileContract(): Promise<boolean> {
 
   compilePromise = (async () => {
     configureNetwork();
-    await MinaGuard.compile();
+    await populateMemoryCache();
+    await MinaGuard.compile({ cache: idbCache });
   })();
 
   try {
@@ -485,6 +568,25 @@ const workerApi = {
 
     progressFn('Submitting transaction...');
     const proposeHash = await sendFn(serializeTx(tx));
+
+    if (proposeHash) {
+      const proposalHashStr = proposalHash.toString();
+      await submitProposalMetadata(params.contractAddress, {
+        proposalHash: proposalHashStr,
+        proposer: params.proposerAddress,
+        to: params.input.to ?? null,
+        amount: proposal.amount.toString(),
+        tokenId: proposal.tokenId.toString(),
+        txType: params.input.txType,
+        data: proposal.data.toString(),
+        uid: proposal.uid.toString(),
+        configNonce: proposal.configNonce.toString(),
+        expiryBlock: proposal.expiryBlock.toString(),
+        networkId: proposal.networkId.toString(),
+        guardAddress: params.contractAddress,
+      });
+    }
+
     return proposeHash;
   },
 
@@ -656,5 +758,8 @@ const workerApi = {
 };
 
 export type WorkerApi = typeof workerApi;
+
+// Eagerly start compilation as soon as the worker loads
+compileContract().catch(() => {});
 
 Comlink.expose(workerApi);
