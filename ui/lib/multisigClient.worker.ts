@@ -6,6 +6,7 @@ import * as Comlink from 'comlink';
 import {
   Mina,
   Field,
+  Bool,
   UInt64,
   fetchAccount,
   AccountUpdate,
@@ -25,6 +26,7 @@ import {
   OwnerStore,
   VoteNullifierStore,
   ApprovalStore,
+  PublicKeyOption,
 } from 'contracts';
 
 import {
@@ -601,12 +603,18 @@ const workerApi = {
           );
         }
         const owner = PublicKey.fromBase58(params.overrides.ownerAddress);
+        // TODO: Allow the caller to specify an insertAfter index instead of always appending
+        const insertAfter =
+          txType === 'addOwner' && ownerStore.length > 0
+            ? new PublicKeyOption({ value: ownerStore.owners[ownerStore.length - 1], isSome: Bool(true) })
+            : PublicKeyOption.none();
         await contract.executeOwnerChange(
           proposalStruct,
           approvalStore.getWitness(proposalHash),
           approvalCount,
           owner,
-          ownerStore.getWitness()
+          ownerStore.getWitness(),
+          insertAfter
         );
         return;
       }
