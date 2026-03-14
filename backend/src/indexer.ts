@@ -225,6 +225,10 @@ export class MinaGuardIndexer {
         await this.applyThresholdChangeEvent(contractId, chainEvent.event);
         return;
       }
+      case 'delegate': {
+        await this.applyDelegateEvent(contractId, chainEvent.event);
+        return;
+      }
       default:
         return;
     }
@@ -453,6 +457,20 @@ export class MinaGuardIndexer {
     await prisma.contract.update({
       where: { id: contractId },
       data: { threshold: newThreshold },
+    });
+  }
+
+  /** Updates the delegate address on a contract when a delegate event is processed. */
+  private async applyDelegateEvent(
+    contractId: number,
+    event: Record<string, unknown>
+  ): Promise<void> {
+    const delegate = asString(event.delegate);
+    if (delegate === null) return;
+
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: { delegate },
     });
   }
 

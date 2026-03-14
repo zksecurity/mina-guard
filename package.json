@@ -5,11 +5,13 @@
     "contracts",
     "ui",
     "backend",
-    "dev-helpers"
+    "dev-helpers",
+    "e2e"
   ],
   "scripts": {
     "test": "bun run --filter contracts test",
     "test:proofs": "bun run --filter contracts test:proofs",
+    "test:e2e": "bun run --filter e2e test",
     "dev": "bun run --filter ui dev",
     "dev:backend": "bun run --filter backend dev",
     "build": "bun run --filter contracts --filter ui build",

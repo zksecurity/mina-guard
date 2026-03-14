@@ -112,6 +112,7 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
     numOwners: asNullableNumber(input.numOwners),
     proposalCounter: asNullableNumber(input.proposalCounter),
     configNonce: asNullableNumber(input.configNonce),
+    delegate: asNullableString(input.delegate),
     discoveredAt: asString(input.discoveredAt) ?? new Date(0).toISOString(),
     lastSyncedAt: asNullableString(input.lastSyncedAt),
   };

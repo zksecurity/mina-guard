@@ -50,6 +50,7 @@ export interface ContractSummary {
   numOwners: number | null;
   proposalCounter: number | null;
   configNonce: number | null;
+  delegate: string | null;
   discoveredAt: string;
   lastSyncedAt: string | null;
 }

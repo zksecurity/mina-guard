@@ -53,6 +53,18 @@ const ARCHIVE_ENDPOINT = 'http://127.0.0.1:8282';
 
 let compilePromise: Promise<void> | null = null;
 
+// -- E2E test mode --------------------------------------------------------
+// When a test private key is set, the worker signs and sends transactions
+// directly instead of delegating to the Auro wallet on the main thread.
+let testPrivateKey: InstanceType<typeof PrivateKey> | null = null;
+const SKIP_PROOFS = process.env.NEXT_PUBLIC_SKIP_PROOFS === 'true';
+const DEFAULT_FEE = 100_000_000; // 0.1 MINA — used when sending directly (test mode)
+
+/** Returns Mina.transaction sender arg — includes fee in test mode since Auro won't set it. */
+function txSender(pub: InstanceType<typeof PublicKey>) {
+  return testPrivateKey ? { sender: pub, fee: DEFAULT_FEE } : pub;
+}
+
 /** Contract state snapshot read directly from chain. */
 interface ContractState {
   ownersCommitment: string;
@@ -123,6 +135,9 @@ async function signProposalHash(
   hashAsFieldString: string,
   signFn: SignFieldsFn
 ): Promise<ReturnType<typeof Signature.fromBase58> | null> {
+  if (testPrivateKey) {
+    return Signature.create(testPrivateKey, [Field(hashAsFieldString)]);
+  }
   const signed = await signFn([hashAsFieldString]);
   if (!signed?.signature) return null;
   try {
@@ -130,6 +145,29 @@ async function signProposalHash(
   } catch {
     return null;
   }
+}
+
+/** Signs the fee payer, sends directly to the network, and returns the tx hash. */
+async function signAndSend(
+  tx: Awaited<ReturnType<typeof Mina.transaction>>,
+  extraKeys: InstanceType<typeof PrivateKey>[] = []
+): Promise<string> {
+  tx.sign([testPrivateKey!, ...extraKeys]);
+  const result = await tx.send();
+  const hash = typeof result.hash === 'function'
+    ? (result.hash as () => string)()
+    : result.hash;
+
+  // Log send errors if any
+  if ((result as any).errors?.length) {
+    console.error('[MultisigWorker] Transaction send errors:', (result as any).errors);
+  }
+  if ((result as any).status === 'rejected') {
+    console.error('[MultisigWorker] Transaction was rejected by the node');
+  }
+
+  console.log('[MultisigWorker] Transaction sent:', hash);
+  return hash;
 }
 
 async function rebuildStoresFromBackend(contractAddress: string) {
@@ -349,6 +387,11 @@ function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
 // ---------------------------------------------------------------------------
 
 const workerApi = {
+  /** Sets the private key for e2e test mode (direct sign/send, no Auro). */
+  setTestKey(privateKeyBase58: string) {
+    testPrivateKey = PrivateKey.fromBase58(privateKeyBase58);
+  },
+
   generateKeypair(): { privateKey: string; publicKey: string } {
     const key = PrivateKey.random();
     return { privateKey: key.toBase58(), publicKey: key.toPublicKey().toBase58() };
@@ -369,15 +412,22 @@ const workerApi = {
     const zkAppAddress = zkAppKey.toPublicKey();
     const zkApp = new MinaGuard(zkAppAddress);
 
-    const tx = await Mina.transaction(feePayer, async () => {
+    const tx = await Mina.transaction(txSender(feePayer), async () => {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
     });
 
-    progressFn('Generating proof...');
-    await tx.prove();
-    tx.sign([zkAppKey]);
+    if (!SKIP_PROOFS) {
+      progressFn('Generating proof...');
+      await tx.prove();
+    }
 
+    if (testPrivateKey) {
+      progressFn('Signing and sending transaction...');
+      return await signAndSend(tx, [zkAppKey]);
+    }
+
+    tx.sign([zkAppKey]);
     progressFn('Submitting transaction...');
     const deployHash = await sendFn(serializeTx(tx));
     return deployHash;
@@ -414,7 +464,7 @@ const workerApi = {
     const feePayer = PublicKey.fromBase58(params.feePayerAddress);
     const zkApp = new MinaGuard(zkAppAddress);
 
-    const tx = await Mina.transaction(feePayer, async () => {
+    const tx = await Mina.transaction(txSender(feePayer), async () => {
       await zkApp.setup(
         ownerStore.getCommitment(),
         Field(params.threshold),
@@ -426,8 +476,17 @@ const workerApi = {
       );
     });
 
-    progressFn('Generating proof...');
-    await tx.prove();
+    if (!SKIP_PROOFS) {
+      progressFn('Generating proof...');
+      await tx.prove();
+    }
+
+    if (testPrivateKey) {
+      progressFn('Signing and sending transaction...');
+      const txHash = await signAndSend(tx);
+      console.log('[MultisigWorker] setup tx result:', txHash);
+      return txHash;
+    }
 
     progressFn('Submitting transaction...');
     const txHash = await sendFn(serializeTx(tx));
@@ -461,7 +520,7 @@ const workerApi = {
         input: params.input,
       });
 
-    progressFn('Awaiting wallet signature...');
+    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
     const proposer = PublicKey.fromBase58(params.proposerAddress);
     const signature = await signProposalHash(
       proposal.hash().toString(),
@@ -475,7 +534,7 @@ const workerApi = {
     );
     const proposalHash = proposal.hash();
 
-    const tx = await Mina.transaction(proposer, async () => {
+    const tx = await Mina.transaction(txSender(proposer), async () => {
       await contract.propose(
         proposal,
         ownerStore.getWitness(),
@@ -486,13 +545,18 @@ const workerApi = {
       );
     });
 
-    progressFn('Generating proof...');
-    await tx.prove();
+    if (!SKIP_PROOFS) {
+      progressFn('Generating proof...');
+      await tx.prove();
+    }
+
+    if (testPrivateKey) {
+      progressFn('Signing and sending transaction...');
+      return await signAndSend(tx);
+    }
 
     progressFn('Submitting transaction...');
-    const proposeHash = await sendFn(serializeTx(tx));
-
-    return proposeHash;
+    return await sendFn(serializeTx(tx));
   },
 
   async createApproveTx(
@@ -521,7 +585,7 @@ const workerApi = {
         contractState
       );
 
-    progressFn('Awaiting wallet signature...');
+    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
     const approver = PublicKey.fromBase58(params.approverAddress);
     const proposalHash = proposalStruct.hash();
 
@@ -537,7 +601,7 @@ const workerApi = {
       PublicKey.fromBase58(params.contractAddress)
     );
 
-    const tx = await Mina.transaction(approver, async () => {
+    const tx = await Mina.transaction(txSender(approver), async () => {
       await contract.approveProposal(
         proposalStruct,
         signature,
@@ -549,12 +613,18 @@ const workerApi = {
       );
     });
 
-    progressFn('Generating proof...');
-    await tx.prove();
+    if (!SKIP_PROOFS) {
+      progressFn('Generating proof...');
+      await tx.prove();
+    }
+
+    if (testPrivateKey) {
+      progressFn('Signing and sending transaction...');
+      return await signAndSend(tx);
+    }
 
     progressFn('Submitting transaction...');
-    const approveHash = await sendFn(serializeTx(tx));
-    return approveHash;
+    return await sendFn(serializeTx(tx));
   },
 
   async createExecuteTx(
@@ -592,7 +662,7 @@ const workerApi = {
     const txType = normalizeTxType(params.proposal.txType);
     console.log("txType: ", txType);
 
-    const tx = await Mina.transaction(executor, async () => {
+    const tx = await Mina.transaction(txSender(executor), async () => {
       if (txType === 'transfer') {
         await contract.executeTransfer(
           proposalStruct,
@@ -652,12 +722,18 @@ const workerApi = {
       throw new Error('Unsupported proposal type for execution');
     });
 
-    progressFn('Generating proof...');
-    await tx.prove();
+    if (!SKIP_PROOFS) {
+      progressFn('Generating proof...');
+      await tx.prove();
+    }
+
+    if (testPrivateKey) {
+      progressFn('Signing and sending transaction...');
+      return await signAndSend(tx);
+    }
 
     progressFn('Submitting transaction...');
-    const executeHash = await sendFn(serializeTx(tx));
-    return executeHash;
+    return await sendFn(serializeTx(tx));
   },
 };
 

@@ -16,6 +16,7 @@ model Contract {
   numOwners      Int?
   configNonce    Int?
   proposalCounter Int?
+  delegate       String?
   discoveredAt   DateTime  @default(now())
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())

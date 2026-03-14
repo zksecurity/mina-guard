@@ -210,6 +210,15 @@ export default function Dashboard() {
               </div>
             </div>
 
+            <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
+              <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Block Producer Delegate</p>
+              <p className="text-sm font-mono mt-1 truncate" title={multisig.delegate ?? undefined}>
+                {multisig.delegate
+                  ? truncateAddress(multisig.delegate, 10)
+                  : 'None'}
+              </p>
+            </div>
+
             <div className="flex gap-3">
               <button
                 onClick={() => setShowProposal(true)}

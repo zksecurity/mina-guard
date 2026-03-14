@@ -49,6 +49,18 @@ export function warmupWorker() {
   getWorkerApi();
 }
 
+/** Sets the worker into e2e test mode with a private key for direct sign/send. */
+export async function setTestKey(privateKeyBase58: string) {
+  return getWorkerApi().setTestKey(privateKeyBase58);
+}
+
+// Expose test helper on window for e2e tests to call via page.evaluate()
+if (typeof window !== 'undefined') {
+  (window as any).__e2eSetTestKey = async (pk: string) => {
+    return getWorkerApi().setTestKey(pk);
+  };
+}
+
 /** Generates a random zkApp keypair in the worker (where o1js is loaded). */
 export async function generateKeypair(): Promise<{ privateKey: string; publicKey: string }> {
   return getWorkerApi().generateKeypair();
