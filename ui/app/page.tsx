@@ -46,9 +46,9 @@ export default function Dashboard() {
   const [balance, setBalance] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!wallet.address) return;
-    fetchBalance(wallet.address).then((b) => setBalance(b));
-  }, [wallet.address]);
+    if (!multisig?.address) return;
+    fetchBalance(multisig.address).then((b) => setBalance(b));
+  }, [multisig?.address, indexerStatus?.lastSuccessfulRunAt]);
 
   const parsedOwners = useMemo(() => {
     return ownerFields.map((s) => s.trim()).filter(Boolean);
