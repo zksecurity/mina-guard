@@ -1,5 +1,6 @@
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
+import { PublicKey } from 'o1js';
 import {
   configureNetwork,
   discoverCandidateAddresses,
@@ -9,6 +10,8 @@ import {
   fetchVerificationKeyHash,
   type ChainEvent,
 } from './mina-client.js';
+
+const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
 
 /** Runtime status exposed over API for monitoring indexer health and lag. */
 export interface IndexerStatus {
@@ -250,7 +253,7 @@ export class MinaGuardIndexer {
     event: Record<string, unknown>
   ): Promise<void> {
     const ownerAddress = asString(event.owner);
-    if (!ownerAddress || ownerAddress.length < 10) return;
+    if (!ownerAddress || ownerAddress.length < 10 || ownerAddress === EMPTY_PUBLIC_KEY) return;
 
     await prisma.owner.upsert({
       where: {
