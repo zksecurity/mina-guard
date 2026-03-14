@@ -75,24 +75,12 @@ export default function TransactionDetailPage() {
   const handleExecute = () => {
     if (!proposal || !multisig || !wallet.address) return;
 
-    let ownerAddress: string | undefined;
-    let delegateAddress: string | undefined;
-
-    if (proposal.txType === 'addOwner' || proposal.txType === 'removeOwner') {
-      ownerAddress = window.prompt('Owner address to execute add/remove owner proposal:') ?? undefined;
-    }
-
-    if (proposal.txType === 'setDelegate' && proposal.data !== '0') {
-      delegateAddress = window.prompt('Delegate address for executeDelegate:') ?? undefined;
-    }
-
-    const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal, overrides: { ownerAddress, delegateAddress } };
+    const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal };
     startOperation('Building execute transaction...', (onProgress) =>
       createExecuteTx({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
-        overrides: captured.overrides,
       }, onProgress)
     );
     router.push('/');
