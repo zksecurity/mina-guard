@@ -470,7 +470,7 @@ const workerApi = {
     const tx = await Mina.transaction(proposer, async () => {
       await contract.propose(
         proposal,
-        ownerStore.getWitness(proposer),
+        ownerStore.getWitness(),
         proposer,
         signature,
         nullifierStore.getWitness(proposalHash, proposer),
@@ -533,7 +533,7 @@ const workerApi = {
         proposalStruct,
         signature,
         approver,
-        ownerStore.getWitness(approver),
+        ownerStore.getWitness(),
         approvalStore.getWitness(proposalHash),
         currentApprovalCount,
         nullifierStore.getWitness(proposalHash, approver)
@@ -582,6 +582,7 @@ const workerApi = {
     );
     const executor = PublicKey.fromBase58(params.executorAddress);
     const txType = normalizeTxType(params.proposal.txType);
+    console.log("txType: ", txType);
 
     const tx = await Mina.transaction(executor, async () => {
       if (txType === 'transfer') {
@@ -605,7 +606,7 @@ const workerApi = {
           approvalStore.getWitness(proposalHash),
           approvalCount,
           owner,
-          ownerStore.getWitness(owner)
+          ownerStore.getWitness()
         );
         return;
       }
