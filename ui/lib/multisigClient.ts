@@ -1,141 +1,134 @@
-// -- Multisig Contract Client -----------------------------------------
-// Bridges the o1js smart contract with the web UI.
-// o1js is lazily loaded due to its large WASM bundle (~40MB).
+// -- Multisig Contract Client (Comlink wrapper) ---------------------------
+// Thin main-thread wrapper that delegates heavy o1js work to a Web Worker.
+"use client";
 
-let o1jsLoaded = false;
-let o1js: typeof import('o1js') | null = null;
+import * as Comlink from 'comlink';
+import type { WorkerApi } from './multisigClient.worker';
+import type { NewProposalInput, Proposal } from '@/lib/types';
+import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
 
-export async function loadO1js() {
-  if (o1jsLoaded && o1js) return o1js;
-  // Dynamic import — only loads when needed
-  o1js = await import('o1js');
-  o1jsLoaded = true;
-  return o1js;
+/** Re-export types consumed by page components. */
+export type { Proposal, NewProposalInput };
+
+/** Optional callback to receive step-based progress updates from the worker. */
+export type OnProgress = (step: string) => void;
+
+let worker: Worker | null = null;
+let api: Comlink.Remote<WorkerApi> | null = null;
+
+/** Lazily creates the shared worker instance. */
+function getWorkerApi(): Comlink.Remote<WorkerApi> {
+  if (!api) {
+    worker = new Worker(
+      new URL('./multisigClient.worker.ts', import.meta.url)
+    );
+    api = Comlink.wrap<WorkerApi>(worker);
+  }
+  return api;
 }
 
-export interface ContractState {
-  ownersRoot: string;
+/** Proxied Auro sendTransaction callback for use inside the worker. */
+function proxiedSendTx() {
+  return Comlink.proxy((txJson: string) => sendTransaction(txJson));
+}
+
+/** Proxied Auro signFields callback for use inside the worker. */
+function proxiedSignFields() {
+  return Comlink.proxy(
+    (fields: Array<string | number>) => getAuroSignFields(fields)
+  );
+}
+
+/** Creates a proxied progress callback for use inside the worker. */
+function proxiedProgress(onProgress?: OnProgress) {
+  return Comlink.proxy((step: string) => onProgress?.(step));
+}
+
+/** Initializes the worker early so compilation starts before the first user action. */
+export function warmupWorker() {
+  getWorkerApi();
+}
+
+/** Sets the worker into e2e test mode with a private key for direct sign/send. */
+export async function setTestKey(privateKeyBase58: string) {
+  return getWorkerApi().setTestKey(privateKeyBase58);
+}
+
+/** Disables proof generation in the worker (for use with lightnet / test environments). */
+export async function setSkipProofs(skip: boolean) {
+  return getWorkerApi().setSkipProofs(skip);
+}
+
+// Expose test helper on window for e2e tests to call via page.evaluate()
+if (typeof window !== 'undefined') {
+  (window as any).__e2eSetTestKey = async (pk: string) => {
+    return getWorkerApi().setTestKey(pk);
+  };
+  (window as any).__e2eSetSkipProofs = async (skip: boolean) => {
+    return getWorkerApi().setSkipProofs(skip);
+  };
+}
+
+/** Generates a random zkApp keypair in the worker (where o1js is loaded). */
+export async function generateKeypair(): Promise<{ privateKey: string; publicKey: string }> {
+  return getWorkerApi().generateKeypair();
+}
+
+/**
+ * Deploys MinaGuard contract account update and submits it through Auro.
+ * The zkApp private key remains in browser memory for this call only.
+ */
+export async function deployContract(params: {
+  feePayerAddress: string;
+  zkAppPrivateKeyBase58: string;
+}, onProgress?: OnProgress): Promise<string | null> {
+  return getWorkerApi().deployContract(params, proxiedSendTx(), proxiedProgress(onProgress));
+}
+
+/** Submits setup transaction with fixed-size owner list and threshold/network bootstrap. */
+export async function setupContract(params: {
+  zkAppAddress: string;
+  feePayerAddress: string;
+  owners: string[];
   threshold: number;
-  numOwners: number;
-  txNonce: number;
-  pendingTxRoot: string;
-  approvalRoot: string;
-  guardRoot: string;
-  configNonce: number;
+  networkId: string;
+}, onProgress?: OnProgress): Promise<string | null> {
+  return getWorkerApi().setupContract(params, proxiedSendTx(), proxiedProgress(onProgress));
 }
 
-/**
- * Fetch the on-chain state of the MultisigWallet contract.
- * In production, this connects to the Mina network and reads account state.
- */
-export async function fetchContractState(
-  contractAddress: string
-): Promise<ContractState | null> {
-  try {
-    const { PublicKey, Mina, fetchAccount } = await loadO1js();
-    const address = PublicKey.fromBase58(contractAddress);
-
-    // Fetch account from the network
-    await fetchAccount({ publicKey: address });
-
-    // In production, we'd instantiate the contract and read state:
-    // const contract = new MultisigWallet(address);
-    // return {
-    //   ownersRoot: contract.ownersRoot.get().toString(),
-    //   threshold: Number(contract.threshold.get().toBigInt()),
-    //   ...
-    // };
-
-    // For MVP, return null (use localStorage state instead)
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Compile the MultisigWallet contract.
- * This is expensive (~1-2 min) and should be done once.
- */
-export async function compileContract(): Promise<boolean> {
-  try {
-    // In production:
-    // const { MultisigWallet } = await import('contracts');
-    // await MultisigWallet.compile();
-    console.log('[MultisigClient] Contract compilation simulated');
-    return true;
-  } catch (err) {
-    console.error('[MultisigClient] Compilation failed:', err);
-    return false;
-  }
-}
-
-/**
- * Create a propose transaction.
- * Returns the serialized transaction for Auro Wallet submission.
- */
+/** Creates, proves, and sends a MinaGuard propose transaction using Auro field signature. */
 export async function createProposeTx(params: {
   contractAddress: string;
   proposerAddress: string;
-  to: string;
-  amount: string; // nanomina
-  txType: number;
-  data: string;
-}): Promise<string | null> {
-  try {
-    // In production:
-    // 1. Load o1js and contract
-    // 2. Build TransactionProposal
-    // 3. Create Mina.transaction with zkApp.propose()
-    // 4. Generate proof
-    // 5. Return serialized transaction
-    console.log('[MultisigClient] Propose tx created (simulated)', params);
-    return 'simulated-tx-json';
-  } catch (err) {
-    console.error('[MultisigClient] Failed to create propose tx:', err);
-    return null;
-  }
+  input: NewProposalInput;
+}, onProgress?: OnProgress): Promise<string | null> {
+  return getWorkerApi().createProposeTx(
+    params,
+    proxiedSignFields(),
+    proxiedSendTx(),
+    proxiedProgress(onProgress)
+  );
 }
 
-/**
- * Create an approve transaction.
- */
+/** Creates, proves, and submits approveProposal transaction for selected proposal hash. */
 export async function createApproveTx(params: {
   contractAddress: string;
   approverAddress: string;
-  txId: string;
-  txHash: string;
-}): Promise<string | null> {
-  try {
-    console.log('[MultisigClient] Approve tx created (simulated)', params);
-    return 'simulated-tx-json';
-  } catch (err) {
-    console.error('[MultisigClient] Failed to create approve tx:', err);
-    return null;
-  }
+  proposal: Proposal;
+}, onProgress?: OnProgress): Promise<string | null> {
+  return getWorkerApi().createApproveTx(
+    params,
+    proxiedSignFields(),
+    proxiedSendTx(),
+    proxiedProgress(onProgress)
+  );
 }
 
-/**
- * Create an execute transaction.
- */
+/** Creates, proves, and submits execution transaction for the selected proposal type. */
 export async function createExecuteTx(params: {
   contractAddress: string;
   executorAddress: string;
-  txId: string;
-  proposal: {
-    to: string;
-    amount: string;
-    tokenId: string;
-    txType: number;
-    data: string;
-    nonce: string;
-  };
-}): Promise<string | null> {
-  try {
-    console.log('[MultisigClient] Execute tx created (simulated)', params);
-    return 'simulated-tx-json';
-  } catch (err) {
-    console.error('[MultisigClient] Failed to create execute tx:', err);
-    return null;
-  }
+  proposal: Proposal;
+}, onProgress?: OnProgress): Promise<string | null> {
+  return getWorkerApi().createExecuteTx(params, proxiedSendTx(), proxiedProgress(onProgress));
 }

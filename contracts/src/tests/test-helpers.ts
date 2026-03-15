@@ -10,6 +10,7 @@ import {
 } from 'o1js';
 import {
   MinaGuard,
+  SetupOwnersInput,
   TransactionProposal,
 } from '../MinaGuard.js';
 import { TxType, PROPOSED_MARKER, MAX_OWNERS } from '../constants.js';
@@ -21,6 +22,7 @@ import { ownerKey } from '../utils.js';
 
 // -- Types -------------------------------------------------------------------
 
+/** Shared context used by integration-style contract tests. */
 export interface TestContext {
   zkApp: MinaGuard;
   zkAppKey: PrivateKey;
@@ -40,7 +42,7 @@ export function makeSignatureInputs(
   proposalHash: Field,
   signerIndices: number[]
 ): SignatureInputs {
-  const inputs: SignatureInputs = [];
+  const inputs: SignatureInput[] = [];
   const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
   for (let i = 0; i < ctx.owners.length; i++) {
     const owner = ctx.owners[i];
@@ -70,23 +72,33 @@ export function makeSignatureInputs(
       })
     );
   }
-  return inputs;
+  return new SignatureInputs({ inputs });
 }
 
 // -- Owner Witness Helper ----------------------------------------------------
 
 export function makeOwnerWitness(owners: PublicKey[]): OwnerWitness {
-  const witness: OwnerWitness = owners.map(
+  const ownerOptions = owners.map(
     (pk) => new PublicKeyOption({ value: pk, isSome: Bool(true) })
   );
-  while (witness.length < MAX_OWNERS) {
-    witness.push(PublicKeyOption.none());
+  while (ownerOptions.length < MAX_OWNERS) {
+    ownerOptions.push(PublicKeyOption.none());
   }
-  return witness;
+  return new OwnerWitness({ owners: ownerOptions });
 }
 
 // -- Setup Helpers -----------------------------------------------------------
 
+/** Pads the owner list to the fixed setup input length required by the contract. */
+export function toFixedSetupOwners(owners: PublicKey[]): PublicKey[] {
+  const padded = [...owners];
+  while (padded.length < MAX_OWNERS) {
+    padded.push(PublicKey.empty());
+  }
+  return padded.slice(0, MAX_OWNERS);
+}
+
+/** Creates and activates a local Mina blockchain test context with funded accounts. */
 export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> {
   const Local = await Mina.LocalBlockchain({ proofsEnabled: false });
   Mina.setActiveInstance(Local);
@@ -133,6 +145,7 @@ export function getOwnersCommitment(ctx: TestContext): Field {
   return computeOwnerChain(ctx.owners.map((o) => o.pub));
 }
 
+/** Deploys MinaGuard, funds it, and performs one-time setup. */
 export async function deployAndSetup(
   ctx: TestContext,
   threshold = 2
@@ -146,7 +159,6 @@ export async function deployAndSetup(
   await deployTxn.prove();
   await deployTxn.sign([deployerKey, zkAppKey]).send();
 
-  // Fund the wallet
   const fundTxn = await Mina.transaction(deployerAccount, async () => {
     const update = AccountUpdate.createSigned(deployerAccount);
     update.send({ to: zkAppAddress, amount: UInt64.from(10_000_000_000) });
@@ -155,13 +167,15 @@ export async function deployAndSetup(
   await fundTxn.sign([deployerKey]).send();
 
   const ownersCommitment = computeOwnerChain(owners.map((o) => o.pub));
+  const setupOwners = toFixedSetupOwners(owners.map((o) => o.pub));
 
   const setupTxn = await Mina.transaction(deployerAccount, async () => {
     await zkApp.setup(
       ownersCommitment,
       Field(threshold),
       Field(owners.length),
-      ctx.networkId
+      ctx.networkId,
+      new SetupOwnersInput({ owners: setupOwners })
     );
   });
   await setupTxn.prove();
@@ -170,6 +184,7 @@ export async function deployAndSetup(
 
 // -- Proposal Helpers --------------------------------------------------------
 
+/** Builds a transfer proposal payload. */
 export function createTransferProposal(
   to: PublicKey,
   amount: UInt64,
@@ -193,6 +208,7 @@ export function createTransferProposal(
   });
 }
 
+/** Builds an add-owner governance proposal payload. */
 export function createAddOwnerProposal(
   newOwner: PublicKey,
   uid: Field,
@@ -215,6 +231,7 @@ export function createAddOwnerProposal(
   });
 }
 
+/** Builds a remove-owner governance proposal payload. */
 export function createRemoveOwnerProposal(
   ownerToRemove: PublicKey,
   uid: Field,
@@ -237,6 +254,7 @@ export function createRemoveOwnerProposal(
   });
 }
 
+/** Builds a threshold-change governance proposal payload. */
 export function createThresholdProposal(
   newThreshold: Field,
   uid: Field,
@@ -259,6 +277,7 @@ export function createThresholdProposal(
   });
 }
 
+/** Builds a delegate proposal payload. */
 export function createDelegateProposal(
   delegate: PublicKey,
   uid: Field,
@@ -281,6 +300,7 @@ export function createDelegateProposal(
   });
 }
 
+/** Builds an un-delegate proposal payload (data=0). */
 export function createUndelegateProposal(
   uid: Field,
   configNonce: Field,
@@ -304,6 +324,7 @@ export function createUndelegateProposal(
 
 // -- Transaction Helpers -----------------------------------------------------
 
+/** Submits a propose call and updates off-chain stores to mirror on-chain mutations. */
 export async function proposeTransaction(
   ctx: TestContext,
   proposal: TransactionProposal,
@@ -331,13 +352,13 @@ export async function proposeTransaction(
   await txn.prove();
   await txn.sign([proposer.key]).send();
 
-  // Update off-chain stores: proposer auto-approves in propose()
   nullifierStore.nullify(proposalHash, proposer.pub);
   approvalStore.setCount(proposalHash, PROPOSED_MARKER.add(1));
 
   return proposalHash;
 }
 
+/** Submits approveProposal for an owner and syncs the local store mirrors. */
 export async function approveTransaction(
   ctx: TestContext,
   proposal: TransactionProposal,
@@ -367,16 +388,17 @@ export async function approveTransaction(
   await txn.prove();
   await txn.sign([approver.key]).send();
 
-  // Update off-chain stores
   nullifierStore.nullify(proposalHash, approver.pub);
   const newCount = Field(Number(currentCount.toString()) + 1);
   approvalStore.setCount(proposalHash, newCount);
 }
 
+/** Reads an account balance from the active Mina instance. */
 export function getBalance(address: PublicKey): UInt64 {
   return Mina.getBalance(address);
 }
 
+/** Funds an account in local tests so transfer assertions can run safely. */
 export async function fundAccount(
   ctx: TestContext,
   address: PublicKey

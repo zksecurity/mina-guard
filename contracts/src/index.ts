@@ -1,6 +1,10 @@
 export {
   MinaGuard,
   TransactionProposal,
+  SetupOwnersInput,
+  DeployEvent,
+  SetupEvent,
+  SetupOwnerEvent,
   ProposalEvent,
   ApprovalEvent,
   ExecutionEvent,

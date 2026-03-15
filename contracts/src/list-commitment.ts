@@ -1,9 +1,9 @@
-import { Option, Poseidon, Field, Provable, PublicKey, Bool } from "o1js";
+import { Option, Poseidon, Field, Provable, PublicKey, Bool, Struct } from "o1js";
 import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from "./constants";
 
 class PublicKeyOption extends Option(PublicKey) { }
-type OwnerWitness = PublicKeyOption[];
-const OwnerWitness = Provable.Array(PublicKeyOption, MAX_OWNERS);
+const OwnerWitnessArray = Provable.Array(PublicKeyOption, MAX_OWNERS);
+class OwnerWitness extends Struct({ owners: OwnerWitnessArray }) { }
 
 function computeOwnerChain(owners: PublicKey[]): Field {
   let currentChain = INITIAL_OWNER_CHAIN;
@@ -27,7 +27,7 @@ function assertOwnerMembership(
 ) {
   let found = Bool(false);
   let currentChain = INITIAL_OWNER_CHAIN;
-  ownersWitness.forEach(({ value: pk, isSome }) => {
+  ownersWitness.owners.forEach(({ value: pk, isSome }) => {
 
     let newChain = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
     currentChain = Provable.if(isSome, newChain, currentChain);
@@ -77,7 +77,7 @@ function addOwnerToCommitment(
   // if prepend, already "found" position. Else, start with false
   let foundPosition = prepend;
 
-  ownersWitness.forEach(({ value: pk, isSome }) => {
+  ownersWitness.owners.forEach(({ value: pk, isSome }) => {
 
     let currentChainTemp = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
     currentChain = Provable.if(isSome, currentChainTemp, currentChain);
@@ -125,7 +125,7 @@ function removeOwnerFromCommitment(
 
   let foundOwner = Bool(false);
 
-  ownersWitness.forEach(({ value: pk, isSome }) => {
+  ownersWitness.owners.forEach(({ value: pk, isSome }) => {
 
     let currentChainTemp = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
     currentChain = Provable.if(isSome, currentChainTemp, currentChain);
@@ -145,6 +145,6 @@ function removeOwnerFromCommitment(
 }
 
 export {
-  OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership,
+  OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, assertOwnerMembership,
   addOwnerToCommitment, removeOwnerFromCommitment
 };

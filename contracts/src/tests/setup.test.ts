@@ -1,6 +1,13 @@
 import { Field, Mina, AccountUpdate, UInt64 } from 'o1js';
 import { EMPTY_MERKLE_MAP_ROOT } from '../constants.js';
-import { setupLocalBlockchain, deployAndSetup, getOwnersCommitment, type TestContext } from './test-helpers.js';
+import { SetupOwnersInput } from '../MinaGuard.js';
+import {
+  setupLocalBlockchain,
+  deployAndSetup,
+  getOwnersCommitment,
+  toFixedSetupOwners,
+  type TestContext,
+} from './test-helpers.js';
 import { computeOwnerChain } from '../list-commitment.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
@@ -23,6 +30,17 @@ describe('MinaGuard - Setup', () => {
     expect(ctx.zkApp.voteNullifierRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
   });
 
+  it('should emit deploy and setup bootstrap events', async () => {
+    await deployAndSetup(ctx, 2);
+
+    const events = await ctx.zkApp.fetchEvents();
+    const deployed = events.filter((e) => e.type === 'deployed');
+    const setupOwner = events.filter((e) => e.type === 'setupOwner');
+
+    expect(deployed.length).toBe(1);
+    expect(setupOwner.length).toBe(20);
+  });
+
   it('should reject double setup', async () => {
     await deployAndSetup(ctx, 2);
 
@@ -32,7 +50,10 @@ describe('MinaGuard - Setup', () => {
           getOwnersCommitment(ctx),
           Field(2),
           Field(3),
-          Field(1)
+          Field(1),
+          new SetupOwnersInput({
+            owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
+          })
         );
       });
       await txn.prove();
@@ -54,7 +75,15 @@ describe('MinaGuard - Setup', () => {
 
     await expect(async () => {
       const txn = await Mina.transaction(deployerAccount, async () => {
-        await zkApp.setup(ownersCommitment, Field(0), Field(3), Field(1));
+        await zkApp.setup(
+          ownersCommitment,
+          Field(0),
+          Field(3),
+          Field(1),
+          new SetupOwnersInput({
+            owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
+          })
+        );
       });
       await txn.prove();
       await txn.sign([deployerKey, zkAppKey]).send();
@@ -74,7 +103,15 @@ describe('MinaGuard - Setup', () => {
 
     await expect(async () => {
       const txn = await Mina.transaction(deployerAccount, async () => {
-        await zkApp.setup(ownersCommitment, Field(5), Field(3), Field(1));
+        await zkApp.setup(
+          ownersCommitment,
+          Field(5),
+          Field(3),
+          Field(1),
+          new SetupOwnersInput({
+            owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
+          })
+        );
       });
       await txn.prove();
       await txn.sign([deployerKey]).send();

@@ -5,15 +5,17 @@ import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import TransactionList from '@/components/TransactionList';
 import Link from 'next/link';
-import { TxStatus } from '@/lib/types';
 
-type Tab = 'all' | 'pending' | 'executed';
+type Tab = 'all' | 'pending' | 'executed' | 'expired';
 
+/** Full proposal table page with lifecycle-status filtering tabs. */
 export default function TransactionsPage() {
   const {
     wallet,
     multisig,
-    transactions,
+    owners,
+    proposals,
+    indexerStatus,
     connect,
     disconnect,
     isLoading,
@@ -21,29 +23,23 @@ export default function TransactionsPage() {
   } = useAppContext();
   const [activeTab, setActiveTab] = useState<Tab>('all');
 
-  const filteredTxs =
+  const filtered =
     activeTab === 'all'
-      ? transactions
-      : transactions.filter((t) => t.status === activeTab);
-
-  const pendingCount = transactions.filter(
-    (t) => t.status === 'pending'
-  ).length;
-  const executedCount = transactions.filter(
-    (t) => t.status === 'executed'
-  ).length;
+      ? proposals
+      : proposals.filter((proposal) => proposal.status === activeTab);
 
   const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: 'all', label: 'All', count: transactions.length },
-    { key: 'pending', label: 'Pending', count: pendingCount },
-    { key: 'executed', label: 'Executed', count: executedCount },
+    { key: 'all', label: 'All', count: proposals.length },
+    { key: 'pending', label: 'Pending', count: proposals.filter((p) => p.status === 'pending').length },
+    { key: 'executed', label: 'Executed', count: proposals.filter((p) => p.status === 'executed').length },
+    { key: 'expired', label: 'Expired', count: proposals.filter((p) => p.status === 'expired').length },
   ];
 
   return (
     <div>
       <Header
-        title="Transactions"
-        subtitle="View and manage multisig transactions"
+        title="Proposals"
+        subtitle="Indexed MinaGuard proposals"
         walletAddress={wallet.address}
         connected={wallet.connected}
         isLoading={isLoading}
@@ -55,13 +51,10 @@ export default function TransactionsPage() {
       <div className="p-6">
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
-            <p className="text-safe-text">
-              Connect your wallet to view transactions
-            </p>
+            <p className="text-safe-text">Connect wallet and select a contract to view proposals</p>
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Tabs + New TX button */}
             <div className="flex items-center justify-between">
               <div className="flex gap-1 bg-safe-gray border border-safe-border rounded-lg p-1">
                 {tabs.map((tab) => (
@@ -75,45 +68,36 @@ export default function TransactionsPage() {
                     }`}
                   >
                     {tab.label}
-                    <span className="ml-1.5 text-xs opacity-60">
-                      {tab.count}
-                    </span>
+                    <span className="ml-1.5 text-xs opacity-60">{tab.count}</span>
                   </button>
                 ))}
               </div>
 
-              <Link
-                href="/transactions/new"
-                className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110 transition-all"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
+              {multisig.ownersCommitment != null ? (
+                <Link
+                  href="/transactions/new"
+                  className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm hover:brightness-110 transition-all"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-                New Transaction
-              </Link>
+                  New Proposal
+                </Link>
+              ) : (
+                <span
+                  title="Run Setup first to initialize the contract"
+                  className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2 text-sm opacity-40 cursor-not-allowed"
+                >
+                  New Proposal
+                </span>
+              )}
             </div>
 
-            {/* Transaction list */}
             <TransactionList
-              transactions={[...filteredTxs].reverse()}
-              threshold={multisig.threshold}
-              owners={multisig.owners}
+              proposals={filtered}
+              threshold={multisig.threshold ?? 0}
+              owners={owners.map((owner) => owner.address)}
               emptyMessage={
-                activeTab === 'pending'
-                  ? 'No pending transactions'
-                  : activeTab === 'executed'
-                  ? 'No executed transactions yet'
-                  : 'No transactions yet'
+                activeTab === 'all'
+                  ? 'No proposals found'
+                  : `No ${activeTab} proposals`
               }
             />
           </div>

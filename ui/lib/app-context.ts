@@ -1,34 +1,68 @@
 'use client';
 
 import { createContext, useContext } from 'react';
-import { WalletState, MultisigState, Transaction } from '@/lib/types';
+import {
+  ContractSummary,
+  IndexerStatus,
+  OwnerRecord,
+  Proposal,
+  WalletState,
+} from '@/lib/types';
 
+/** Banner state displayed at the top of the Dashboard after an operation completes. */
+export interface OperationBanner {
+  type: 'success' | 'error';
+  message: string;
+}
+
+/** Shared app context contract for wallet, contract index data, and refresh actions. */
 export interface AppContextType {
   wallet: WalletState;
-  multisig: MultisigState | null;
-  transactions: Transaction[];
+  multisig: ContractSummary | null;
+  contracts: ContractSummary[];
+  owners: OwnerRecord[];
+  proposals: Proposal[];
   pendingCount: number;
+  indexerStatus: IndexerStatus | null;
   connect: () => void;
   disconnect: () => void;
   isLoading: boolean;
   auroInstalled: boolean;
-  addTransaction: (tx: Transaction) => void;
-  updateTransaction: (txId: string, updates: Partial<Transaction>) => void;
-  refreshMultisig: () => void;
+  refreshMultisig: () => Promise<void>;
+  selectContract: (address: string) => Promise<void>;
+  /** Whether a worker operation is currently running. */
+  isOperating: boolean;
+  /** Spinner label shown while a worker task is in flight. */
+  operationLabel: string;
+  /** Result banner from the last completed operation. */
+  operationBanner: OperationBanner | null;
+  /** Clears the result banner. */
+  clearBanner: () => void;
+  /** Starts a worker operation: shows spinner, runs fn, shows result banner, refreshes state.
+   *  The fn receives an onProgress callback to update the spinner label mid-operation. */
+  startOperation: (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => void;
 }
 
 export const AppContext = createContext<AppContextType>({
   wallet: { connected: false, address: null, network: null },
   multisig: null,
-  transactions: [],
+  contracts: [],
+  owners: [],
+  proposals: [],
   pendingCount: 0,
+  indexerStatus: null,
   connect: () => {},
   disconnect: () => {},
   isLoading: false,
   auroInstalled: false,
-  addTransaction: () => {},
-  updateTransaction: () => {},
-  refreshMultisig: () => {},
+  refreshMultisig: async () => {},
+  selectContract: async () => {},
+  isOperating: false,
+  operationLabel: '',
+  operationBanner: null,
+  clearBanner: () => {},
+  startOperation: () => {},
 });
 
+/** Hook wrapper for typed context consumption in client components. */
 export const useAppContext = () => useContext(AppContext);

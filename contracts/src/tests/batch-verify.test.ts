@@ -3,6 +3,7 @@ import { Bool, Field, Poseidon, PrivateKey, Provable, Signature } from 'o1js';
 import {
   batchVerify,
   SignatureInput,
+  SignatureInputs,
   SignatureOption,
 } from '../batch-verify.js';
 import { INITIAL_SIGNER_CHAIN, MAX_OWNERS } from '../constants.js';
@@ -75,7 +76,7 @@ describe('batchVerify signerChain', () => {
     const expected = expectedSignerChain([pk0, pk1, pk2]);
 
     await Provable.runAndCheck(() => {
-      const result = batchVerify(inputs, message);
+      const result = batchVerify(new SignatureInputs({ inputs }), message);
       result.signerChain.assertEquals(expected);
       result.approvalCount.assertEquals(Field(3));
     });
@@ -114,7 +115,7 @@ describe('batchVerify signerChain', () => {
     const expected = expectedSignerChain([pk0]);
 
     await Provable.runAndCheck(() => {
-      const result = batchVerify(inputs, message);
+      const result = batchVerify(new SignatureInputs({ inputs }), message);
       result.signerChain.assertEquals(expected);
       result.approvalCount.assertEquals(Field(1));
     });

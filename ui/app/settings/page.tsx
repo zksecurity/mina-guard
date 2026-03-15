@@ -1,40 +1,31 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import OwnerList from '@/components/OwnerList';
 import ThresholdBadge from '@/components/ThresholdBadge';
 
+/** Settings page for owner set and threshold governance proposal shortcuts. */
 export default function SettingsPage() {
   const router = useRouter();
   const {
     wallet,
     multisig,
+    owners,
     connect,
     disconnect,
     isLoading,
     auroInstalled,
   } = useAppContext();
 
-  const handleAddOwner = () => {
-    router.push('/transactions/new');
-  };
-
-  const handleRemoveOwner = (address: string) => {
-    router.push('/transactions/new');
-  };
-
-  const handleChangeThreshold = () => {
-    router.push('/transactions/new');
-  };
+  const activeOwners = owners.map((owner) => owner.address);
 
   return (
     <div>
       <Header
         title="Settings"
-        subtitle="Manage owners and threshold"
+        subtitle="Manage owners, threshold, and contract metadata"
         walletAddress={wallet.address}
         connected={wallet.connected}
         isLoading={isLoading}
@@ -46,124 +37,79 @@ export default function SettingsPage() {
       <div className="p-6 max-w-2xl space-y-6">
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
-            <p className="text-safe-text">
-              Connect your wallet to manage settings
-            </p>
+            <p className="text-safe-text">Connect wallet to manage contract settings</p>
           </div>
         ) : (
           <>
-            {/* Threshold Section */}
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-sm font-semibold">
-                    Required Confirmations
-                  </h3>
+                  <h3 className="text-sm font-semibold">Required Confirmations</h3>
                   <p className="text-xs text-safe-text mt-1">
-                    Transactions require this many owner confirmations
+                    Governance changes are approved by current threshold.
                   </p>
                 </div>
                 <ThresholdBadge
-                  threshold={multisig.threshold}
-                  numOwners={multisig.numOwners}
+                  threshold={multisig.threshold ?? 0}
+                  numOwners={multisig.numOwners ?? activeOwners.length}
                   size="lg"
                 />
               </div>
               <button
-                onClick={handleChangeThreshold}
+                onClick={() => router.push('/transactions/new')}
                 className="w-full mt-2 p-2.5 border border-safe-border rounded-lg text-sm text-safe-text hover:text-safe-green hover:border-safe-green transition-colors"
               >
-                Change Threshold
+                Create Threshold Proposal
               </button>
-              <p className="text-[10px] text-safe-text mt-2">
-                Changing the threshold requires a multisig proposal approved
-                by the current threshold of owners.
-              </p>
             </div>
 
-            {/* Owners Section */}
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
               <div className="mb-4">
-                <h3 className="text-sm font-semibold">
-                  Owners ({multisig.numOwners})
-                </h3>
+                <h3 className="text-sm font-semibold">Owners ({activeOwners.length})</h3>
                 <p className="text-xs text-safe-text mt-1">
-                  Owners can propose, confirm, and execute transactions
+                  Owners can propose, approve, and execute transactions.
                 </p>
               </div>
               <OwnerList
-                owners={multisig.owners}
+                owners={activeOwners}
                 currentUser={wallet.address}
-                threshold={multisig.threshold}
-                onAddOwner={handleAddOwner}
-                onRemoveOwner={handleRemoveOwner}
+                threshold={multisig.threshold ?? 1}
+                onAddOwner={() => router.push('/transactions/new')}
+                onRemoveOwner={() => router.push('/transactions/new')}
               />
-              <p className="text-[10px] text-safe-text mt-3">
-                Adding or removing owners requires a multisig proposal
-                approved by the current threshold of owners.
-              </p>
             </div>
 
-            {/* Wallet Info Section */}
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
-              <h3 className="text-sm font-semibold mb-4">Wallet Info</h3>
+              <h3 className="text-sm font-semibold mb-4">Contract Info</h3>
               <div className="space-y-3">
-                <div className="flex justify-between items-center py-2 border-b border-safe-border/50">
-                  <span className="text-sm text-safe-text">
-                    Contract Address
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-mono">
-                      {multisig.address.slice(0, 12)}...
-                      {multisig.address.slice(-8)}
-                    </span>
-                    <button
-                      onClick={() =>
-                        navigator.clipboard.writeText(multisig.address)
-                      }
-                      className="p-1 text-safe-text hover:text-white transition-colors"
-                    >
-                      <svg
-                        className="w-3.5 h-3.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={1.5}
-                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-safe-border/50">
-                  <span className="text-sm text-safe-text">Network</span>
-                  <span className="text-sm">{wallet.network ?? 'Unknown'}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-safe-border/50">
-                  <span className="text-sm text-safe-text">
-                    Transaction Nonce
-                  </span>
-                  <span className="text-sm font-mono">
-                    {multisig.txNonce}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center py-2">
-                  <span className="text-sm text-safe-text">
-                    Config Nonce
-                  </span>
-                  <span className="text-sm font-mono">
-                    {multisig.configNonce}
-                  </span>
-                </div>
+                <InfoRow label="Contract" value={multisig.address} mono />
+                <InfoRow label="Network" value={wallet.network ?? 'Unknown'} />
+                <InfoRow label="Network ID" value={multisig.networkId ?? '-'} mono />
+                <InfoRow label="Owners Commitment" value={multisig.ownersCommitment ?? '-'} mono />
+                <InfoRow label="Config Nonce" value={String(multisig.configNonce ?? '-')} mono />
               </div>
             </div>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Label-value row primitive used in settings metadata section. */
+function InfoRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex justify-between items-center py-2 border-b border-safe-border/50 last:border-0">
+      <span className="text-sm text-safe-text">{label}</span>
+      <span className={`text-sm ${mono ? 'font-mono truncate max-w-[16rem] text-right' : ''}`}>{value}</span>
     </div>
   );
 }

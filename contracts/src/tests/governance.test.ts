@@ -528,7 +528,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const sigs = makeSignatureInputs(ctx, proposalHash, [0]); // only owner 0 signs validly
       const wrongKey = PrivateKey.random();
       const wrongSig = Signature.create(wrongKey, [proposalHash]);
-      sigs[1] = new SignatureInput({
+      sigs.inputs[1] = new SignatureInput({
         value: {
           signature: new SignatureOption({ value: wrongSig, isSome: Bool(true) }),
           signer: ctx.owners[1].pub,
@@ -561,7 +561,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
       const nonOwner = PrivateKey.random();
       const nonOwnerSig = Signature.create(nonOwner, [proposalHash]);
-      sigs[1] = new SignatureInput({
+      sigs.inputs[1] = new SignatureInput({
         value: {
           signature: new SignatureOption({ value: nonOwnerSig, isSome: Bool(true) }),
           signer: nonOwner.toPublicKey(),

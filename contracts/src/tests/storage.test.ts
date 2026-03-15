@@ -52,9 +52,9 @@ describe('OwnerStore', () => {
 
     const witness = store.getWitness();
     // Witness should have MAX_OWNERS entries, first 2 filled
-    expect(witness[0].isSome.toBoolean()).toBe(true);
-    expect(witness[1].isSome.toBoolean()).toBe(true);
-    expect(witness[2].isSome.toBoolean()).toBe(false);
+    expect(witness.owners[0].isSome.toBoolean()).toBe(true);
+    expect(witness.owners[1].isSome.toBoolean()).toBe(true);
+    expect(witness.owners[2].isSome.toBoolean()).toBe(false);
   });
 
   it('should serialize and deserialize', () => {
