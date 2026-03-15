@@ -17,7 +17,7 @@ import { PublicKeyOption } from '../list-commitment.js';
 import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-describe('MinaGuard - Execute', { timeout: 60_000 }, () => {
+describe('MinaGuard - Execute', () => {
   let ctx: TestContext;
 
   beforeEach(async () => {
@@ -361,7 +361,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     const sigs = makeSignatureInputs(ctx, proposalHash, [0]); // only owner 0 signs validly
     const wrongKey = PrivateKey.random();
     const wrongSig = Signature.create(wrongKey, [proposalHash]);
-    sigs[1] = new SignatureInput({
+    sigs.inputs[1] = new SignatureInput({
       value: {
         signature: new SignatureOption({ value: wrongSig, isSome: Bool(true) }),
         signer: ctx.owners[1].pub,

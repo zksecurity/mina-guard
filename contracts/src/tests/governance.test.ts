@@ -19,7 +19,7 @@ import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { ownerKey } from '../utils.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-describe('MinaGuard - Governance', { timeout: 60_000 }, () => {
+describe('MinaGuard - Governance', () => {
   let ctx: TestContext;
 
   beforeEach(async () => {
@@ -391,7 +391,7 @@ describe('MinaGuard - Governance', { timeout: 60_000 }, () => {
 
 // -- Batch Sig Governance Tests ------------------------------------------------
 
-describe('MinaGuard - Owner Change BatchSig', { timeout: 60_000 }, () => {
+describe('MinaGuard - Owner Change BatchSig', () => {
   let ctx: TestContext;
 
   beforeEach(async () => {

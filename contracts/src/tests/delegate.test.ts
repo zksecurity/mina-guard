@@ -14,7 +14,7 @@ import {
 import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-describe('MinaGuard - Delegate', { timeout: 60_000 }, () => {
+describe('MinaGuard - Delegate', () => {
   let ctx: TestContext;
 
   beforeEach(async () => {
@@ -47,7 +47,7 @@ describe('MinaGuard - Delegate', { timeout: 60_000 }, () => {
     expect(delegate!.equals(blockProducer).toBoolean()).toBe(true);
   });
 
-  it('should un-delegate (delegate to self) via multisig', { timeout: 60_000 }, async () => {
+  it('should un-delegate (delegate to self) via multisig', async () => {
     // First delegate to someone
     const blockProducer = PrivateKey.random().toPublicKey();
     const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
@@ -339,7 +339,7 @@ describe('MinaGuard - Delegate BatchSig', () => {
     const sigs = makeSignatureInputs(ctx, proposalHash, [0]); // only owner 0 signs validly
     const wrongKey = PrivateKey.random();
     const wrongSig = Signature.create(wrongKey, [proposalHash]);
-    sigs[1] = new SignatureInput({
+    sigs.inputs[1] = new SignatureInput({
       value: {
         signature: new SignatureOption({ value: wrongSig, isSome: Bool(true) }),
         signer: ctx.owners[1].pub,
