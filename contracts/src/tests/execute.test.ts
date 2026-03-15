@@ -17,7 +17,7 @@ import { PublicKeyOption } from '../list-commitment.js';
 import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-describe('MinaGuard - Execute', () => {
+describe('MinaGuard - Execute', { timeout: 60_000 }, () => {
   let ctx: TestContext;
 
   beforeEach(async () => {

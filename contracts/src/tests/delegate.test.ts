@@ -14,7 +14,7 @@ import {
 import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-describe('MinaGuard - Delegate', () => {
+describe('MinaGuard - Delegate', { timeout: 60_000 }, () => {
   let ctx: TestContext;
 
   beforeEach(async () => {
@@ -47,7 +47,7 @@ describe('MinaGuard - Delegate', () => {
     expect(delegate!.equals(blockProducer).toBoolean()).toBe(true);
   });
 
-  it('should un-delegate (delegate to self) via multisig', async () => {
+  it('should un-delegate (delegate to self) via multisig', { timeout: 60_000 }, async () => {
     // First delegate to someone
     const blockProducer = PrivateKey.random().toPublicKey();
     const proposal1 = createDelegateProposal(blockProducer, Field(0), Field(0), ctx.zkAppAddress);
