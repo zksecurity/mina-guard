@@ -15,7 +15,7 @@ jobs:
         image: o1labs/mina-local-network:compatible-latest-lightnet
         env:
           NETWORK_TYPE: 'single-node'
-          PROOF_LEVEL: 'full'
+          PROOF_LEVEL: 'none'
           LOG_LEVEL: 'Info'
         ports:
           - 3085:3085
@@ -30,7 +30,7 @@ jobs:
       - name: Wait for Mina network readiness
         uses: o1-labs/wait-for-mina-network-action@v1
         with:
-          mina-graphql-port: 8080
+          mina-graphql-port: 3085
           max-attempts: 120
           polling-interval-ms: 10000
 
