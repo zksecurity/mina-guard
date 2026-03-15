@@ -363,7 +363,21 @@ test('4. Execute add owner proposal', async () => { const page = sharedPage;
 test('5. Propose change threshold to 2/2', async () => { const page = sharedPage;
   log('=== Step 5: Propose threshold change ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+
+  // Wait for the ThresholdBadge to show numOwners=2 (useMultisig polls every 15s)
+  log('Waiting for numOwners to update to 2...');
+  await page.waitForFunction(
+    () => {
+      const spans = document.querySelectorAll('span');
+      for (let i = 0; i < spans.length; i++) {
+        if (spans[i].textContent?.trim() === '/' && spans[i + 1]?.textContent?.trim() === '2') {
+          return true;
+        }
+      }
+      return false;
+    },
+    { timeout: 30_000 }
+  );
 
   // Open proposal modal from dashboard
   log('Clicking New Proposal...');
