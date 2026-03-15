@@ -18,6 +18,8 @@ jobs:
           PROOF_LEVEL: 'full'
           LOG_LEVEL: 'Info'
         ports:
+          - 3085:3085
+          - 5432:5432
           - 8080:8080
           - 8181:8181
           - 8282:8282
