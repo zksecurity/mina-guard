@@ -193,7 +193,6 @@ export default async function globalSetup() {
         NEXT_PUBLIC_API_BASE_URL: BACKEND_URL,
         NEXT_PUBLIC_MINA_ENDPOINT: 'http://127.0.0.1:8080/graphql',
         NEXT_PUBLIC_ARCHIVE_ENDPOINT: 'http://127.0.0.1:8282',
-        NEXT_PUBLIC_SKIP_PROOFS: 'false',
       },
       'frontend'
     );

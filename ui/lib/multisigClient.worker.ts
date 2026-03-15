@@ -57,7 +57,7 @@ let compilePromise: Promise<void> | null = null;
 // When a test private key is set, the worker signs and sends transactions
 // directly instead of delegating to the Auro wallet on the main thread.
 let testPrivateKey: InstanceType<typeof PrivateKey> | null = null;
-const SKIP_PROOFS = process.env.NEXT_PUBLIC_SKIP_PROOFS === 'true';
+let skipProofs = false;
 const DEFAULT_FEE = 100_000_000; // 0.1 MINA — used when sending directly (test mode)
 
 /** Returns Mina.transaction sender arg — includes fee in test mode since Auro won't set it. */
@@ -78,12 +78,12 @@ interface ContractState {
 }
 
 function configureNetwork() {
-  Mina.setActiveInstance(
-    Mina.Network({
-      mina: MINA_ENDPOINT,
-      archive: ARCHIVE_ENDPOINT,
-    })
-  );
+  const network = Mina.Network({
+    mina: MINA_ENDPOINT,
+    archive: ARCHIVE_ENDPOINT,
+  });
+  if (skipProofs) network.proofsEnabled = false;
+  Mina.setActiveInstance(network);
 }
 
 async function compileContract(): Promise<boolean> {
@@ -392,6 +392,11 @@ const workerApi = {
     testPrivateKey = PrivateKey.fromBase58(privateKeyBase58);
   },
 
+  /** Disables proof generation (for use with lightnet / test environments). */
+  setSkipProofs(skip: boolean) {
+    skipProofs = skip;
+  },
+
   generateKeypair(): { privateKey: string; publicKey: string } {
     const key = PrivateKey.random();
     return { privateKey: key.toBase58(), publicKey: key.toPublicKey().toBase58() };
@@ -417,10 +422,8 @@ const workerApi = {
       await zkApp.deploy();
     });
 
-    if (!SKIP_PROOFS) {
-      progressFn('Generating proof...');
-      await tx.prove();
-    }
+    progressFn('Generating proof...');
+    await tx.prove();
 
     if (testPrivateKey) {
       progressFn('Signing and sending transaction...');
@@ -476,10 +479,8 @@ const workerApi = {
       );
     });
 
-    if (!SKIP_PROOFS) {
-      progressFn('Generating proof...');
-      await tx.prove();
-    }
+    progressFn('Generating proof...');
+    await tx.prove();
 
     if (testPrivateKey) {
       progressFn('Signing and sending transaction...');
@@ -545,10 +546,8 @@ const workerApi = {
       );
     });
 
-    if (!SKIP_PROOFS) {
-      progressFn('Generating proof...');
-      await tx.prove();
-    }
+    progressFn('Generating proof...');
+    await tx.prove();
 
     if (testPrivateKey) {
       progressFn('Signing and sending transaction...');
@@ -613,10 +612,8 @@ const workerApi = {
       );
     });
 
-    if (!SKIP_PROOFS) {
-      progressFn('Generating proof...');
-      await tx.prove();
-    }
+    progressFn('Generating proof...');
+    await tx.prove();
 
     if (testPrivateKey) {
       progressFn('Signing and sending transaction...');
@@ -722,10 +719,8 @@ const workerApi = {
       throw new Error('Unsupported proposal type for execution');
     });
 
-    if (!SKIP_PROOFS) {
-      progressFn('Generating proof...');
-      await tx.prove();
-    }
+    progressFn('Generating proof...');
+    await tx.prove();
 
     if (testPrivateKey) {
       progressFn('Signing and sending transaction...');

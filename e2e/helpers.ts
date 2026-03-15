@@ -290,6 +290,9 @@ export async function activateTestKey(
     async (pk: string) => (window as any).__e2eSetTestKey(pk),
     account.privateKey
   );
+  await page.evaluate(
+    async () => (window as any).__e2eSetSkipProofs(true)
+  );
 }
 
 /**

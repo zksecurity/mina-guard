@@ -54,10 +54,18 @@ export async function setTestKey(privateKeyBase58: string) {
   return getWorkerApi().setTestKey(privateKeyBase58);
 }
 
+/** Disables proof generation in the worker (for use with lightnet / test environments). */
+export async function setSkipProofs(skip: boolean) {
+  return getWorkerApi().setSkipProofs(skip);
+}
+
 // Expose test helper on window for e2e tests to call via page.evaluate()
 if (typeof window !== 'undefined') {
   (window as any).__e2eSetTestKey = async (pk: string) => {
     return getWorkerApi().setTestKey(pk);
+  };
+  (window as any).__e2eSetSkipProofs = async (skip: boolean) => {
+    return getWorkerApi().setSkipProofs(skip);
   };
 }
 
