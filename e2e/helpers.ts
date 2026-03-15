@@ -198,7 +198,8 @@ export async function fundContract(
       ? (result.hash as () => string)()
       : result.hash;
   log(`  Fund tx sent: ${hash}`);
-  // Don't wait() — the MINA will be available well before step 7 needs it
+  // Wait for inclusion so the next step doesn't hit Insufficient_replace_fee
+  await result.wait();
 }
 
 // ---------------------------------------------------------------------------
