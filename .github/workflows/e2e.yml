@@ -29,8 +29,17 @@ jobs:
         uses: o1-labs/wait-for-mina-network-action@v1
         with:
           mina-graphql-port: 8080
-          max-attempts: 60
+          max-attempts: 120
           polling-interval-ms: 10000
+
+      - name: Debug container status
+        if: failure()
+        run: |
+          echo "=== Docker containers ==="
+          docker ps -a
+          echo ""
+          echo "=== Mina container logs (last 100 lines) ==="
+          docker logs $(docker ps -aq --filter "ancestor=o1labs/mina-local-network:compatible-latest-lightnet") 2>&1 | tail -100
 
       - name: Git checkout
         uses: actions/checkout@v6
