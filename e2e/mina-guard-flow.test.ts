@@ -85,6 +85,12 @@ async function gotoWithWallet(
       await switchAccount(page, account);
       currentAccount = account;
     }
+    // Dismiss any stale operation banner before navigating
+    const closeBtn = page.locator('button:has-text("×")');
+    if (await closeBtn.first().isVisible().catch(() => false)) {
+      await closeBtn.first().click().catch(() => {});
+      await page.waitForTimeout(300);
+    }
     await navigateTo(page, path);
   }
 }
