@@ -1,10 +1,11 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import {
   log,
   loadState,
   setupTestPage,
   activateTestKey,
   switchAccount,
+  navigateTo,
   waitForBanner,
   waitForIndexer,
   getContracts,
@@ -28,34 +29,64 @@ let accounts: TestAccount[];
 let contractAddress: string;
 let proposalHashes: string[] = [];
 
-test.beforeAll(() => {
+// Shared page — avoids Web Worker restart (and contract recompilation) between tests
+let sharedPage: Page;
+let sharedContext: BrowserContext;
+let currentAccount: TestAccount | null = null;
+
+test.beforeAll(async ({ browser }) => {
   const state = loadState();
   accounts = state.accounts;
   log(`Loaded ${accounts.length} test accounts`);
   accounts.forEach((a, i) =>
     log(`  Account ${i + 1}: ${a.publicKey}`)
   );
-});
 
-// All tests run in order in the same browser context
-test.describe.configure({ mode: 'serial' });
+  // Create a single page that will be reused for all tests
+  sharedContext = await browser.newContext({ baseURL: 'http://localhost:3000' });
+  sharedPage = await sharedContext.newPage();
 
-// Helper: navigate to a page with mock wallet already injected
-async function gotoWithWallet(
-  page: Page,
-  path: string,
-  account: TestAccount
-): Promise<void> {
-  // Capture browser console (including worker) for diagnostics
-  page.on('console', (msg) => {
+  // Capture browser console for diagnostics
+  sharedPage.on('console', (msg) => {
     const text = msg.text();
     if (text.includes('MultisigWorker') || text.includes('failed') || text.includes('Error')) {
       log(`[browser] ${text}`);
     }
   });
-  await setupTestPage(page, account);
-  await page.goto(path, { waitUntil: 'networkidle' });
-  await activateTestKey(page, account);
+});
+
+test.afterAll(async () => {
+  await sharedContext?.close();
+});
+
+// All tests run in order in the same browser context
+test.describe.configure({ mode: 'serial' });
+
+/**
+ * Navigate to a path with the mock wallet active for the given account.
+ * The first call does a full page.goto (which starts contract compilation).
+ * Subsequent calls use client-side navigation to preserve the Web Worker.
+ */
+async function gotoWithWallet(
+  path: string,
+  account: TestAccount
+): Promise<void> {
+  const page = sharedPage;
+
+  if (!currentAccount) {
+    // First navigation — full page load to bootstrap the app + worker
+    await setupTestPage(page, account);
+    await page.goto(path, { waitUntil: 'networkidle' });
+    await activateTestKey(page, account);
+    currentAccount = account;
+  } else {
+    // Client-side navigation — preserves worker (no recompilation)
+    if (currentAccount.publicKey !== account.publicKey) {
+      await switchAccount(page, account);
+      currentAccount = account;
+    }
+    await navigateTo(page, path);
+  }
 }
 
 // On failure, dump backend state for debugging
@@ -74,9 +105,9 @@ test.afterEach(async ({}, testInfo) => {
 // 1. Deploy MinaGuard contract
 // ---------------------------------------------------------------------------
 
-test('1. Deploy MinaGuard contract', async ({ page }) => {
+test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   log('=== Step 1: Deploy MinaGuard contract ===');
-  await gotoWithWallet(page, '/deploy', accounts[0]);
+  await gotoWithWallet('/deploy', accounts[0]);
 
   // Wait for the wallet to connect — the header should show the address
   await page.waitForFunction(
@@ -134,11 +165,9 @@ test('1. Deploy MinaGuard contract', async ({ page }) => {
 // 2. Setup contract (account1 as owner, threshold 1/1)
 // ---------------------------------------------------------------------------
 
-test('2. Setup contract (account1 as owner, threshold=1/1)', async ({
-  page,
-}) => {
+test('2. Setup contract (account1 as owner, threshold=1/1)', async () => { const page = sharedPage;
   log('=== Step 2: Setup contract ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
 
   // Select the deployed contract if needed
   // The dashboard might auto-select the only contract, or we may need to select it
@@ -216,9 +245,9 @@ test('2. Setup contract (account1 as owner, threshold=1/1)', async ({
 // 3. Propose: add account2 as new owner
 // ---------------------------------------------------------------------------
 
-test('3. Propose add owner (account2)', async ({ page }) => {
+test('3. Propose add owner (account2)', async () => { const page = sharedPage;
   log('=== Step 3: Propose add owner ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   // Click "New Proposal"
@@ -281,10 +310,10 @@ test('3. Propose add owner (account2)', async ({ page }) => {
 // 4. Execute add owner proposal
 // ---------------------------------------------------------------------------
 
-test('4. Execute add owner proposal', async ({ page }) => {
+test('4. Execute add owner proposal', async () => { const page = sharedPage;
   log('=== Step 4: Execute add owner ===');
   const proposalHash = proposalHashes[0];
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[0]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
   await page.waitForTimeout(3_000);
 
   // Click "Execute Proposal"
@@ -331,9 +360,9 @@ test('4. Execute add owner proposal', async ({ page }) => {
 // 5. Propose: change threshold to 2/2
 // ---------------------------------------------------------------------------
 
-test('5. Propose change threshold to 2/2', async ({ page }) => {
+test('5. Propose change threshold to 2/2', async () => { const page = sharedPage;
   log('=== Step 5: Propose threshold change ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   // Open proposal modal from dashboard
@@ -395,10 +424,10 @@ test('5. Propose change threshold to 2/2', async ({ page }) => {
 // 6. Execute threshold change
 // ---------------------------------------------------------------------------
 
-test('6. Execute threshold change', async ({ page }) => {
+test('6. Execute threshold change', async () => { const page = sharedPage;
   log('=== Step 6: Execute threshold change ===');
   const proposalHash = proposalHashes[1];
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[0]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking Execute Proposal...');
@@ -427,9 +456,9 @@ test('6. Execute threshold change', async ({ page }) => {
 // 7. Propose: send MINA to account3
 // ---------------------------------------------------------------------------
 
-test('7. Propose send MINA to account3', async ({ page }) => {
+test('7. Propose send MINA to account3', async () => { const page = sharedPage;
   log('=== Step 7: Propose MINA transfer ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   // Open proposal modal from dashboard
@@ -491,12 +520,12 @@ test('7. Propose send MINA to account3', async ({ page }) => {
 // 8. Approve transfer (account2)
 // ---------------------------------------------------------------------------
 
-test('8. Approve transfer (account2)', async ({ page }) => {
+test('8. Approve transfer (account2)', async () => { const page = sharedPage;
   log('=== Step 8: Approve transfer (account2) ===');
   const proposalHash = proposalHashes[2];
 
   // Navigate as account2
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[1]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[1]);
   await page.waitForTimeout(3_000);
 
   // Click "Approve Proposal"
@@ -533,7 +562,7 @@ test('8. Approve transfer (account2)', async ({ page }) => {
 // 9. Execute transfer (account2)
 // ---------------------------------------------------------------------------
 
-test('9. Execute transfer (account2)', async ({ page }) => {
+test('9. Execute transfer (account2)', async () => { const page = sharedPage;
   log('=== Step 9: Execute transfer (account2) ===');
   const proposalHash = proposalHashes[2];
 
@@ -544,7 +573,7 @@ test('9. Execute transfer (account2)', async ({ page }) => {
   await new Promise((r) => setTimeout(r, 30_000));
 
   // Navigate as account2
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[1]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[1]);
   await page.waitForTimeout(3_000);
 
   // Click "Execute Proposal"
@@ -584,7 +613,7 @@ test('9. Execute transfer (account2)', async ({ page }) => {
   log(`Transfer proposal executed at block ${proposal.executedAtBlock}`);
 
   // Verify the UI shows executed status
-  await page.reload({ waitUntil: 'networkidle' });
+  await navigateTo(page, `/transactions/${proposalHash}`);
   const statusBadge = page.locator('text=executed').or(page.locator('text=Executed'));
   await expect(statusBadge.first()).toBeVisible({ timeout: 10_000 });
   log('UI shows executed status');
@@ -596,9 +625,9 @@ test('9. Execute transfer (account2)', async ({ page }) => {
 // 10. Verify Settings page displays correct state
 // ---------------------------------------------------------------------------
 
-test('10. Verify Settings page', async ({ page }) => {
+test('10. Verify Settings page', async () => { const page = sharedPage;
   log('=== Step 10: Verify Settings page ===');
-  await gotoWithWallet(page, '/settings', accounts[0]);
+  await gotoWithWallet('/settings', accounts[0]);
   await page.waitForTimeout(3_000);
 
   // Verify "Required Confirmations" section exists
@@ -620,9 +649,9 @@ test('10. Verify Settings page', async ({ page }) => {
 // 11. Verify Transactions page filtering
 // ---------------------------------------------------------------------------
 
-test('11. Verify Transactions page filtering', async ({ page }) => {
+test('11. Verify Transactions page filtering', async () => { const page = sharedPage;
   log('=== Step 11: Verify Transactions page filtering ===');
-  await gotoWithWallet(page, '/transactions', accounts[0]);
+  await gotoWithWallet('/transactions', accounts[0]);
   await page.waitForTimeout(3_000);
 
   // After steps 1-9: 3 proposals total (addOwner=executed, changeThreshold=executed, transfer=executed)
@@ -654,9 +683,9 @@ test('11. Verify Transactions page filtering', async ({ page }) => {
 // 12. Propose threshold change back to 1/2 (needed to enable owner removal)
 // ---------------------------------------------------------------------------
 
-test('12. Propose threshold change to 1/2', async ({ page }) => {
+test('12. Propose threshold change to 1/2', async () => { const page = sharedPage;
   log('=== Step 12: Propose threshold change to 1/2 ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking New Proposal...');
@@ -723,11 +752,11 @@ test('12. Propose threshold change to 1/2', async ({ page }) => {
 // 13. Approve threshold change (account2)
 // ---------------------------------------------------------------------------
 
-test('13. Approve threshold change (account2)', async ({ page }) => {
+test('13. Approve threshold change (account2)', async () => { const page = sharedPage;
   log('=== Step 13: Approve threshold change (account2) ===');
   const proposalHash = proposalHashes[3];
 
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[1]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[1]);
   await page.waitForTimeout(3_000);
 
   log('Clicking Approve Proposal...');
@@ -755,11 +784,11 @@ test('13. Approve threshold change (account2)', async ({ page }) => {
 // 14. Execute threshold change to 1/2
 // ---------------------------------------------------------------------------
 
-test('14. Execute threshold change to 1/2', async ({ page }) => {
+test('14. Execute threshold change to 1/2', async () => { const page = sharedPage;
   log('=== Step 14: Execute threshold change to 1/2 ===');
   const proposalHash = proposalHashes[3];
 
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[0]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking Execute Proposal...');
@@ -787,9 +816,9 @@ test('14. Execute threshold change to 1/2', async ({ page }) => {
 // 15. Propose remove owner (account2)
 // ---------------------------------------------------------------------------
 
-test('15. Propose remove owner (account2)', async ({ page }) => {
+test('15. Propose remove owner (account2)', async () => { const page = sharedPage;
   log('=== Step 15: Propose remove owner ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking New Proposal...');
@@ -848,11 +877,11 @@ test('15. Propose remove owner (account2)', async ({ page }) => {
 // 16. Execute remove owner
 // ---------------------------------------------------------------------------
 
-test('16. Execute remove owner', async ({ page }) => {
+test('16. Execute remove owner', async () => { const page = sharedPage;
   log('=== Step 16: Execute remove owner ===');
   const proposalHash = proposalHashes[4];
 
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[0]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking Execute Proposal...');
@@ -896,9 +925,9 @@ test('16. Execute remove owner', async ({ page }) => {
 // 17. Verify state after owner removal
 // ---------------------------------------------------------------------------
 
-test('17. Verify state after owner removal', async ({ page }) => {
+test('17. Verify state after owner removal', async () => { const page = sharedPage;
   log('=== Step 17: Verify state after owner removal ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   // Dashboard delegate card should show "None"
@@ -911,9 +940,9 @@ test('17. Verify state after owner removal', async ({ page }) => {
 // 18. Propose set delegate (to account3)
 // ---------------------------------------------------------------------------
 
-test('18. Propose set delegate (account3)', async ({ page }) => {
+test('18. Propose set delegate (account3)', async () => { const page = sharedPage;
   log('=== Step 18: Propose set delegate ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking New Proposal...');
@@ -970,11 +999,11 @@ test('18. Propose set delegate (account3)', async ({ page }) => {
 // 19. Execute set delegate
 // ---------------------------------------------------------------------------
 
-test('19. Execute set delegate', async ({ page }) => {
+test('19. Execute set delegate', async () => { const page = sharedPage;
   log('=== Step 19: Execute set delegate ===');
   const proposalHash = proposalHashes[5];
 
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[0]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking Execute Proposal...');
@@ -1010,9 +1039,9 @@ test('19. Execute set delegate', async ({ page }) => {
 // 20. Verify delegate card on Dashboard
 // ---------------------------------------------------------------------------
 
-test('20. Verify delegate card shows delegate', async ({ page }) => {
+test('20. Verify delegate card shows delegate', async () => { const page = sharedPage;
   log('=== Step 20: Verify delegate card ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   // The delegate card should show the account3 address (truncated)
@@ -1026,9 +1055,9 @@ test('20. Verify delegate card shows delegate', async ({ page }) => {
 // 21. Propose undelegate
 // ---------------------------------------------------------------------------
 
-test('21. Propose undelegate', async ({ page }) => {
+test('21. Propose undelegate', async () => { const page = sharedPage;
   log('=== Step 21: Propose undelegate ===');
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking New Proposal...');
@@ -1086,11 +1115,11 @@ test('21. Propose undelegate', async ({ page }) => {
 // 22. Execute undelegate
 // ---------------------------------------------------------------------------
 
-test('22. Execute undelegate', async ({ page }) => {
+test('22. Execute undelegate', async () => { const page = sharedPage;
   log('=== Step 22: Execute undelegate ===');
   const proposalHash = proposalHashes[6];
 
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[0]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking Execute Proposal...');
@@ -1127,7 +1156,7 @@ test('22. Execute undelegate', async ({ page }) => {
 // 23. Propose transfer with low expiry block (will expire before execution)
 // ---------------------------------------------------------------------------
 
-test('23. Propose transfer with near-future expiry', async ({ page }) => {
+test('23. Propose transfer with near-future expiry', async () => { const page = sharedPage;
   log('=== Step 23: Propose transfer with expiry ===');
 
   // Get current block height from indexer status
@@ -1136,7 +1165,7 @@ test('23. Propose transfer with near-future expiry', async ({ page }) => {
   const expiryBlock = currentHeight + 2; // expires in ~40s (20s slot time)
   log(`Current block height: ${currentHeight}, setting expiry: ${expiryBlock}`);
 
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
 
   log('Clicking New Proposal...');
@@ -1193,7 +1222,7 @@ test('23. Propose transfer with near-future expiry', async ({ page }) => {
 // 24. Wait for proposal to expire and verify status
 // ---------------------------------------------------------------------------
 
-test('24. Verify proposal expires and execute button is hidden', async ({ page }) => {
+test('24. Verify proposal expires and execute button is hidden', async () => { const page = sharedPage;
   log('=== Step 24: Verify proposal expiry ===');
   const proposalHash = proposalHashes[7];
 
@@ -1214,7 +1243,7 @@ test('24. Verify proposal expires and execute button is hidden', async ({ page }
   log(`Proposal status: ${proposal.status}`);
 
   // Navigate to the proposal detail page
-  await gotoWithWallet(page, `/transactions/${proposalHash}`, accounts[0]);
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
   await page.waitForTimeout(3_000);
 
   // Verify status badge shows "Expired" (red)
@@ -1237,23 +1266,23 @@ test('24. Verify proposal expires and execute button is hidden', async ({ page }
 // 25. Verify final state
 // ---------------------------------------------------------------------------
 
-test('25. Verify final state', async ({ page }) => {
+test('25. Verify final state', async () => { const page = sharedPage;
   log('=== Step 25: Verify final state ===');
 
   // Dashboard — delegate card should show contract self (undelegated)
-  await gotoWithWallet(page, '/', accounts[0]);
+  await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(3_000);
   await expect(page.locator('text=Block Producer Delegate')).toBeVisible({ timeout: 10_000 });
   log('Delegate card visible on dashboard');
 
   // Settings — 1 owner
-  await page.goto('/settings', { waitUntil: 'networkidle' });
+  await navigateTo(page, '/settings');
   await page.waitForTimeout(3_000);
   await expect(page.locator('text=Owners (1)')).toBeVisible({ timeout: 10_000 });
   log('Settings shows 1 owner');
 
   // Transactions — all proposals should be executed
-  await page.goto('/transactions', { waitUntil: 'networkidle' });
+  await navigateTo(page, '/transactions');
   await page.waitForTimeout(3_000);
 
   const executedTab = page.locator('button', { hasText: /Executed/i }).first();

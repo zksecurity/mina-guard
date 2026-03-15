@@ -202,6 +202,30 @@ export async function fundContract(
 }
 
 // ---------------------------------------------------------------------------
+// Client-side navigation (preserves Web Worker across route changes)
+// ---------------------------------------------------------------------------
+
+/**
+ * Navigates using Next.js client-side router instead of a full page reload.
+ * This keeps the Web Worker (and compiled contract) alive between tests.
+ */
+export async function navigateTo(
+  page: Page,
+  path: string,
+  timeoutMs = 30_000
+): Promise<void> {
+  await page.evaluate((p) => (window as any).__e2eNavigate(p), path);
+  // Wait for the pathname to update
+  await page.waitForFunction(
+    (expected) => (window as any).__e2ePathname() === expected,
+    path,
+    { timeout: timeoutMs }
+  );
+  // Let React render settle
+  await page.waitForLoadState('networkidle');
+}
+
+// ---------------------------------------------------------------------------
 // Mock wallet injection
 // ---------------------------------------------------------------------------
 

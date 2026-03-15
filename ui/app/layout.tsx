@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import { useWallet } from '@/hooks/useWallet';
@@ -11,7 +12,16 @@ import { warmupWorker } from '@/lib/multisigClient';
 
 /** Root-level provider that wires wallet state with backend-indexed contract data. */
 function AppProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+
   useEffect(() => { warmupWorker(); }, []);
+
+  // Expose client-side navigation for e2e tests (avoids full reload / worker restart)
+  useEffect(() => {
+    (window as any).__e2eNavigate = (path: string) => router.push(path);
+    (window as any).__e2ePathname = () => pathname;
+  }, [router, pathname]);
 
   const { wallet, isLoading: walletLoading, auroInstalled, connect, disconnect } =
     useWallet();
