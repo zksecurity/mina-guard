@@ -94,14 +94,6 @@ jobs:
           timeout 60 bash -c 'until curl -sf http://localhost:3000; do sleep 2; done'
           echo "Services ready"
 
-      - name: Acquire test accounts
-        id: accounts
-        run: |
-          for i in 1 2 3; do
-            acc=$(curl -s http://localhost:8181/acquire-account)
-            echo "Account $i: $(echo $acc | jq -r .pk)"
-          done
-
       - name: Run e2e tests
         run: cd e2e && node node_modules/@playwright/test/cli.js test
         env:
