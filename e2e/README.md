@@ -86,7 +86,6 @@ You can obtain the hash manually with:
 bun run dev-helpers/cli.ts vk-hash compile
 ```
 
-
 ## Configuration
 
 All timing and endpoint settings are centralised in [network-config.ts](network-config.ts). Key differences between modes:
