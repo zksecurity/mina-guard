@@ -20,9 +20,12 @@ export default function Dashboard() {
     proposals,
     indexerStatus,
     connect,
+    connectAuro,
+    connectLedger,
     disconnect,
     isLoading,
     auroInstalled,
+    ledgerSupported,
     isOperating,
     operationLabel,
     operationBanner,
@@ -81,6 +84,7 @@ export default function Dashboard() {
     setShowSetup(false);
 
     const captured = { address: multisig.address, feePayer: wallet.address, owners: parsedOwners, threshold: Number(threshold), networkId };
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     startOperation('Building setup transaction...', (onProgress) =>
       setupContract({
         zkAppAddress: captured.address,
@@ -88,7 +92,7 @@ export default function Dashboard() {
         owners: captured.owners,
         threshold: captured.threshold,
         networkId: captured.networkId,
-      }, onProgress)
+      }, onProgress, signer)
     );
   };
 
@@ -98,12 +102,13 @@ export default function Dashboard() {
     setShowProposal(false);
 
     const captured = { contractAddress: multisig.address, proposerAddress: wallet.address };
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     startOperation('Building proposal transaction...', (onProgress) =>
       createProposeTx({
         contractAddress: captured.contractAddress,
         proposerAddress: captured.proposerAddress,
         input: data,
-      }, onProgress)
+      }, onProgress, signer)
     );
   };
 
@@ -116,7 +121,11 @@ export default function Dashboard() {
         connected={wallet.connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={wallet.type}
         onConnect={connect}
+        onConnectAuro={connectAuro}
+        onConnectLedger={connectLedger}
         onDisconnect={disconnect}
       />
 

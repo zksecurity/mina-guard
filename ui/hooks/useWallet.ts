@@ -1,39 +1,52 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   isAuroInstalled,
-  connectAuro,
+  connectAuro as connectAuroWallet,
   getAuroAccounts,
   getAuroNetwork,
   onAccountChange,
   onNetworkChange,
 } from '@/lib/auroWallet';
+import {
+  isLedgerSupported,
+  getLedgerAddress,
+  disconnectLedger,
+} from '@/lib/ledgerWallet';
 import { WalletState } from '@/lib/types';
 
+const EMPTY_WALLET: WalletState = {
+  connected: false,
+  address: null,
+  network: null,
+  type: null,
+};
+
 export function useWallet() {
-  const [wallet, setWallet] = useState<WalletState>({
-    connected: false,
-    address: null,
-    network: null,
-  });
+  const [wallet, setWallet] = useState<WalletState>(EMPTY_WALLET);
   const [isLoading, setIsLoading] = useState(false);
   const [auroInstalled, setAuroInstalled] = useState(false);
+  const [ledgerSupported, setLedgerSupported] = useState(false);
+  const manuallyDisconnected = useRef(
+    typeof window !== 'undefined' && localStorage.getItem('wallet-disconnected') === 'true'
+  );
 
-  // Check if Auro is installed on mount
+  // Check capabilities on mount
   useEffect(() => {
     setAuroInstalled(isAuroInstalled());
+    setLedgerSupported(isLedgerSupported());
   }, []);
 
-  // Listen for account/network changes
+  // Listen for Auro account/network changes only when connected via Auro
   useEffect(() => {
-    if (!auroInstalled) return;
+    if (!auroInstalled || wallet.type !== 'auro') return;
 
     const unsubAccounts = onAccountChange((accounts) => {
       if (accounts.length > 0) {
         setWallet((prev) => ({ ...prev, address: accounts[0], connected: true }));
       } else {
-        setWallet({ connected: false, address: null, network: null });
+        setWallet(EMPTY_WALLET);
       }
     });
 
@@ -45,11 +58,13 @@ export function useWallet() {
       unsubAccounts();
       unsubNetwork();
     };
-  }, [auroInstalled]);
+  }, [auroInstalled, wallet.type]);
 
-  // Auto-reconnect if previously connected
+  // Auto-reconnect Auro if it was the last wallet type used (skip if disconnected or was Ledger)
   useEffect(() => {
-    if (!auroInstalled) return;
+    if (!auroInstalled || manuallyDisconnected.current) return;
+    const lastType = typeof window !== 'undefined' ? localStorage.getItem('wallet-type') : null;
+    if (lastType && lastType !== 'auro') return;
     (async () => {
       const accounts = await getAuroAccounts();
       if (accounts.length > 0) {
@@ -58,37 +73,75 @@ export function useWallet() {
           connected: true,
           address: accounts[0],
           network,
+          type: 'auro',
         });
       }
     })();
   }, [auroInstalled]);
 
-  const connect = useCallback(async () => {
+  const connectAuro = useCallback(async () => {
     if (!auroInstalled) {
       window.open('https://www.aurowallet.com/', '_blank');
       return;
     }
+    manuallyDisconnected.current = false;
+    localStorage.removeItem('wallet-disconnected');
     setIsLoading(true);
     try {
-      const address = await connectAuro();
+      const address = await connectAuroWallet();
       if (address) {
         const network = await getAuroNetwork();
-        setWallet({ connected: true, address, network });
+        localStorage.setItem('wallet-type', 'auro');
+        setWallet({ connected: true, address, network, type: 'auro' });
       }
     } finally {
       setIsLoading(false);
     }
   }, [auroInstalled]);
 
-  const disconnect = useCallback(() => {
-    setWallet({ connected: false, address: null, network: null });
+  const connectLedger = useCallback(async (accountIndex?: number) => {
+    const idx = typeof accountIndex === 'number' ? accountIndex : 0;
+    manuallyDisconnected.current = false;
+    localStorage.removeItem('wallet-disconnected');
+    setIsLoading(true);
+    try {
+      const address = await getLedgerAddress(idx);
+      console.log("Ledger addr: ");
+      console.log(address);
+      if (address) {
+        localStorage.setItem('wallet-type', 'ledger');
+        setWallet({
+          connected: true,
+          address,
+          network: null,
+          type: 'ledger',
+          ledgerAccountIndex: idx,
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  const disconnect = useCallback(async () => {
+    if (wallet.type === 'ledger') {
+      await disconnectLedger();
+    }
+    manuallyDisconnected.current = true;
+    localStorage.setItem('wallet-disconnected', 'true');
+    localStorage.removeItem('wallet-type');
+    setWallet(EMPTY_WALLET);
+  }, [wallet.type]);
 
   return {
     wallet,
     isLoading,
     auroInstalled,
-    connect,
+    ledgerSupported,
+    connectAuro,
+    connectLedger,
     disconnect,
+    /** Backward-compatible alias for connectAuro. */
+    connect: connectAuro,
   };
 }

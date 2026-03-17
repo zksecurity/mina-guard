@@ -14,6 +14,7 @@ import {
   createAddOwnerProposal,
 } from './test-helpers.js';
 import { PublicKeyOption } from '../list-commitment.js';
+import { OwnerStore } from '../storage.js';
 import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
@@ -186,8 +187,9 @@ describe('MinaGuard - Execute', () => {
     await approveTransaction(ctx, addOwnerProposal, 1);
 
     const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-    const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-    const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+    const ownerStoreForInsert = new OwnerStore();
+    for (const o of ctx.owners) ownerStoreForInsert.add(o.pub);
+    const insertAfter = ownerStoreForInsert.findInsertAfter(newOwner);
     const govApprovalWitness = ctx.approvalStore.getWitness(govTxHash);
     const govTxn = await Mina.transaction(ctx.deployerAccount, async () => {
       await ctx.zkApp.executeOwnerChange(
@@ -196,7 +198,10 @@ describe('MinaGuard - Execute', () => {
     });
     await govTxn.prove();
     await govTxn.sign([ctx.deployerKey]).send();
-    ctx.owners.push({ key: PrivateKey.random(), pub: newOwner });
+    const newOwnerEntry = { key: PrivateKey.random(), pub: newOwner };
+    const insertIdx = ctx.owners.findIndex(o => o.pub.toBase58() > newOwner.toBase58());
+    if (insertIdx === -1) ctx.owners.push(newOwnerEntry);
+    else ctx.owners.splice(insertIdx, 0, newOwnerEntry);
     ctx.approvalStore.setCount(govTxHash, EXECUTED_MARKER);
 
     // configNonce is now 1, but the transfer proposal was created with configNonce=0

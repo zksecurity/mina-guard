@@ -1,14 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { truncateAddress } from '@/lib/types';
+import { truncateAddress, type WalletType } from '@/lib/types';
 
 interface WalletConnectProps {
   address: string | null;
   connected: boolean;
   isLoading: boolean;
   auroInstalled: boolean;
+  ledgerSupported: boolean;
+  walletType: WalletType | null;
   onConnect: () => void;
+  onConnectAuro: () => void;
+  onConnectLedger: () => void;
   onDisconnect: () => void;
 }
 
@@ -17,7 +21,11 @@ export default function WalletConnect({
   connected,
   isLoading,
   auroInstalled,
+  ledgerSupported,
+  walletType,
   onConnect,
+  onConnectAuro,
+  onConnectLedger,
   onDisconnect,
 }: WalletConnectProps) {
   const [copied, setCopied] = useState(false);
@@ -34,6 +42,9 @@ export default function WalletConnect({
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 bg-safe-gray border border-safe-border rounded-lg px-3 py-2">
           <div className="w-2 h-2 rounded-full bg-safe-green" />
+          <span className="text-[10px] text-safe-text uppercase tracking-wider">
+            {walletType === 'ledger' ? 'Ledger' : 'Auro'}
+          </span>
           <span className="text-sm font-mono">
             {truncateAddress(address)}
           </span>
@@ -63,43 +74,73 @@ export default function WalletConnect({
     );
   }
 
-  return (
-    <button
-      onClick={onConnect}
-      disabled={isLoading}
-      className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 hover:brightness-110 transition-all disabled:opacity-50"
-    >
-      {isLoading ? (
-        <>
-          <svg
-            className="animate-spin h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-          Connecting...
-        </>
-      ) : (
-        <>
+  // Show spinner while connecting
+  if (isLoading) {
+    return (
+      <button
+        disabled
+        className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 opacity-50"
+      >
+        <svg
+          className="animate-spin h-4 w-4"
+          viewBox="0 0 24 24"
+          fill="none"
+        >
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+          />
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+        Connecting...
+      </button>
+    );
+  }
+
+  // Show wallet selection buttons when both options are available
+  if (auroInstalled && ledgerSupported) {
+    return (
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onConnectAuro}
+          className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 hover:brightness-110 transition-all"
+        >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
-          {auroInstalled ? 'Connect Wallet' : 'Install Auro'}
-        </>
-      )}
+          Connect Auro
+        </button>
+        <button
+          onClick={onConnectLedger}
+          className="flex items-center gap-2 bg-safe-gray border border-safe-border text-white font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-safe-hover transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+          Connect Ledger
+        </button>
+      </div>
+    );
+  }
+
+  // Fallback: single connect button (Auro only or install prompt)
+  return (
+    <button
+      onClick={onConnect}
+      className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 hover:brightness-110 transition-all"
+    >
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+      </svg>
+      {auroInstalled ? 'Connect Wallet' : 'Install Auro'}
     </button>
   );
 }

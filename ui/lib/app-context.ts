@@ -25,9 +25,12 @@ export interface AppContextType {
   pendingCount: number;
   indexerStatus: IndexerStatus | null;
   connect: () => void;
+  connectAuro: () => void;
+  connectLedger: (accountIndex?: number) => void;
   disconnect: () => void;
   isLoading: boolean;
   auroInstalled: boolean;
+  ledgerSupported: boolean;
   refreshMultisig: () => Promise<void>;
   selectContract: (address: string) => Promise<void>;
   /** Whether a worker operation is currently running. */
@@ -44,7 +47,7 @@ export interface AppContextType {
 }
 
 export const AppContext = createContext<AppContextType>({
-  wallet: { connected: false, address: null, network: null },
+  wallet: { connected: false, address: null, network: null, type: null },
   multisig: null,
   contracts: [],
   owners: [],
@@ -52,9 +55,12 @@ export const AppContext = createContext<AppContextType>({
   pendingCount: 0,
   indexerStatus: null,
   connect: () => {},
+  connectAuro: () => {},
+  connectLedger: () => {},
   disconnect: () => {},
   isLoading: false,
   auroInstalled: false,
+  ledgerSupported: false,
   refreshMultisig: async () => {},
   selectContract: async () => {},
   isOperating: false,

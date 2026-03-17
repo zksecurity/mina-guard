@@ -23,8 +23,10 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     (window as any).__e2ePathname = () => pathname;
   }, [router, pathname]);
 
-  const { wallet, isLoading: walletLoading, auroInstalled, connect, disconnect } =
-    useWallet();
+  const {
+    wallet, isLoading: walletLoading, auroInstalled, ledgerSupported,
+    connect, connectAuro, connectLedger, disconnect,
+  } = useWallet();
 
   const {
     state: multisig,
@@ -97,9 +99,12 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         pendingCount,
         indexerStatus,
         connect,
+        connectAuro,
+        connectLedger,
         disconnect,
         isLoading: walletLoading || multisigLoading || proposalsLoading,
         auroInstalled,
+        ledgerSupported,
         refreshMultisig,
         selectContract,
         isOperating,

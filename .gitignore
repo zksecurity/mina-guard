@@ -5,6 +5,7 @@ node_modules/
 contracts/build/
 ui/.next/
 ui/out/
+.next
 
 # environment
 .env

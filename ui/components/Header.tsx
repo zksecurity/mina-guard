@@ -1,6 +1,7 @@
 'use client';
 
 import WalletConnect from './WalletConnect';
+import type { WalletType } from '@/lib/types';
 
 interface HeaderProps {
   title: string;
@@ -9,7 +10,11 @@ interface HeaderProps {
   connected: boolean;
   isLoading: boolean;
   auroInstalled: boolean;
+  ledgerSupported: boolean;
+  walletType: WalletType | null;
   onConnect: () => void;
+  onConnectAuro: () => void;
+  onConnectLedger: () => void;
   onDisconnect: () => void;
 }
 
@@ -20,7 +25,11 @@ export default function Header({
   connected,
   isLoading,
   auroInstalled,
+  ledgerSupported,
+  walletType,
   onConnect,
+  onConnectAuro,
+  onConnectLedger,
   onDisconnect,
 }: HeaderProps) {
   return (
@@ -36,7 +45,11 @@ export default function Header({
         connected={connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={walletType}
         onConnect={onConnect}
+        onConnectAuro={onConnectAuro}
+        onConnectLedger={onConnectLedger}
         onDisconnect={onDisconnect}
       />
     </header>

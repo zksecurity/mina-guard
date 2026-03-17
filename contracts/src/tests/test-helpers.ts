@@ -120,6 +120,8 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
     }
   }
 
+  owners.sort((a, b) => a.pub.toBase58().localeCompare(b.pub.toBase58()));
+
   const zkAppKey = PrivateKey.random();
   const zkAppAddress = zkAppKey.toPublicKey();
   const zkApp = new MinaGuard(zkAppAddress);

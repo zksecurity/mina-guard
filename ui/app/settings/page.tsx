@@ -14,9 +14,12 @@ export default function SettingsPage() {
     multisig,
     owners,
     connect,
+    connectAuro,
+    connectLedger,
     disconnect,
     isLoading,
     auroInstalled,
+    ledgerSupported,
   } = useAppContext();
 
   const activeOwners = owners.map((owner) => owner.address);
@@ -30,7 +33,11 @@ export default function SettingsPage() {
         connected={wallet.connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={wallet.type}
         onConnect={connect}
+        onConnectAuro={connectAuro}
+        onConnectLedger={connectLedger}
         onDisconnect={disconnect}
       />
 

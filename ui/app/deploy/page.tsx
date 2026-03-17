@@ -12,9 +12,12 @@ export default function DeployPage() {
   const {
     wallet,
     connect,
+    connectAuro,
+    connectLedger,
     disconnect,
     isLoading,
     auroInstalled,
+    ledgerSupported,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -42,11 +45,12 @@ export default function DeployPage() {
     if (!wallet.address || !keypair) return;
 
     const captured = { feePayerAddress: wallet.address, zkAppPrivateKeyBase58: keypair.privateKey };
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     startOperation('Building deploy transaction...', (onProgress) =>
       deployContract({
         feePayerAddress: captured.feePayerAddress,
         zkAppPrivateKeyBase58: captured.zkAppPrivateKeyBase58,
-      }, onProgress)
+      }, onProgress, signer)
     );
     router.push('/');
   };
@@ -60,7 +64,11 @@ export default function DeployPage() {
         connected={wallet.connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={wallet.type}
         onConnect={connect}
+        onConnectAuro={connectAuro}
+        onConnectLedger={connectLedger}
         onDisconnect={disconnect}
       />
 

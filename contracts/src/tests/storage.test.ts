@@ -40,7 +40,8 @@ describe('OwnerStore', () => {
     store.add(owner1);
     store.add(owner2);
 
-    expect(store.getCommitment()).toEqual(computeOwnerChain([owner1, owner2]));
+    const sorted = [owner1, owner2].sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
+    expect(store.getCommitment()).toEqual(computeOwnerChain(sorted));
   });
 
   it('should generate valid witness', () => {
@@ -81,9 +82,12 @@ describe('OwnerStore', () => {
     store.add(owner1);
     store.add(owner2);
 
-    store.insertAfter(owner3, owner1);
+    // insertAfter bypasses sorting — it places owner3 directly after the first sorted owner
+    const first = store.owners[0];
+    const second = store.owners[1];
+    store.insertAfter(owner3, first);
 
-    expect(store.getCommitment()).toEqual(computeOwnerChain([owner1, owner3, owner2]));
+    expect(store.getCommitment()).toEqual(computeOwnerChain([first, owner3, second]));
   });
 
   it('should prepend when insertAfter is null', () => {
@@ -95,6 +99,63 @@ describe('OwnerStore', () => {
     store.insertAfter(owner2, null);
 
     expect(store.getCommitment()).toEqual(computeOwnerChain([owner2, owner1]));
+  });
+
+  it('should maintain sorted order on add', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 5 }, () => PrivateKey.random().toPublicKey());
+    for (const k of keys) store.add(k);
+
+    const base58s = store.owners.map(o => o.toBase58());
+    const sorted = [...base58s].sort();
+    expect(base58s).toEqual(sorted);
+  });
+
+  it('should produce same commitment regardless of insertion order', () => {
+    const keys = Array.from({ length: 4 }, () => PrivateKey.random().toPublicKey());
+
+    const store1 = new OwnerStore();
+    for (const k of keys) store1.add(k);
+
+    const store2 = new OwnerStore();
+    for (const k of [...keys].reverse()) store2.add(k);
+
+    expect(store1.getCommitment()).toEqual(store2.getCommitment());
+  });
+
+  it('findInsertAfter returns none for first sorted position', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
+    keys.sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
+    store.add(keys[1]);
+    store.add(keys[2]);
+
+    const result = store.findInsertAfter(keys[0]);
+    expect(result.isSome.toBoolean()).toBe(false);
+  });
+
+  it('findInsertAfter returns predecessor for middle position', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
+    keys.sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
+    store.add(keys[0]);
+    store.add(keys[2]);
+
+    const result = store.findInsertAfter(keys[1]);
+    expect(result.isSome.toBoolean()).toBe(true);
+    expect(result.value.toBase58()).toBe(keys[0].toBase58());
+  });
+
+  it('findInsertAfter returns last owner for append position', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
+    keys.sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
+    store.add(keys[0]);
+    store.add(keys[1]);
+
+    const result = store.findInsertAfter(keys[2]);
+    expect(result.isSome.toBoolean()).toBe(true);
+    expect(result.value.toBase58()).toBe(keys[1].toBase58());
   });
 });
 

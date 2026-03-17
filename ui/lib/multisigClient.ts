@@ -4,11 +4,18 @@
 
 import * as Comlink from 'comlink';
 import type { WorkerApi } from './multisigClient.worker';
-import type { NewProposalInput, Proposal } from '@/lib/types';
+import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
+import { signFields as ledgerSignFields, signFeePayer } from '@/lib/ledgerWallet';
 
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
+
+/** Configuration describing which wallet should sign fields. */
+export interface SignerConfig {
+  type: WalletType;
+  ledgerAccountIndex?: number;
+}
 
 /** Optional callback to receive step-based progress updates from the worker. */
 export type OnProgress = (step: string) => void;
@@ -27,15 +34,29 @@ function getWorkerApi(): Comlink.Remote<WorkerApi> {
   return api;
 }
 
-/** Proxied Auro sendTransaction callback for use inside the worker. */
-function proxiedSendTx() {
+/** Proxied Auro sendTransaction callback for use inside the worker. Returns null for Ledger. */
+function proxiedSendTx(signer?: SignerConfig) {
+  if (signer?.type === 'ledger') return null;
   return Comlink.proxy((txJson: string) => sendTransaction(txJson));
 }
 
-/** Proxied Auro signFields callback for use inside the worker. */
-function proxiedSignFields() {
+/** Proxied Ledger fee payer signing callback. Returns undefined for Auro. */
+function proxiedSignFeePayer(signer?: SignerConfig) {
+  if (signer?.type !== 'ledger') return undefined;
   return Comlink.proxy(
-    (fields: Array<string | number>) => getAuroSignFields(fields)
+    (commitment: string) => signFeePayer(commitment, signer.ledgerAccountIndex)
+  );
+}
+
+/** Proxied signFields callback that dispatches to Auro or Ledger based on signer config. */
+function proxiedSignFields(signer?: SignerConfig) {
+  if (signer?.type === 'ledger') {
+    return Comlink.proxy(
+      (fields: Array<string>) => ledgerSignFields(fields, signer.ledgerAccountIndex)
+    );
+  }
+  return Comlink.proxy(
+    (fields: Array<string>) => getAuroSignFields(fields)
   );
 }
 
@@ -75,14 +96,14 @@ export async function generateKeypair(): Promise<{ privateKey: string; publicKey
 }
 
 /**
- * Deploys MinaGuard contract account update and submits it through Auro.
+ * Deploys MinaGuard contract account update and submits via Auro or Ledger.
  * The zkApp private key remains in browser memory for this call only.
  */
 export async function deployContract(params: {
   feePayerAddress: string;
   zkAppPrivateKeyBase58: string;
-}, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().deployContract(params, proxiedSendTx(), proxiedProgress(onProgress));
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  return getWorkerApi().deployContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
 /** Submits setup transaction with fixed-size owner list and threshold/network bootstrap. */
@@ -92,21 +113,22 @@ export async function setupContract(params: {
   owners: string[];
   threshold: number;
   networkId: string;
-}, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().setupContract(params, proxiedSendTx(), proxiedProgress(onProgress));
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  return getWorkerApi().setupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
-/** Creates, proves, and sends a MinaGuard propose transaction using Auro field signature. */
+/** Creates, proves, and sends a MinaGuard propose transaction using Auro or Ledger field signature. */
 export async function createProposeTx(params: {
   contractAddress: string;
   proposerAddress: string;
   input: NewProposalInput;
-}, onProgress?: OnProgress): Promise<string | null> {
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   return getWorkerApi().createProposeTx(
     params,
-    proxiedSignFields(),
-    proxiedSendTx(),
-    proxiedProgress(onProgress)
+    proxiedSignFields(signer),
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer)
   );
 }
 
@@ -115,12 +137,13 @@ export async function createApproveTx(params: {
   contractAddress: string;
   approverAddress: string;
   proposal: Proposal;
-}, onProgress?: OnProgress): Promise<string | null> {
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   return getWorkerApi().createApproveTx(
     params,
-    proxiedSignFields(),
-    proxiedSendTx(),
-    proxiedProgress(onProgress)
+    proxiedSignFields(signer),
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer)
   );
 }
 
@@ -129,6 +152,6 @@ export async function createExecuteTx(params: {
   contractAddress: string;
   executorAddress: string;
   proposal: Proposal;
-}, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().createExecuteTx(params, proxiedSendTx(), proxiedProgress(onProgress));
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  return getWorkerApi().createExecuteTx(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }

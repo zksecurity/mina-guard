@@ -6,11 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "cd deps/o1js/src/mina-signer && npx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs"
   },
   "dependencies": {
+    "@ledgerhq/hw-transport": "^6.33.0",
+    "@ledgerhq/hw-transport-webhid": "^6.32.0",
+    "@zondax/ledger-mina-js": "^0.2.0",
     "comlink": "^4.4.2",
     "contracts": "workspace:*",
+    "mina-signer": "file:deps/o1js/src/mina-signer",
     "next": "^14.2.0",
     "o1js": "^2.13.0",
     "react": "^18.3.0",

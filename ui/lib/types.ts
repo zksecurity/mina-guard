@@ -63,11 +63,16 @@ export interface ApprovalRecord {
   createdAt: string;
 }
 
-/** Runtime wallet session state for Auro integration. */
+/** Wallet backend type identifier. */
+export type WalletType = 'auro' | 'ledger';
+
+/** Runtime wallet session state for Auro and Ledger integration. */
 export interface WalletState {
   connected: boolean;
   address: string | null;
   network: string | null;
+  type: WalletType | null;
+  ledgerAccountIndex?: number;
 }
 
 /** Polling indexer health details exposed by backend status endpoint. */

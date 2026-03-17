@@ -17,9 +17,12 @@ export default function TransactionsPage() {
     proposals,
     indexerStatus,
     connect,
+    connectAuro,
+    connectLedger,
     disconnect,
     isLoading,
     auroInstalled,
+    ledgerSupported,
   } = useAppContext();
   const [activeTab, setActiveTab] = useState<Tab>('all');
 
@@ -44,7 +47,11 @@ export default function TransactionsPage() {
         connected={wallet.connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={wallet.type}
         onConnect={connect}
+        onConnectAuro={connectAuro}
+        onConnectLedger={connectLedger}
         onDisconnect={disconnect}
       />
 

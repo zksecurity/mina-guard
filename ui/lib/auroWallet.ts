@@ -72,10 +72,12 @@ export async function sendTransaction(
 ): Promise<string | null> {
   if (!isAuroInstalled()) return null;
   try {
+    console.log('In sendtransaction, before sending');
     const result = await window.mina!.sendTransaction({
       transaction,
       feePayer: { fee, memo },
     });
+    console.log('In sendtransaction, after sending');
     return result.hash;
   } catch {
     return null;
@@ -101,11 +103,12 @@ export async function signMessage(message: string): Promise<{
 
 /** Requests wallet field signature used for MinaGuard in-circuit signature verification. */
 export async function getAuroSignFields(
-  fields: Array<string | number>
-): Promise<{ data: Array<string | number>; signature: string } | null> {
+  fields: Array<string>
+): Promise<{ data: Array<string>; signature: string } | null> {
   if (!isAuroInstalled()) return null;
   try {
-    return await window.mina!.signFields({ message: fields });
+    const result = await window.mina!.signFields({ message: fields });
+    return { data: result.data.map(String), signature: result.signature };
   } catch {
     return null;
   }

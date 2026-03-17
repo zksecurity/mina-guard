@@ -16,9 +16,12 @@ export default function NewTransactionPage() {
     multisig,
     owners,
     connect,
+    connectAuro,
+    connectLedger,
     disconnect,
     isLoading,
     auroInstalled,
+    ledgerSupported,
     refreshMultisig,
   } = useAppContext();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -32,11 +35,12 @@ export default function NewTransactionPage() {
     setError(null);
 
     try {
+      const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
       const txHash = await createProposeTx({
         contractAddress: multisig.address,
         proposerAddress: wallet.address,
         input: data,
-      });
+      }, undefined, signer);
 
       if (!txHash) {
         setError('Failed to submit proposal transaction.');
@@ -61,7 +65,11 @@ export default function NewTransactionPage() {
         connected={wallet.connected}
         isLoading={isLoading}
         auroInstalled={auroInstalled}
+        ledgerSupported={ledgerSupported}
+        walletType={wallet.type}
         onConnect={connect}
+        onConnectAuro={connectAuro}
+        onConnectLedger={connectLedger}
         onDisconnect={disconnect}
       />
 
