@@ -29,6 +29,9 @@ export interface AppContextType {
   connectLedger: (accountIndex?: number) => void;
   disconnect: () => void;
   isLoading: boolean;
+  /** Wallet connection error message (e.g. Ledger errors). */
+  walletError: string | null;
+  clearWalletError: () => void;
   auroInstalled: boolean;
   ledgerSupported: boolean;
   refreshMultisig: () => Promise<void>;
@@ -59,6 +62,8 @@ export const AppContext = createContext<AppContextType>({
   connectLedger: () => {},
   disconnect: () => {},
   isLoading: false,
+  walletError: null,
+  clearWalletError: () => {},
   auroInstalled: false,
   ledgerSupported: false,
   refreshMultisig: async () => {},

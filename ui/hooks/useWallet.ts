@@ -26,6 +26,7 @@ const EMPTY_WALLET: WalletState = {
 export function useWallet() {
   const [wallet, setWallet] = useState<WalletState>(EMPTY_WALLET);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [auroInstalled, setAuroInstalled] = useState(false);
   const [ledgerSupported, setLedgerSupported] = useState(false);
   const manuallyDisconnected = useRef(
@@ -99,26 +100,29 @@ export function useWallet() {
     }
   }, [auroInstalled]);
 
+  const connectingRef = useRef(false);
   const connectLedger = useCallback(async (accountIndex?: number) => {
+    if (connectingRef.current) return;
+    connectingRef.current = true;
     const idx = typeof accountIndex === 'number' ? accountIndex : 0;
     manuallyDisconnected.current = false;
     localStorage.removeItem('wallet-disconnected');
     setIsLoading(true);
+    setError(null);
     try {
       const address = await getLedgerAddress(idx);
-      console.log("Ledger addr: ");
-      console.log(address);
-      if (address) {
-        localStorage.setItem('wallet-type', 'ledger');
-        setWallet({
-          connected: true,
-          address,
-          network: null,
-          type: 'ledger',
-          ledgerAccountIndex: idx,
-        });
-      }
+      localStorage.setItem('wallet-type', 'ledger');
+      setWallet({
+        connected: true,
+        address,
+        network: null,
+        type: 'ledger',
+        ledgerAccountIndex: idx,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ledger connection failed');
     } finally {
+      connectingRef.current = false;
       setIsLoading(false);
     }
   }, []);
@@ -133,9 +137,13 @@ export function useWallet() {
     setWallet(EMPTY_WALLET);
   }, [wallet.type]);
 
+  const clearError = useCallback(() => setError(null), []);
+
   return {
     wallet,
     isLoading,
+    error,
+    clearError,
     auroInstalled,
     ledgerSupported,
     connectAuro,

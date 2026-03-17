@@ -24,7 +24,8 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   }, [router, pathname]);
 
   const {
-    wallet, isLoading: walletLoading, auroInstalled, ledgerSupported,
+    wallet, isLoading: walletLoading, error: walletError, clearError: clearWalletError,
+    auroInstalled, ledgerSupported,
     connect, connectAuro, connectLedger, disconnect,
   } = useWallet();
 
@@ -103,6 +104,8 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         connectLedger,
         disconnect,
         isLoading: walletLoading || multisigLoading || proposalsLoading,
+        walletError,
+        clearWalletError,
         auroInstalled,
         ledgerSupported,
         refreshMultisig,

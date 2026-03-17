@@ -24,6 +24,8 @@ export default function Dashboard() {
     connectLedger,
     disconnect,
     isLoading,
+    walletError,
+    clearWalletError,
     auroInstalled,
     ledgerSupported,
     isOperating,
@@ -158,6 +160,8 @@ export default function Dashboard() {
             onConnectLedger={connectLedger}
             auroInstalled={auroInstalled}
             ledgerSupported={ledgerSupported}
+            error={walletError}
+            onClearError={clearWalletError}
           />
         ) : multisig ? (
           <div className="space-y-6">
@@ -405,11 +409,15 @@ function ConnectNotice({
   onConnectLedger,
   auroInstalled,
   ledgerSupported,
+  error,
+  onClearError,
 }: {
   onConnectAuro: () => void;
   onConnectLedger: () => void;
   auroInstalled: boolean;
   ledgerSupported: boolean;
+  error: string | null;
+  onClearError: () => void;
 }) {
   return (
     <div className="text-center py-20">
@@ -417,6 +425,12 @@ function ConnectNotice({
       <p className="text-sm text-safe-text mb-6 max-w-sm mx-auto">
         Connect with Auro Wallet or Ledger to create and approve MinaGuard proposals.
       </p>
+      {error && (
+        <div className="flex items-center justify-center gap-2 mb-4 mx-auto max-w-md rounded-lg px-4 py-3 text-sm bg-red-500/10 text-red-400 border border-red-500/30">
+          <span>{error}</span>
+          <button onClick={onClearError} className="ml-2 shrink-0 hover:opacity-70">&times;</button>
+        </div>
+      )}
       <div className="flex items-center justify-center gap-3">
         <button
           onClick={onConnectAuro}
