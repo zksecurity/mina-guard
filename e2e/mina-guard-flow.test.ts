@@ -20,6 +20,11 @@ import {
   dumpState,
   type TestAccount,
 } from './helpers';
+import { getNetworkConfig } from './network-config';
+
+const netConfig = getNetworkConfig();
+const SETTLE_WAIT = netConfig.settlementWaitMs;
+const SHORT_WAIT = netConfig.mode === 'devnet' ? 10_000 : 3_000;
 
 // ---------------------------------------------------------------------------
 // Shared state across sequential tests
@@ -43,7 +48,7 @@ test.beforeAll(async ({ browser }) => {
   );
 
   // Create a single page that will be reused for all tests
-  sharedContext = await browser.newContext({ baseURL: 'http://localhost:3000' });
+  sharedContext = await browser.newContext({ baseURL: netConfig.frontendUrl });
   sharedPage = await sharedContext.newPage();
 
   // Capture browser console for diagnostics
@@ -92,6 +97,20 @@ async function gotoWithWallet(
       await page.waitForTimeout(300);
     }
     await navigateTo(page, path);
+  }
+
+  // On devnet the indexer discovers old contracts from previous runs,
+  // so the sidebar dropdown may default to the wrong one.
+  if (contractAddress && netConfig.mode === 'devnet') {
+    const selector = page.locator('select');
+    if (await selector.isVisible().catch(() => false)) {
+      const currentVal = await selector.inputValue();
+      if (currentVal !== contractAddress) {
+        log(`Switching contract selector to ${contractAddress.slice(0, 12)}...`);
+        await selector.selectOption(contractAddress);
+        await page.waitForTimeout(2_000);
+      }
+    }
   }
 }
 
@@ -175,9 +194,7 @@ test('2. Setup contract (account1 as owner, threshold=1/1)', async () => { const
   log('=== Step 2: Setup contract ===');
   await gotoWithWallet('/', accounts[0]);
 
-  // Select the deployed contract if needed
-  // The dashboard might auto-select the only contract, or we may need to select it
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Click "Setup Contract" button
   log('Clicking Setup Contract...');
@@ -254,7 +271,7 @@ test('2. Setup contract (account1 as owner, threshold=1/1)', async () => { const
 test('3. Propose add owner (account2)', async () => { const page = sharedPage;
   log('=== Step 3: Propose add owner ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Click "New Proposal"
   log('Clicking New Proposal...');
@@ -320,7 +337,7 @@ test('4. Execute add owner proposal', async () => { const page = sharedPage;
   log('=== Step 4: Execute add owner ===');
   const proposalHash = proposalHashes[0];
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Click "Execute Proposal"
   log('Clicking Execute Proposal...');
@@ -448,7 +465,7 @@ test('6. Execute threshold change', async () => { const page = sharedPage;
   log('=== Step 6: Execute threshold change ===');
   const proposalHash = proposalHashes[1];
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking Execute Proposal...');
   const executeBtn = page.getByRole('button', { name: /execute proposal/i });
@@ -479,7 +496,7 @@ test('6. Execute threshold change', async () => { const page = sharedPage;
 test('7. Propose send MINA to account3', async () => { const page = sharedPage;
   log('=== Step 7: Propose MINA transfer ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Open proposal modal from dashboard
   log('Clicking New Proposal...');
@@ -546,7 +563,7 @@ test('8. Approve transfer (account2)', async () => { const page = sharedPage;
 
   // Navigate as account2
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[1]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Click "Approve Proposal"
   log('Clicking Approve Proposal...');
@@ -590,11 +607,11 @@ test('9. Execute transfer (account2)', async () => { const page = sharedPage;
   // before attempting execute. The on-chain approvalRoot must reflect
   // the new approval, otherwise the Merkle witness will be invalid.
   log('Waiting for on-chain state to settle after approval...');
-  await new Promise((r) => setTimeout(r, 30_000));
+  await new Promise((r) => setTimeout(r, SETTLE_WAIT));
 
   // Navigate as account2
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[1]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Click "Execute Proposal"
   log('Clicking Execute Proposal...');
@@ -610,7 +627,7 @@ test('9. Execute transfer (account2)', async () => { const page = sharedPage;
   if (txHashMatch) {
     log(`Execute tx hash: ${txHashMatch[0]}`);
     // Give the node time to process, then check status
-    await new Promise((r) => setTimeout(r, 30_000));
+    await new Promise((r) => setTimeout(r, SETTLE_WAIT));
     await checkTxStatus(txHashMatch[0]);
   }
 
@@ -648,7 +665,7 @@ test('9. Execute transfer (account2)', async () => { const page = sharedPage;
 test('10. Verify Settings page', async () => { const page = sharedPage;
   log('=== Step 10: Verify Settings page ===');
   await gotoWithWallet('/settings', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Verify "Required Confirmations" section exists
   await expect(page.locator('text=Required Confirmations')).toBeVisible({ timeout: 10_000 });
@@ -672,7 +689,7 @@ test('10. Verify Settings page', async () => { const page = sharedPage;
 test('11. Verify Transactions page filtering', async () => { const page = sharedPage;
   log('=== Step 11: Verify Transactions page filtering ===');
   await gotoWithWallet('/transactions', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // After steps 1-9: 3 proposals total (addOwner=executed, changeThreshold=executed, transfer=executed)
   // All tab should show 3
@@ -706,7 +723,7 @@ test('11. Verify Transactions page filtering', async () => { const page = shared
 test('12. Propose threshold change to 1/2', async () => { const page = sharedPage;
   log('=== Step 12: Propose threshold change to 1/2 ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking New Proposal...');
   const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
@@ -777,7 +794,7 @@ test('13. Approve threshold change (account2)', async () => { const page = share
   const proposalHash = proposalHashes[3];
 
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[1]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking Approve Proposal...');
   const approveBtn = page.getByRole('button', { name: /approve proposal/i });
@@ -809,7 +826,7 @@ test('14. Execute threshold change to 1/2', async () => { const page = sharedPag
   const proposalHash = proposalHashes[3];
 
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking Execute Proposal...');
   const executeBtn = page.getByRole('button', { name: /execute proposal/i });
@@ -839,7 +856,7 @@ test('14. Execute threshold change to 1/2', async () => { const page = sharedPag
 test('15. Propose remove owner (account2)', async () => { const page = sharedPage;
   log('=== Step 15: Propose remove owner ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking New Proposal...');
   const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
@@ -902,7 +919,7 @@ test('16. Execute remove owner', async () => { const page = sharedPage;
   const proposalHash = proposalHashes[4];
 
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking Execute Proposal...');
   const executeBtn = page.getByRole('button', { name: /execute proposal/i });
@@ -948,7 +965,7 @@ test('16. Execute remove owner', async () => { const page = sharedPage;
 test('17. Verify state after owner removal', async () => { const page = sharedPage;
   log('=== Step 17: Verify state after owner removal ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Dashboard delegate card should show "None"
   await expect(page.locator('text=Block Producer Delegate')).toBeVisible({ timeout: 10_000 });
@@ -963,7 +980,7 @@ test('17. Verify state after owner removal', async () => { const page = sharedPa
 test('18. Propose set delegate (account3)', async () => { const page = sharedPage;
   log('=== Step 18: Propose set delegate ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking New Proposal...');
   const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
@@ -1024,7 +1041,7 @@ test('19. Execute set delegate', async () => { const page = sharedPage;
   const proposalHash = proposalHashes[5];
 
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking Execute Proposal...');
   const executeBtn = page.getByRole('button', { name: /execute proposal/i });
@@ -1062,7 +1079,7 @@ test('19. Execute set delegate', async () => { const page = sharedPage;
 test('20. Verify delegate card shows delegate', async () => { const page = sharedPage;
   log('=== Step 20: Verify delegate card ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // The delegate card should show the account3 address (truncated)
   await expect(page.locator('text=Block Producer Delegate')).toBeVisible({ timeout: 10_000 });
@@ -1078,7 +1095,7 @@ test('20. Verify delegate card shows delegate', async () => { const page = share
 test('21. Propose undelegate', async () => { const page = sharedPage;
   log('=== Step 21: Propose undelegate ===');
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking New Proposal...');
   const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
@@ -1140,7 +1157,7 @@ test('22. Execute undelegate', async () => { const page = sharedPage;
   const proposalHash = proposalHashes[6];
 
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking Execute Proposal...');
   const executeBtn = page.getByRole('button', { name: /execute proposal/i });
@@ -1182,11 +1199,11 @@ test('23. Propose transfer with near-future expiry', async () => { const page = 
   // Get current block height from indexer status
   const status = await getIndexerStatus();
   const currentHeight = status?.latestChainHeight ?? status?.indexedHeight ?? 0;
-  const expiryBlock = currentHeight + 2; // expires in ~40s (20s slot time)
+  const expiryBlock = currentHeight + netConfig.expiryBlockOffset;
   log(`Current block height: ${currentHeight}, setting expiry: ${expiryBlock}`);
 
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   log('Clicking New Proposal...');
   const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
@@ -1254,8 +1271,8 @@ test('24. Verify proposal expires and execute button is hidden', async () => { c
       const proposal = await getProposal(contractAddress, proposalHash);
       return proposal?.status === 'expired';
     },
-    180_000, // 3 min — need to wait for blocks to pass the expiry
-    5_000
+    netConfig.mode === 'devnet' ? 2_400_000 : 180_000, // devnet: 40 min, lightnet: 3 min
+    netConfig.indexerPollIntervalMs
   );
 
   const proposal = await getProposal(contractAddress, proposalHash);
@@ -1264,7 +1281,7 @@ test('24. Verify proposal expires and execute button is hidden', async () => { c
 
   // Navigate to the proposal detail page
   await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Verify status badge shows "Expired" (red)
   const expiredBadge = page.locator('text=expired').or(page.locator('text=Expired'));
@@ -1291,19 +1308,19 @@ test('25. Verify final state', async () => { const page = sharedPage;
 
   // Dashboard — delegate card should show contract self (undelegated)
   await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
   await expect(page.locator('text=Block Producer Delegate')).toBeVisible({ timeout: 10_000 });
   log('Delegate card visible on dashboard');
 
   // Settings — 1 owner
   await navigateTo(page, '/settings');
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
   await expect(page.locator('text=Owners (1)')).toBeVisible({ timeout: 10_000 });
   log('Settings shows 1 owner');
 
   // Transactions — all proposals should be executed
   await navigateTo(page, '/transactions');
-  await page.waitForTimeout(3_000);
+  await page.waitForTimeout(SHORT_WAIT);
 
   const executedTab = page.locator('button', { hasText: /Executed/i }).first();
   const executedText = await executedTab.textContent();
