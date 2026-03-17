@@ -46,10 +46,8 @@ type SignFieldsFn = (
 /** Callback type for reporting step-based progress to the main thread. */
 type ProgressFn = (step: string) => void;
 
-// const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'https://api.minascan.io/node/devnet/v1/graphql';
-// const ARCHIVE_ENDPOINT = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
-const MINA_ENDPOINT = 'http://127.0.0.1:8080/graphql';
-const ARCHIVE_ENDPOINT = 'http://127.0.0.1:8282';
+const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'https://api.minascan.io/node/devnet/v1/graphql';
+const ARCHIVE_ENDPOINT = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
 
 let compilePromise: Promise<void> | null = null;
 
