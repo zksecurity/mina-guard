@@ -36,7 +36,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     isLoading: multisigLoading,
     refreshState: refreshMultisig,
     selectContract,
-  } = useMultisig();
+  } = useMultisig(wallet.address);
 
   const {
     proposals,

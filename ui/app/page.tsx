@@ -153,7 +153,12 @@ export default function Dashboard() {
         )}
 
         {!wallet.connected ? (
-          <ConnectNotice onConnect={connect} auroInstalled={auroInstalled} />
+          <ConnectNotice
+            onConnectAuro={connectAuro}
+            onConnectLedger={connectLedger}
+            auroInstalled={auroInstalled}
+            ledgerSupported={ledgerSupported}
+          />
         ) : multisig ? (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -396,24 +401,44 @@ export default function Dashboard() {
 
 /** Connect-wallet empty state shown when no wallet session is active. */
 function ConnectNotice({
-  onConnect,
+  onConnectAuro,
+  onConnectLedger,
   auroInstalled,
+  ledgerSupported,
 }: {
-  onConnect: () => void;
+  onConnectAuro: () => void;
+  onConnectLedger: () => void;
   auroInstalled: boolean;
+  ledgerSupported: boolean;
 }) {
   return (
     <div className="text-center py-20">
       <h3 className="text-lg font-semibold mb-2">Connect your wallet</h3>
       <p className="text-sm text-safe-text mb-6 max-w-sm mx-auto">
-        Connect your Auro Wallet to create and approve MinaGuard proposals.
+        Connect with Auro Wallet or Ledger to create and approve MinaGuard proposals.
       </p>
-      <button
-        onClick={onConnect}
-        className="bg-safe-green text-safe-dark font-semibold rounded-lg px-6 py-3 text-sm hover:brightness-110 transition-all"
-      >
-        {auroInstalled ? 'Connect Auro Wallet' : 'Install Auro Wallet'}
-      </button>
+      <div className="flex items-center justify-center gap-3">
+        <button
+          onClick={onConnectAuro}
+          className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-6 py-3 text-sm hover:brightness-110 transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          {auroInstalled ? 'Connect Auro' : 'Install Auro'}
+        </button>
+        {ledgerSupported && (
+          <button
+            onClick={onConnectLedger}
+            className="flex items-center gap-2 bg-safe-gray border border-safe-border text-white font-semibold rounded-lg px-6 py-3 text-sm hover:bg-safe-hover transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            Connect Ledger
+          </button>
+        )}
+      </div>
     </div>
   );
 }
