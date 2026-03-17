@@ -87,10 +87,13 @@ export class MinaGuardIndexer {
 
       if (toHeight >= fromHeight) {
         await this.syncKnownContracts(fromHeight, toHeight);
-        await this.deriveExpiredProposals(latestHeight);
         await this.setIndexedHeight(toHeight);
         this.status.indexedHeight = toHeight;
       }
+
+      // Check for expired proposals on every tick, even when no new blocks
+      // were ingested — the chain height may already be past the expiry.
+      await this.deriveExpiredProposals(latestHeight);
 
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
