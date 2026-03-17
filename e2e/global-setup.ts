@@ -189,6 +189,32 @@ export default async function globalSetup() {
     });
     log('Database schema pushed');
 
+    // -----------------------------------------------------------------------
+    // Verification key hash — compile the contract to get the vk hash so
+    // the backend indexer only picks up MinaGuard contracts on devnet.
+    // Skipped when MINAGUARD_VK_HASH is already set or in lightnet mode.
+    // -----------------------------------------------------------------------
+    let vkHash = process.env.MINAGUARD_VK_HASH ?? null;
+    if (!vkHash && config.mode === 'devnet') {
+      log('Compiling MinaGuard contract to extract vk hash (uses cache if available)...');
+      try {
+        const output = execSync('bun run dev-helpers/cli.ts vk-hash compile', {
+          cwd: ROOT,
+          stdio: 'pipe',
+          timeout: 600_000, // 10 min — first compile is slow
+        }).toString();
+        const match = output.match(/vkHash:\s*(\S+)/);
+        if (match) {
+          vkHash = match[1];
+          log(`  Extracted vk hash: ${vkHash.slice(0, 20)}...`);
+        } else {
+          log('  Warning: could not parse vk hash from compile output');
+        }
+      } catch (err) {
+        log(`  Warning: vk hash compilation failed: ${err}`);
+      }
+    }
+
     // Start backend
     log('Starting backend...');
     const backendEnv: Record<string, string> = {
@@ -200,6 +226,9 @@ export default async function globalSetup() {
     };
     if (config.accountManagerUrl) {
       backendEnv.LIGHTNET_ACCOUNT_MANAGER = config.accountManagerUrl;
+    }
+    if (vkHash) {
+      backendEnv.MINAGUARD_VK_HASH = vkHash;
     }
     const backendChild = spawnService(
       'bun',

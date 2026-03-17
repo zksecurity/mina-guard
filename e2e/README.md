@@ -70,6 +70,22 @@ NETWORK=devnet bun test
 
 Devnet tests are significantly slower (~45 min) due to ~3-minute block times and real proof generation.
 
+### Verification key hash
+
+On devnet the backend needs the MinaGuard verification key hash (`MINAGUARD_VK_HASH`) to filter out unrelated contracts. The setup **automatically compiles** the contract to extract this hash before starting the backend. The first compilation is slow (~2-5 min), but subsequent runs use a cache.
+
+To skip the compilation step, set the hash explicitly in `.env.devnet`:
+
+```
+MINAGUARD_VK_HASH=12345...
+```
+
+You can obtain the hash manually with:
+
+```bash
+bun run dev-helpers/cli.ts vk-hash compile
+```
+
 ## Configuration
 
 All timing and endpoint settings are centralised in [network-config.ts](network-config.ts). Key differences between modes:
