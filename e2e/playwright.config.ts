@@ -1,18 +1,21 @@
 import { defineConfig } from '@playwright/test';
+import { getNetworkConfig } from './network-config';
+
+const config = getNetworkConfig();
 
 export default defineConfig({
   testDir: '.',
   testMatch: '*.test.ts',
-  timeout: 15 * 60 * 1000, // 15 min per test step (proof generation is slow)
+  timeout: config.testStepTimeoutMs,
   retries: 0,
   workers: 1,
   globalSetup: './global-setup.ts',
   globalTeardown: './global-teardown.ts',
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: config.frontendUrl,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    actionTimeout: 30_000,
+    actionTimeout: config.mode === 'devnet' ? 60_000 : 30_000,
   },
 });

@@ -9,6 +9,7 @@ import {
   AccountUpdate,
   fetchAccount,
 } from 'o1js';
+import { getNetworkConfig } from './network-config';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,7 +48,7 @@ export function loadState(): E2eState {
 // Backend API helpers
 // ---------------------------------------------------------------------------
 
-const API = 'http://localhost:4000';
+const API = getNetworkConfig().backendUrl;
 
 export async function apiGet<T>(path: string): Promise<T | null> {
   try {
@@ -129,9 +130,12 @@ export async function getApprovals(
 export async function waitForIndexer(
   description: string,
   check: () => Promise<boolean>,
-  timeoutMs = 240_000,
-  intervalMs = 5_000
+  timeoutMs?: number,
+  intervalMs?: number,
 ): Promise<void> {
+  const config = getNetworkConfig();
+  timeoutMs ??= config.indexerTimeoutMs;
+  intervalMs ??= config.indexerPollIntervalMs;
   log(`Waiting: ${description}`);
   const start = Date.now();
   let dots = 0;
@@ -168,10 +172,11 @@ export async function fundContract(
   amountMina: number = 10
 ): Promise<void> {
   if (!minaNetworkConfigured) {
+    const config = getNetworkConfig();
     Mina.setActiveInstance(
       Mina.Network({
-        mina: 'http://127.0.0.1:8080/graphql',
-        archive: 'http://127.0.0.1:8282',
+        mina: config.minaEndpoint,
+        archive: config.archiveEndpoint,
       })
     );
     minaNetworkConfigured = true;
@@ -198,8 +203,36 @@ export async function fundContract(
       ? (result.hash as () => string)()
       : result.hash;
   log(`  Fund tx sent: ${hash}`);
-  // Wait for inclusion so the next step doesn't hit Insufficient_replace_fee
-  await result.wait();
+  // Poll the contract's on-chain balance to confirm inclusion.
+  // result.wait() can hang indefinitely on devnet, so we check the actual
+  // outcome instead: the target account's balance increasing.
+  const config = getNetworkConfig();
+  const timeoutMs = config.indexerTimeoutMs; // 240s lightnet, 900s devnet
+  const pollMs = config.indexerPollIntervalMs;
+  const start = Date.now();
+
+  // Snapshot balance before (account may not exist yet → 0)
+  const before = await fetchAccount({ publicKey: target });
+  const balanceBefore = before.account
+    ? BigInt(before.account.balance.toBigInt())
+    : 0n;
+  log(`  Contract balance before: ${balanceBefore} nanomina`);
+
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, pollMs));
+    const acct = await fetchAccount({ publicKey: target });
+    const bal = acct.account ? BigInt(acct.account.balance.toBigInt()) : 0n;
+    if (bal > balanceBefore) {
+      log(`  Fund tx confirmed — balance: ${bal} nanomina (+${bal - balanceBefore})`);
+      return;
+    }
+    if ((Date.now() - start) % (pollMs * 5) < pollMs) {
+      log(`  Still waiting for fund tx inclusion... (${((Date.now() - start) / 1000).toFixed(0)}s)`);
+    }
+  }
+  throw new Error(
+    `Fund tx not confirmed after ${(timeoutMs / 1000).toFixed(0)}s — contract balance did not increase`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +338,7 @@ export async function activateTestKey(
   page: Page,
   account: TestAccount
 ): Promise<void> {
+  const config = getNetworkConfig();
   log(`Setting test key for account ${account.publicKey.slice(0, 12)}...`);
   // Wait for the worker to be initialized (the __e2eSetTestKey global)
   await page.waitForFunction(
@@ -315,9 +349,11 @@ export async function activateTestKey(
     async (pk: string) => (window as any).__e2eSetTestKey(pk),
     account.privateKey
   );
-  await page.evaluate(
-    async () => (window as any).__e2eSetSkipProofs(true)
-  );
+  if (config.skipProofs) {
+    await page.evaluate(
+      async () => (window as any).__e2eSetSkipProofs(true)
+    );
+  }
 }
 
 /**
@@ -352,8 +388,9 @@ export async function switchAccount(
 export async function waitForBanner(
   page: Page,
   type: 'success' | 'error' = 'success',
-  timeoutMs = 600_000
+  timeoutMs?: number
 ): Promise<string> {
+  timeoutMs ??= getNetworkConfig().bannerTimeoutMs;
   // Dismiss any stale banner by clicking its close button
   const closeBtn = page.locator('button:has-text("×")');
   if (await closeBtn.first().isVisible().catch(() => false)) {
@@ -399,7 +436,7 @@ export async function waitForOperationDone(
  */
 export async function checkTxStatus(txHash: string): Promise<string> {
   try {
-    const res = await fetch('http://127.0.0.1:8080/graphql', {
+    const res = await fetch(getNetworkConfig().minaEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -428,7 +465,7 @@ export async function checkTxStatus(txHash: string): Promise<string> {
       }
     }
     // Check if it's still in the mempool
-    const poolRes = await fetch('http://127.0.0.1:8080/graphql', {
+    const poolRes = await fetch(getNetworkConfig().minaEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

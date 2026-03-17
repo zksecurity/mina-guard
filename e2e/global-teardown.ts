@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { getNetworkConfig } from './network-config';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const STATE_FILE = resolve(import.meta.dirname, '.e2e-state.json');
@@ -39,8 +40,8 @@ export default async function globalTeardown() {
     log('State file cleaned up');
   }
 
-  // Stop lightnet (only locally — in CI it's a Docker service)
-  if (!IS_CI) {
+  // Stop lightnet (only locally and only when using lightnet mode)
+  if (!IS_CI && getNetworkConfig().mode === 'lightnet') {
     log('Stopping lightnet...');
     try {
       execSync('zk lightnet stop', { cwd: ROOT, stdio: 'pipe', timeout: 30_000 });
