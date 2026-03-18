@@ -9,6 +9,7 @@ import { truncateAddress, formatMina, type NewProposalInput } from '@/lib/types'
 import { setupContract, createProposeTx } from '@/lib/multisigClient';
 import { fetchBalance } from '@/lib/api';
 import ProposalForm from '@/components/ProposalForm';
+import LedgerConnectModal from '@/components/LedgerConnectModal';
 import Link from 'next/link';
 
 /** Dashboard overview page for selected contract and latest indexed proposals. */
@@ -413,12 +414,14 @@ function ConnectNotice({
   onClearError,
 }: {
   onConnectAuro: () => void;
-  onConnectLedger: () => void;
+  onConnectLedger: (accountIndex?: number) => void;
   auroInstalled: boolean;
   ledgerSupported: boolean;
   error: string | null;
   onClearError: () => void;
 }) {
+  const [showLedgerModal, setShowLedgerModal] = useState(false);
+
   return (
     <div className="text-center py-20">
       <h3 className="text-lg font-semibold mb-2">Connect your wallet</h3>
@@ -443,7 +446,7 @@ function ConnectNotice({
         </button>
         {ledgerSupported && (
           <button
-            onClick={onConnectLedger}
+            onClick={() => setShowLedgerModal(true)}
             className="flex items-center gap-2 bg-safe-gray border border-safe-border text-white font-semibold rounded-lg px-6 py-3 text-sm hover:bg-safe-hover transition-colors"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -453,6 +456,16 @@ function ConnectNotice({
           </button>
         )}
       </div>
+      {showLedgerModal && (
+        <LedgerConnectModal
+          onConfirm={(accountIndex, _networkId) => {
+            // TODO: wire networkId to Ledger signing calls
+            setShowLedgerModal(false);
+            onConnectLedger(accountIndex);
+          }}
+          onClose={() => setShowLedgerModal(false)}
+        />
+      )}
     </div>
   );
 }

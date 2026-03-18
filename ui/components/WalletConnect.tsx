@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { truncateAddress, type WalletType } from '@/lib/types';
+import LedgerConnectModal from './LedgerConnectModal';
 
 interface WalletConnectProps {
   address: string | null;
@@ -12,7 +13,7 @@ interface WalletConnectProps {
   walletType: WalletType | null;
   onConnect: () => void;
   onConnectAuro: () => void;
-  onConnectLedger: () => void;
+  onConnectLedger: (accountIndex?: number) => void;
   onDisconnect: () => void;
 }
 
@@ -29,6 +30,7 @@ export default function WalletConnect({
   onDisconnect,
 }: WalletConnectProps) {
   const [copied, setCopied] = useState(false);
+  const [showLedgerModal, setShowLedgerModal] = useState(false);
 
   const handleCopy = () => {
     if (!address) return;
@@ -119,7 +121,7 @@ export default function WalletConnect({
           Connect Auro
         </button>
         <button
-          onClick={onConnectLedger}
+          onClick={() => setShowLedgerModal(true)}
           className="flex items-center gap-2 bg-safe-gray border border-safe-border text-white font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-safe-hover transition-colors"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -127,6 +129,16 @@ export default function WalletConnect({
           </svg>
           Connect Ledger
         </button>
+        {showLedgerModal && (
+          <LedgerConnectModal
+            onConfirm={(accountIndex, _networkId) => {
+              // TODO: wire networkId to Ledger signing calls
+              setShowLedgerModal(false);
+              onConnectLedger(accountIndex);
+            }}
+            onClose={() => setShowLedgerModal(false)}
+          />
+        )}
       </div>
     );
   }

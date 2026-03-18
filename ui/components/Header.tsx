@@ -14,7 +14,7 @@ interface HeaderProps {
   walletType: WalletType | null;
   onConnect: () => void;
   onConnectAuro: () => void;
-  onConnectLedger: () => void;
+  onConnectLedger: (accountIndex?: number) => void;
   onDisconnect: () => void;
 }
 

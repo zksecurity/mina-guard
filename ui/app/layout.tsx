@@ -34,14 +34,12 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     contracts,
     owners,
     indexerStatus,
-    isLoading: multisigLoading,
     refreshState: refreshMultisig,
     selectContract,
   } = useMultisig();
 
   const {
     proposals,
-    isLoading: proposalsLoading,
     pendingCount,
   } = useTransactions(multisig?.address ?? null);
 
@@ -103,7 +101,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         connectAuro,
         connectLedger,
         disconnect: async () => { await disconnect(); clearBanner(); },
-        isLoading: walletLoading || multisigLoading || proposalsLoading,
+        isLoading: walletLoading,
         walletError,
         clearWalletError,
         auroInstalled,
