@@ -45,16 +45,23 @@ function ledgerErrorMessage(codeOrText: number | string): string {
  *  Also resets the transport — thrown exceptions (as opposed to returnCode errors)
  *  indicate the transport may be in a bad state. */
 function toLedgerError(err: unknown): Error {
+  const t = transport;
   transport = null;
   app = null;
+  if (t) { void t.close().catch(() => {}); }
   const msg = err instanceof Error ? err.message : String(err);
   return new Error(ledgerErrorMessage(msg));
 }
 
-/** Checks a Ledger response and throws a descriptive error if it indicates failure. */
+/** Checks a Ledger response and throws a descriptive error if it indicates failure.
+ *  Resets the transport so the next attempt starts with a fresh connection. */
 function assertLedgerSuccess(result: { returnCode: string; message?: string }): void {
   const code = parseInt(result.returnCode, 10);
   if (code === LEDGER_SUCCESS) return;
+  const t = transport;
+  transport = null;
+  app = null;
+  if (t) { void t.close().catch(() => {}); }
   throw new Error(ledgerErrorMessage(code));
 }
 

@@ -6,7 +6,7 @@ import { ContractSummary, IndexerStatus, OwnerRecord } from '@/lib/types';
 import { getSelectedContract, saveSelectedContract } from '@/lib/storage';
 
 /** Polls backend contract/indexer endpoints and manages selected contract state. */
-export function useMultisig(walletAddress: string | null) {
+export function useMultisig() {
   const [contracts, setContracts] = useState<ContractSummary[]>([]);
   const [owners, setOwners] = useState<OwnerRecord[]>([]);
   const [indexerStatus, setIndexerStatus] = useState<IndexerStatus | null>(null);
@@ -23,7 +23,7 @@ export function useMultisig(walletAddress: string | null) {
     setIsLoading(true);
     try {
       const [contractRows, status] = await Promise.all([
-        fetchContracts(walletAddress ?? undefined),
+        fetchContracts(),
         fetchIndexerStatus(),
       ]);
 
@@ -60,7 +60,7 @@ export function useMultisig(walletAddress: string | null) {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedAddress, walletAddress]);
+  }, [selectedAddress]);
 
   /** Changes selected contract and refreshes owner list for the new address. */
   const selectContract = useCallback(async (address: string) => {

@@ -37,7 +37,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     isLoading: multisigLoading,
     refreshState: refreshMultisig,
     selectContract,
-  } = useMultisig(wallet.address);
+  } = useMultisig();
 
   const {
     proposals,
@@ -102,7 +102,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         connect,
         connectAuro,
         connectLedger,
-        disconnect,
+        disconnect: async () => { await disconnect(); clearBanner(); },
         isLoading: walletLoading || multisigLoading || proposalsLoading,
         walletError,
         clearWalletError,

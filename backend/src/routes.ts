@@ -20,14 +20,9 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   }));
 
   /** Lists tracked contracts with owner/proposal aggregate counts. */
-  router.get('/api/contracts', safe(async (req, res) => {
-    const ownerParam = req.query.owner as string | undefined;
-
+  router.get('/api/contracts', safe(async (_req, res) => {
     const contracts = await prisma.contract.findMany({
       orderBy: { discoveredAt: 'desc' },
-      where: ownerParam
-        ? { owners: { some: { address: ownerParam, active: true } } }
-        : undefined,
       include: {
         _count: {
           select: {

@@ -14,10 +14,9 @@ export async function fetchIndexerStatus(): Promise<IndexerStatus | null> {
   return getJson<IndexerStatus>('/api/indexer/status');
 }
 
-/** Fetches discovered contracts from backend, optionally filtered by owner address. */
-export async function fetchContracts(ownerAddress?: string): Promise<ContractSummary[]> {
-  const query = ownerAddress ? `?owner=${encodeURIComponent(ownerAddress)}` : '';
-  const data = await getJson<Array<Record<string, unknown>>>(`/api/contracts${query}`);
+/** Fetches all discovered contracts from backend. */
+export async function fetchContracts(): Promise<ContractSummary[]> {
+  const data = await getJson<Array<Record<string, unknown>>>('/api/contracts');
   if (!data) return [];
   return data.map((item) => toContractSummary(item));
 }
