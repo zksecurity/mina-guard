@@ -28,11 +28,9 @@ function assertOwnerMembership(
   let found = Bool(false);
   let currentChain = INITIAL_OWNER_CHAIN;
   ownersWitness.owners.forEach(({ value: pk, isSome }) => {
-
     let newChain = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
     currentChain = Provable.if(isSome, newChain, currentChain);
     found = Provable.if(claimedOwner.equals(pk).and(isSome), Bool(true), found);
-
   });
   found.assertTrue('Claimed owner not a member of owners.');
   currentChain.assertEquals(ownerCommitment, 'Owner list mismatch');

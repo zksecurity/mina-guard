@@ -1,4 +1,5 @@
 import { Field, Mina, PrivateKey, Signature, UInt64, Bool } from 'o1js';
+import { Receiver } from '../MinaGuard.js';
 import { EXECUTED_MARKER } from '../constants.js';
 import {
   setupLocalBlockchain,
@@ -32,7 +33,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -54,7 +55,7 @@ describe('MinaGuard - Execute', () => {
   it('should reject execution with insufficient approvals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -77,7 +78,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -102,7 +103,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -141,7 +142,7 @@ describe('MinaGuard - Execute', () => {
     const recipient = PrivateKey.random().toPublicKey();
     // Create proposal with wrong configNonce
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(99), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(99), ctx.zkAppAddress
     );
 
     // Can't even propose this since configNonce mismatch happens at propose time
@@ -174,7 +175,7 @@ describe('MinaGuard - Execute', () => {
 
     // 1. Propose and approve a transfer with configNonce=0
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
@@ -223,7 +224,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -258,7 +259,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
 
@@ -281,7 +282,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
   it('should reject with insufficient approvals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
 
@@ -304,7 +305,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      recipient, transferAmount, Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
 
@@ -338,7 +339,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     const counterBefore = ctx.zkApp.proposalCounter.get();
 
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
 
@@ -357,7 +358,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
   it('should reject with invalid signature in batch', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
 
@@ -385,7 +386,7 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
   it('should reject with wrong configNonce', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(99), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(99), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
 
@@ -416,5 +417,105 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Not a transfer tx');
+  });
+
+  // -- Multi-receiver tests --------------------------------------------------
+
+  it('should execute a multi-receiver transfer (on-chain flow)', async () => {
+    const recipient1Key = PrivateKey.random();
+    const recipient1 = recipient1Key.toPublicKey();
+    const recipient2Key = PrivateKey.random();
+    const recipient2 = recipient2Key.toPublicKey();
+    await fundAccount(ctx, recipient1);
+    await fundAccount(ctx, recipient2);
+
+    const amount1 = UInt64.from(500_000_000);
+    const amount2 = UInt64.from(300_000_000);
+    const proposal = createTransferProposal(
+      [new Receiver({ address: recipient1, amount: amount1 }), new Receiver({ address: recipient2, amount: amount2 })],
+      Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    const balance1Before = getBalance(recipient1);
+    const balance2Before = getBalance(recipient2);
+
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+
+    expect(getBalance(recipient1).sub(balance1Before)).toEqual(amount1);
+    expect(getBalance(recipient2).sub(balance2Before)).toEqual(amount2);
+  });
+
+  it('should execute a full 5-receiver transfer (on-chain flow)', async () => {
+    const recipients = Array.from({ length: 5 }, () => PrivateKey.random());
+    for (const r of recipients) {
+      await fundAccount(ctx, r.toPublicKey());
+    }
+
+    const amounts = [100_000_000, 200_000_000, 300_000_000, 150_000_000, 250_000_000];
+    const proposal = createTransferProposal(
+      recipients.map((r, i) => new Receiver({ address: r.toPublicKey(), amount: UInt64.from(amounts[i]) })),
+      Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    const balancesBefore = recipients.map((r) => getBalance(r.toPublicKey()));
+
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+
+    for (let i = 0; i < 5; i++) {
+      const gained = getBalance(recipients[i].toPublicKey()).sub(balancesBefore[i]);
+      expect(gained).toEqual(UInt64.from(amounts[i]));
+    }
+  });
+
+  it('should execute a multi-receiver transfer via batch sig', async () => {
+    const recipient1Key = PrivateKey.random();
+    const recipient1 = recipient1Key.toPublicKey();
+    const recipient2Key = PrivateKey.random();
+    const recipient2 = recipient2Key.toPublicKey();
+    const recipient3Key = PrivateKey.random();
+    const recipient3 = recipient3Key.toPublicKey();
+    await fundAccount(ctx, recipient1);
+    await fundAccount(ctx, recipient2);
+    await fundAccount(ctx, recipient3);
+
+    const amount1 = UInt64.from(400_000_000);
+    const amount2 = UInt64.from(300_000_000);
+    const amount3 = UInt64.from(200_000_000);
+    const proposal = createTransferProposal(
+      [new Receiver({ address: recipient1, amount: amount1 }), new Receiver({ address: recipient2, amount: amount2 }), new Receiver({ address: recipient3, amount: amount3 })],
+      Field(0), Field(0), ctx.zkAppAddress
+    );
+    const proposalHash = proposal.hash();
+
+    const balance1Before = getBalance(recipient1);
+    const balance2Before = getBalance(recipient2);
+    const balance3Before = getBalance(recipient3);
+
+    const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransferBatchSig(proposal, approvalWitness, sigs);
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+
+    expect(getBalance(recipient1).sub(balance1Before)).toEqual(amount1);
+    expect(getBalance(recipient2).sub(balance2Before)).toEqual(amount2);
+    expect(getBalance(recipient3).sub(balance3Before)).toEqual(amount3);
   });
 });

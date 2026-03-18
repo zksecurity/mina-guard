@@ -1,5 +1,5 @@
 import { Field, Mina, PrivateKey, Signature, UInt64 } from 'o1js';
-import { TransactionProposal } from '../MinaGuard.js';
+import { Receiver, TransactionProposal } from '../MinaGuard.js';
 import { TxType } from '../constants.js';
 import {
   setupLocalBlockchain,
@@ -22,8 +22,7 @@ describe('MinaGuard - Propose', () => {
   it('should allow owner to propose and auto-approve a transfer', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient,
-      UInt64.from(1_000_000_000),
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
       Field(0),
       Field(0),
       ctx.zkAppAddress
@@ -40,8 +39,7 @@ describe('MinaGuard - Propose', () => {
     const nonOwner = PrivateKey.random();
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient,
-      UInt64.from(1_000_000_000),
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
       Field(0),
       Field(0),
       ctx.zkAppAddress
@@ -74,8 +72,7 @@ describe('MinaGuard - Propose', () => {
   it('should reject proposal with wrong configNonce', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient,
-      UInt64.from(1_000_000_000),
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
       Field(0),
       Field(99), // wrong configNonce
       ctx.zkAppAddress
@@ -107,8 +104,7 @@ describe('MinaGuard - Propose', () => {
   it('should reject proposal with wrong networkId', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient,
-      UInt64.from(1_000_000_000),
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
       Field(0),
       Field(0),
       ctx.zkAppAddress,
@@ -143,8 +139,7 @@ describe('MinaGuard - Propose', () => {
     const recipient = PrivateKey.random().toPublicKey();
     const wrongGuard = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient,
-      UInt64.from(1_000_000_000),
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
       Field(0),
       Field(0),
       wrongGuard
@@ -177,13 +172,13 @@ describe('MinaGuard - Propose', () => {
     const recipient = PrivateKey.random().toPublicKey();
 
     const proposal1 = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal1, 0);
     expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
 
     const proposal2 = createTransferProposal(
-      recipient, UInt64.from(2_000_000_000), Field(1), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(2_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal2, 1);
     expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(2));

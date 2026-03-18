@@ -1,6 +1,6 @@
-import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64, Bool } from 'o1js';
-import { EXECUTED_MARKER } from '../constants.js';
-import { TransactionProposal } from '../MinaGuard.js';
+import { Field, Mina, PrivateKey, Signature, UInt64, Bool } from 'o1js';
+import { EXECUTED_MARKER, MAX_RECEIVERS } from '../constants.js';
+import { TransactionProposal, Receiver } from '../MinaGuard.js';
 import { TxType } from '../constants.js';
 import {
   setupLocalBlockchain,
@@ -353,9 +353,12 @@ describe('MinaGuard - Governance', () => {
 
       // Now try to propose with old configNonce (0) - should fail
       const recipient = PrivateKey.random().toPublicKey();
+      const receivers = [
+        new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) }),
+        ...Array.from({ length: MAX_RECEIVERS - 1 }, () => Receiver.empty()),
+      ];
       const oldProposal = new TransactionProposal({
-        to: recipient,
-        amount: UInt64.from(1_000_000_000),
+        receivers,
         tokenId: Field(0),
         txType: TxType.TRANSFER,
         data: Field(0),
@@ -616,8 +619,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const newOwner = PrivateKey.random().toPublicKey();
 
       const proposal = new TransactionProposal({
-        to: PublicKey.empty(),
-        amount: UInt64.from(0),
+        receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
         txType: TxType.ADD_OWNER,
         data: ownerKey(newOwner),
