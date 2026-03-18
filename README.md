@@ -20,6 +20,9 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 ### First-time setup
 
 ```bash
+# Fetch submodule (fork of o1js, for now)
+git submodule update --init
+
 bun install
 
 # Build contracts (required by backend and UI)
