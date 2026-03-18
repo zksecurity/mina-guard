@@ -302,11 +302,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    const query = `{ account(publicKey: "${address}") { balance { total } } }`;
+    const query = `query($publicKey: PublicKey!) { account(publicKey: $publicKey) { balance { total } } }`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, variables: { publicKey: req.params.address } }),
     });
 
     if (!response.ok) {
