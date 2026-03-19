@@ -485,6 +485,11 @@ const workerApi = {
     const proposalHash = proposal.hash();
     const hashStr = proposalHash.toString();
 
+    // Sign before submitting to avoid orphaned proposals if the user refuses
+    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
+    const signature = await signProposalHash(hashStr, signFn);
+    if (!signature) return null;
+
     progressFn('Submitting proposal to backend...');
     await postOffchainProposal(params.contractAddress, {
       toAddress: to.toBase58(),
@@ -499,11 +504,6 @@ const workerApi = {
       guardAddress: params.contractAddress,
       proposalHash: hashStr,
     });
-
-    // Also submit the proposer's signature as first approval
-    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
-    const signature = await signProposalHash(hashStr, signFn);
-    if (!signature) return null;
 
     progressFn('Submitting signature to backend...');
     const sigJson = signature.toJSON();
