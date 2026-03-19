@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
@@ -17,8 +17,15 @@ const TX_TYPES: { value: TxType; label: string }[] = [
   { value: 'setDelegate', label: 'Set Delegate' },
 ];
 
-/** Proposal creation page that submits real MinaGuard propose transactions. */
 export default function NewTransactionPage() {
+  return (
+    <Suspense>
+      <NewTransactionPageInner />
+    </Suspense>
+  );
+}
+
+function NewTransactionPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const {
