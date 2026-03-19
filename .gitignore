@@ -9,8 +9,8 @@ ui/out/
 
 # environment
 .env
-.env.*
-!.env.example
+.env.local
+e2e/.env.devnet
 
 # editor / OS
 .DS_Store
@@ -27,6 +27,14 @@ coverage/
 e2e/.e2e-state.json
 e2e/test-results/
 e2e/playwright-report/
+
+# o1js compilation cache
+cache/
+
+# sqlite
+backend/prisma/dev.db
+backend/prisma/dev.db-shm
+backend/prisma/dev.db-wal
 
 # misc
 *.log

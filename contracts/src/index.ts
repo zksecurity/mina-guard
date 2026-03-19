@@ -21,7 +21,7 @@ export { TxType, EXECUTED_MARKER, EMPTY_MERKLE_MAP_ROOT, PROPOSED_MARKER, MAX_OW
 
 export { OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment } from './list-commitment.js';
 
-export { batchVerify, SignatureInputs } from './batch-verify.js';
+export { batchVerify, SignatureInputs, SignatureInput, SignatureOption } from './batch-verify.js';
 
 export { ownerKey } from './utils.js';
 

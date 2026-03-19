@@ -1,21 +1,14 @@
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { getNetworkConfig, getDevnetAccounts, type TestAccount } from './network-config';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const STATE_FILE = resolve(import.meta.dirname, '.e2e-state.json');
-const ACCOUNT_MANAGER = 'http://127.0.0.1:8181';
-const BACKEND_URL = 'http://localhost:4000';
-const FRONTEND_URL = 'http://localhost:3000';
 
 // In CI, lightnet/backend/frontend are started externally (GitHub Actions services + steps).
 // Locally, we manage the full lifecycle ourselves.
 const IS_CI = process.env.CI === 'true';
-
-interface TestAccount {
-  publicKey: string;
-  privateKey: string;
-}
 
 interface E2eState {
   accounts: TestAccount[];
@@ -49,8 +42,8 @@ async function waitForUrl(
   throw new Error(`Timed out waiting for ${label} at ${url}`);
 }
 
-async function acquireAccount(): Promise<TestAccount> {
-  const res = await fetch(`${ACCOUNT_MANAGER}/acquire-account`);
+async function acquireAccount(accountManagerUrl: string): Promise<TestAccount> {
+  const res = await fetch(`${accountManagerUrl}/acquire-account`);
   if (!res.ok) {
     throw new Error(
       `Account manager returned ${res.status}: ${await res.text()}`
@@ -89,54 +82,79 @@ function spawnService(
   return child;
 }
 
+async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const out = execSync(`lsof -ti:${port} 2>/dev/null || true`, { stdio: 'pipe' }).toString().trim();
+      if (!out) return;
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  log(`Warning: port ${port} still in use after ${timeoutMs / 1000}s`);
+}
+
 export default async function globalSetup() {
-  log(`=== E2E Global Setup (${IS_CI ? 'CI' : 'local'}) ===`);
+  const config = getNetworkConfig();
+  log(`=== E2E Global Setup (${IS_CI ? 'CI' : 'local'}, network=${config.mode}) ===`);
 
   // -----------------------------------------------------------------------
   // Lightnet — only managed locally; in CI it's a Docker service
+  // Skipped entirely when running against devnet.
   // -----------------------------------------------------------------------
-  if (!IS_CI) {
-    log('Stopping any existing lightnet...');
-    try {
-      execSync('zk lightnet stop', { cwd: ROOT, stdio: 'pipe', timeout: 30_000 });
-      log('Previous lightnet stopped');
-    } catch {
-      log('No existing lightnet to stop');
+  if (config.mode === 'lightnet') {
+    if (!IS_CI) {
+      log('Stopping any existing lightnet...');
+      try {
+        execSync('zk lightnet stop', { cwd: ROOT, stdio: 'pipe', timeout: 30_000 });
+        log('Previous lightnet stopped');
+      } catch {
+        log('No existing lightnet to stop');
+      }
+
+      log('Starting lightnet (this may take 1-2 minutes)...');
+      try {
+        execSync('zk lightnet start', {
+          cwd: ROOT,
+          stdio: 'inherit',
+          timeout: 300_000,
+        });
+      } catch (err) {
+        throw new Error(`Failed to start lightnet: ${err}`);
+      }
     }
 
-    log('Starting lightnet (this may take 1-2 minutes)...');
-    try {
-      execSync('zk lightnet start', {
-        cwd: ROOT,
-        stdio: 'inherit',
-        timeout: 300_000,
-      });
-    } catch (err) {
-      throw new Error(`Failed to start lightnet: ${err}`);
-    }
+    // Wait for lightnet services (both CI and local)
+    log('Waiting for lightnet services...');
+    await waitForUrl(
+      config.minaEndpoint,
+      'Mina daemon',
+      60_000
+    ).catch(() => {
+      log('Daemon GET failed, assuming it is up (GraphQL needs POST)');
+    });
+    await waitForUrl(config.accountManagerUrl!, 'Account manager', 60_000);
   }
-
-  // Wait for lightnet services (both CI and local)
-  log('Waiting for lightnet services...');
-  await waitForUrl(
-    'http://127.0.0.1:8080/graphql',
-    'Mina daemon',
-    60_000
-  ).catch(() => {
-    log('Daemon GET failed, assuming it is up (GraphQL needs POST)');
-  });
-  await waitForUrl(ACCOUNT_MANAGER, 'Account manager', 60_000);
 
   // -----------------------------------------------------------------------
   // Test accounts
   // -----------------------------------------------------------------------
-  log('Acquiring 3 funded test accounts...');
-  const accounts: TestAccount[] = [];
-  for (let i = 0; i < 3; i++) {
-    const acc = await acquireAccount();
-    accounts.push(acc);
-    log(`  Account ${i + 1}: ${acc.publicKey}`);
+  let accounts: TestAccount[];
+
+  if (config.mode === 'devnet') {
+    log('Loading hardcoded devnet accounts...');
+    accounts = getDevnetAccounts();
+  } else {
+    log('Acquiring 3 funded test accounts from lightnet...');
+    accounts = [];
+    for (let i = 0; i < 3; i++) {
+      const acc = await acquireAccount(config.accountManagerUrl!);
+      accounts.push(acc);
+    }
   }
+  accounts.forEach((a, i) => log(`  Account ${i + 1}: ${a.publicKey}`));
 
   // -----------------------------------------------------------------------
   // Backend + Frontend — only managed locally; in CI they're started by the workflow
@@ -145,7 +163,7 @@ export default async function globalSetup() {
   let frontendPid = 0;
 
   if (!IS_CI) {
-    // Kill stale processes on our ports
+    // Kill stale processes on our ports and wait for them to release
     log('Killing any stale processes on ports 3000 and 4000...');
     try {
       execSync('lsof -ti:3000 | xargs kill -9 2>/dev/null || true', { stdio: 'pipe' });
@@ -153,6 +171,9 @@ export default async function globalSetup() {
     } catch {
       // fine
     }
+    // Wait until ports are actually free
+    await waitForPortFree(4000);
+    await waitForPortFree(3000);
 
     // Reset database
     log('Resetting backend database...');
@@ -168,19 +189,51 @@ export default async function globalSetup() {
     });
     log('Database schema pushed');
 
+    // -----------------------------------------------------------------------
+    // Verification key hash — compile the contract to get the vk hash so
+    // the backend indexer only picks up MinaGuard contracts on devnet.
+    // Skipped when MINAGUARD_VK_HASH is already set or in lightnet mode.
+    // -----------------------------------------------------------------------
+    let vkHash = process.env.MINAGUARD_VK_HASH ?? null;
+    if (!vkHash && config.mode === 'devnet') {
+      log('Compiling MinaGuard contract to extract vk hash (uses cache if available)...');
+      try {
+        const output = execSync('bun run dev-helpers/cli.ts vk-hash compile', {
+          cwd: ROOT,
+          stdio: 'pipe',
+          timeout: 600_000, // 10 min — first compile is slow
+        }).toString();
+        const match = output.match(/vkHash:\s*(\S+)/);
+        if (match) {
+          vkHash = match[1];
+          log(`  Extracted vk hash: ${vkHash.slice(0, 20)}...`);
+        } else {
+          log('  Warning: could not parse vk hash from compile output');
+        }
+      } catch (err) {
+        log(`  Warning: vk hash compilation failed: ${err}`);
+      }
+    }
+
     // Start backend
     log('Starting backend...');
+    const backendEnv: Record<string, string> = {
+      INDEX_POLL_INTERVAL_MS: String(config.indexerPollIntervalMs),
+      MINA_ENDPOINT: config.minaEndpoint,
+      ARCHIVE_ENDPOINT: config.archiveEndpoint,
+      DATABASE_URL: 'file:./dev.db',
+      PORT: '4000',
+    };
+    if (config.accountManagerUrl) {
+      backendEnv.LIGHTNET_ACCOUNT_MANAGER = config.accountManagerUrl;
+    }
+    if (vkHash) {
+      backendEnv.MINAGUARD_VK_HASH = vkHash;
+    }
     const backendChild = spawnService(
       'bun',
-      ['run', 'dev:backend'],
-      {
-        INDEX_POLL_INTERVAL_MS: '5000',
-        MINA_ENDPOINT: 'http://127.0.0.1:8080/graphql',
-        ARCHIVE_ENDPOINT: 'http://127.0.0.1:8282',
-        LIGHTNET_ACCOUNT_MANAGER: ACCOUNT_MANAGER,
-        DATABASE_URL: 'file:./dev.db',
-        PORT: '4000',
-      },
+      ['run', '--filter', 'backend', 'dev'],
+      backendEnv,
       'backend'
     );
 
@@ -188,11 +241,11 @@ export default async function globalSetup() {
     log('Starting frontend...');
     const frontendChild = spawnService(
       'bun',
-      ['run', 'dev'],
+      ['run', '--filter', 'ui', 'dev'],
       {
-        NEXT_PUBLIC_API_BASE_URL: BACKEND_URL,
-        NEXT_PUBLIC_MINA_ENDPOINT: 'http://127.0.0.1:8080/graphql',
-        NEXT_PUBLIC_ARCHIVE_ENDPOINT: 'http://127.0.0.1:8282',
+        NEXT_PUBLIC_API_BASE_URL: config.backendUrl,
+        NEXT_PUBLIC_MINA_ENDPOINT: config.minaEndpoint,
+        NEXT_PUBLIC_ARCHIVE_ENDPOINT: config.archiveEndpoint,
       },
       'frontend'
     );
@@ -205,8 +258,8 @@ export default async function globalSetup() {
   }
 
   // Wait for services (both CI and local)
-  await waitForUrl(`${BACKEND_URL}/health`, 'Backend');
-  await waitForUrl(FRONTEND_URL, 'Frontend');
+  await waitForUrl(`${config.backendUrl}/health`, 'Backend');
+  await waitForUrl(config.frontendUrl, 'Frontend');
 
   // Write state for tests and teardown
   const state: E2eState = {

@@ -48,6 +48,18 @@ cd backend && bun run dev
 bun run --filter contracts test
 ```
 
+## E2E Testing
+
+Full end-to-end tests live in `e2e/` and exercise the deploy → propose → approve → execute lifecycle against a real Mina network. See [e2e/README.md](e2e/README.md) for setup details.
+
+```bash
+# Quick start with local lightnet (default)
+cd e2e && bun install && bun test
+
+# Against Mina devnet (requires funded accounts in e2e/.env.devnet)
+cd e2e && NETWORK=devnet bun test
+```
+
 ## Build
 
 ```bash

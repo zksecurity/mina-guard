@@ -56,6 +56,7 @@ model Proposal {
   expiryBlock     String?
   networkId       String?
   guardAddress    String?
+  origin          String    @default("onchain")
   status          String    @default("pending")
   approvalCount   Int       @default(0)
   createdAtBlock  Int?
@@ -75,6 +76,8 @@ model Approval {
   approver    String
   approvalRaw String?
   blockHeight Int?
+  signatureR  String?
+  signatureS  String?
   createdAt   DateTime @default(now())
   proposal    Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 

@@ -15,6 +15,7 @@ import {
   disconnectLedger,
 } from '@/lib/ledgerWallet';
 import { WalletState } from '@/lib/types';
+import { setLedgerSigning } from '@/lib/multisigClient';
 
 const EMPTY_WALLET: WalletState = {
   connected: false,
@@ -109,6 +110,7 @@ export function useWallet() {
     localStorage.removeItem('wallet-disconnected');
     setIsLoading(true);
     setError(null);
+    setLedgerSigning(true);
     try {
       const address = await getLedgerAddress(idx);
       localStorage.setItem('wallet-type', 'ledger');
@@ -122,6 +124,7 @@ export function useWallet() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ledger connection failed');
     } finally {
+      setLedgerSigning(false);
       connectingRef.current = false;
       setIsLoading(false);
     }
