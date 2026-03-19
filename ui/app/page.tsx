@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import TransactionList from '@/components/TransactionList';
 import { truncateAddress, formatMina, type NewProposalInput } from '@/lib/types';
-import { setupContract, createOffchainProposal } from '@/lib/multisigClient';
+import { createOffchainProposal } from '@/lib/multisigClient';
 import { fetchBalance, fetchContract } from '@/lib/api';
 import ProposalForm from '@/components/ProposalForm';
 import LedgerConnectModal from '@/components/LedgerConnectModal';
@@ -38,13 +38,6 @@ export default function Dashboard() {
 
   const recent = [...proposals].slice(0, 5);
 
-  // Setup Contract modal state
-  const [showSetup, setShowSetup] = useState(false);
-  const [ownerFields, setOwnerFields] = useState<string[]>(['']);
-  const [threshold, setThreshold] = useState('2');
-  const [networkId, setNetworkId] = useState('1');
-  const [setupError, setSetupError] = useState<string | null>(null);
-
   // New Proposal modal state
   const [showProposal, setShowProposal] = useState(false);
 
@@ -56,48 +49,6 @@ export default function Dashboard() {
     if (!multisig?.address) return;
     fetchBalance(multisig.address).then((b) => setBalance(b));
   }, [multisig?.address, indexerStatus?.lastSuccessfulRunAt]);
-
-  const parsedOwners = useMemo(() => {
-    return ownerFields.map((s) => s.trim()).filter(Boolean);
-  }, [ownerFields]);
-
-  const validateSetup = (): string | null => {
-    if (parsedOwners.length === 0) return 'Add at least one owner address.';
-    const invalid = parsedOwners.find((addr) => !addr.startsWith('B62') || addr.length < 50);
-    if (invalid) return `Invalid address: ${invalid.slice(0, 20)}...`;
-    const unique = new Set(parsedOwners);
-    if (unique.size !== parsedOwners.length) return 'Duplicate owner addresses.';
-    if (parsedOwners.length > 20) return 'Maximum 20 owners allowed.';
-    const t = Number(threshold);
-    if (!t || t < 1) return 'Threshold must be at least 1.';
-    if (t > parsedOwners.length) return `Threshold (${t}) cannot exceed number of owners (${parsedOwners.length}).`;
-    if (!networkId.trim()) return 'Network ID is required.';
-    return null;
-  };
-
-  const handleSetup = () => {
-    const error = validateSetup();
-    if (error) {
-      setSetupError(error);
-      return;
-    }
-    if (!wallet.address || !multisig?.address) return;
-
-    setSetupError(null);
-    setShowSetup(false);
-
-    const captured = { address: multisig.address, feePayer: wallet.address, owners: parsedOwners, threshold: Number(threshold), networkId };
-    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
-    startOperation('Building setup transaction...', (onProgress) =>
-      setupContract({
-        zkAppAddress: captured.address,
-        feePayerAddress: captured.feePayer,
-        owners: captured.owners,
-        threshold: captured.threshold,
-        networkId: captured.networkId,
-      }, onProgress, signer)
-    );
-  };
 
   const handleProposalSubmit = (data: NewProposalInput) => {
     if (!wallet.address || !multisig) return;
@@ -129,7 +80,7 @@ export default function Dashboard() {
     <div>
       <Header
         title="Dashboard"
-        subtitle="Overview of indexed MinaGuard multisig activity"
+        subtitle=""
         walletAddress={wallet.address}
         connected={wallet.connected}
         isLoading={isLoading}
@@ -179,8 +130,11 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Address</p>
-                <div className="flex items-center gap-1.5">
-                  <p className="text-sm font-mono">{truncateAddress(multisig.address, 10)}</p>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-sm font-mono flex min-w-0">
+                    <span className="truncate">{multisig.address.slice(0, -4)}</span>
+                    <span className="shrink-0">{multisig.address.slice(-4)}</span>
+                  </span>
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(multisig.address);
@@ -205,13 +159,12 @@ export default function Dashboard() {
 
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Threshold</p>
-                <div className="flex items-center gap-3 mt-2">
+                <div className="mt-2">
                   <ThresholdBadge
                     threshold={multisig.threshold ?? 0}
                     numOwners={multisig.numOwners ?? owners.length}
                     size="lg"
                   />
-                  <span className="text-xs text-safe-text">required approvals</span>
                 </div>
               </div>
 
@@ -224,46 +177,22 @@ export default function Dashboard() {
               </div>
 
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Indexer Status</p>
-                <p className="text-sm">
-                  {indexerStatus?.running ? 'Running' : 'Stopped'}
-                  {indexerStatus?.lastSuccessfulRunAt
-                    ? ` · synced ${new Date(indexerStatus.lastSuccessfulRunAt).toLocaleTimeString()}`
-                    : ''}
+                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Block Producer Delegate</p>
+                <p className="text-sm font-mono mt-1 truncate" title={multisig.delegate ?? undefined}>
+                  {multisig.delegate
+                    ? truncateAddress(multisig.delegate, 10)
+                    : 'None'}
                 </p>
-                {indexerStatus?.lastError && (
-                  <p className="text-xs text-red-400 mt-1 truncate" title={indexerStatus.lastError}>
-                    {indexerStatus.lastError}
-                  </p>
-                )}
               </div>
-            </div>
-
-            <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-              <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Block Producer Delegate</p>
-              <p className="text-sm font-mono mt-1 truncate" title={multisig.delegate ?? undefined}>
-                {multisig.delegate
-                  ? truncateAddress(multisig.delegate, 10)
-                  : 'None'}
-              </p>
             </div>
 
             <div className="flex gap-3">
               <button
                 onClick={() => setShowProposal(true)}
-                disabled={multisig.ownersCommitment == null}
-                title={multisig.ownersCommitment == null ? 'Run Setup first to initialize the contract' : undefined}
+                disabled={isOperating}
                 className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 New Proposal
-              </button>
-              <button
-                onClick={() => setShowSetup(true)}
-                disabled={multisig.threshold != null}
-                title={multisig.threshold != null ? 'Contract is already set up' : undefined}
-                className="flex items-center gap-2 bg-safe-gray border border-safe-border text-white rounded-lg px-5 py-2.5 text-sm hover:bg-safe-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Setup Contract
               </button>
             </div>
 
@@ -294,96 +223,6 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-
-      {/* Setup Contract Modal */}
-      {showSetup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-safe-dark border border-safe-border rounded-xl w-full max-w-lg mx-4 p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-safe-text">
-                Setup Contract
-              </h3>
-              <button
-                onClick={() => setShowSetup(false)}
-                className="text-safe-text hover:text-white text-lg leading-none"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-xs text-safe-text">Owners</span>
-              {ownerFields.map((value, i) => (
-                <div key={i} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={value}
-                    onChange={(e) => {
-                      const next = [...ownerFields];
-                      next[i] = e.target.value;
-                      setOwnerFields(next);
-                      setSetupError(null);
-                    }}
-                    placeholder={`Owner ${i + 1} address (B62...)`}
-                    className="flex-1 bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono"
-                  />
-                  {ownerFields.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => setOwnerFields(ownerFields.filter((_, j) => j !== i))}
-                      className="text-safe-text hover:text-red-400 px-2 text-lg leading-none"
-                    >
-                      &times;
-                    </button>
-                  )}
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={() => setOwnerFields([...ownerFields, ''])}
-                className="text-xs text-safe-green hover:underline"
-              >
-                + Add owner
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="space-y-1">
-                <span className="text-xs text-safe-text">Threshold</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={threshold}
-                  onChange={(e) => { setThreshold(e.target.value); setSetupError(null); }}
-                  placeholder="Threshold"
-                  className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs text-safe-text">Network ID</span>
-                <input
-                  type="text"
-                  value={networkId}
-                  onChange={(e) => { setNetworkId(e.target.value.trim()); setSetupError(null); }}
-                  placeholder="Network ID"
-                  className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm"
-                />
-              </label>
-            </div>
-
-            {setupError && <p className="text-sm text-red-400">{setupError}</p>}
-
-            <button
-              disabled={isOperating}
-              onClick={handleSetup}
-              className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2.5 text-sm disabled:opacity-60"
-            >
-              {isOperating ? 'Submitting...' : 'Run Setup'}
-            </button>
-
-          </div>
-        </div>
-      )}
 
       {/* New Proposal Modal */}
       {showProposal && multisig && (

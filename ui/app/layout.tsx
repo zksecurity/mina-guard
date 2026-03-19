@@ -130,7 +130,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           multisigAddress={multisig?.address ?? null}
           contracts={contracts.map((c) => c.address)}
           pendingTxCount={pendingCount}
-          network={wallet.network}
+          indexerStatus={indexerStatus}
           onSelectContract={(address) => {
             void selectContract(address);
           }}

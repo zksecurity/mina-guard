@@ -2,13 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { truncateAddress } from '@/lib/types';
+import { truncateAddress, type IndexerStatus } from '@/lib/types';
 
 interface SidebarProps {
   multisigAddress: string | null;
   contracts: string[];
   pendingTxCount: number;
-  network: string | null;
+  indexerStatus: IndexerStatus | null;
   onSelectContract?: (address: string) => void;
 }
 
@@ -58,7 +58,7 @@ export default function Sidebar({
   multisigAddress,
   contracts,
   pendingTxCount,
-  network,
+  indexerStatus,
   onSelectContract,
 }: SidebarProps) {
   const pathname = usePathname();
@@ -120,11 +120,27 @@ export default function Sidebar({
         })}
       </nav>
 
-      <div className="p-4 border-t border-safe-border">
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${network ? 'bg-safe-green' : 'bg-red-500'}`} />
-          <span className="text-xs text-safe-text">{network ?? 'Not connected'}</span>
-        </div>
+      <div className="p-4 border-t border-safe-border space-y-2">
+        {indexerStatus && (
+          <div>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${indexerStatus.running ? 'bg-safe-green' : 'bg-red-500'}`} />
+              <span className="text-xs text-safe-text">
+                Indexer {indexerStatus.running ? 'running' : 'stopped'}
+              </span>
+            </div>
+            {indexerStatus.lastSuccessfulRunAt && (
+              <p className="text-[10px] text-safe-text ml-4">
+                Synced {new Date(indexerStatus.lastSuccessfulRunAt).toLocaleTimeString()}
+              </p>
+            )}
+            {indexerStatus.lastError && (
+              <p className="text-[10px] text-red-400 ml-4 truncate" title={indexerStatus.lastError}>
+                {indexerStatus.lastError}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );
