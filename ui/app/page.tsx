@@ -5,12 +5,17 @@ import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import TransactionList from '@/components/TransactionList';
-import { truncateAddress, formatMina, type NewProposalInput } from '@/lib/types';
-import { createOffchainProposal } from '@/lib/multisigClient';
-import { fetchBalance, fetchContract } from '@/lib/api';
-import ProposalForm from '@/components/ProposalForm';
-import LedgerConnectModal from '@/components/LedgerConnectModal';
+import { truncateAddress, formatMina } from '@/lib/types';
+import { fetchBalance } from '@/lib/api';
 import Link from 'next/link';
+
+const TX_TYPES = [
+  { value: 'transfer', label: 'Send MINA' },
+  { value: 'addOwner', label: 'Add Owner' },
+  { value: 'removeOwner', label: 'Remove Owner' },
+  { value: 'changeThreshold', label: 'Change Threshold' },
+  { value: 'setDelegate', label: 'Set Delegate' },
+] as const;
 
 /** Dashboard overview page for selected contract and latest indexed proposals. */
 export default function Dashboard() {
@@ -33,15 +38,10 @@ export default function Dashboard() {
     operationLabel,
     operationBanner,
     clearBanner,
-    startOperation,
   } = useAppContext();
 
   const recent = [...proposals].slice(0, 5);
 
-  // New Proposal modal state
-  const [showProposal, setShowProposal] = useState(false);
-
-  // Wallet balance
   const [balance, setBalance] = useState<string | null>(null);
   const [copiedAddress, setCopiedAddress] = useState(false);
 
@@ -49,32 +49,6 @@ export default function Dashboard() {
     if (!multisig?.address) return;
     fetchBalance(multisig.address).then((b) => setBalance(b));
   }, [multisig?.address, indexerStatus?.lastSuccessfulRunAt]);
-
-  const handleProposalSubmit = (data: NewProposalInput) => {
-    if (!wallet.address || !multisig) return;
-
-    setShowProposal(false);
-
-    const contractAddress = multisig.address;
-    const proposerAddress = wallet.address;
-    const networkId = multisig.networkId ?? '0';
-    const fallbackConfigNonce = multisig.configNonce ?? 0;
-    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
-
-    startOperation('Creating offchain proposal...', async (onProgress) => {
-      // Fetch the latest configNonce directly before creating the proposal to
-      // avoid using a stale value from React state (governance txs increment it).
-      const fresh = await fetchContract(contractAddress);
-      const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      return createOffchainProposal({
-        contractAddress,
-        proposerAddress,
-        input: data,
-        configNonce,
-        networkId,
-      }, onProgress, signer);
-    });
-  };
 
   return (
     <div>
@@ -179,21 +153,24 @@ export default function Dashboard() {
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Block Producer Delegate</p>
                 <p className="text-sm font-mono mt-1 truncate" title={multisig.delegate ?? undefined}>
-                  {multisig.delegate
-                    ? truncateAddress(multisig.delegate, 10)
-                    : 'None'}
+                  {multisig.delegate ? truncateAddress(multisig.delegate, 10) : 'None'}
                 </p>
               </div>
             </div>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowProposal(true)}
-                disabled={isOperating}
-                className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                New Proposal
-              </button>
+            <div>
+              <h3 className="text-base font-bold mb-3">New Proposal</h3>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                {TX_TYPES.map((type) => (
+                  <Link
+                    key={type.value}
+                    href={`/transactions/new?type=${type.value}`}
+                    className="p-3 rounded-lg border border-safe-border bg-safe-gray text-sm text-white font-medium text-left transition-colors hover:border-safe-green hover:text-safe-green"
+                  >
+                    {type.label}
+                  </Link>
+                ))}
+              </div>
             </div>
 
             <div>
@@ -223,42 +200,6 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-
-      {/* New Proposal Modal */}
-      {showProposal && multisig && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-safe-dark border border-safe-border rounded-xl w-full max-w-2xl mx-4 p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-safe-text">
-                New Proposal
-              </h3>
-              <button
-                onClick={() => setShowProposal(false)}
-                className="text-safe-text hover:text-white text-lg leading-none"
-              >
-                &times;
-              </button>
-            </div>
-            {proposals.some(
-              (p) =>
-                p.status === 'pending' &&
-                p.txType &&
-                ['addOwner', 'removeOwner', 'changeThreshold', 'setDelegate'].includes(p.txType)
-            ) && (
-              <div className="rounded-lg px-4 py-3 mb-4 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
-                There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
-              </div>
-            )}
-            <ProposalForm
-              owners={owners.map((o) => o.address)}
-              currentThreshold={multisig.threshold ?? 1}
-              numOwners={multisig.numOwners ?? owners.length}
-              onSubmit={handleProposalSubmit}
-              isSubmitting={isOperating}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

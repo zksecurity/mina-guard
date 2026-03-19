@@ -9,6 +9,7 @@ interface ProposalFormProps {
   numOwners: number;
   onSubmit: (data: NewProposalInput) => void;
   isSubmitting: boolean;
+  txType: TxType;
 }
 
 /** Dynamic proposal form that maps UI inputs to MinaGuard tx type payloads. */
@@ -18,8 +19,8 @@ export default function ProposalForm({
   numOwners,
   onSubmit,
   isSubmitting,
+  txType,
 }: ProposalFormProps) {
-  const [txType, setTxType] = useState<TxType>('transfer');
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
   const [newOwner, setNewOwner] = useState('');
@@ -64,32 +65,6 @@ export default function ProposalForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div>
-        <label className="block text-sm text-safe-text mb-2">Transaction Type</label>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { value: 'transfer', label: 'Send MINA' },
-            { value: 'addOwner', label: 'Add Owner' },
-            { value: 'removeOwner', label: 'Remove Owner' },
-            { value: 'changeThreshold', label: 'Change Threshold' },
-            { value: 'setDelegate', label: 'Set Delegate' },
-          ].map((type) => (
-            <button
-              key={type.value}
-              type="button"
-              onClick={() => { setTxType(type.value as TxType); setValidationError(null); }}
-              className={`p-3 rounded-lg border text-sm text-left transition-colors ${
-                txType === type.value
-                  ? 'border-safe-green text-safe-green bg-safe-hover'
-                  : 'border-safe-border text-safe-text hover:border-safe-text'
-              }`}
-            >
-              {type.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {txType === 'transfer' && (
         <>
           <FormInput
@@ -154,7 +129,7 @@ export default function ProposalForm({
               </label>
             ))}
           </div>
-          {txType === 'removeOwner' && numOwners - 1 < currentThreshold && (
+          {numOwners - 1 < currentThreshold && (
             <p className="text-xs text-red-400 mt-2">
               Cannot remove an owner while it would go below the threshold. Create a &quot;Change Threshold&quot; proposal first.
             </p>
