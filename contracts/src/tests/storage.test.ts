@@ -10,8 +10,8 @@ describe('OwnerStore', () => {
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
 
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
     expect(store.isOwner(owner1)).toBe(true);
     expect(store.isOwner(owner2)).toBe(true);
@@ -24,8 +24,8 @@ describe('OwnerStore', () => {
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
 
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
     store.remove(owner1);
 
     expect(store.isOwner(owner1)).toBe(false);
@@ -37,10 +37,10 @@ describe('OwnerStore', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
-    const sorted = [owner1, owner2].sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
+    const sorted = [owner1, owner2].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
     expect(store.getCommitment()).toEqual(computeOwnerChain(sorted));
   });
 
@@ -48,8 +48,8 @@ describe('OwnerStore', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
     const witness = store.getWitness();
     // Witness should have MAX_OWNERS entries, first 2 filled
@@ -62,8 +62,8 @@ describe('OwnerStore', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
     const json = store.serialize();
     const restored = OwnerStore.deserialize(json);
@@ -74,88 +74,51 @@ describe('OwnerStore', () => {
     expect(restored.isOwner(owner2)).toBe(true);
   });
 
+  it('should insert in sorted base58 order', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 5 }, () => PrivateKey.random().toPublicKey());
+    for (const k of keys) store.addSorted(k);
+
+    const sorted = [...keys].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+    expect(store.getCommitment()).toEqual(computeOwnerChain(sorted));
+  });
+
+  it('should find sorted predecessor', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey())
+      .sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+    for (const k of keys) store.addSorted(k);
+
+    // predecessor of first element is null
+    expect(store.sortedPredecessor(keys[0])).toBeNull();
+    // predecessor of second is first
+    expect(store.sortedPredecessor(keys[1])?.toBase58()).toBe(keys[0].toBase58());
+    // predecessor of third is second
+    expect(store.sortedPredecessor(keys[2])?.toBase58()).toBe(keys[1].toBase58());
+  });
+
   it('should insert after a specific owner', () => {
     const store = new OwnerStore();
-    const owner1 = PrivateKey.random().toPublicKey();
-    const owner2 = PrivateKey.random().toPublicKey();
+    const [owner1, owner2] = Array.from({ length: 2 }, () => PrivateKey.random().toPublicKey())
+      .sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
+
     const owner3 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    store.insertAfter(owner3, owner1);
 
-    // insertAfter bypasses sorting — it places owner3 directly after the first sorted owner
-    const first = store.owners[0];
-    const second = store.owners[1];
-    store.insertAfter(owner3, first);
-
-    expect(store.getCommitment()).toEqual(computeOwnerChain([first, owner3, second]));
+    expect(store.getCommitment()).toEqual(computeOwnerChain([owner1, owner3, owner2]));
   });
 
   it('should prepend when insertAfter is null', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
-    const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
+    store.addSorted(owner1);
 
+    const owner2 = PrivateKey.random().toPublicKey();
     store.insertAfter(owner2, null);
 
     expect(store.getCommitment()).toEqual(computeOwnerChain([owner2, owner1]));
-  });
-
-  it('should maintain sorted order on add', () => {
-    const store = new OwnerStore();
-    const keys = Array.from({ length: 5 }, () => PrivateKey.random().toPublicKey());
-    for (const k of keys) store.add(k);
-
-    const base58s = store.owners.map(o => o.toBase58());
-    const sorted = [...base58s].sort();
-    expect(base58s).toEqual(sorted);
-  });
-
-  it('should produce same commitment regardless of insertion order', () => {
-    const keys = Array.from({ length: 4 }, () => PrivateKey.random().toPublicKey());
-
-    const store1 = new OwnerStore();
-    for (const k of keys) store1.add(k);
-
-    const store2 = new OwnerStore();
-    for (const k of [...keys].reverse()) store2.add(k);
-
-    expect(store1.getCommitment()).toEqual(store2.getCommitment());
-  });
-
-  it('findInsertAfter returns none for first sorted position', () => {
-    const store = new OwnerStore();
-    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
-    keys.sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
-    store.add(keys[1]);
-    store.add(keys[2]);
-
-    const result = store.findInsertAfter(keys[0]);
-    expect(result.isSome.toBoolean()).toBe(false);
-  });
-
-  it('findInsertAfter returns predecessor for middle position', () => {
-    const store = new OwnerStore();
-    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
-    keys.sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
-    store.add(keys[0]);
-    store.add(keys[2]);
-
-    const result = store.findInsertAfter(keys[1]);
-    expect(result.isSome.toBoolean()).toBe(true);
-    expect(result.value.toBase58()).toBe(keys[0].toBase58());
-  });
-
-  it('findInsertAfter returns last owner for append position', () => {
-    const store = new OwnerStore();
-    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
-    keys.sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
-    store.add(keys[0]);
-    store.add(keys[1]);
-
-    const result = store.findInsertAfter(keys[2]);
-    expect(result.isSome.toBoolean()).toBe(true);
-    expect(result.value.toBase58()).toBe(keys[1].toBase58());
   });
 });
 

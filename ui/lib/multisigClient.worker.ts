@@ -200,20 +200,19 @@ async function rebuildStoresFromBackend(contractAddress: string) {
   const nullifierStore = new VoteNullifierStore();
   const events = await fetchAllEvents(contractAddress);
 
-  // Process setupOwner events sorted by index — the archive may return events
-  // within the same transaction in arbitrary order, which would cause an
-  // incorrect ownerChain hash that doesn't match ownersCommitment on-chain.
+  // Owners are kept in ascending base58 order so the commitment is
+  // deterministic regardless of archive event ordering.
   const emptyKey = PublicKey.empty().toBase58();
   const setupOwnerEntries = events
     .filter(e => e.eventType === 'setupOwner')
     .map(e => {
       const p = e.payload as Record<string, unknown>;
-      return { index: Number(p.index ?? 0), owner: p.owner };
+      return { owner: p.owner };
     })
     .filter(({ owner }) => typeof owner === 'string' && (owner as string).length > 10 && owner !== emptyKey)
-    .sort((a, b) => a.index - b.index);
+    .sort((a, b) => (a.owner as string) > (b.owner as string) ? 1 : -1);
   for (const { owner } of setupOwnerEntries) {
-    ownerStore.add(PublicKey.fromBase58(owner as string));
+    ownerStore.addSorted(PublicKey.fromBase58(owner as string));
   }
 
   for (const event of events) {
@@ -227,7 +226,7 @@ async function rebuildStoresFromBackend(contractAddress: string) {
       const added = payload.added;
       if (typeof owner === 'string' && owner.length > 10) {
         if (added === '1' || added === 1 || added === true) {
-          ownerStore.add(PublicKey.fromBase58(owner));
+          ownerStore.addSorted(PublicKey.fromBase58(owner));
         } else {
           ownerStore.remove(PublicKey.fromBase58(owner));
         }
@@ -481,10 +480,8 @@ const workerApi = {
 
     progressFn('Building transaction...');
     const ownerStore = new OwnerStore();
-    const ownerKeys = params.owners.map((address) =>
-      PublicKey.fromBase58(address)
-    );
-    for (const owner of ownerKeys) ownerStore.add(owner);
+    const ownerKeys = params.owners.map((address) => PublicKey.fromBase58(address));
+    for (const owner of ownerKeys) ownerStore.addSorted(owner);
 
     const paddedOwners = [...ownerStore.owners];
     while (paddedOwners.length < MAX_OWNERS) {
@@ -758,9 +755,10 @@ const workerApi = {
           throw new Error('Proposal toAddress is required for owner change execution');
         }
         const owner = PublicKey.fromBase58(params.proposal.toAddress);
+        const pred = ownerStore.sortedPredecessor(owner);
         const insertAfter =
-          txType === 'addOwner'
-            ? ownerStore.findInsertAfter(owner)
+          txType === 'addOwner' && pred
+            ? new PublicKeyOption({ value: pred, isSome: Bool(true) })
             : PublicKeyOption.none();
         await contract.executeOwnerChangeBatchSig(
           proposalStruct, approvalWitness, sigInputs, owner, ownerStore.getWitness(), insertAfter

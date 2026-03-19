@@ -87,6 +87,21 @@ export function makeOwnerWitness(owners: PublicKey[]): OwnerWitness {
   return new OwnerWitness({ owners: ownerOptions });
 }
 
+/**
+ * Returns the insertAfter option for adding `newOwner` into the sorted owner list.
+ * Returns none if the new owner would be first (prepend).
+ */
+export function sortedInsertAfter(owners: PublicKey[], newOwner: PublicKey): PublicKeyOption {
+  const b58 = newOwner.toBase58();
+  let pred: PublicKey | null = null;
+  for (const o of owners) {
+    if (o.toBase58() < b58) pred = o;
+  }
+  return pred
+    ? new PublicKeyOption({ value: pred, isSome: Bool(true) })
+    : PublicKeyOption.none();
+}
+
 // -- Setup Helpers -----------------------------------------------------------
 
 /** Pads the owner list to the fixed setup input length required by the contract. */
@@ -119,8 +134,8 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
       owners.push({ key, pub: key.toPublicKey() });
     }
   }
-
-  owners.sort((a, b) => a.pub.toBase58().localeCompare(b.pub.toBase58()));
+  // Canonical ascending base58 order for deterministic owner chain commitments
+  owners.sort((a, b) => a.pub.toBase58() > b.pub.toBase58() ? 1 : -1);
 
   const zkAppKey = PrivateKey.random();
   const zkAppAddress = zkAppKey.toPublicKey();

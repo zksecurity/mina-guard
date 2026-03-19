@@ -42,8 +42,8 @@ export class OwnerStore {
     this.owners = [];
   }
 
-  /** Add owner in ascending base58-sorted position. */
-  add(owner: PublicKey): void {
+  /** Insert owner in ascending base58 order. */
+  addSorted(owner: PublicKey): void {
     const b58 = owner.toBase58();
     const idx = this.owners.findIndex((o) => o.toBase58() > b58);
     if (idx === -1) {
@@ -51,6 +51,19 @@ export class OwnerStore {
     } else {
       this.owners.splice(idx, 0, owner);
     }
+  }
+
+  /**
+   * Returns the owner immediately before `target` in the sorted list,
+   * or null if `target` would be the first element.
+   */
+  sortedPredecessor(target: PublicKey): PublicKey | null {
+    const b58 = target.toBase58();
+    let pred: PublicKey | null = null;
+    for (const o of this.owners) {
+      if (o.toBase58() < b58) pred = o;
+    }
+    return pred;
   }
 
   /** Insert owner after the given key. If afterOwner is null, prepend. */
@@ -64,21 +77,6 @@ export class OwnerStore {
     );
     if (idx === -1) throw new Error('afterOwner not found');
     this.owners.splice(idx + 1, 0, owner);
-  }
-
-  /**
-   * Returns the `insertAfter` argument for the on-chain `addOwnerToCommitment`
-   * circuit, based on the new owner's sorted position.
-   * Returns `PublicKeyOption.none()` when the owner would be first (prepend).
-   */
-  findInsertAfter(newOwner: PublicKey): PublicKeyOption {
-    const b58 = newOwner.toBase58();
-    const idx = this.owners.findIndex((o) => o.toBase58() > b58);
-    if (idx === 0 || (idx === -1 && this.owners.length === 0)) {
-      return PublicKeyOption.none();
-    }
-    const predecessorIdx = idx === -1 ? this.owners.length - 1 : idx - 1;
-    return new PublicKeyOption({ value: this.owners[predecessorIdx], isSome: Bool(true) });
   }
 
   remove(owner: PublicKey): void {
@@ -118,11 +116,9 @@ export class OwnerStore {
   static deserialize(json: string): OwnerStore {
     const data = JSON.parse(json);
     const store = new OwnerStore();
-    const owners = (data.owners as string[]).map((a) =>
+    store.owners = (data.owners as string[]).map((a) =>
       PublicKey.fromBase58(a)
     );
-    owners.sort((a, b) => a.toBase58().localeCompare(b.toBase58()));
-    store.owners = owners;
     return store;
   }
 }

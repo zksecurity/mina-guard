@@ -14,11 +14,11 @@ const BASE = `http://localhost:${PORT}`;
 
 let server: Server;
 
-// Test keys — 3 owners, threshold 2
+// Test keys — 3 owners, threshold 2, sorted by base58 for deterministic ordering
 const owners = Array.from({ length: 3 }, () => {
   const key = PrivateKey.random();
   return { key, pub: key.toPublicKey() };
-});
+}).sort((a, b) => a.pub.toBase58() > b.pub.toBase58() ? 1 : -1);
 
 const guardKey = PrivateKey.random();
 const guardAddress = guardKey.toPublicKey();
