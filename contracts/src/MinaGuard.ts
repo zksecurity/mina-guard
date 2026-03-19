@@ -610,6 +610,7 @@ export class MinaGuard extends SmartContract {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
+    // TODO: revisit to see if it can be removed
     this.emitEvent('executionBatch', {
       proposalHash,
       to: PublicKey.empty(),
@@ -680,6 +681,7 @@ export class MinaGuard extends SmartContract {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
+    // TODO: revisit to see if it can be removed
     this.emitEvent('executionBatch', {
       proposalHash,
       to: PublicKey.empty(),
