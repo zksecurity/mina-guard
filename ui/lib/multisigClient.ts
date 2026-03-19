@@ -144,6 +144,17 @@ export async function setupContract(params: {
   return getWorkerApi().setupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
+/** Deploys and initializes the contract in a single transaction. */
+export async function deployAndSetupContract(params: {
+  feePayerAddress: string;
+  zkAppPrivateKeyBase58: string;
+  owners: string[];
+  threshold: number;
+  networkId: string;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
+}
+
 /** Creates an offchain proposal in the backend and submits the proposer's first signature. */
 export async function createOffchainProposal(params: {
   contractAddress: string;

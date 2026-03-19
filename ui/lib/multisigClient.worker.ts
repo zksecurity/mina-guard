@@ -464,6 +464,57 @@ const workerApi = {
     return `Transaction submitted: ${deployHash}`;
   },
 
+  async deployAndSetupContract(
+    params: {
+      feePayerAddress: string;
+      zkAppPrivateKeyBase58: string;
+      owners: string[];
+      threshold: number;
+      networkId: string;
+    },
+    sendFn: SendTxFn | null,
+    progressFn: ProgressFn,
+    signFeePayerFn?: SignFeePayerFn
+  ): Promise<string | null> {
+    progressFn('Compiling contract...');
+    const ok = await compileContract();
+    if (!ok) return null;
+
+    progressFn('Building transaction...');
+    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
+    const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
+    const zkAppAddress = zkAppKey.toPublicKey();
+    const zkApp = new MinaGuard(zkAppAddress);
+
+    const ownerStore = new OwnerStore();
+    const ownerKeys = params.owners.map((address) => PublicKey.fromBase58(address));
+    for (const owner of ownerKeys) ownerStore.add(owner);
+
+    const paddedOwners = [...ownerKeys];
+    while (paddedOwners.length < MAX_OWNERS) {
+      paddedOwners.push(PublicKey.empty());
+    }
+
+    const tx = await Mina.transaction(txSender(feePayer), async () => {
+      AccountUpdate.fundNewAccount(feePayer);
+      await zkApp.deploy();
+      await zkApp.setup(
+        ownerStore.getCommitment(),
+        Field(params.threshold),
+        Field(ownerKeys.length),
+        Field(params.networkId),
+        new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) })
+      );
+    });
+
+    progressFn('Generating proof...');
+    await tx.prove();
+
+    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
+    return `Transaction submitted: ${txHash}`;
+  },
+
   async setupContract(
     params: {
       zkAppAddress: string;
