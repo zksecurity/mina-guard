@@ -30,5 +30,10 @@ e2e/playwright-report/
 # o1js compilation cache
 cache/
 
+# sqlite
+backend/prisma/dev.db
+backend/prisma/dev.db-shm
+backend/prisma/dev.db-wal
+
 # misc
 *.log

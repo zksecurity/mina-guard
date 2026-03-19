@@ -12,12 +12,19 @@ export interface BackendConfig {
   minaguardVkHash: string | null;
 }
 
-/** Reads and validates environment variables with safe development defaults. */
+/** Throws if a required environment variable is missing or empty. */
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required env var: ${name}. Check your .env file.`);
+  return value;
+}
+
+/** Reads and validates environment variables. Requires MINA_ENDPOINT and ARCHIVE_ENDPOINT. */
 export function loadConfig(): BackendConfig {
   const port = Number(process.env.PORT ?? '4000');
   const databaseUrl = process.env.DATABASE_URL ?? 'file:./dev.db';
-  const minaEndpoint = process.env.MINA_ENDPOINT ?? 'https://api.minascan.io/node/devnet/v1/graphql';
-  const archiveEndpoint = process.env.ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
+  const minaEndpoint = requireEnv('MINA_ENDPOINT');
+  const archiveEndpoint = requireEnv('ARCHIVE_ENDPOINT');
   const lightnetAccountManager = process.env.LIGHTNET_ACCOUNT_MANAGER;
 
   return {
