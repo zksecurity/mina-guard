@@ -20,6 +20,15 @@ export interface SignerConfig {
 /** Optional callback to receive step-based progress updates from the worker. */
 export type OnProgress = (step: string) => void;
 
+/** Listener called when Ledger signing state changes. */
+let ledgerSigningListener: ((signing: boolean) => void) | null = null;
+
+/** Registers a callback that fires when Ledger device interaction starts/stops. */
+export function onLedgerSigningChange(fn: (signing: boolean) => void): () => void {
+  ledgerSigningListener = fn;
+  return () => { ledgerSigningListener = null; };
+}
+
 let worker: Worker | null = null;
 let api: Comlink.Remote<WorkerApi> | null = null;
 
@@ -43,17 +52,27 @@ function proxiedSendTx(signer?: SignerConfig) {
 /** Proxied Ledger fee payer signing callback. Returns undefined for Auro. */
 function proxiedSignFeePayer(signer?: SignerConfig) {
   if (signer?.type !== 'ledger') return undefined;
-  return Comlink.proxy(
-    (commitment: string) => signFeePayer(commitment, signer.ledgerAccountIndex)
-  );
+  return Comlink.proxy(async (commitment: string) => {
+    ledgerSigningListener?.(true);
+    try {
+      return await signFeePayer(commitment, signer.ledgerAccountIndex);
+    } finally {
+      ledgerSigningListener?.(false);
+    }
+  });
 }
 
 /** Proxied signFields callback that dispatches to Auro or Ledger based on signer config. */
 function proxiedSignFields(signer?: SignerConfig) {
   if (signer?.type === 'ledger') {
-    return Comlink.proxy(
-      (fields: Array<string>) => ledgerSignFields(fields, signer.ledgerAccountIndex)
-    );
+    return Comlink.proxy(async (fields: Array<string>) => {
+      ledgerSigningListener?.(true);
+      try {
+        return await ledgerSignFields(fields, signer.ledgerAccountIndex);
+      } finally {
+        ledgerSigningListener?.(false);
+      }
+    });
   }
   return Comlink.proxy(
     (fields: Array<string>) => getAuroSignFields(fields)
