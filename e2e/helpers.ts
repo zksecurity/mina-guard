@@ -391,12 +391,29 @@ export async function waitForBanner(
   timeoutMs?: number
 ): Promise<string> {
   timeoutMs ??= getNetworkConfig().bannerTimeoutMs;
-  // Dismiss any stale banner by clicking its close button
+
+  // Dismiss any stale banner, then wait for it to leave the DOM before
+  // polling for the new result.  This prevents a race where a fast operation
+  // (e.g. offchain approve) completes and shows its banner before we finish
+  // dismissing the old one — causing us to accidentally close the real result.
   const closeBtn = page.locator('button:has-text("×")');
   if (await closeBtn.first().isVisible().catch(() => false)) {
     await closeBtn.first().click().catch(() => {});
     log('Dismissed stale banner');
-    await page.waitForTimeout(500);
+    // Wait until the old banner is actually gone from the DOM
+    await page.waitForFunction(
+      () => {
+        const btns = Array.from(document.querySelectorAll('button')).filter(
+          (b) => b.textContent?.trim() === '×'
+        );
+        const hasBanner = btns.some((btn) => {
+          const cls = btn.parentElement?.className ?? '';
+          return cls.includes('text-safe-green') || cls.includes('text-red-400');
+        });
+        return !hasBanner;
+      },
+      { timeout: 5_000 }
+    ).catch(() => {});
   }
 
   log('Waiting for operation banner...');
