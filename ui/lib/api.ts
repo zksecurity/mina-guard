@@ -95,9 +95,13 @@ export async function fetchBalance(address: string): Promise<string | null> {
 async function getJson<T>(path: string): Promise<T | null> {
   try {
     const response = await fetch(`${API_BASE}${path}`, { cache: 'no-store' });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.error(`[api] getJson(${path}) returned ${response.status}:`, await response.text());
+      return null;
+    }
     return (await response.json()) as T;
-  } catch {
+  } catch (err) {
+    console.error(`[api] getJson(${path}) failed:`, err);
     return null;
   }
 }
@@ -134,6 +138,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
     status: asProposalStatus(input.status),
+    origin: asString(input.origin) === 'onchain' ? 'onchain' : 'offchain',
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
@@ -186,6 +191,95 @@ function asProposalStatus(value: unknown): Proposal['status'] {
   const text = asString(value);
   if (text === 'executed' || text === 'expired') return text;
   return 'pending';
+}
+
+// ---------------------------------------------------------------------------
+// Batch-sig offchain API helpers
+// ---------------------------------------------------------------------------
+
+/** Creates an offchain proposal in the backend for signature aggregation. */
+export async function postOffchainProposal(
+  contractAddress: string,
+  data: {
+    toAddress: string;
+    amount: string;
+    tokenId: string;
+    txType: string;
+    data: string;
+    uid: string;
+    configNonce: string;
+    expiryBlock: string;
+    networkId: string;
+    guardAddress: string;
+    proposalHash: string;
+  }
+): Promise<{ proposalHash: string; origin: string; status: string } | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/contracts/${contractAddress}/proposals`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as any).error ?? `HTTP ${res.status}`);
+    }
+    return (await res.json()) as any;
+  } catch (err) {
+    console.error('[api] postOffchainProposal failed:', err);
+    throw err;
+  }
+}
+
+/** Submits an owner signature for an offchain proposal. */
+export async function postSignature(
+  contractAddress: string,
+  proposalHash: string,
+  data: { signer: string; signatureR: string; signatureS: string }
+): Promise<{ approvalCount: number; threshold: number; ready: boolean } | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/contracts/${contractAddress}/proposals/${proposalHash}/signatures`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as any).error ?? `HTTP ${res.status}`);
+    }
+    return (await res.json()) as any;
+  } catch (err) {
+    console.error('[api] postSignature failed:', err);
+    throw err;
+  }
+}
+
+/** Fetches the assembled batch payload for client-side execution. */
+export async function fetchBatchPayload(
+  contractAddress: string,
+  proposalHash: string
+): Promise<{
+  ready: boolean;
+  threshold: number;
+  approvalCount: number;
+  proposal: Record<string, string | null>;
+  inputs: Array<{
+    isSome: boolean;
+    signer: string | null;
+    hasSignature: boolean;
+    signatureR: string | null;
+    signatureS: string | null;
+  }>;
+} | null> {
+  return getJson(
+    `/api/contracts/${contractAddress}/proposals/${proposalHash}/batch-payload`
+  );
 }
 
 /** Fetches all raw indexed events for a contract using paginated backend API reads. */

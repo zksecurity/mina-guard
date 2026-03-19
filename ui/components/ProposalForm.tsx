@@ -29,9 +29,25 @@ export default function ProposalForm({
   const [undelegate, setUndelegate] = useState(false);
   const [expiryBlock, setExpiryBlock] = useState('0');
 
+  const [validationError, setValidationError] = useState<string | null>(null);
+
   /** Emits normalized form payload according to the selected transaction type. */
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setValidationError(null);
+
+    if (txType === 'addOwner' && owners.includes(newOwner.trim())) {
+      setValidationError('This address is already an owner.');
+      return;
+    }
+    if (txType === 'removeOwner' && !owners.includes(removeOwnerAddress.trim())) {
+      setValidationError('This address is not a current owner.');
+      return;
+    }
+    if (txType === 'removeOwner' && numOwners - 1 < currentThreshold) {
+      setValidationError('Reduce the threshold first before removing an owner.');
+      return;
+    }
 
     onSubmit({
       txType,
@@ -61,7 +77,7 @@ export default function ProposalForm({
             <button
               key={type.value}
               type="button"
-              onClick={() => setTxType(type.value as TxType)}
+              onClick={() => { setTxType(type.value as TxType); setValidationError(null); }}
               className={`p-3 rounded-lg border text-sm text-left transition-colors ${
                 txType === type.value
                   ? 'border-safe-green text-safe-green bg-safe-hover'
@@ -138,9 +154,9 @@ export default function ProposalForm({
               </label>
             ))}
           </div>
-          {numOwners - 1 < currentThreshold && (
+          {txType === 'removeOwner' && numOwners - 1 < currentThreshold && (
             <p className="text-xs text-red-400 mt-2">
-              Removing one owner would break current threshold constraints.
+              Cannot remove an owner while it would go below the threshold. Create a &quot;Change Threshold&quot; proposal first.
             </p>
           )}
         </div>
@@ -196,6 +212,8 @@ export default function ProposalForm({
         placeholder="0"
         inputMode="numeric"
       />
+
+      {validationError && <p className="text-sm text-red-400">{validationError}</p>}
 
       <button
         type="submit"

@@ -11,7 +11,7 @@ import {
   formatMina,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
-import { createApproveTx, createExecuteTx } from '@/lib/multisigClient';
+import { submitOffchainSignature, executeBatchTx } from '@/lib/multisigClient';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -56,28 +56,28 @@ export default function TransactionDetailPage() {
   const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved;
   const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold;
 
-  /** Submits approve transaction, navigates to Dashboard for progress/result. */
+  /** Signs the proposal hash offchain and submits to the backend. */
   const handleApprove = () => {
     if (!proposal || !multisig || !wallet.address) return;
 
-    const captured = { contractAddress: multisig.address, approverAddress: wallet.address, proposal };
-    startOperation('Building approve transaction...', (onProgress) =>
-      createApproveTx({
+    const captured = { contractAddress: multisig.address, signerAddress: wallet.address, proposalHash: proposal.proposalHash };
+    startOperation('Signing proposal...', (onProgress) =>
+      submitOffchainSignature({
         contractAddress: captured.contractAddress,
-        approverAddress: captured.approverAddress,
-        proposal: captured.proposal,
+        signerAddress: captured.signerAddress,
+        proposalHash: captured.proposalHash,
       }, onProgress)
     );
     router.push('/');
   };
 
-  /** Submits execute transaction, navigates to Dashboard for progress/result. */
+  /** Fetches batch payload and submits execute*BatchSig transaction on-chain. */
   const handleExecute = () => {
     if (!proposal || !multisig || !wallet.address) return;
 
     const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal };
-    startOperation('Building execute transaction...', (onProgress) =>
-      createExecuteTx({
+    startOperation('Building batch execute transaction...', (onProgress) =>
+      executeBatchTx({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,

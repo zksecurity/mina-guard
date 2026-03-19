@@ -6,8 +6,8 @@ import Header from '@/components/Header';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import TransactionList from '@/components/TransactionList';
 import { truncateAddress, formatMina, type NewProposalInput } from '@/lib/types';
-import { setupContract, createProposeTx } from '@/lib/multisigClient';
-import { fetchBalance } from '@/lib/api';
+import { setupContract, createOffchainProposal } from '@/lib/multisigClient';
+import { fetchBalance, fetchContract } from '@/lib/api';
 import ProposalForm from '@/components/ProposalForm';
 import Link from 'next/link';
 
@@ -97,14 +97,24 @@ export default function Dashboard() {
 
     setShowProposal(false);
 
-    const captured = { contractAddress: multisig.address, proposerAddress: wallet.address };
-    startOperation('Building proposal transaction...', (onProgress) =>
-      createProposeTx({
-        contractAddress: captured.contractAddress,
-        proposerAddress: captured.proposerAddress,
+    const contractAddress = multisig.address;
+    const proposerAddress = wallet.address;
+    const networkId = multisig.networkId ?? '0';
+    const fallbackConfigNonce = multisig.configNonce ?? 0;
+
+    startOperation('Creating offchain proposal...', async (onProgress) => {
+      // Fetch the latest configNonce directly before creating the proposal to
+      // avoid using a stale value from React state (governance txs increment it).
+      const fresh = await fetchContract(contractAddress);
+      const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
+      return createOffchainProposal({
+        contractAddress,
+        proposerAddress,
         input: data,
-      }, onProgress)
-    );
+        configNonce,
+        networkId,
+      }, onProgress);
+    });
   };
 
   return (
@@ -371,6 +381,16 @@ export default function Dashboard() {
                 &times;
               </button>
             </div>
+            {proposals.some(
+              (p) =>
+                p.status === 'pending' &&
+                p.txType &&
+                ['addOwner', 'removeOwner', 'changeThreshold', 'setDelegate'].includes(p.txType)
+            ) && (
+              <div className="rounded-lg px-4 py-3 mb-4 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
+                There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
+              </div>
+            )}
             <ProposalForm
               owners={owners.map((o) => o.address)}
               currentThreshold={multisig.threshold ?? 1}

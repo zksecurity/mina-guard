@@ -26,6 +26,7 @@ export interface Proposal {
   networkId: string | null;
   guardAddress: string | null;
   status: ProposalStatus;
+  origin: 'onchain' | 'offchain';
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;

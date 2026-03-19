@@ -10,6 +10,7 @@ import ApprovalProgress from './ApprovalProgress';
 
 interface TransactionCardProps {
   proposal: Proposal;
+  index: number;
   threshold: number;
   owners: string[];
 }
@@ -23,6 +24,7 @@ const statusColors = {
 /** Compact proposal list card used on dashboard and transactions pages. */
 export default function TransactionCard({
   proposal,
+  index,
   threshold,
   owners,
 }: TransactionCardProps) {
@@ -35,7 +37,7 @@ export default function TransactionCard({
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-lg bg-safe-gray border border-safe-border flex items-center justify-center text-safe-text">
-              <span className="text-xs font-mono">#{proposal.uid ?? '?'}</span>
+              <span className="text-xs font-mono">#{index}</span>
             </div>
             <div>
               <div className="flex items-center gap-2">

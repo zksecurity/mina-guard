@@ -96,39 +96,39 @@ export async function setupContract(params: {
   return getWorkerApi().setupContract(params, proxiedSendTx(), proxiedProgress(onProgress));
 }
 
-/** Creates, proves, and sends a MinaGuard propose transaction using Auro field signature. */
-export async function createProposeTx(params: {
+/** Creates an offchain proposal in the backend and submits the proposer's first signature. */
+export async function createOffchainProposal(params: {
   contractAddress: string;
   proposerAddress: string;
   input: NewProposalInput;
+  configNonce: number;
+  networkId: string;
 }, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().createProposeTx(
+  return getWorkerApi().createOffchainProposal(
     params,
     proxiedSignFields(),
-    proxiedSendTx(),
     proxiedProgress(onProgress)
   );
 }
 
-/** Creates, proves, and submits approveProposal transaction for selected proposal hash. */
-export async function createApproveTx(params: {
+/** Signs the proposal hash and submits the signature to the backend. */
+export async function submitOffchainSignature(params: {
   contractAddress: string;
-  approverAddress: string;
-  proposal: Proposal;
+  signerAddress: string;
+  proposalHash: string;
 }, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().createApproveTx(
+  return getWorkerApi().submitOffchainSignature(
     params,
     proxiedSignFields(),
-    proxiedSendTx(),
     proxiedProgress(onProgress)
   );
 }
 
-/** Creates, proves, and submits execution transaction for the selected proposal type. */
-export async function createExecuteTx(params: {
+/** Fetches batch payload, builds and sends an execute*BatchSig transaction. */
+export async function executeBatchTx(params: {
   contractAddress: string;
   executorAddress: string;
   proposal: Proposal;
 }, onProgress?: OnProgress): Promise<string | null> {
-  return getWorkerApi().createExecuteTx(params, proxiedSendTx(), proxiedProgress(onProgress));
+  return getWorkerApi().executeBatchTx(params, proxiedSendTx(), proxiedProgress(onProgress));
 }

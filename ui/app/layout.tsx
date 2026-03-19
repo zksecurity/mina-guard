@@ -68,7 +68,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             setOperationBanner({ type: 'error', message: `${label.replace(/\.\.\.$/, '')} failed.` });
             return;
           }
-          setOperationBanner({ type: 'success', message: `Transaction submitted: ${result}` });
+          setOperationBanner({ type: 'success', message: result });
           console.log('[startOperation] refreshing state...');
           await refreshRef.current();
           console.log('[startOperation] refresh done');

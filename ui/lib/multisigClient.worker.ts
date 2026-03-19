@@ -26,6 +26,9 @@ import {
   VoteNullifierStore,
   ApprovalStore,
   PublicKeyOption,
+  SignatureInputs,
+  SignatureInput,
+  SignatureOption,
 } from 'contracts';
 
 import {
@@ -33,7 +36,12 @@ import {
   type Proposal,
   normalizeTxType,
 } from '@/lib/types';
-import { fetchAllEvents } from './api';
+import {
+  fetchAllEvents,
+  postOffchainProposal,
+  postSignature,
+  fetchBatchPayload,
+} from './api';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
 type SendTxFn = (txJson: string) => Promise<string | null>;
@@ -145,7 +153,7 @@ async function signProposalHash(
   }
 }
 
-/** Signs the fee payer, sends directly to the network, and returns the tx hash. */
+/** Signs the fee payer, sends directly to the network, and returns the formatted success message. */
 async function signAndSend(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
   extraKeys: InstanceType<typeof PrivateKey>[] = []
@@ -165,7 +173,7 @@ async function signAndSend(
   }
 
   console.log('[MultisigWorker] Transaction sent:', hash);
-  return hash;
+  return `Transaction submitted: ${hash}`;
 }
 
 async function rebuildStoresFromBackend(contractAddress: string) {
@@ -174,20 +182,28 @@ async function rebuildStoresFromBackend(contractAddress: string) {
   const nullifierStore = new VoteNullifierStore();
   const events = await fetchAllEvents(contractAddress);
 
+  // Process setupOwner events sorted by index — the archive may return events
+  // within the same transaction in arbitrary order, which would cause an
+  // incorrect ownerChain hash that doesn't match ownersCommitment on-chain.
+  const emptyKey = PublicKey.empty().toBase58();
+  const setupOwnerEntries = events
+    .filter(e => e.eventType === 'setupOwner')
+    .map(e => {
+      const p = e.payload as Record<string, unknown>;
+      return { index: Number(p.index ?? 0), owner: p.owner };
+    })
+    .filter(({ owner }) => typeof owner === 'string' && (owner as string).length > 10 && owner !== emptyKey)
+    .sort((a, b) => a.index - b.index);
+  for (const { owner } of setupOwnerEntries) {
+    ownerStore.add(PublicKey.fromBase58(owner as string));
+  }
+
   for (const event of events) {
     if (event.eventType === 'setupOwner') {
-      const payload = event.payload as Record<string, unknown>;
-      const owner = payload.owner;
-      const emptyKey = PublicKey.empty().toBase58();
-      console.log("emptyKey: ", emptyKey);
-      console.log("payload.owner: ", payload.owner);
-      if (typeof owner === 'string' && owner.length > 10 && owner !== emptyKey) {
-        ownerStore.add(PublicKey.fromBase58(owner));
-      }
-      continue;
+      continue; // handled above with explicit index ordering
     }
 
-    if (event.eventType === 'ownerChange') {
+    if (event.eventType === 'ownerChange' || event.eventType === 'ownerChangeBatch') {
       const payload = event.payload as Record<string, unknown>;
       const owner = payload.owner;
       const added = payload.added;
@@ -248,7 +264,7 @@ async function rebuildStoresFromBackend(contractAddress: string) {
       continue;
     }
 
-    if (event.eventType === 'execution') {
+    if (event.eventType === 'execution' || event.eventType === 'executionBatch') {
       const payload = event.payload as Record<string, unknown>;
       const proposalHash = payload.proposalHash;
       if (typeof proposalHash === 'string') {
@@ -295,83 +311,6 @@ function buildProposalDataField(input: NewProposalInput): any {
     }
   }
   return Field(0);
-}
-
-async function buildProposalAndStores(params: {
-  contractAddress: string;
-  contractState: ContractState;
-  input: NewProposalInput;
-}) {
-  const { ownerStore, approvalStore, nullifierStore } =
-    await rebuildStoresFromBackend(params.contractAddress);
-
-  const to = (() => {
-    if (params.input.txType === 'transfer' && params.input.to)
-      return PublicKey.fromBase58(params.input.to);
-    if (params.input.txType === 'addOwner' && params.input.newOwner)
-      return PublicKey.fromBase58(params.input.newOwner);
-    if (params.input.txType === 'removeOwner' && params.input.removeOwnerAddress)
-      return PublicKey.fromBase58(params.input.removeOwnerAddress);
-    if (params.input.txType === 'setDelegate' && params.input.delegate)
-      return PublicKey.fromBase58(params.input.delegate);
-    return PublicKey.empty();
-  })();
-
-  const amount =
-    params.input.txType === 'transfer'
-      ? UInt64.from(
-          Math.floor(Number(params.input.amount ?? '0') * 1_000_000_000)
-        )
-      : UInt64.from(0);
-
-  const txType = uiTxTypeToField(params.input.txType);
-  const data = buildProposalDataField(params.input);
-
-  const proposal = new TransactionProposal({
-    to,
-    amount,
-    tokenId: Field(0),
-    txType,
-    data,
-    uid: Field(params.contractState.proposalCounter),
-    configNonce: Field(params.contractState.configNonce),
-    expiryBlock: Field(params.input.expiryBlock ?? 0),
-    networkId: Field(params.contractState.networkId),
-    guardAddress: PublicKey.fromBase58(params.contractAddress),
-  });
-
-  return { proposal, ownerStore, approvalStore, nullifierStore };
-}
-
-async function buildStoresForExistingProposal(
-  contractAddress: string,
-  proposal: Proposal,
-  contractState: ContractState
-) {
-  const stores = await rebuildStoresFromBackend(contractAddress);
-  const txType = proposal.txType
-    ? uiTxTypeToField(proposal.txType)
-    : Field(0);
-
-  const proposalStruct = new TransactionProposal({
-    to: safePublicKey(proposal.toAddress),
-    amount: UInt64.from(proposal.amount ?? '0'),
-    tokenId: Field(proposal.tokenId ?? '0'),
-    txType,
-    data: Field(proposal.data ?? '0'),
-    uid: Field(proposal.uid ?? '0'),
-    configNonce: Field(proposal.configNonce ?? contractState.configNonce),
-    expiryBlock: Field(proposal.expiryBlock ?? '0'),
-    networkId: Field(proposal.networkId ?? contractState.networkId),
-    guardAddress: safePublicKey(proposal.guardAddress ?? contractAddress),
-  });
-
-  return {
-    proposalStruct,
-    ownerStore: stores.ownerStore,
-    approvalStore: stores.approvalStore,
-    nullifierStore: stores.nullifierStore,
-  };
 }
 
 /** Safely serializes tx.toJSON() regardless of whether it returns a string or object. */
@@ -431,7 +370,7 @@ const workerApi = {
     tx.sign([zkAppKey]);
     progressFn('Submitting transaction...');
     const deployHash = await sendFn(serializeTx(tx));
-    return deployHash;
+    return `Transaction submitted: ${deployHash}`;
   },
 
   async setupContract(
@@ -490,139 +429,134 @@ const workerApi = {
     progressFn('Submitting transaction...');
     const txHash = await sendFn(serializeTx(tx));
     console.log('[MultisigWorker] setup tx result:', txHash);
-    return txHash;
+    return `Transaction submitted: ${txHash}`;
   },
 
-  async createProposeTx(
+  /**
+   * Creates an offchain proposal in the backend and submits the proposer's
+   * signature as the first approval.  No on-chain transaction is sent.
+   * Returns the proposal hash string on success.
+   */
+  async createOffchainProposal(
     params: {
       contractAddress: string;
       proposerAddress: string;
       input: NewProposalInput;
+      configNonce: number;
+      networkId: string;
     },
     signFn: SignFieldsFn,
-    sendFn: SendTxFn,
     progressFn: ProgressFn
   ): Promise<string | null> {
-    progressFn('Compiling contract...');
-    const ok = await compileContract();
-    if (!ok) return null;
+    progressFn('Computing proposal hash...');
+    configureNetwork();
 
-    progressFn('Fetching on-chain state...');
-    const contractState = await fetchContractState(params.contractAddress);
-    if (!contractState) return null;
+    const to = (() => {
+      if (params.input.txType === 'transfer' && params.input.to)
+        return PublicKey.fromBase58(params.input.to);
+      if (params.input.txType === 'addOwner' && params.input.newOwner)
+        return PublicKey.fromBase58(params.input.newOwner);
+      if (params.input.txType === 'removeOwner' && params.input.removeOwnerAddress)
+        return PublicKey.fromBase58(params.input.removeOwnerAddress);
+      if (params.input.txType === 'setDelegate' && params.input.delegate)
+        return PublicKey.fromBase58(params.input.delegate);
+      return PublicKey.empty();
+    })();
 
-    progressFn('Rebuilding stores from events...');
-    const { proposal, ownerStore, approvalStore, nullifierStore } =
-      await buildProposalAndStores({
-        contractAddress: params.contractAddress,
-        contractState,
-        input: params.input,
-      });
+    const amount =
+      params.input.txType === 'transfer'
+        ? UInt64.from(Math.floor(Number(params.input.amount ?? '0') * 1_000_000_000))
+        : UInt64.from(0);
 
-    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
-    const proposer = PublicKey.fromBase58(params.proposerAddress);
-    const signature = await signProposalHash(
-      proposal.hash().toString(),
-      signFn
-    );
-    if (!signature) return null;
+    const txType = uiTxTypeToField(params.input.txType);
+    const data = buildProposalDataField(params.input);
+    const uid = Field.random();
 
-    progressFn('Building transaction...');
-    const contract = new MinaGuard(
-      PublicKey.fromBase58(params.contractAddress)
-    );
-    const proposalHash = proposal.hash();
-
-    const tx = await Mina.transaction(txSender(proposer), async () => {
-      await contract.propose(
-        proposal,
-        ownerStore.getWitness(),
-        proposer,
-        signature,
-        nullifierStore.getWitness(proposalHash, proposer),
-        approvalStore.getWitness(proposalHash)
-      );
+    const proposal = new TransactionProposal({
+      to,
+      amount,
+      tokenId: Field(0),
+      txType,
+      data,
+      uid,
+      configNonce: Field(params.configNonce),
+      expiryBlock: Field(params.input.expiryBlock ?? 0),
+      networkId: Field(params.networkId),
+      guardAddress: PublicKey.fromBase58(params.contractAddress),
     });
 
-    progressFn('Generating proof...');
-    await tx.prove();
+    const proposalHash = proposal.hash();
+    const hashStr = proposalHash.toString();
 
-    if (testPrivateKey) {
-      progressFn('Signing and sending transaction...');
-      return await signAndSend(tx);
-    }
+    progressFn('Submitting proposal to backend...');
+    await postOffchainProposal(params.contractAddress, {
+      toAddress: to.toBase58(),
+      amount: amount.toString(),
+      tokenId: '0',
+      txType: txType.toString(),
+      data: data.toString(),
+      uid: uid.toString(),
+      configNonce: params.configNonce.toString(),
+      expiryBlock: (params.input.expiryBlock ?? 0).toString(),
+      networkId: params.networkId,
+      guardAddress: params.contractAddress,
+      proposalHash: hashStr,
+    });
 
-    progressFn('Submitting transaction...');
-    return await sendFn(serializeTx(tx));
+    // Also submit the proposer's signature as first approval
+    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
+    const signature = await signProposalHash(hashStr, signFn);
+    if (!signature) return null;
+
+    progressFn('Submitting signature to backend...');
+    const sigJson = signature.toJSON();
+    await postSignature(params.contractAddress, hashStr, {
+      signer: params.proposerAddress,
+      signatureR: sigJson.r,
+      signatureS: sigJson.s,
+    });
+
+    return 'Proposal created';
   },
 
-  async createApproveTx(
+  /**
+   * Signs the proposal hash and submits the signature to the backend.
+   * No on-chain transaction is sent.
+   * Returns a JSON string with { approvalCount, threshold, ready }.
+   */
+  async submitOffchainSignature(
     params: {
       contractAddress: string;
-      approverAddress: string;
-      proposal: Proposal;
+      signerAddress: string;
+      proposalHash: string;
     },
     signFn: SignFieldsFn,
-    sendFn: SendTxFn,
     progressFn: ProgressFn
   ): Promise<string | null> {
-    progressFn('Compiling contract...');
-    const ok = await compileContract();
-    if (!ok) return null;
-
-    progressFn('Fetching on-chain state...');
-    const contractState = await fetchContractState(params.contractAddress);
-    if (!contractState) return null;
-
-    progressFn('Rebuilding stores from events...');
-    const { proposalStruct, ownerStore, approvalStore, nullifierStore } =
-      await buildStoresForExistingProposal(
-        params.contractAddress,
-        params.proposal,
-        contractState
-      );
-
     progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
-    const approver = PublicKey.fromBase58(params.approverAddress);
-    const proposalHash = proposalStruct.hash();
+    configureNetwork();
 
-    const signature = await signProposalHash(
-      proposalHash.toString(),
-      signFn
-    );
+    const signature = await signProposalHash(params.proposalHash, signFn);
     if (!signature) return null;
 
-    progressFn('Building transaction...');
-    const currentApprovalCount = approvalStore.getCount(proposalHash);
-    const contract = new MinaGuard(
-      PublicKey.fromBase58(params.contractAddress)
-    );
-
-    const tx = await Mina.transaction(txSender(approver), async () => {
-      await contract.approveProposal(
-        proposalStruct,
-        signature,
-        approver,
-        ownerStore.getWitness(),
-        approvalStore.getWitness(proposalHash),
-        currentApprovalCount,
-        nullifierStore.getWitness(proposalHash, approver)
-      );
+    progressFn('Submitting signature to backend...');
+    const sigJson = signature.toJSON();
+    const result = await postSignature(params.contractAddress, params.proposalHash, {
+      signer: params.signerAddress,
+      signatureR: sigJson.r,
+      signatureS: sigJson.s,
     });
 
-    progressFn('Generating proof...');
-    await tx.prove();
-
-    if (testPrivateKey) {
-      progressFn('Signing and sending transaction...');
-      return await signAndSend(tx);
-    }
-
-    progressFn('Submitting transaction...');
-    return await sendFn(serializeTx(tx));
+    if (!result) return null;
+    return `Signature submitted (${result.approvalCount}/${result.threshold} approvals)`;
   },
 
-  async createExecuteTx(
+  /**
+   * Fetches the aggregated batch payload from the backend, compiles the
+   * contract, builds the appropriate execute*BatchSig transaction, proves
+   * and sends it on-chain.
+   */
+  async executeBatchTx(
     params: {
       contractAddress: string;
       executorAddress: string;
@@ -631,6 +565,20 @@ const workerApi = {
     sendFn: SendTxFn,
     progressFn: ProgressFn
   ): Promise<string | null> {
+    progressFn('Fetching batch payload...');
+    const payload = await fetchBatchPayload(
+      params.contractAddress,
+      params.proposal.proposalHash
+    );
+    if (!payload) {
+      console.error('[MultisigWorker] Failed to fetch batch payload');
+      return null;
+    }
+    if (!payload.ready) {
+      console.error('[MultisigWorker] Batch payload not ready — insufficient signatures');
+      return null;
+    }
+
     progressFn('Compiling contract...');
     const ok = await compileContract();
     if (!ok) return null;
@@ -639,63 +587,105 @@ const workerApi = {
     const contractState = await fetchContractState(params.contractAddress);
     if (!contractState) return null;
 
-    progressFn('Rebuilding stores from events...');
-    const { proposalStruct, ownerStore, approvalStore } =
-      await buildStoresForExistingProposal(
-        params.contractAddress,
-        params.proposal,
-        contractState
-      );
+    progressFn('Rebuilding stores...');
+    const { ownerStore, approvalStore } = await rebuildStoresFromBackend(params.contractAddress);
+
+    // Build TransactionProposal struct from the proposal record
+    const txType = normalizeTxType(params.proposal.txType);
+    const proposalStruct = new TransactionProposal({
+      to: safePublicKey(params.proposal.toAddress),
+      amount: UInt64.from(params.proposal.amount ?? '0'),
+      tokenId: Field(params.proposal.tokenId ?? '0'),
+      txType: txType ? uiTxTypeToField(txType) : Field(0),
+      data: Field(params.proposal.data ?? '0'),
+      uid: Field(params.proposal.uid ?? '0'),
+      configNonce: Field(params.proposal.configNonce ?? contractState.configNonce),
+      expiryBlock: Field(params.proposal.expiryBlock ?? '0'),
+      networkId: Field(params.proposal.networkId ?? contractState.networkId),
+      guardAddress: safePublicKey(params.proposal.guardAddress ?? params.contractAddress),
+    });
+
+    const proposalHash = proposalStruct.hash();
+    const approvalWitness = approvalStore.getWitness(proposalHash);
+
+    // Build SignatureInputs using ownerStore order (matches ownersCommitment),
+    // looking up signatures from payload by address.
+    const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
+    const dummyPk = PublicKey.fromFields([Field(1), Field(1)]);
+    const sigByAddress = new Map(
+      payload.inputs
+        .filter((s) => s.isSome && s.signer && s.hasSignature)
+        .map((s) => [s.signer!, { r: s.signatureR!, s: s.signatureS! }])
+    );
+    const orderedSlots: Array<{ isSome: boolean; signer: string | null; hasSignature: boolean; signatureR: string | null; signatureS: string | null }> =
+      ownerStore.owners.map((pk) => {
+        const addr = pk.toBase58();
+        const sig = sigByAddress.get(addr);
+        return { isSome: true, signer: addr, hasSignature: !!sig, signatureR: sig?.r ?? null, signatureS: sig?.s ?? null };
+      });
+    while (orderedSlots.length < MAX_OWNERS) {
+      orderedSlots.push({ isSome: false, signer: null, hasSignature: false, signatureR: null, signatureS: null });
+    }
+    const sigInputs = new SignatureInputs({
+      inputs: orderedSlots.map((slot) => {
+        if (!slot.isSome) {
+          return new SignatureInput({
+            value: {
+              signature: new SignatureOption({ value: dummySig, isSome: Bool(false) }),
+              signer: dummyPk,
+            },
+            isSome: Bool(false),
+          });
+        }
+        const signer = PublicKey.fromBase58(slot.signer!);
+        if (slot.hasSignature) {
+          const sig = Signature.fromJSON({ r: slot.signatureR!, s: slot.signatureS! });
+          return new SignatureInput({
+            value: {
+              signature: new SignatureOption({ value: sig, isSome: Bool(true) }),
+              signer,
+            },
+            isSome: Bool(true),
+          });
+        }
+        return new SignatureInput({
+          value: {
+            signature: new SignatureOption({ value: dummySig, isSome: Bool(false) }),
+            signer,
+          },
+          isSome: Bool(true),
+        });
+      }),
+    });
 
     progressFn('Building transaction...');
-    const proposalHash = proposalStruct.hash();
-    const approvalCount = approvalStore.getCount(proposalHash);
-    const contract = new MinaGuard(
-      PublicKey.fromBase58(params.contractAddress)
-    );
+    const contract = new MinaGuard(PublicKey.fromBase58(params.contractAddress));
     const executor = PublicKey.fromBase58(params.executorAddress);
-    const txType = normalizeTxType(params.proposal.txType);
-    console.log("txType: ", txType);
 
     const tx = await Mina.transaction(txSender(executor), async () => {
       if (txType === 'transfer') {
-        await contract.executeTransfer(
-          proposalStruct,
-          approvalStore.getWitness(proposalHash),
-          approvalCount
-        );
+        await contract.executeTransferBatchSig(proposalStruct, approvalWitness, sigInputs);
         return;
       }
 
       if (txType === 'addOwner' || txType === 'removeOwner') {
         if (!params.proposal.toAddress) {
-          throw new Error(
-            'Proposal toAddress is required for owner change execution'
-          );
+          throw new Error('Proposal toAddress is required for owner change execution');
         }
         const owner = PublicKey.fromBase58(params.proposal.toAddress);
-        // TODO: Allow the caller to specify an insertAfter index instead of always appending
         const insertAfter =
           txType === 'addOwner' && ownerStore.length > 0
             ? new PublicKeyOption({ value: ownerStore.owners[ownerStore.length - 1], isSome: Bool(true) })
             : PublicKeyOption.none();
-        await contract.executeOwnerChange(
-          proposalStruct,
-          approvalStore.getWitness(proposalHash),
-          approvalCount,
-          owner,
-          ownerStore.getWitness(),
-          insertAfter
+        await contract.executeOwnerChangeBatchSig(
+          proposalStruct, approvalWitness, sigInputs, owner, ownerStore.getWitness(), insertAfter
         );
         return;
       }
 
       if (txType === 'changeThreshold') {
-        await contract.executeThresholdChange(
-          proposalStruct,
-          approvalStore.getWitness(proposalHash),
-          approvalCount,
-          Field(params.proposal.data ?? '0')
+        await contract.executeThresholdChangeBatchSig(
+          proposalStruct, approvalWitness, sigInputs, Field(params.proposal.data ?? '0')
         );
         return;
       }
@@ -705,16 +695,13 @@ const workerApi = {
           params.proposal.data === '0'
             ? PublicKey.empty()
             : PublicKey.fromBase58(params.proposal.toAddress ?? '');
-        await contract.executeDelegate(
-          proposalStruct,
-          approvalStore.getWitness(proposalHash),
-          approvalCount,
-          delegate
+        await contract.executeDelegateBatchSig(
+          proposalStruct, approvalWitness, sigInputs, delegate
         );
         return;
       }
 
-      throw new Error('Unsupported proposal type for execution');
+      throw new Error('Unsupported proposal type for batch execution');
     });
 
     progressFn('Generating proof...');
@@ -726,7 +713,7 @@ const workerApi = {
     }
 
     progressFn('Submitting transaction...');
-    return await sendFn(serializeTx(tx));
+    return `Transaction submitted: ${await sendFn(serializeTx(tx))}`;
   },
 };
 
