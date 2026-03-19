@@ -7,19 +7,18 @@
  *   - Approve: instant (sign + API call, no proof)
  *   - Execute: on-chain batch transaction (compile + prove + send)
  *
- * Coverage (mirrors onchain-flow.test.ts scope):
+ * Coverage:
  *   1.  Deploy + setup a MinaGuard contract (2 owners, threshold 2)
- *   2.  Fund the contract
- *   3.  Transfer: propose (owner1) → approve (owner2) → execute → verify
- *   4.  Add owner (accounts[2]): propose → approve → execute → verify
- *   5.  Change threshold to 1: propose → approve → execute → verify
- *   6.  Remove owner (accounts[2]): propose (threshold=1) → execute → verify
- *   7.  Set delegate: propose → execute → verify dashboard
- *   8.  Undelegate: propose → execute → verify
- *   9.  Propose transfer with expiry → wait for expiry → verify expired UI
- *   10. Verify Settings page
- *   11. Verify Transactions page filtering
- *   12. Verify final state
+ *   2.  Transfer: propose (owner1) → approve (owner2) → execute → verify
+ *   3.  Add owner (accounts[2]): propose → approve → execute → verify
+ *   4.  Change threshold to 1: propose → approve → execute → verify
+ *   5.  Remove owner (accounts[2]): propose (threshold=1) → execute → verify
+ *   6.  Set delegate: propose → execute → verify dashboard
+ *   7.  Undelegate: propose → execute → verify
+ *   8.  Propose transfer with expiry → wait for expiry → verify expired UI
+ *   9.  Verify Settings page
+ *   10. Verify Transactions page filtering
+ *   11. Verify final state
  */
 
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
@@ -32,7 +31,6 @@ import {
   navigateTo,
   waitForBanner,
   waitForIndexer,
-  getContracts,
   getContract,
   getOwners,
   getProposals,
@@ -131,12 +129,12 @@ test.afterEach(async ({}, testInfo) => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. Deploy MinaGuard contract
+// 1. Deploy + setup MinaGuard contract (2 owners, threshold=2)
 // ---------------------------------------------------------------------------
 
-test('1. Deploy MinaGuard contract', async () => {
+test('1. Deploy + setup MinaGuard contract', async () => {
   const page = sharedPage;
-  log('=== Step 1: Deploy MinaGuard contract ===');
+  log('=== Step 1: Deploy + setup MinaGuard contract ===');
   await gotoWithWallet('/deploy', accounts[0]);
 
   await page.waitForFunction(
@@ -152,103 +150,66 @@ test('1. Deploy MinaGuard contract', async () => {
     { timeout: 60_000 }
   );
 
-  const addressEl = page
-    .locator('text=Contract Address')
-    .locator('..')
-    .locator('.font-mono');
+  const addressEl = page.locator('p.break-all.font-mono');
   await addressEl.waitFor({ state: 'visible', timeout: 10_000 });
   contractAddress = (await addressEl.textContent())?.trim() ?? '';
   expect(contractAddress).toMatch(/^B62/);
   log(`Contract address: ${contractAddress}`);
 
-  log('Clicking Deploy...');
-  const deployBtn = page.getByRole('button', { name: /deploy minaguard/i });
-  await deployBtn.click();
+  // The first owner field is pre-filled with the connected wallet address.
+  // Add a second owner and set threshold to 2.
+  log('Filling setup form on deploy page...');
 
-  log('Waiting for deploy transaction...');
-  await waitForBanner(page, 'success');
-
-  await waitForIndexer('indexer discovers deployed contract', async () => {
-    const contracts = await getContracts();
-    return contracts.some((c: any) => c.address === contractAddress);
-  });
-
-  const contract = await getContract(contractAddress);
-  expect(contract).not.toBeNull();
-  log(`Contract discovered by indexer: ${contract.address}`);
-
-  await fundContract(contractAddress, accounts[0], 10);
-});
-
-// ---------------------------------------------------------------------------
-// 2. Setup contract (2 owners, threshold=2)
-// ---------------------------------------------------------------------------
-
-test('2. Setup contract (2 owners, threshold=2)', async () => {
-  const page = sharedPage;
-  log('=== Step 2: Setup contract ===');
-  await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(SHORT_WAIT);
-
-  log('Clicking Setup Contract...');
-  const setupBtn = page.getByRole('button', { name: /setup contract/i });
-  await setupBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await setupBtn.click();
-
-  log('Filling setup form...');
-
+  // Fill first owner (may be empty if wallet address wasn't available at render)
   const owner1Input = page.locator('input[placeholder*="Owner"]').first();
-  await owner1Input.waitFor({ state: 'visible', timeout: 10_000 });
+  await owner1Input.waitFor({ state: 'visible', timeout: 5_000 });
   await owner1Input.fill(accounts[0].publicKey);
 
+  // Add second owner
   const addOwnerBtn = page.getByRole('button', { name: /add owner/i });
-  if (await addOwnerBtn.isVisible().catch(() => false)) {
-    await addOwnerBtn.click();
-    await page.waitForTimeout(500);
-  }
+  await addOwnerBtn.click();
+
+  // Wait for second owner input to appear
   const owner2Input = page.locator('input[placeholder*="Owner"]').nth(1);
+  await owner2Input.waitFor({ state: 'visible', timeout: 5_000 });
   await owner2Input.fill(accounts[1].publicKey);
 
   const thresholdInput = page.locator('input[type="number"]').first();
   await thresholdInput.fill('2');
 
-  const allInputs = page.locator('.fixed input, dialog input, [class*="modal"] input');
-  const allCount = await allInputs.count();
-  if (allCount >= 4) {
-    const lastInput = allInputs.nth(allCount - 1);
-    await lastInput.fill('1');
-  }
+  log('Clicking Deploy MinaGuard...');
+  const deployBtn = page.getByRole('button', { name: /deploy minaguard/i });
+  await deployBtn.click();
 
-  log('Clicking Run Setup...');
-  const runSetupBtn = page.getByRole('button', { name: /run setup/i });
-  await runSetupBtn.click();
-
-  log('Waiting for setup transaction...');
+  log('Waiting for deploy + setup transaction...');
   await waitForBanner(page, 'success');
 
-  await waitForIndexer('indexer processes setup events', async () => {
+  await waitForIndexer('indexer discovers deployed contract with setup', async () => {
     const contract = await getContract(contractAddress);
     return contract !== null && contract.threshold === 2 && contract.numOwners === 2;
   });
 
   const contract = await getContract(contractAddress);
+  expect(contract).not.toBeNull();
   expect(contract.threshold).toBe(2);
   expect(contract.numOwners).toBe(2);
-  log(`Setup verified: threshold=${contract.threshold}, numOwners=${contract.numOwners}`);
+  log(`Contract deployed and set up: threshold=${contract.threshold}, numOwners=${contract.numOwners}`);
 
   const owners = await getOwners(contractAddress);
   const activeOwners = owners.filter((o: any) => o.active);
   expect(activeOwners).toHaveLength(2);
   log(`Owners verified: ${activeOwners.map((o: any) => o.address.slice(0, 12) + '...').join(', ')}`);
+
+  await fundContract(contractAddress, accounts[0], 10);
 });
 
 // ---------------------------------------------------------------------------
-// 3. Create offchain transfer proposal (owner1 proposes, auto-signs)
+// 2. Create offchain transfer proposal (owner1 proposes, auto-signs)
 // ---------------------------------------------------------------------------
 
-test('3. Create offchain transfer proposal', async () => {
+test('2. Create offchain transfer proposal', async () => {
   const page = sharedPage;
-  log('=== Step 3: Create offchain transfer proposal ===');
+  log('=== Step 2: Create offchain transfer proposal ===');
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -286,12 +247,12 @@ test('3. Create offchain transfer proposal', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Approve transfer with owner 2 (offchain)
+// 3. Approve transfer with owner 2 (offchain)
 // ---------------------------------------------------------------------------
 
-test('4. Approve transfer with owner 2 (offchain)', async () => {
+test('3. Approve transfer with owner 2 (offchain)', async () => {
   const page = sharedPage;
-  log('=== Step 4: Approve transfer with owner 2 ===');
+  log('=== Step 3: Approve transfer with owner 2 ===');
   await gotoWithWallet(`/transactions/${proposalHashes[0]}`, accounts[1]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -318,12 +279,12 @@ test('4. Approve transfer with owner 2 (offchain)', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. Execute batch transfer
+// 4. Execute batch transfer
 // ---------------------------------------------------------------------------
 
-test('5. Execute batch transfer', async () => {
+test('4. Execute batch transfer', async () => {
   const page = sharedPage;
-  log('=== Step 5: Execute batch transfer ===');
+  log('=== Step 4: Execute batch transfer ===');
   await gotoWithWallet(`/transactions/${proposalHashes[0]}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -338,11 +299,11 @@ test('5. Execute batch transfer', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. Indexer reconciles transfer as executed
+// 5. Indexer reconciles transfer as executed
 // ---------------------------------------------------------------------------
 
-test('6. Indexer reconciles transfer as executed', async () => {
-  log('=== Step 6: Verify indexer reconciliation of transfer ===');
+test('5. Indexer reconciles transfer as executed', async () => {
+  log('=== Step 5: Verify indexer reconciliation of transfer ===');
 
   await waitForIndexer('indexer marks transfer as executed', async () => {
     const p = await getProposal(contractAddress, proposalHashes[0]);
@@ -358,12 +319,12 @@ test('6. Indexer reconciles transfer as executed', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. Create offchain addOwner proposal (accounts[2])
+// 6. Create offchain addOwner proposal (accounts[2])
 // ---------------------------------------------------------------------------
 
-test('7. Create offchain addOwner proposal', async () => {
+test('6. Create offchain addOwner proposal', async () => {
   const page = sharedPage;
-  log('=== Step 7: Create offchain addOwner proposal ===');
+  log('=== Step 6: Create offchain addOwner proposal ===');
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -401,12 +362,12 @@ test('7. Create offchain addOwner proposal', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. Approve addOwner with owner 2
+// 7. Approve addOwner with owner 2
 // ---------------------------------------------------------------------------
 
-test('8. Approve addOwner with owner 2', async () => {
+test('7. Approve addOwner with owner 2', async () => {
   const page = sharedPage;
-  log('=== Step 8: Approve addOwner with owner 2 ===');
+  log('=== Step 7: Approve addOwner with owner 2 ===');
   await gotoWithWallet(`/transactions/${proposalHashes[1]}`, accounts[1]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -428,12 +389,12 @@ test('8. Approve addOwner with owner 2', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 9. Execute batch addOwner
+// 8. Execute batch addOwner
 // ---------------------------------------------------------------------------
 
-test('9. Execute batch addOwner', async () => {
+test('8. Execute batch addOwner', async () => {
   const page = sharedPage;
-  log('=== Step 9: Execute batch addOwner ===');
+  log('=== Step 8: Execute batch addOwner ===');
   await gotoWithWallet(`/transactions/${proposalHashes[1]}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -463,12 +424,12 @@ test('9. Execute batch addOwner', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. Create offchain changeThreshold proposal (2 → 1)
+// 9. Create offchain changeThreshold proposal (2 → 1)
 // ---------------------------------------------------------------------------
 
-test('10. Create offchain changeThreshold proposal (threshold=1)', async () => {
+test('9. Create offchain changeThreshold proposal (threshold=1)', async () => {
   const page = sharedPage;
-  log('=== Step 10: Create offchain changeThreshold proposal ===');
+  log('=== Step 9: Create offchain changeThreshold proposal ===');
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -515,12 +476,12 @@ test('10. Create offchain changeThreshold proposal (threshold=1)', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 11. Approve changeThreshold with owner 2
+// 10. Approve changeThreshold with owner 2
 // ---------------------------------------------------------------------------
 
-test('11. Approve changeThreshold with owner 2', async () => {
+test('10. Approve changeThreshold with owner 2', async () => {
   const page = sharedPage;
-  log('=== Step 11: Approve changeThreshold with owner 2 ===');
+  log('=== Step 10: Approve changeThreshold with owner 2 ===');
   await gotoWithWallet(`/transactions/${proposalHashes[2]}`, accounts[1]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -542,12 +503,12 @@ test('11. Approve changeThreshold with owner 2', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 12. Execute batch changeThreshold
+// 11. Execute batch changeThreshold
 // ---------------------------------------------------------------------------
 
-test('12. Execute batch changeThreshold', async () => {
+test('11. Execute batch changeThreshold', async () => {
   const page = sharedPage;
-  log('=== Step 12: Execute batch changeThreshold ===');
+  log('=== Step 11: Execute batch changeThreshold ===');
   await gotoWithWallet(`/transactions/${proposalHashes[2]}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -575,12 +536,12 @@ test('12. Execute batch changeThreshold', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 13. Create offchain removeOwner proposal (accounts[2], threshold=1)
+// 12. Create offchain removeOwner proposal (accounts[2], threshold=1)
 // ---------------------------------------------------------------------------
 
-test('13. Create offchain removeOwner proposal', async () => {
+test('12. Create offchain removeOwner proposal', async () => {
   const page = sharedPage;
-  log('=== Step 13: Create offchain removeOwner proposal ===');
+  log('=== Step 12: Create offchain removeOwner proposal ===');
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -626,12 +587,12 @@ test('13. Create offchain removeOwner proposal', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 14. Execute batch removeOwner
+// 13. Execute batch removeOwner
 // ---------------------------------------------------------------------------
 
-test('14. Execute batch removeOwner', async () => {
+test('13. Execute batch removeOwner', async () => {
   const page = sharedPage;
-  log('=== Step 14: Execute batch removeOwner ===');
+  log('=== Step 13: Execute batch removeOwner ===');
   await gotoWithWallet(`/transactions/${proposalHashes[3]}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -666,12 +627,12 @@ test('14. Execute batch removeOwner', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 15. Verify Settings page
+// 14. Verify Settings page
 // ---------------------------------------------------------------------------
 
-test('15. Verify Settings page', async () => {
+test('14. Verify Settings page', async () => {
   const page = sharedPage;
-  log('=== Step 15: Verify Settings page ===');
+  log('=== Step 14: Verify Settings page ===');
   await gotoWithWallet('/settings', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -688,12 +649,12 @@ test('15. Verify Settings page', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 16. Create offchain setDelegate proposal
+// 15. Create offchain setDelegate proposal
 // ---------------------------------------------------------------------------
 
-test('16. Create offchain setDelegate proposal', async () => {
+test('15. Create offchain setDelegate proposal', async () => {
   const page = sharedPage;
-  log('=== Step 16: Create offchain setDelegate proposal ===');
+  log('=== Step 15: Create offchain setDelegate proposal ===');
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -744,12 +705,12 @@ test('16. Create offchain setDelegate proposal', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 17. Execute batch setDelegate
+// 16. Execute batch setDelegate
 // ---------------------------------------------------------------------------
 
-test('17. Execute batch setDelegate', async () => {
+test('16. Execute batch setDelegate', async () => {
   const page = sharedPage;
-  log('=== Step 17: Execute batch setDelegate ===');
+  log('=== Step 16: Execute batch setDelegate ===');
   await gotoWithWallet(`/transactions/${proposalHashes[4]}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -776,12 +737,12 @@ test('17. Execute batch setDelegate', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 18. Verify dashboard shows delegate address
+// 17. Verify dashboard shows delegate address
 // ---------------------------------------------------------------------------
 
-test('18. Verify dashboard shows delegate address', async () => {
+test('17. Verify dashboard shows delegate address', async () => {
   const page = sharedPage;
-  log('=== Step 18: Verify delegate card on dashboard ===');
+  log('=== Step 17: Verify delegate card on dashboard ===');
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -792,12 +753,12 @@ test('18. Verify dashboard shows delegate address', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 19. Create offchain undelegate proposal
+// 18. Create offchain undelegate proposal
 // ---------------------------------------------------------------------------
 
-test('19. Create offchain undelegate proposal', async () => {
+test('18. Create offchain undelegate proposal', async () => {
   const page = sharedPage;
-  log('=== Step 19: Create offchain undelegate proposal ===');
+  log('=== Step 18: Create offchain undelegate proposal ===');
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -844,12 +805,12 @@ test('19. Create offchain undelegate proposal', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 20. Execute batch undelegate
+// 19. Execute batch undelegate
 // ---------------------------------------------------------------------------
 
-test('20. Execute batch undelegate', async () => {
+test('19. Execute batch undelegate', async () => {
   const page = sharedPage;
-  log('=== Step 20: Execute batch undelegate ===');
+  log('=== Step 19: Execute batch undelegate ===');
   await gotoWithWallet(`/transactions/${proposalHashes[5]}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -876,12 +837,12 @@ test('20. Execute batch undelegate', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 21. Propose transfer with near-future expiry
+// 20. Propose transfer with near-future expiry
 // ---------------------------------------------------------------------------
 
-test('21. Propose transfer with near-future expiry', async () => {
+test('20. Propose transfer with near-future expiry', async () => {
   const page = sharedPage;
-  log('=== Step 21: Propose transfer with expiry ===');
+  log('=== Step 20: Propose transfer with expiry ===');
 
   const status = await getIndexerStatus();
   const currentHeight = status?.latestChainHeight ?? status?.indexedHeight ?? 0;
@@ -936,12 +897,12 @@ test('21. Propose transfer with near-future expiry', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 22. Verify proposal expires and execute button is hidden
+// 21. Verify proposal expires and execute button is hidden
 // ---------------------------------------------------------------------------
 
-test('22. Verify proposal expires and execute button is hidden', async () => {
+test('21. Verify proposal expires and execute button is hidden', async () => {
   const page = sharedPage;
-  log('=== Step 22: Verify proposal expiry ===');
+  log('=== Step 21: Verify proposal expiry ===');
 
   log('Waiting for proposal to expire...');
   await waitForIndexer(
@@ -975,12 +936,12 @@ test('22. Verify proposal expires and execute button is hidden', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 23. Verify Transactions page filtering
+// 22. Verify Transactions page filtering
 // ---------------------------------------------------------------------------
 
-test('23. Verify Transactions page filtering', async () => {
+test('22. Verify Transactions page filtering', async () => {
   const page = sharedPage;
-  log('=== Step 23: Verify Transactions page filtering ===');
+  log('=== Step 22: Verify Transactions page filtering ===');
   await gotoWithWallet('/transactions', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -1013,12 +974,12 @@ test('23. Verify Transactions page filtering', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 24. Verify final state
+// 23. Verify final state
 // ---------------------------------------------------------------------------
 
-test('24. Verify final state', async () => {
+test('23. Verify final state', async () => {
   const page = sharedPage;
-  log('=== Step 24: Verify final state ===');
+  log('=== Step 23: Verify final state ===');
 
   // Dashboard — delegate card should show contract self (undelegated)
   await gotoWithWallet('/', accounts[0]);
@@ -1039,5 +1000,5 @@ test('24. Verify final state', async () => {
 
   log('\n=== Final State ===');
   await dumpState(contractAddress);
-  log('\n=== All 24 steps completed successfully! ===');
+  log('\n=== All 23 steps completed successfully! ===');
 });
