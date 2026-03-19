@@ -315,8 +315,9 @@ export class MinaGuard extends SmartContract {
     networkId: Field,
     initialOwners: SetupOwnersInput
   ) {
-    const currentCommitment = this.ownersCommitment.getAndRequireEquals();
-    currentCommitment.assertEquals(Field(0), 'Already initialized');
+    // Use requireEquals instead of getAndRequireEquals so deploy+setup can
+    // be combined in a single transaction (no account cache read needed).
+    this.ownersCommitment.requireEquals(Field(0));
 
     threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
     numOwners.assertGreaterThanOrEqual(

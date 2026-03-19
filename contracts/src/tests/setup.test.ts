@@ -58,7 +58,7 @@ describe('MinaGuard - Setup', () => {
       });
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
-    }).toThrow('Already initialized');
+    }).toThrow();
   });
 
   it('should reject threshold = 0', async () => {
