@@ -132,6 +132,7 @@ export class OwnerChangeEvent extends Struct({
   owner: PublicKey,
   added: Field,
   newNumOwners: Field,
+  configNonce: Field,
 }) { }
 
 export class OwnerChangeBatchEvent extends Struct({
@@ -139,6 +140,7 @@ export class OwnerChangeBatchEvent extends Struct({
   owner: PublicKey,
   added: Field,
   newNumOwners: Field,
+  configNonce: Field,
   approverChain: Field,
 }) { }
 
@@ -146,12 +148,14 @@ export class ThresholdChangeEvent extends Struct({
   proposalHash: Field,
   oldThreshold: Field,
   newThreshold: Field,
+  configNonce: Field,
 }) { }
 
 export class ThresholdChangeBatchEvent extends Struct({
   proposalHash: Field,
   oldThreshold: Field,
   newThreshold: Field,
+  configNonce: Field,
   approverChain: Field,
 }) { }
 
@@ -606,11 +610,20 @@ export class MinaGuard extends SmartContract {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
+    this.emitEvent('executionBatch', {
+      proposalHash,
+      to: PublicKey.empty(),
+      amount: UInt64.from(0),
+      txType: proposal.txType,
+      approverChain: verificationRes.signerChain,
+    });
+
     this.emitEvent('ownerChangeBatch', {
       proposalHash,
       owner: ownerPubKey,
       added: isAdd.toField(),
       newNumOwners,
+      configNonce: currentConfigNonce.add(1),
       approverChain: verificationRes.signerChain,
     });
   }
@@ -667,10 +680,19 @@ export class MinaGuard extends SmartContract {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
+    this.emitEvent('executionBatch', {
+      proposalHash,
+      to: PublicKey.empty(),
+      amount: UInt64.from(0),
+      txType: proposal.txType,
+      approverChain: verificationRes.signerChain,
+    });
+
     this.emitEvent('thresholdChangeBatch', {
       proposalHash,
       oldThreshold: currentThreshold,
       newThreshold,
+      configNonce: currentConfigNonce.add(1),
       approverChain: verificationRes.signerChain,
     });
   }
@@ -717,6 +739,14 @@ export class MinaGuard extends SmartContract {
 
     // Mark as executed
     this.markExecuted(approvalWitness);
+
+    this.emitEvent('executionBatch', {
+      proposalHash,
+      to: targetDelegate,
+      amount: UInt64.from(0),
+      txType: proposal.txType,
+      approverChain: verificationRes.signerChain,
+    });
 
     this.emitEvent('delegateBatch', {
       proposalHash,
@@ -793,6 +823,7 @@ export class MinaGuard extends SmartContract {
       owner: ownerPubKey,
       added: isAdd.toField(),
       newNumOwners,
+      configNonce: currentConfigNonce.add(1),
     });
   }
 
@@ -852,6 +883,7 @@ export class MinaGuard extends SmartContract {
       proposalHash,
       oldThreshold: currentThreshold,
       newThreshold,
+      configNonce: currentConfigNonce.add(1),
     });
   }
 

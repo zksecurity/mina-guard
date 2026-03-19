@@ -120,9 +120,19 @@ export class MinaGuardIndexer {
         continue;
       }
 
-      await prisma.contract.create({
+      const created = await prisma.contract.create({
         data: { address },
       });
+
+      // Backfill events for the newly discovered contract. The contract was
+      // deployed within the bestChain window (~290 blocks), so scanning from
+      // a small margin before discovery is sufficient and stays cheap on mainnet.
+      const indexedHeight = await this.getIndexedHeight();
+      const backfillFrom = Math.max(0, indexedHeight - 300);
+      if (indexedHeight > backfillFrom) {
+        console.log(`[indexer] backfilling events for ${address} from block ${backfillFrom} to ${indexedHeight}`);
+        await this.syncSingleContract(created.id, address, backfillFrom, indexedHeight);
+      }
     }
 
     this.status.discoveredContracts = await prisma.contract.count();
@@ -164,11 +174,16 @@ export class MinaGuardIndexer {
       deployed: 0,
       setup: 1,
       setupOwner: 2,
-      ownerChange: 3,
-      thresholdChange: 4,
-      proposal: 5,
-      approval: 6,
-      execution: 7,
+      proposal: 3,
+      approval: 4,
+      execution: 5,
+      executionBatch: 5,
+      ownerChange: 6,
+      ownerChangeBatch: 6,
+      thresholdChange: 7,
+      thresholdChangeBatch: 7,
+      delegate: 8,
+      delegateBatch: 8,
     };
     events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
 
@@ -216,19 +231,23 @@ export class MinaGuardIndexer {
         await this.applyApprovalEvent(contractId, chainEvent);
         return;
       }
-      case 'execution': {
+      case 'execution':
+      case 'executionBatch': {
         await this.applyExecutionEvent(contractId, chainEvent);
         return;
       }
-      case 'ownerChange': {
+      case 'ownerChange':
+      case 'ownerChangeBatch': {
         await this.applyOwnerChangeEvent(contractId, chainEvent.event);
         return;
       }
-      case 'thresholdChange': {
+      case 'thresholdChange':
+      case 'thresholdChangeBatch': {
         await this.applyThresholdChangeEvent(contractId, chainEvent.event);
         return;
       }
-      case 'delegate': {
+      case 'delegate':
+      case 'delegateBatch': {
         await this.applyDelegateEvent(contractId, chainEvent.event);
         return;
       }
@@ -304,11 +323,23 @@ export class MinaGuardIndexer {
    * Creates a proposal row from on-chain event data.
    * ProposalEvent includes all TransactionProposal fields so the indexer
    * can reconstruct full proposal details purely from on-chain events.
+   *
+   * If an offchain proposal already exists for this hash, skip the update
+   * to avoid overwriting data or origin managed by the batch-sig API.
    */
   private async applyProposalEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
     const event = chainEvent.event;
     const proposalHash = asString(event.proposalHash);
     if (!proposalHash) return;
+
+    const existing = await prisma.proposal.findUnique({
+      where: {
+        contractId_proposalHash: { contractId, proposalHash },
+      },
+      select: { origin: true },
+    });
+
+    if (existing?.origin === 'offchain') return;
 
     await prisma.proposal.upsert({
       where: {
@@ -447,6 +478,14 @@ export class MinaGuardIndexer {
         data: { numOwners: newNumOwners },
       });
     }
+
+    const configNonce = asNumber(event.configNonce);
+    if (configNonce !== null) {
+      await prisma.contract.update({
+        where: { id: contractId },
+        data: { configNonce },
+      });
+    }
   }
 
   /** Applies threshold change governance results to contract metadata. */
@@ -457,9 +496,13 @@ export class MinaGuardIndexer {
     const newThreshold = asNumber(event.newThreshold);
     if (newThreshold === null) return;
 
+    const configNonce = asNumber(event.configNonce);
     await prisma.contract.update({
       where: { id: contractId },
-      data: { threshold: newThreshold },
+      data: {
+        threshold: newThreshold,
+        ...(configNonce !== null ? { configNonce } : {}),
+      },
     });
   }
 
