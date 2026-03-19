@@ -10,8 +10,8 @@ describe('OwnerStore', () => {
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
 
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
     expect(store.isOwner(owner1)).toBe(true);
     expect(store.isOwner(owner2)).toBe(true);
@@ -24,8 +24,8 @@ describe('OwnerStore', () => {
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
 
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
     store.remove(owner1);
 
     expect(store.isOwner(owner1)).toBe(false);
@@ -37,18 +37,19 @@ describe('OwnerStore', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
-    expect(store.getCommitment()).toEqual(computeOwnerChain([owner1, owner2]));
+    const sorted = [owner1, owner2].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+    expect(store.getCommitment()).toEqual(computeOwnerChain(sorted));
   });
 
   it('should generate valid witness', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
     const witness = store.getWitness();
     // Witness should have MAX_OWNERS entries, first 2 filled
@@ -61,8 +62,8 @@ describe('OwnerStore', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
     const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
     const json = store.serialize();
     const restored = OwnerStore.deserialize(json);
@@ -73,14 +74,37 @@ describe('OwnerStore', () => {
     expect(restored.isOwner(owner2)).toBe(true);
   });
 
+  it('should insert in sorted base58 order', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 5 }, () => PrivateKey.random().toPublicKey());
+    for (const k of keys) store.addSorted(k);
+
+    const sorted = [...keys].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+    expect(store.getCommitment()).toEqual(computeOwnerChain(sorted));
+  });
+
+  it('should find sorted predecessor', () => {
+    const store = new OwnerStore();
+    const keys = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey())
+      .sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+    for (const k of keys) store.addSorted(k);
+
+    // predecessor of first element is null
+    expect(store.sortedPredecessor(keys[0])).toBeNull();
+    // predecessor of second is first
+    expect(store.sortedPredecessor(keys[1])?.toBase58()).toBe(keys[0].toBase58());
+    // predecessor of third is second
+    expect(store.sortedPredecessor(keys[2])?.toBase58()).toBe(keys[1].toBase58());
+  });
+
   it('should insert after a specific owner', () => {
     const store = new OwnerStore();
-    const owner1 = PrivateKey.random().toPublicKey();
-    const owner2 = PrivateKey.random().toPublicKey();
-    const owner3 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
-    store.add(owner2);
+    const [owner1, owner2] = Array.from({ length: 2 }, () => PrivateKey.random().toPublicKey())
+      .sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+    store.addSorted(owner1);
+    store.addSorted(owner2);
 
+    const owner3 = PrivateKey.random().toPublicKey();
     store.insertAfter(owner3, owner1);
 
     expect(store.getCommitment()).toEqual(computeOwnerChain([owner1, owner3, owner2]));
@@ -89,9 +113,9 @@ describe('OwnerStore', () => {
   it('should prepend when insertAfter is null', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
-    const owner2 = PrivateKey.random().toPublicKey();
-    store.add(owner1);
+    store.addSorted(owner1);
 
+    const owner2 = PrivateKey.random().toPublicKey();
     store.insertAfter(owner2, null);
 
     expect(store.getCommitment()).toEqual(computeOwnerChain([owner2, owner1]));

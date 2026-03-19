@@ -42,8 +42,28 @@ export class OwnerStore {
     this.owners = [];
   }
 
-  add(owner: PublicKey): void {
-    this.owners.push(owner);
+  /** Insert owner in ascending base58 order. */
+  addSorted(owner: PublicKey): void {
+    const b58 = owner.toBase58();
+    const idx = this.owners.findIndex((o) => o.toBase58() > b58);
+    if (idx === -1) {
+      this.owners.push(owner);
+    } else {
+      this.owners.splice(idx, 0, owner);
+    }
+  }
+
+  /**
+   * Returns the owner immediately before `target` in the sorted list,
+   * or null if `target` would be the first element.
+   */
+  sortedPredecessor(target: PublicKey): PublicKey | null {
+    const b58 = target.toBase58();
+    let pred: PublicKey | null = null;
+    for (const o of this.owners) {
+      if (o.toBase58() < b58) pred = o;
+    }
+    return pred;
   }
 
   /** Insert owner after the given key. If afterOwner is null, prepend. */

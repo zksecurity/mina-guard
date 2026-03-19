@@ -12,6 +12,7 @@ import {
   createThresholdProposal,
   makeOwnerWitness,
   makeSignatureInputs,
+  sortedInsertAfter,
   type TestContext,
 } from './test-helpers.js';
 import { PublicKeyOption, computeOwnerChain } from '../list-commitment.js';
@@ -38,9 +39,9 @@ describe('MinaGuard - Governance', () => {
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubs = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubs);
+      const insertAfter = sortedInsertAfter(ownerPubs, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -58,8 +59,9 @@ describe('MinaGuard - Governance', () => {
 
       expect(ctx.zkApp.numOwners.get()).toEqual(Field(4));
 
-      // Verify commitment matches expected
-      const expectedCommitment = computeOwnerChain([...ctx.owners.map((o) => o.pub), newOwner]);
+      // Verify commitment matches expected (sorted)
+      const sortedOwners = [...ownerPubs, newOwner].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+      const expectedCommitment = computeOwnerChain(sortedOwners);
       expect(ctx.zkApp.ownersCommitment.get()).toEqual(expectedCommitment);
     });
 
@@ -70,9 +72,9 @@ describe('MinaGuard - Governance', () => {
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubs = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubs);
+      const insertAfter = sortedInsertAfter(ownerPubs, existingOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -122,9 +124,9 @@ describe('MinaGuard - Governance', () => {
       await approveTransaction(ctx, proposal, 1);
 
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubs = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubs);
+      const insertAfter = sortedInsertAfter(ownerPubs, newOwner);
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
         await ctx.zkApp.executeOwnerChange(
@@ -406,10 +408,10 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = proposal.hash();
 
+      const ownerPubs = ctx.owners.map((o) => o.pub);
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerWitness = makeOwnerWitness(ownerPubs);
+      const insertAfter = sortedInsertAfter(ownerPubs, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -422,7 +424,8 @@ describe('MinaGuard - Owner Change BatchSig', () => {
 
       expect(ctx.zkApp.numOwners.get()).toEqual(Field(4));
 
-      const expectedCommitment = computeOwnerChain([...ctx.owners.map((o) => o.pub), newOwner]);
+      const sortedOwners = [...ownerPubs, newOwner].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
+      const expectedCommitment = computeOwnerChain(sortedOwners);
       expect(ctx.zkApp.ownersCommitment.get()).toEqual(expectedCommitment);
     });
 
@@ -432,10 +435,10 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = proposal.hash();
 
+      const ownerPubs = ctx.owners.map((o) => o.pub);
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerWitness = makeOwnerWitness(ownerPubs);
+      const insertAfter = sortedInsertAfter(ownerPubs, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -457,9 +460,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposalHash = proposal.hash();
 
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -480,9 +483,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposalHash = proposal.hash();
 
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, existingOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -503,9 +506,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposalHash = proposal.hash();
 
       const sigs = makeSignatureInputs(ctx, proposalHash, [0]); // only 1 sig, threshold=2
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -536,9 +539,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
         isSome: Bool(true),
       });
 
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -569,9 +572,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
         isSome: Bool(true),
       });
 
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -593,9 +596,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposalHash = proposal.hash();
 
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -627,9 +630,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposalHash = proposal.hash();
 
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
@@ -650,9 +653,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposalHash = proposal.hash();
 
       const sigs = makeSignatureInputs(ctx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const lastOwner = ctx.owners[ctx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const ownerPubsLocal = ctx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(ownerPubsLocal);
+      const insertAfter = sortedInsertAfter(ownerPubsLocal, newOwner);
 
       // Execute first time
       const approvalWitness1 = ctx.approvalStore.getWitness(proposalHash);
@@ -687,9 +690,9 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       const proposalHash = proposal.hash();
 
       const sigs = makeSignatureInputs(maxCtx, proposalHash, [0, 1]);
-      const ownerWitness = makeOwnerWitness(maxCtx.owners.map((o) => o.pub));
-      const lastOwner = maxCtx.owners[maxCtx.owners.length - 1].pub;
-      const insertAfter = new PublicKeyOption({ value: lastOwner, isSome: Bool(true) });
+      const maxOwnerPubs = maxCtx.owners.map((o) => o.pub);
+      const ownerWitness = makeOwnerWitness(maxOwnerPubs);
+      const insertAfter = sortedInsertAfter(maxOwnerPubs, extraOwner);
       const approvalWitness = maxCtx.approvalStore.getWitness(proposalHash);
 
       await expect(async () => {
