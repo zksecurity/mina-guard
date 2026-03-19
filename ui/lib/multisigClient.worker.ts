@@ -488,9 +488,9 @@ const workerApi = {
 
     const ownerStore = new OwnerStore();
     const ownerKeys = params.owners.map((address) => PublicKey.fromBase58(address));
-    for (const owner of ownerKeys) ownerStore.add(owner);
+    for (const owner of ownerKeys) ownerStore.addSorted(owner);
 
-    const paddedOwners = [...ownerKeys];
+    const paddedOwners = [...ownerStore.owners];
     while (paddedOwners.length < MAX_OWNERS) {
       paddedOwners.push(PublicKey.empty());
     }
