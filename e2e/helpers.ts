@@ -400,11 +400,29 @@ export async function waitForBanner(
   }
 
   log('Waiting for operation banner...');
-  const bannerText =
-    type === 'success' ? 'Transaction submitted' : 'failed';
-  const banner = page.locator(`text=${bannerText}`);
-  await banner.first().waitFor({ state: 'visible', timeout: timeoutMs });
-  const text = await banner.first().textContent();
+  // Success banners use text-safe-green class; error banners use text-red-400.
+  // We wait for the × close button to appear inside a banner of the right type.
+  await page.waitForFunction(
+    (expectedType: string) => {
+      const btns = Array.from(document.querySelectorAll('button')).filter(
+        (b) => b.textContent?.trim() === '×'
+      );
+      return btns.some((btn) => {
+        const parent = btn.parentElement;
+        if (!parent) return false;
+        const cls = parent.className ?? '';
+        return expectedType === 'success'
+          ? cls.includes('text-safe-green')
+          : cls.includes('text-red-400');
+      });
+    },
+    type,
+    { timeout: timeoutMs }
+  );
+  const bannerEl = page.locator(
+    type === 'success' ? '.text-safe-green' : '.text-red-400'
+  ).first();
+  const text = await bannerEl.textContent();
   log(`  Banner: ${text?.trim()}`);
   return text?.trim() ?? '';
 }

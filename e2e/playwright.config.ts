@@ -6,6 +6,7 @@ const config = getNetworkConfig();
 export default defineConfig({
   testDir: '.',
   testMatch: '*.test.ts',
+  testIgnore: ['onchain-flow.test.ts'],
   timeout: config.testStepTimeoutMs,
   retries: 0,
   workers: 1,

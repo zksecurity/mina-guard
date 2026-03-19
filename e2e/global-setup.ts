@@ -232,7 +232,7 @@ export default async function globalSetup() {
     }
     const backendChild = spawnService(
       'bun',
-      ['run', 'dev:backend'],
+      ['run', '--filter', 'backend', 'dev'],
       backendEnv,
       'backend'
     );
@@ -241,7 +241,7 @@ export default async function globalSetup() {
     log('Starting frontend...');
     const frontendChild = spawnService(
       'bun',
-      ['run', 'dev'],
+      ['run', '--filter', 'ui', 'dev'],
       {
         NEXT_PUBLIC_API_BASE_URL: config.backendUrl,
         NEXT_PUBLIC_MINA_ENDPOINT: config.minaEndpoint,

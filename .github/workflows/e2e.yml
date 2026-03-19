@@ -70,7 +70,7 @@ jobs:
           DATABASE_URL: file:./dev.db
 
       - name: Start backend
-        run: bun run dev:backend &
+        run: bun run --filter backend dev &
         env:
           PORT: '4000'
           DATABASE_URL: file:./dev.db
@@ -80,7 +80,7 @@ jobs:
           INDEX_POLL_INTERVAL_MS: '5000'
 
       - name: Start frontend
-        run: bun run dev &
+        run: bun run --filter ui dev &
         env:
           NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
           NEXT_PUBLIC_MINA_ENDPOINT: http://localhost:8080/graphql

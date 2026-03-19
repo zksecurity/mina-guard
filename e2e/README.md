@@ -107,7 +107,8 @@ e2e/
 ├── global-setup.ts           # Starts lightnet/backend/frontend before tests
 ├── global-teardown.ts        # Stops all services after tests
 ├── helpers.ts                # Wallet mock, API helpers, indexer polling
-├── mina-guard-flow.test.ts   # Main test suite
+├── onchain-flow.test.ts      # On-chain flow tests (disabled — superseded by offchain-flow)
+├── offchain-flow.test.ts     # Offchain batch-sig flow tests (primary)
 ├── .env.devnet.example       # Template for devnet account keys
 └── .env.devnet               # Your local devnet config (git-ignored)
 ```
