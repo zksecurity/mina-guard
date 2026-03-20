@@ -7,6 +7,9 @@ import { MinaApp } from '@zondax/ledger-mina-js';
 let transport: Transport | null = null;
 let app: MinaApp | null = null;
 
+/** Ledger network ID: 1 = mainnet, 0 = testnet/devnet */
+const LEDGER_NETWORK_ID = process.env.NEXT_PUBLIC_MINA_NETWORK === 'mainnet' ? 1 : 0;
+
 const LEDGER_SUCCESS = 9000;
 
 /** Maps Ledger status codes to user-friendly messages.
@@ -146,10 +149,9 @@ export async function signFeePayer(
 ): Promise<{ field: string; scalar: string }> {
   const ledger = await getApp();
   const bytes = fieldToBytes(BigInt(commitment));
-  // networkId: 1 = mainnet, 0 = testnet (default to testnet)
   let result;
   try {
-    result = await ledger.signFieldElement(accountIndex, 0, bytes);
+    result = await ledger.signFieldElement(accountIndex, LEDGER_NETWORK_ID, bytes);
   } catch (err) {
     throw toLedgerError(err);
   }
@@ -169,11 +171,9 @@ export async function signFields(
   const fieldBigInt = BigInt(fields[0]);
   const bytes = fieldToBytes(fieldBigInt);
 
-  // networkId: 1 = mainnet, 0 = testnet (default to testnet)
-  // TODO: change to real network ID
   let result;
   try {
-    result = await ledger.signFieldElement(accountIndex, 0, bytes);
+    result = await ledger.signFieldElement(accountIndex, LEDGER_NETWORK_ID, bytes);
   } catch (err) {
     throw toLedgerError(err);
   }

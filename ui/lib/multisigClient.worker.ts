@@ -337,7 +337,9 @@ function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
 }
 
 /** mina-signer client for computing transaction commitments without o1js overhead. */
-const signerClient = new Client({ network: 'testnet' });
+const signerClient = new Client({
+  network: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
+});
 
 /** Signs the fee payer via Ledger and broadcasts directly to the Mina GraphQL endpoint. */
 async function broadcastWithLedgerSig(
