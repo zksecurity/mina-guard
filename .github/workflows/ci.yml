@@ -46,7 +46,7 @@ jobs:
       - name: bun ci, build, & test
         run: |
           bun ci
-          cd ui/deps/o1js/src/mina-signer && npx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs
+          (cd ui/deps/o1js/src/mina-signer && bun install && npx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs)
           bun run build
           bun run test
         env:
