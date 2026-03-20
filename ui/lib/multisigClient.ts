@@ -108,7 +108,9 @@ export async function setSkipProofs(skip: boolean) {
 }
 
 // Expose test helper on window for e2e tests to call via page.evaluate()
-if (typeof window !== 'undefined') {
+// Next.js inlines NEXT_PUBLIC_* at build time; the block is dead-code eliminated
+// in production builds where the var is not set.
+if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_E2E_TEST === 'true') {
   (window as any).__e2eSetTestKey = async (pk: string) => {
     return getWorkerApi().setTestKey(pk);
   };

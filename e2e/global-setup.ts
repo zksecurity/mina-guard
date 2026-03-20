@@ -246,6 +246,7 @@ export default async function globalSetup() {
         NEXT_PUBLIC_API_BASE_URL: config.backendUrl,
         NEXT_PUBLIC_MINA_ENDPOINT: config.minaEndpoint,
         NEXT_PUBLIC_ARCHIVE_ENDPOINT: config.archiveEndpoint,
+        NEXT_PUBLIC_E2E_TEST: 'true',
       },
       'frontend'
     );

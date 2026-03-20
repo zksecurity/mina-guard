@@ -1,11 +1,59 @@
 import { Router } from 'express';
+import { PublicKey } from 'o1js';
+import { z } from 'zod';
 import { prisma } from './db.js';
 import { computeProposalHash, verifySignature, buildBatchPayload } from './batch-sig-service.js';
+
+const base58PublicKey = z.string().refine((addr) => {
+  try { PublicKey.fromBase58(addr); return true; } catch { return false; }
+}, { message: 'Invalid Mina public key' });
+
+const fieldString = z.coerce.string().regex(/^\d+$/, 'Must be a numeric string');
+const hexHash = z.string().regex(/^[0-9a-fA-F]{64}$/, 'Must be a 64-char hex string');
+
+const createProposalSchema = z.object({
+  toAddress: base58PublicKey,
+  amount: fieldString,
+  tokenId: fieldString,
+  txType: fieldString,
+  data: fieldString,
+  uid: fieldString,
+  configNonce: fieldString,
+  expiryBlock: fieldString,
+  networkId: fieldString,
+  guardAddress: base58PublicKey,
+  proposalHash: hexHash,
+});
+
+const submitSignatureSchema = z.object({
+  signer: base58PublicKey,
+  signatureR: fieldString,
+  signatureS: fieldString,
+});
 
 /** Creates the batch-sig API router for offchain signature aggregation. */
 export function createBatchRouter(): Router {
   const router = Router();
   const safe = wrapAsyncRoute();
+
+  // Validate :address param on all routes
+  router.param('address', (_req, res, next, value) => {
+    try {
+      PublicKey.fromBase58(value);
+      next();
+    } catch {
+      res.status(400).json({ error: 'Invalid contract address' });
+    }
+  });
+
+  // Validate :proposalHash param on all routes
+  router.param('proposalHash', (_req, res, next, value) => {
+    if (hexHash.safeParse(value).success) {
+      next();
+    } else {
+      res.status(400).json({ error: 'Invalid proposal hash' });
+    }
+  });
 
   /** Creates an offchain proposal for batch signature collection. */
   router.post('/api/contracts/:address/proposals', safe(async (req, res) => {
@@ -23,16 +71,17 @@ export function createBatchRouter(): Router {
       return;
     }
 
+    const parsed = createProposalSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten().fieldErrors });
+      return;
+    }
+
     const {
       toAddress, amount, tokenId, txType, data,
       uid, configNonce, expiryBlock, networkId, guardAddress,
       proposalHash,
-    } = req.body;
-
-    if (!proposalHash || !toAddress || !guardAddress) {
-      res.status(400).json({ error: 'Missing required fields' });
-      return;
-    }
+    } = parsed.data;
 
     if (guardAddress !== contract.address) {
       res.status(400).json({ error: 'guardAddress does not match contract address' });
@@ -61,11 +110,11 @@ export function createBatchRouter(): Router {
       return;
     }
 
-    if (computedHash !== String(proposalHash)) {
+    if (computedHash !== proposalHash) {
       res.status(400).json({
         error: 'Proposal hash mismatch',
         expected: computedHash,
-        received: String(proposalHash),
+        received: proposalHash,
       });
       return;
     }
@@ -75,7 +124,7 @@ export function createBatchRouter(): Router {
       where: {
         contractId_proposalHash: {
           contractId: contract.id,
-          proposalHash: String(proposalHash),
+          proposalHash,
         },
       },
     });
@@ -88,17 +137,17 @@ export function createBatchRouter(): Router {
     const proposal = await prisma.proposal.create({
       data: {
         contractId: contract.id,
-        proposalHash: String(proposalHash),
-        toAddress: String(toAddress),
-        amount: String(amount),
-        tokenId: String(tokenId),
-        txType: String(txType),
-        data: String(data),
-        uid: String(uid),
-        configNonce: String(configNonce),
-        expiryBlock: String(expiryBlock),
-        networkId: String(networkId),
-        guardAddress: String(guardAddress),
+        proposalHash,
+        toAddress,
+        amount,
+        tokenId,
+        txType,
+        data,
+        uid,
+        configNonce,
+        expiryBlock,
+        networkId,
+        guardAddress,
         origin: 'offchain',
         status: 'pending',
       },
@@ -142,19 +191,20 @@ export function createBatchRouter(): Router {
       return;
     }
 
-    const { signer, signatureR, signatureS } = req.body;
-
-    if (!signer || !signatureR || !signatureS) {
-      res.status(400).json({ error: 'Missing required fields: signer, signatureR, signatureS' });
+    const parsed = submitSignatureSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten().fieldErrors });
       return;
     }
+
+    const { signer, signatureR, signatureS } = parsed.data;
 
     // Verify signer is an active owner
     const owner = await prisma.owner.findUnique({
       where: {
         contractId_address: {
           contractId: contract.id,
-          address: String(signer),
+          address: signer,
         },
       },
     });
@@ -169,7 +219,7 @@ export function createBatchRouter(): Router {
       where: {
         proposalId_approver: {
           proposalId: proposal.id,
-          approver: String(signer),
+          approver: signer,
         },
       },
     });
@@ -183,9 +233,9 @@ export function createBatchRouter(): Router {
     let valid: boolean;
     try {
       valid = verifySignature(
-        String(signer),
-        String(signatureR),
-        String(signatureS),
+        signer,
+        signatureR,
+        signatureS,
         proposal.proposalHash
       );
     } catch (err) {
@@ -198,22 +248,26 @@ export function createBatchRouter(): Router {
       return;
     }
 
-    await prisma.approval.create({
-      data: {
-        proposalId: proposal.id,
-        approver: String(signer),
-        signatureR: String(signatureR),
-        signatureS: String(signatureS),
-      },
-    });
+    const approvalCount = await prisma.$transaction(async (tx) => {
+      await tx.approval.create({
+        data: {
+          proposalId: proposal.id,
+          approver: signer,
+          signatureR: signatureR,
+          signatureS: signatureS,
+        },
+      });
 
-    const approvalCount = await prisma.approval.count({
-      where: { proposalId: proposal.id },
-    });
+      const count = await tx.approval.count({
+        where: { proposalId: proposal.id },
+      });
 
-    await prisma.proposal.update({
-      where: { id: proposal.id },
-      data: { approvalCount },
+      await tx.proposal.update({
+        where: { id: proposal.id },
+        data: { approvalCount: count },
+      });
+
+      return count;
     });
 
     const threshold = contract.threshold ?? 1;

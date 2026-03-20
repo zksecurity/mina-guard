@@ -1,13 +1,35 @@
 import { Router } from 'express';
+import { PublicKey } from 'o1js';
 import { prisma } from './db.js';
 import type { MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
+
+const PROPOSAL_HASH_RE = /^[0-9a-fA-F]{64}$/;
 
 /** Creates the read-only API router bound to shared indexer status and Prisma data. */
 export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfig): Router {
   const router = Router();
   const safe = wrapAsyncRoute();
   router.use(requestLoggerMiddleware());
+
+  // Validate :address param on all routes
+  router.param('address', (_req, res, next, value) => {
+    try {
+      PublicKey.fromBase58(value);
+      next();
+    } catch {
+      res.status(400).json({ error: 'Invalid contract address' });
+    }
+  });
+
+  // Validate :proposalHash param on all routes
+  router.param('proposalHash', (_req, res, next, value) => {
+    if (PROPOSAL_HASH_RE.test(value)) {
+      next();
+    } else {
+      res.status(400).json({ error: 'Invalid proposal hash' });
+    }
+  });
 
   /** Returns basic health and process liveness metadata. */
   router.get('/health', safe(async (_req, res) => {
