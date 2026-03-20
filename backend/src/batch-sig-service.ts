@@ -2,8 +2,11 @@ import { Field, PublicKey, Signature, UInt64 } from 'o1js';
 import { TransactionProposal, MAX_OWNERS } from 'contracts';
 import { prisma } from './db.js';
 
+const EMPTY_PUBLIC_KEY_BASE58 = PublicKey.empty().toBase58();
+
 function safePublicKey(base58: string): InstanceType<typeof PublicKey> {
   if (!base58) throw new Error('Missing public key');
+  if (base58 === EMPTY_PUBLIC_KEY_BASE58) return PublicKey.empty();
   return PublicKey.fromBase58(base58);
 }
 
