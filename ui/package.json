@@ -13,6 +13,8 @@
     "@ledgerhq/hw-transport": "^6.33.0",
     "@ledgerhq/hw-transport-webhid": "^6.32.0",
     "@zondax/ledger-mina-js": "^0.2.0",
+    "@noble/hashes": "^1.7.1",
+    "blakejs": "^1.2.1",
     "comlink": "^4.4.2",
     "contracts": "workspace:*",
     "mina-signer": "file:deps/o1js/src/mina-signer",

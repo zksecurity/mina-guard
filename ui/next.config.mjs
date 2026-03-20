@@ -1,3 +1,8 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -18,6 +23,14 @@ const nextConfig = {
         child_process: false,
       };
     }
+    // Resolve mina-signer directly from the o1js submodule's esbuild output.
+    // bun copies file: deps at install time, so the postinstall-built dist/web/
+    // bundle isn't visible in the cached copy. This alias bypasses that stale copy.
+    // Only used client-side (web worker); nothing server-side imports mina-signer.
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'mina-signer': path.resolve(__dirname, 'deps/o1js/src/mina-signer/dist/web/index.js'),
+    };
     return config;
   },
   // Headers for SharedArrayBuffer (required by o1js WASM)
