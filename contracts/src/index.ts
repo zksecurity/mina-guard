@@ -7,7 +7,7 @@ export {
   SetupEvent,
   SetupOwnerEvent,
   ProposalEvent,
-  ProposalReceiverEvent,
+  TransferEvent,
   ApprovalEvent,
   ExecutionEvent,
   ExecutionBatchEvent,

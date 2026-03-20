@@ -120,12 +120,11 @@ export class ProposalEvent extends Struct({
   guardAddress: PublicKey,
 }) { }
 
-/** Emitted once per receiver slot during propose (fixed-size, padded with empties). */
-export class ProposalReceiverEvent extends Struct({
+/** Emitted once per receiver slot during transfer execution (fixed-size, padded with empties). */
+export class TransferEvent extends Struct({
   proposalHash: Field,
   receiver: PublicKey,
   amount: UInt64,
-  index: Field,
 }) { }
 
 /** Emitted whenever a valid owner approval is recorded. */
@@ -211,7 +210,7 @@ export class MinaGuard extends SmartContract {
     setup: SetupEvent,
     setupOwner: SetupOwnerEvent,
     proposal: ProposalEvent,
-    proposalReceiver: ProposalReceiverEvent,
+    transfer: TransferEvent,
     approval: ApprovalEvent,
     execution: ExecutionEvent,
     executionBatch: ExecutionBatchEvent,
@@ -424,15 +423,6 @@ export class MinaGuard extends SmartContract {
       guardAddress: proposal.guardAddress,
     });
 
-    for (let i = 0; i < MAX_RECEIVERS; i++) {
-      this.emitEvent('proposalReceiver', {
-        proposalHash,
-        receiver: proposal.receivers[i].address,
-        amount: proposal.receivers[i].amount,
-        index: Field(i),
-      });
-    }
-
     this.emitEvent('approval', {
       proposalHash,
       approver: proposer,
@@ -525,6 +515,7 @@ export class MinaGuard extends SmartContract {
       const isEmpty = r.address.equals(PublicKey.empty());
       const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
       this.send({ to: r.address, amount: effectiveAmount });
+      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
     }
 
     this.markExecuted(approvalWitness);
@@ -570,6 +561,7 @@ export class MinaGuard extends SmartContract {
       const isEmpty = r.address.equals(PublicKey.empty());
       const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
       this.send({ to: r.address, amount: effectiveAmount });
+      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
     }
 
     // Mark as executed
