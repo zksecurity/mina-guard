@@ -34,10 +34,32 @@ export function useWallet() {
     typeof window !== 'undefined' && localStorage.getItem('wallet-disconnected') === 'true'
   );
 
-  // Check capabilities on mount
+  // Check capabilities on mount, retrying briefly for Auro since the
+  // extension injects window.mina asynchronously after page load.
   useEffect(() => {
-    setAuroInstalled(isAuroInstalled());
     setLedgerSupported(isLedgerSupported());
+
+    if (isAuroInstalled()) {
+      setAuroInstalled(true);
+      return;
+    }
+
+    // Listen for the provider injection event fired by Auro
+    const onInit = () => setAuroInstalled(true);
+    window.addEventListener('mina#initialized', onInit);
+
+    // Fallback poll in case the event was missed or isn't dispatched
+    const id = setInterval(() => {
+      if (isAuroInstalled()) {
+        setAuroInstalled(true);
+        clearInterval(id);
+      }
+    }, 200);
+
+    return () => {
+      window.removeEventListener('mina#initialized', onInit);
+      clearInterval(id);
+    };
   }, []);
 
   // Listen for Auro account/network changes only when connected via Auro
