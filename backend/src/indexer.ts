@@ -268,6 +268,7 @@ export class MinaGuardIndexer {
         threshold: asNumber(event.threshold),
         numOwners: asNumber(event.numOwners),
         networkId: asString(event.networkId),
+        configNonce: 0,
       },
     });
   }

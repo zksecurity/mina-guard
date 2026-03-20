@@ -35,6 +35,14 @@ cp backend/.env.example backend/.env
 cd backend && bunx prisma generate && cd ..
 ```
 
+Prior to testing with lightnet, accounts must have funds. To fund them, add the
+public keys to `dev-helpers/.env` and run:
+```bash
+cd dev-helpers && bun run cli.ts lightnet-fund
+```
+
+**NOTE**: To test with a Ledger device, its public key (corresponding to the account index used) must be funded similarly. Only the public key is needed.
+
 ### Running
 
 ```bash
