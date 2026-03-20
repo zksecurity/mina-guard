@@ -39,7 +39,7 @@ export function createBatchRouter(): Router {
       return;
     }
 
-    if (Number(configNonce) !== contract.configNonce) {
+    if (Number(configNonce) !== (contract.configNonce ?? 0)) {
       res.status(400).json({ error: 'configNonce mismatch with on-chain state' });
       return;
     }
