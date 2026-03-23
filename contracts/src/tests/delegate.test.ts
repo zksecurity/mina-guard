@@ -1,9 +1,10 @@
-import { Field, Mina, PrivateKey, Signature, UInt64, Bool } from 'o1js';
+import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64, Bool } from 'o1js';
 import { Receiver } from '../MinaGuard.js';
-import { EXECUTED_MARKER } from '../constants.js';
+import { EXECUTED_MARKER, ExecutionMode } from '../constants.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
+  deployAndSetupGuard,
   proposeTransaction,
   approveTransaction,
   createDelegateProposal,
@@ -13,6 +14,8 @@ import {
   type TestContext,
 } from './test-helpers.js';
 import { SignatureInput, SignatureOption } from '../batch-verify.js';
+import { MinaGuard } from '../MinaGuard.js';
+import { ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 describe('MinaGuard - Delegate', () => {
@@ -22,6 +25,46 @@ describe('MinaGuard - Delegate', () => {
     ctx = await setupLocalBlockchain();
     await deployAndSetup(ctx, 2);
   });
+
+  async function deployChildGuard(parentAddress = ctx.zkAppAddress) {
+    const childKey = PrivateKey.random();
+    const childAddress = childKey.toPublicKey();
+    const childZkApp = new MinaGuard(childAddress);
+
+    await deployAndSetupGuard(
+      ctx.deployerAccount,
+      ctx.deployerKey,
+      childZkApp,
+      childKey,
+      childAddress,
+      ctx.owners.map((o) => o.pub),
+      ctx.networkId,
+      2,
+      parentAddress
+    );
+
+    return {
+      childZkApp,
+      childKey,
+      childAddress,
+      childExecutionStore: new ApprovalStore(),
+    };
+  }
+
+  function makeChildContext(
+    childZkApp: MinaGuard,
+    childKey: PrivateKey,
+    childAddress: PublicKey
+  ): TestContext {
+    return {
+      ...ctx,
+      zkApp: childZkApp,
+      zkAppKey: childKey,
+      zkAppAddress: childAddress,
+      approvalStore: new ApprovalStore(),
+      nullifierStore: new VoteNullifierStore(),
+    };
+  }
 
   it('should delegate to a block producer via multisig', async () => {
     const blockProducer = PrivateKey.random().toPublicKey();
@@ -166,6 +209,340 @@ describe('MinaGuard - Delegate', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Data does not match delegate');
+  });
+
+  it('should execute delegate on a specific child via parent approvals', async () => {
+    const { childZkApp, childAddress, childExecutionStore } =
+      await deployChildGuard();
+    const blockProducer = PrivateKey.random().toPublicKey();
+
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress,
+      Field(0),
+      ctx.networkId,
+      childAddress,
+      ExecutionMode.CHILD
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    const parentApprovalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const childExecutionWitness = childExecutionStore.getWitness(proposalHash);
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await childZkApp.child_executeDelegate(
+        proposal,
+        parentApprovalWitness,
+        Field(3),
+        childExecutionWitness,
+        blockProducer
+      );
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+    childExecutionStore.setCount(proposalHash, Field(1));
+
+    const childDelegate = Mina.getAccount(childAddress).delegate;
+    expect(childDelegate).toBeDefined();
+    expect(childDelegate!.equals(blockProducer).toBoolean()).toBe(true);
+  });
+
+  it('should reject a specifically targeted child proposal on a different child', async () => {
+    const { childZkApp } = await deployChildGuard();
+    const otherChildAddress = PrivateKey.random().toPublicKey();
+    const blockProducer = PrivateKey.random().toPublicKey();
+
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress,
+      Field(0),
+      ctx.networkId,
+      otherChildAddress,
+      ExecutionMode.CHILD
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    await expect(async () => {
+      const parentApprovalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const childExecutionWitness = new ApprovalStore().getWitness(proposalHash);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await childZkApp.child_executeDelegate(
+          proposal,
+          parentApprovalWitness,
+          Field(3),
+          childExecutionWitness,
+          blockProducer
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Proposal not for this child');
+  });
+
+  it('should allow wildcard child proposals to execute once per linked child', async () => {
+    const childOne = await deployChildGuard();
+    const childTwo = await deployChildGuard();
+    const blockProducer = PrivateKey.random().toPublicKey();
+
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress,
+      Field(0),
+      ctx.networkId,
+      PublicKey.empty(),
+      ExecutionMode.CHILD
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    const parentApprovalWitness = ctx.approvalStore.getWitness(proposalHash);
+
+    const childOneTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await childOne.childZkApp.child_executeDelegate(
+        proposal,
+        parentApprovalWitness,
+        Field(3),
+        childOne.childExecutionStore.getWitness(proposalHash),
+        blockProducer
+      );
+    });
+    await childOneTxn.prove();
+    await childOneTxn.sign([ctx.deployerKey]).send();
+    childOne.childExecutionStore.setCount(proposalHash, Field(1));
+
+    const childTwoTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await childTwo.childZkApp.child_executeDelegate(
+        proposal,
+        parentApprovalWitness,
+        Field(3),
+        childTwo.childExecutionStore.getWitness(proposalHash),
+        blockProducer
+      );
+    });
+    await childTwoTxn.prove();
+    await childTwoTxn.sign([ctx.deployerKey]).send();
+    childTwo.childExecutionStore.setCount(proposalHash, Field(1));
+
+    const childOneDelegate = Mina.getAccount(childOne.childAddress).delegate;
+    const childTwoDelegate = Mina.getAccount(childTwo.childAddress).delegate;
+    expect(childOneDelegate).toBeDefined();
+    expect(childTwoDelegate).toBeDefined();
+    expect(childOneDelegate!.equals(blockProducer).toBoolean()).toBe(true);
+    expect(childTwoDelegate!.equals(blockProducer).toBoolean()).toBe(true);
+  });
+
+  it('should reject replaying a wildcard child proposal on the same child', async () => {
+    const { childZkApp, childAddress, childExecutionStore } =
+      await deployChildGuard();
+    const blockProducer = PrivateKey.random().toPublicKey();
+
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress,
+      Field(0),
+      ctx.networkId,
+      PublicKey.empty(),
+      ExecutionMode.CHILD
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    const parentApprovalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const firstTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await childZkApp.child_executeDelegate(
+        proposal,
+        parentApprovalWitness,
+        Field(3),
+        childExecutionStore.getWitness(proposalHash),
+        blockProducer
+      );
+    });
+    await firstTxn.prove();
+    await firstTxn.sign([ctx.deployerKey]).send();
+    childExecutionStore.setCount(proposalHash, Field(1));
+
+    await expect(async () => {
+      const replayTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await childZkApp.child_executeDelegate(
+          proposal,
+          parentApprovalWitness,
+          Field(3),
+          childExecutionStore.getWitness(proposalHash),
+          blockProducer
+        );
+      });
+      await replayTxn.prove();
+      await replayTxn.sign([ctx.deployerKey]).send();
+    }).toThrow('Child execution root mismatch');
+
+    const childDelegate = Mina.getAccount(childAddress).delegate;
+    expect(childDelegate).toBeDefined();
+    expect(childDelegate!.equals(blockProducer).toBoolean()).toBe(true);
+  });
+
+  it('should reject child execution on a main account', async () => {
+    const blockProducer = PrivateKey.random().toPublicKey();
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress,
+      Field(0),
+      ctx.networkId,
+      PublicKey.empty(),
+      ExecutionMode.CHILD
+    );
+    const proposalHash = proposal.hash();
+
+    await expect(async () => {
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.child_executeDelegate(
+          proposal,
+          ctx.approvalStore.getWitness(proposalHash),
+          Field(0),
+          new ApprovalStore().getWitness(proposalHash),
+          blockProducer
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Not a child account');
+  });
+
+  it('should reject child execution when guardAddress does not match the parent', async () => {
+    const { childZkApp } = await deployChildGuard();
+    const blockProducer = PrivateKey.random().toPublicKey();
+    const wrongParent = PrivateKey.random().toPublicKey();
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      wrongParent,
+      Field(0),
+      ctx.networkId,
+      PublicKey.empty(),
+      ExecutionMode.CHILD
+    );
+    const proposalHash = proposal.hash();
+
+    await expect(async () => {
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await childZkApp.child_executeDelegate(
+          proposal,
+          ctx.approvalStore.getWitness(proposalHash),
+          Field(0),
+          new ApprovalStore().getWitness(proposalHash),
+          blockProducer
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow();
+  });
+
+  it('should allow a child to execute a local proposal with its own approvals', async () => {
+    const { childZkApp, childKey, childAddress } = await deployChildGuard();
+    const childCtx = makeChildContext(childZkApp, childKey, childAddress);
+    const blockProducer = PrivateKey.random().toPublicKey();
+
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      childAddress
+    );
+    const proposalHash = await proposeTransaction(childCtx, proposal, 0);
+    await approveTransaction(childCtx, proposal, 1);
+
+    const approvalWitness = childCtx.approvalStore.getWitness(proposalHash);
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await childZkApp.executeDelegate(
+        proposal,
+        approvalWitness,
+        Field(3),
+        blockProducer
+      );
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+
+    const childDelegate = Mina.getAccount(childAddress).delegate;
+    expect(childDelegate).toBeDefined();
+    expect(childDelegate!.equals(blockProducer).toBoolean()).toBe(true);
+  });
+
+  it('should reject child-routed proposals through local execute paths', async () => {
+    const { childZkApp, childAddress } = await deployChildGuard();
+    const blockProducer = PrivateKey.random().toPublicKey();
+
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress,
+      Field(0),
+      ctx.networkId,
+      childAddress,
+      ExecutionMode.CHILD
+    );
+    const proposalHash = await proposeTransaction(ctx, proposal, 0);
+    await approveTransaction(ctx, proposal, 1);
+
+    await expect(async () => {
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeDelegate(
+          proposal,
+          ctx.approvalStore.getWitness(proposalHash),
+          Field(3),
+          blockProducer
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Not a local execution proposal');
+
+    await expect(async () => {
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await childZkApp.executeDelegate(
+          proposal,
+          new ApprovalStore().getWitness(proposalHash),
+          Field(0),
+          blockProducer
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow('Not a local execution proposal');
+  });
+
+  it('should reject proposing a child-routed proposal on a child account', async () => {
+    const { childZkApp, childKey, childAddress } = await deployChildGuard();
+    const childCtx = makeChildContext(childZkApp, childKey, childAddress);
+    const blockProducer = PrivateKey.random().toPublicKey();
+
+    const proposal = createDelegateProposal(
+      blockProducer,
+      Field(0),
+      Field(0),
+      childAddress,
+      Field(0),
+      ctx.networkId,
+      PublicKey.empty(),
+      ExecutionMode.CHILD
+    );
+
+    await expect(async () => {
+      await proposeTransaction(childCtx, proposal, 0);
+    }).toThrow('Child-routed proposals must be stored on a parent guard');
   });
 });
 

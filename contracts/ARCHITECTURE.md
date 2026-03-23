@@ -1,6 +1,6 @@
 # MinaGuard Architecture
 
-MinaGuard is a multisig vault zkApp for Mina, built with o1js. It manages shared funds via a quorum of owner signatures verified inside zero-knowledge circuits. The contract supports two execution flows: a **multi-step on-chain flow** (propose → approve → execute) and a **batch signature flow** where all signatures are collected off-chain and verified in a single transaction.
+MinaGuard is a multisig vault zkApp for Mina, built with o1js. It manages shared funds via a quorum of owner signatures verified inside zero-knowledge circuits. A guard can operate either as a **main account** (`parent = PublicKey.empty()`) or as a **child account** linked to a parent guard. The contract supports two execution flows: a **multi-step on-chain flow** (propose → approve → execute) and a **batch signature flow** where all signatures are collected off-chain and verified in a single transaction.
 
 ## File Layout
 
@@ -14,9 +14,9 @@ MinaGuard is a multisig vault zkApp for Mina, built with o1js. It manages shared
 | `utils.ts` | `ownerKey()` helper (`Poseidon.hash(owner.toFields())`) |
 | `index.ts` | Public exports |
 
-## On-Chain State (8 Fields)
+## On-Chain State
 
-Mina limits zkApps to 8 state fields. MinaGuard uses all 8:
+MinaGuard's intended child-account layout stores governance state directly on-chain:
 
 | Slot | Field | Purpose |
 | ---- | ----- | ------- |
@@ -25,9 +25,13 @@ Mina limits zkApps to 8 state fields. MinaGuard uses all 8:
 | 2 | `numOwners` | Current owner count |
 | 3 | `proposalCounter` | Monotonic counter; each proposal gets a unique ID |
 | 4 | `voteNullifierRoot` | MerkleMap root preventing double-voting |
-| 5 | `approvalRoot` | MerkleMap root of approval counts (`proposalHash → count`) |
+| 5 | `approvalRoot` | MerkleMap root of approval counts (`proposalHash -> count`) |
 | 6 | `configNonce` | Incremented on governance changes; invalidates stale proposals |
 | 7 | `networkId` | Network identifier; prevents cross-network replay |
+| 8 | `parent` | `PublicKey.empty()` for main guards, or the linked parent guard for child guards |
+| 9 | `childExecutionRoot` | MerkleMap root keyed by `proposalHash` to prevent replaying child executions on the same child |
+
+This direct layout is the intended long-term model. With the current local o1js runtime, this expanded state shape may exceed the still-enforced 8-field-element limit, so deploy/proving tests can fail locally until the Mina upgrade lands.
 
 ## Owner Storage Model
 
@@ -55,7 +59,7 @@ Active owners are `Some(pk)`, padding slots are `None`. Three circuit functions 
 
 ## Off-Chain Storage
 
-Three independent store classes in `storage.ts` mirror on-chain roots. Each is self-contained and serializable.
+Three independent store classes in `storage.ts` mirror on-chain roots. Child execution uses its own `MerkleMap`-style replay tracking rooted at `childExecutionRoot`, keyed by `proposalHash` per child guard instance.
 
 ### OwnerStore
 
@@ -99,13 +103,22 @@ class TransactionProposal extends Struct({
   configNonce:  Field,       // Must match on-chain configNonce
   expiryBlock:  Field,       // Block height deadline (0 = no expiry)
   networkId:    Field,       // Must match on-chain networkId
-  guardAddress: PublicKey,   // Must match contract address
+  guardAddress: PublicKey,   // Approval source: current contract for LOCAL, parent for CHILD
+  executionMode: Field,      // ExecutionMode.LOCAL or ExecutionMode.CHILD
+  childAccount: PublicKey,   // Empty for LOCAL or CHILD wildcard; specific child when CHILD targets one child
 })
 ```
 
 Unused receiver slots use `Receiver.empty()` (`PublicKey.empty()` + `UInt64(0)`). Non-transfer proposals (governance actions) use all-empty receiver slots.
 
-`hash()` returns `Poseidon(all fields)`. This hash is the universal key for approval counts, vote nullifiers, and signatures.
+`hash()` returns `Poseidon(all fields)`, including `executionMode` and `childAccount`. This hash is the universal key for approval counts, vote nullifiers, and signatures.
+
+Child-routing semantics:
+
+- `executionMode == LOCAL` means the proposal executes on the current contract using that contract's own approvals/config. In this mode, `childAccount` must be `PublicKey.empty()`.
+- `executionMode == CHILD` means the proposal executes on a child using the parent's approvals/config. In this mode, `guardAddress` must equal the parent.
+- `executionMode == CHILD` with `childAccount == PublicKey.empty()` is wildcard-child executable and may be consumed once per linked child.
+- `executionMode == CHILD` with `childAccount != PublicKey.empty()` binds the proposal to one specific child account.
 
 ### Why hash-keyed instead of nonce-keyed
 
@@ -127,13 +140,15 @@ Defined in `constants.ts`:
 
 | Constant | Value | Purpose |
 | -------- | ----- | ------- |
-| `MAX_RECEIVERS` | `5` | Fixed-size bound for receiver/amount arrays in proposals |
+| `MAX_RECEIVERS` | `9` | Fixed-size bound for receiver/amount arrays in proposals |
 | `MAX_OWNERS` | `20` | Fixed-size bound for owner witnesses and signature batches |
 | `INITIAL_OWNER_CHAIN` | `Poseidon.hashWithPrefix('owner-chain', [])` | Chain hash seed for owners |
 | `INITIAL_SIGNER_CHAIN` | `Poseidon.hashWithPrefix('signer-chain', [])` | Chain hash seed for batch signer audit trail |
 | `PROPOSED_MARKER` | `Field(1)` | Base value written to approval map on propose |
 | `EXECUTED_MARKER` | `Field(0).sub(1)` | Max field value; marks executed proposals |
 | `EMPTY_MERKLE_MAP_ROOT` | `new MerkleMap().getRoot()` | Initializes `approvalRoot` and `voteNullifierRoot` |
+| `ExecutionMode.LOCAL` | `Field(0)` | Proposal executes on the current contract using local governance |
+| `ExecutionMode.CHILD` | `Field(1)` | Proposal executes on a child using parent governance |
 
 ## On-Chain Multi-Step Flow
 
@@ -143,11 +158,12 @@ Defined in `constants.ts`:
 
 ### Setup
 
-`setup(ownersCommitment, threshold, numOwners, networkId, initialOwners)` — one-time initialization.
+`setup(ownersCommitment, threshold, numOwners, networkId, parent, initialOwners)` — one-time initialization.
 
 - Guard: `ownersCommitment == Field(0)` (not yet initialized)
 - Validates: `threshold > 0`, `numOwners >= threshold`, `numOwners <= MAX_OWNERS`
-- Initializes all 8 state fields; `approvalRoot` and `voteNullifierRoot` set to `EMPTY_MERKLE_MAP_ROOT`
+- Initializes state roots and counters; `approvalRoot`, `voteNullifierRoot`, and `childExecutionRoot` are set to `EMPTY_MERKLE_MAP_ROOT`
+- Persists `parent`; `PublicKey.empty()` means this guard is a main account, otherwise it is a child account
 - Emits `SetupEvent` + one `SetupOwnerEvent` per `MAX_OWNERS` slot (fixed-size for deterministic indexing)
 - Trust model: clients should independently compute the expected commitment and verify it matches
 
@@ -159,11 +175,12 @@ There is only one propose method and it **always auto-approves** as the proposer
 
 1. Verify proposer is an owner (chain hash witness)
 2. Assert `configNonce`, `networkId`, `guardAddress` match on-chain values
-3. Increment `proposalCounter`
-4. Verify proposer's signature over `[proposalHash]`
-5. Check and set vote nullifier (prevents re-proposal)
-6. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1` (= `Field(2)`, the marker plus the proposer's approval)
-7. Emit `ProposalEvent` (includes all proposal fields for indexer reconstruction) and `ApprovalEvent`
+3. Assert routing is valid: `LOCAL` proposals cannot target a child; `CHILD` proposals can only be proposed/approved on a parent guard
+4. Increment `proposalCounter`
+5. Verify proposer's signature over `[proposalHash]`
+6. Check and set vote nullifier (prevents re-proposal)
+7. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1` (= `Field(2)`, the marker plus the proposer's approval)
+8. Emit `ProposalEvent` (includes all proposal fields for indexer reconstruction) and `ApprovalEvent`
 
 ### Approve
 
@@ -171,18 +188,21 @@ There is only one propose method and it **always auto-approves** as the proposer
 
 1. Verify approver is an owner
 2. Assert `configNonce`, `networkId`, `guardAddress` match
-3. Verify signature over `[proposalHash]`
-4. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed (`count != EXECUTED_MARKER`)
-5. Check and set vote nullifier (prevents double-vote)
-6. Increment approval count in the approval map
-7. Emit `ApprovalEvent`
+3. Assert the same routing invariants as `propose`
+4. Verify signature over `[proposalHash]`
+5. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed (`count != EXECUTED_MARKER`)
+6. Check and set vote nullifier (prevents double-vote)
+7. Increment approval count in the approval map
+8. Emit `ApprovalEvent`
 
-### Execute (4 methods)
+### Execute (5 methods)
 
-All execute methods share these common checks:
+The local execute methods (`executeTransfer`, `executeOwnerChange`, `executeThresholdChange`, `executeDelegate` and their batch variants) share these common checks:
 
 - Wallet is initialized (`ownersCommitment != 0`)
 - `txType` matches the method
+- `executionMode == LOCAL`
+- `childAccount == PublicKey.empty()`
 - `configNonce`, `networkId`, `guardAddress` match on-chain values
 - Proposal not expired (if `expiryBlock != 0`, asserts `blockchainLength <= expiryBlock`)
 - Not already executed (`approvalCount != EXECUTED_MARKER`)
@@ -190,7 +210,7 @@ All execute methods share these common checks:
 - Threshold satisfied: `approvalCount - PROPOSED_MARKER >= threshold`
 - Approval witness verified against `approvalRoot`
 
-After execution, the approval count is overwritten with `EXECUTED_MARKER`, permanently preventing re-execution or further approvals. Execution is **permissionless** — anyone can trigger it once the threshold is met.
+After a local execution, the approval count is overwritten with `EXECUTED_MARKER`, permanently preventing re-execution or further approvals. Execution is **permissionless** — anyone can trigger it once the threshold is met.
 
 **`executeTransfer`** — Loops through all `MAX_RECEIVERS` slots, sending to each non-empty receiver. Empty slots (`PublicKey.empty()`) get their amount zeroed via `Provable.if` (a send of 0 is a no-op). Emits `ExecutionEvent`.
 
@@ -200,11 +220,13 @@ After execution, the approval count is overwritten with `EXECUTED_MARKER`, perma
 
 **`executeDelegate`** — Validates `proposal.data` is `Field(0)` (un-delegate to self) or `ownerKey(delegate)`. Sets `account.delegate` accordingly. Does **not** increment `configNonce`. Emits `ExecutionEvent` + `DelegateEvent`.
 
+**`child_executeDelegate`** — Child-only execution path for `SET_DELEGATE`. It asserts `parent != PublicKey.empty()`, requires `executionMode == CHILD`, checks that `proposal.guardAddress` matches the stored parent, and requires `proposal.childAccount` to be either this child or `PublicKey.empty()` for wildcard execution. Approval count, threshold, `configNonce`, `networkId`, and `approvalRoot` are read from the parent guard. Replay protection is local to the child via `childExecutionRoot`, so the same wildcard proposal can be consumed independently by multiple linked children but only once per child.
+
 ## Batch Signature Flow
 
 The batch flow bypasses the multi-step propose/approve/execute cycle. Signatures from a quorum of owners are collected **off-chain** and verified in a single transaction.
 
-Four batch methods: `executeTransferBatchSig`, `executeOwnerChangeBatchSig`, `executeThresholdChangeBatchSig`, `executeDelegateBatchSig`. `executeTransferBatchSig` loops through all `MAX_RECEIVERS` slots, sending to each non-empty receiver (empty slots get their amount zeroed via `Provable.if`, so a send of 0 is a no-op), mirroring `executeTransfer`.
+Four batch methods exist today: `executeTransferBatchSig`, `executeOwnerChangeBatchSig`, `executeThresholdChangeBatchSig`, `executeDelegateBatchSig`. `executeTransferBatchSig` loops through all `MAX_RECEIVERS` slots, sending to each non-empty receiver (empty slots get their amount zeroed via `Provable.if`, so a send of 0 is a no-op), mirroring `executeTransfer`. Child delegation currently has only the multi-step `child_executeDelegate` path; there is no batch child-delegate method yet.
 
 ### Batch Verification Circuit
 
@@ -238,15 +260,15 @@ Returns `{ approvalCount, signerChain, ownerChain }`.
 | Event | Fields | Emitted By |
 | ----- | ------ | ---------- |
 | `DeployEvent` | `guardAddress` | `deploy` |
-| `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId` | `setup` |
+| `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId, parent` | `setup` |
 | `SetupOwnerEvent` | `owner, index` | `setup` (one per `MAX_OWNERS` slot) |
-| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, uid, configNonce, expiryBlock, networkId, guardAddress` | `propose` (receiver data emitted via separate `ProposalReceiverEvent`s) |
+| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, uid, configNonce, expiryBlock, networkId, guardAddress, executionMode, childAccount` | `propose` (receiver data emitted via separate `ProposalReceiverEvent`s) |
 | `ProposalReceiverEvent` | `proposalHash, receiver, amount, index` | `propose` (one per `MAX_RECEIVERS` slot) |
 | `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
-| `ExecutionEvent` | `proposalHash, txType` | `executeTransfer`, `executeOwnerChange`, `executeThresholdChange`, `executeDelegate` (receivers committed via `proposalHash`) |
+| `ExecutionEvent` | `proposalHash, txType` | `executeTransfer`, `executeOwnerChange`, `executeThresholdChange`, `executeDelegate`, `child_executeDelegate` (receivers committed via `proposalHash`) |
 | `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners` | `executeOwnerChange` |
 | `ThresholdChangeEvent` | `proposalHash, oldThreshold, newThreshold` | `executeThresholdChange` |
-| `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` |
+| `DelegateEvent` | `proposalHash, delegate` | `executeDelegate`, `child_executeDelegate` |
 
 ### Batch Flow Events
 
@@ -267,12 +289,14 @@ Returns `{ approvalCount, signerChain, ownerChain }`.
 | Only owners can approve | Chain hash witness + signature over `proposalHash` |
 | No double-voting | Vote nullifier map keyed by `hash(proposalHash, approver)` |
 | Proposal existence verified | `PROPOSED_MARKER` in approval map (on-chain flow) |
-| No re-execution | `EXECUTED_MARKER` replaces count after execution (both flows) |
+| No re-execution on main-account paths | `EXECUTED_MARKER` replaces count after execution (both flows) |
 | Stale proposals rejected | `configNonce` in proposal must match on-chain value |
 | Time-bounded proposals | Optional `expiryBlock` checked against `blockchainLength` |
 | No proposal substitution | Approvals keyed by content hash, not sequential ID |
 | Cross-network replay prevented | `networkId` in proposal must match on-chain |
-| Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |
+| Cross-contract replay prevented | Main paths require `guardAddress == this.address`; child paths require `guardAddress == parent` |
+| No cross-child substitution | `childAccount` is part of `proposalHash`, binding approvals to a specific child or wildcard child intent |
+| No same-child replay for wildcard proposals | Each child tracks executed child proposals in `childExecutionRoot` keyed by `proposalHash` |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
 | Anyone can execute | Execution is permissionless once threshold is met |
 | MINA receivable | `receive: Permissions.none()` allows deposits without proof |

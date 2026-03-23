@@ -20,3 +20,8 @@ export const TxType = {
   CHANGE_THRESHOLD: Field(3),
   SET_DELEGATE: Field(4),
 };
+
+export const ExecutionMode = {
+  LOCAL: Field(0),
+  CHILD: Field(1),
+};

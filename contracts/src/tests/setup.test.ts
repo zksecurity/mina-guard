@@ -1,4 +1,4 @@
-import { Field, Mina, AccountUpdate, UInt64 } from 'o1js';
+import { Field, Mina, AccountUpdate, UInt64, PublicKey } from 'o1js';
 import { EMPTY_MERKLE_MAP_ROOT } from '../constants.js';
 import { SetupOwnersInput } from '../MinaGuard.js';
 import {
@@ -28,6 +28,17 @@ describe('MinaGuard - Setup', () => {
     expect(ctx.zkApp.configNonce.get()).toEqual(Field(0));
     expect(ctx.zkApp.approvalRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
     expect(ctx.zkApp.voteNullifierRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
+    expect(ctx.zkApp.parent.get()).toEqual(PublicKey.empty());
+    expect(ctx.zkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
+  });
+
+  it('should persist a non-empty parent when initialized as a child account', async () => {
+    const parentAddress = ctx.owners[0].pub;
+
+    await deployAndSetup(ctx, 2, parentAddress);
+
+    expect(ctx.zkApp.parent.get()).toEqual(parentAddress);
+    expect(ctx.zkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
   });
 
   it('should emit deploy and setup bootstrap events', async () => {
@@ -51,6 +62,7 @@ describe('MinaGuard - Setup', () => {
           Field(2),
           Field(3),
           Field(1),
+          PublicKey.empty(),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })
@@ -80,6 +92,7 @@ describe('MinaGuard - Setup', () => {
           Field(0),
           Field(3),
           Field(1),
+          PublicKey.empty(),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })
@@ -108,6 +121,7 @@ describe('MinaGuard - Setup', () => {
           Field(5),
           Field(3),
           Field(1),
+          PublicKey.empty(),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })

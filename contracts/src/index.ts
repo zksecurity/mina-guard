@@ -19,7 +19,15 @@ export {
   DelegateBatchEvent,
 } from './MinaGuard.js';
 
-export { TxType, EXECUTED_MARKER, EMPTY_MERKLE_MAP_ROOT, PROPOSED_MARKER, MAX_OWNERS, MAX_RECEIVERS } from './constants.js';
+export {
+  TxType,
+  ExecutionMode,
+  EXECUTED_MARKER,
+  EMPTY_MERKLE_MAP_ROOT,
+  PROPOSED_MARKER,
+  MAX_OWNERS,
+  MAX_RECEIVERS,
+} from './constants.js';
 
 export { OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment } from './list-commitment.js';
 

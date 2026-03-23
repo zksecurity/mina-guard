@@ -1,5 +1,5 @@
-import { Field, Mina, PrivateKey, Signature, UInt64, Bool } from 'o1js';
-import { EXECUTED_MARKER, MAX_RECEIVERS } from '../constants.js';
+import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64, Bool } from 'o1js';
+import { EXECUTED_MARKER, ExecutionMode, MAX_RECEIVERS } from '../constants.js';
 import { TransactionProposal, Receiver } from '../MinaGuard.js';
 import { TxType } from '../constants.js';
 import {
@@ -19,6 +19,14 @@ import { PublicKeyOption, computeOwnerChain } from '../list-commitment.js';
 import { SignatureInput, SignatureOption } from '../batch-verify.js';
 import { ownerKey } from '../utils.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
+
+function currentThreshold(ctx: TestContext): Field {
+  return ctx.zkApp.threshold.get();
+}
+
+function currentNumOwners(ctx: TestContext): Field {
+  return ctx.zkApp.numOwners.get();
+}
 
 describe('MinaGuard - Governance', () => {
   let ctx: TestContext;
@@ -57,7 +65,7 @@ describe('MinaGuard - Governance', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
 
-      expect(ctx.zkApp.numOwners.get()).toEqual(Field(4));
+      expect(currentNumOwners(ctx)).toEqual(Field(4));
 
       // Verify commitment matches expected (sorted)
       const sortedOwners = [...ownerPubs, newOwner].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
@@ -100,7 +108,7 @@ describe('MinaGuard - Governance', () => {
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
       const commitmentBefore = ctx.zkApp.ownersCommitment.get();
-      const numOwnersBefore = ctx.zkApp.numOwners.get();
+      const numOwnersBefore = currentNumOwners(ctx);
 
       await expect(async () => {
         const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -113,7 +121,7 @@ describe('MinaGuard - Governance', () => {
       }).toThrow('Proposal not found');
 
       expect(ctx.zkApp.ownersCommitment.get()).toEqual(commitmentBefore);
-      expect(ctx.zkApp.numOwners.get()).toEqual(numOwnersBefore);
+      expect(currentNumOwners(ctx)).toEqual(numOwnersBefore);
     });
 
     it('should increment configNonce after adding owner', async () => {
@@ -166,7 +174,7 @@ describe('MinaGuard - Governance', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
 
-      expect(ctx.zkApp.numOwners.get()).toEqual(Field(2));
+      expect(currentNumOwners(ctx)).toEqual(Field(2));
 
       // Verify commitment matches expected (owners[0], owners[1])
       const expectedCommitment = computeOwnerChain([ctx.owners[0].pub, ctx.owners[1].pub]);
@@ -255,7 +263,7 @@ describe('MinaGuard - Governance', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
 
-      expect(ctx.zkApp.threshold.get()).toEqual(Field(3));
+      expect(currentThreshold(ctx)).toEqual(Field(3));
     });
 
     it('should reject threshold = 0', async () => {
@@ -282,7 +290,7 @@ describe('MinaGuard - Governance', () => {
       const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
       const proposalHash = proposal.hash();
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-      const thresholdBefore = ctx.zkApp.threshold.get();
+      const thresholdBefore = currentThreshold(ctx);
 
       await expect(async () => {
         const txn = await Mina.transaction(ctx.deployerAccount, async () => {
@@ -294,7 +302,7 @@ describe('MinaGuard - Governance', () => {
         await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Proposal not found');
 
-      expect(ctx.zkApp.threshold.get()).toEqual(thresholdBefore);
+      expect(currentThreshold(ctx)).toEqual(thresholdBefore);
     });
 
     it('should reject threshold above numOwners', async () => {
@@ -367,6 +375,8 @@ describe('MinaGuard - Governance', () => {
         expiryBlock: Field(0),
         networkId: Field(1),
         guardAddress: ctx.zkAppAddress,
+        executionMode: ExecutionMode.LOCAL,
+        childAccount: PublicKey.empty(),
       });
 
       await expect(async () => {
@@ -425,7 +435,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
 
-      expect(ctx.zkApp.numOwners.get()).toEqual(Field(4));
+      expect(currentNumOwners(ctx)).toEqual(Field(4));
 
       const sortedOwners = [...ownerPubs, newOwner].sort((a, b) => a.toBase58() > b.toBase58() ? 1 : -1);
       const expectedCommitment = computeOwnerChain(sortedOwners);
@@ -628,6 +638,8 @@ describe('MinaGuard - Owner Change BatchSig', () => {
         expiryBlock: Field(0),
         networkId: Field(99),
         guardAddress: ctx.zkAppAddress,
+        executionMode: ExecutionMode.LOCAL,
+        childAccount: PublicKey.empty(),
       });
       const proposalHash = proposal.hash();
 
@@ -728,7 +740,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
 
-      expect(ctx.zkApp.numOwners.get()).toEqual(Field(2));
+      expect(currentNumOwners(ctx)).toEqual(Field(2));
 
       const expectedCommitment = computeOwnerChain([ctx.owners[0].pub, ctx.owners[1].pub]);
       expect(ctx.zkApp.ownersCommitment.get()).toEqual(expectedCommitment);
@@ -843,7 +855,7 @@ describe('MinaGuard - Threshold Change BatchSig', () => {
     await txn.prove();
     await txn.sign([ctx.deployerKey]).send();
 
-    expect(ctx.zkApp.threshold.get()).toEqual(Field(3));
+    expect(currentThreshold(ctx)).toEqual(Field(3));
   });
 
   it('should increment configNonce after threshold change', async () => {

@@ -14,7 +14,13 @@ import {
   SetupOwnersInput,
   TransactionProposal,
 } from '../MinaGuard.js';
-import { TxType, PROPOSED_MARKER, MAX_OWNERS, MAX_RECEIVERS } from '../constants.js';
+import {
+  TxType,
+  ExecutionMode,
+  PROPOSED_MARKER,
+  MAX_OWNERS,
+  MAX_RECEIVERS,
+} from '../constants.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
 import { SignatureInputs, SignatureInput, SignatureOption } from '../batch-verify.js';
@@ -166,9 +172,36 @@ export function getOwnersCommitment(ctx: TestContext): Field {
 /** Deploys MinaGuard, funds it, and performs one-time setup. */
 export async function deployAndSetup(
   ctx: TestContext,
-  threshold = 2
+  threshold = 2,
+  parent = PublicKey.empty()
 ): Promise<void> {
   const { zkApp, zkAppKey, zkAppAddress, deployerKey, deployerAccount, owners } = ctx;
+
+  await deployAndSetupGuard(
+    deployerAccount,
+    deployerKey,
+    zkApp,
+    zkAppKey,
+    zkAppAddress,
+    owners.map((o) => o.pub),
+    ctx.networkId,
+    threshold,
+    parent
+  );
+}
+
+export async function deployAndSetupGuard(
+  deployerAccount: PublicKey,
+  deployerKey: PrivateKey,
+  zkApp: MinaGuard,
+  zkAppKey: PrivateKey,
+  zkAppAddress: PublicKey,
+  owners: PublicKey[],
+  networkId: Field,
+  threshold = 2,
+  parent = PublicKey.empty()
+): Promise<void> {
+  const ownerPubs = [...owners];
 
   const deployTxn = await Mina.transaction(deployerAccount, async () => {
     AccountUpdate.fundNewAccount(deployerAccount);
@@ -184,15 +217,16 @@ export async function deployAndSetup(
   await fundTxn.prove();
   await fundTxn.sign([deployerKey]).send();
 
-  const ownersCommitment = computeOwnerChain(owners.map((o) => o.pub));
-  const setupOwners = toFixedSetupOwners(owners.map((o) => o.pub));
+  const ownersCommitment = computeOwnerChain(ownerPubs);
+  const setupOwners = toFixedSetupOwners(ownerPubs);
 
   const setupTxn = await Mina.transaction(deployerAccount, async () => {
     await zkApp.setup(
       ownersCommitment,
       Field(threshold),
-      Field(owners.length),
-      ctx.networkId,
+      Field(ownerPubs.length),
+      networkId,
+      parent,
       new SetupOwnersInput({ owners: setupOwners })
     );
   });
@@ -209,7 +243,9 @@ export function createTransferProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  executionMode = ExecutionMode.LOCAL
 ): TransactionProposal {
   const padded = [...receivers];
   while (padded.length < MAX_RECEIVERS) {
@@ -225,6 +261,8 @@ export function createTransferProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    executionMode,
+    childAccount,
   });
 }
 
@@ -239,7 +277,9 @@ export function createAddOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  executionMode = ExecutionMode.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -251,6 +291,8 @@ export function createAddOwnerProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    executionMode,
+    childAccount,
   });
 }
 
@@ -261,7 +303,9 @@ export function createRemoveOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  executionMode = ExecutionMode.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -273,6 +317,8 @@ export function createRemoveOwnerProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    executionMode,
+    childAccount,
   });
 }
 
@@ -283,7 +329,9 @@ export function createThresholdProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  executionMode = ExecutionMode.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -295,6 +343,8 @@ export function createThresholdProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    executionMode,
+    childAccount,
   });
 }
 
@@ -305,7 +355,9 @@ export function createDelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  executionMode = ExecutionMode.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -317,6 +369,8 @@ export function createDelegateProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    executionMode,
+    childAccount,
   });
 }
 
@@ -326,7 +380,9 @@ export function createUndelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  executionMode = ExecutionMode.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -338,6 +394,8 @@ export function createUndelegateProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    executionMode,
+    childAccount,
   });
 }
 
