@@ -1,6 +1,10 @@
 'use client';
 
-export default function LedgerSigningModal() {
+import type { LedgerSigningContext } from '@/lib/multisigClient';
+
+export default function LedgerSigningModal({ context = 'signing' }: { context?: LedgerSigningContext }) {
+  const isConnecting = context === 'connecting';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="bg-safe-dark border border-safe-border rounded-xl w-full max-w-sm mx-4 p-6 space-y-4 text-center">
@@ -14,11 +18,13 @@ export default function LedgerSigningModal() {
         </div>
 
         <h3 className="text-sm font-semibold uppercase tracking-wider text-white">
-          Check Your Ledger
+          {isConnecting ? 'Connecting to Ledger' : 'Check Your Ledger'}
         </h3>
 
         <p className="text-sm text-safe-text">
-          Please review and confirm the transaction on your Ledger device.
+          {isConnecting
+            ? 'Reading address from your Ledger device...'
+            : 'Please review and confirm the transaction on your Ledger device.'}
         </p>
 
         <p className="text-xs text-safe-text/70">

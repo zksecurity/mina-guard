@@ -8,7 +8,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext, type OperationBanner } from '@/lib/app-context';
-import { warmupWorker, onLedgerSigningChange } from '@/lib/multisigClient';
+import { warmupWorker, onLedgerSigningChange, type LedgerSigningContext } from '@/lib/multisigClient';
 import LedgerSigningModal from '@/components/LedgerSigningModal';
 
 /** Root-level provider that wires wallet state with backend-indexed contract data. */
@@ -46,7 +46,11 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Ledger signing popup state
   const [ledgerSigning, setLedgerSigning] = useState(false);
-  useEffect(() => onLedgerSigningChange(setLedgerSigning), []);
+  const [ledgerContext, setLedgerContext] = useState<LedgerSigningContext>('signing');
+  useEffect(() => onLedgerSigningChange((signing, context) => {
+    setLedgerSigning(signing);
+    if (context) setLedgerContext(context);
+  }), []);
 
   // Global operation state for worker-based transactions
   const [isOperating, setIsOperating] = useState(false);
@@ -132,7 +136,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           }}
         />
         <main className="flex-1 min-h-screen">{children}</main>
-        {ledgerSigning && <LedgerSigningModal />}
+        {ledgerSigning && <LedgerSigningModal context={ledgerContext} />}
       </div>
     </AppContext.Provider>
   );

@@ -20,18 +20,21 @@ export interface SignerConfig {
 /** Optional callback to receive step-based progress updates from the worker. */
 export type OnProgress = (step: string) => void;
 
+/** Context for the Ledger signing modal: 'connecting' for address retrieval, 'signing' for tx signing. */
+export type LedgerSigningContext = 'connecting' | 'signing';
+
 /** Listener called when Ledger signing state changes. */
-let ledgerSigningListener: ((signing: boolean) => void) | null = null;
+let ledgerSigningListener: ((signing: boolean, context?: LedgerSigningContext) => void) | null = null;
 
 /** Registers a callback that fires when Ledger device interaction starts/stops. */
-export function onLedgerSigningChange(fn: (signing: boolean) => void): () => void {
+export function onLedgerSigningChange(fn: (signing: boolean, context?: LedgerSigningContext) => void): () => void {
   ledgerSigningListener = fn;
   return () => { ledgerSigningListener = null; };
 }
 
 /** Fires the Ledger signing listener (e.g. to show/hide the "Check Ledger" modal). */
-export function setLedgerSigning(signing: boolean) {
-  ledgerSigningListener?.(signing);
+export function setLedgerSigning(signing: boolean, context?: LedgerSigningContext) {
+  ledgerSigningListener?.(signing, context);
 }
 
 let worker: Worker | null = null;
@@ -58,7 +61,7 @@ function proxiedSendTx(signer?: SignerConfig) {
 function proxiedSignFeePayer(signer?: SignerConfig) {
   if (signer?.type !== 'ledger') return undefined;
   return Comlink.proxy(async (commitment: string) => {
-    ledgerSigningListener?.(true);
+    ledgerSigningListener?.(true, 'signing');
     try {
       return await signFeePayer(commitment, signer.ledgerAccountIndex);
     } finally {
@@ -71,7 +74,7 @@ function proxiedSignFeePayer(signer?: SignerConfig) {
 function proxiedSignFields(signer?: SignerConfig) {
   if (signer?.type === 'ledger') {
     return Comlink.proxy(async (fields: Array<string>) => {
-      ledgerSigningListener?.(true);
+      ledgerSigningListener?.(true, 'signing');
       try {
         return await ledgerSignFields(fields, signer.ledgerAccountIndex);
       } finally {

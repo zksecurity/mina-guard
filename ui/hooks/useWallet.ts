@@ -110,7 +110,7 @@ export function useWallet() {
     localStorage.removeItem('wallet-disconnected');
     setIsLoading(true);
     setError(null);
-    setLedgerSigning(true);
+    setLedgerSigning(true, 'connecting');
     try {
       const address = await getLedgerAddress(idx);
       localStorage.setItem('wallet-type', 'ledger');

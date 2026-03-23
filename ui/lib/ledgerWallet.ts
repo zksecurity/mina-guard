@@ -107,12 +107,11 @@ export async function getLedgerAddress(
   const ledger = await getApp();
   let result;
   try {
-    result = await ledger.getAddress(accountIndex, true);
+    result = await ledger.getAddress(accountIndex, false);
   } catch (err) {
     throw toLedgerError(err);
   }
   assertLedgerSuccess(result);
-  console.log("Ledger addr: " + result.publicKey);
   return result.publicKey!;
 }
 
