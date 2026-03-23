@@ -26,7 +26,7 @@ export default function DeployPage() {
   const [generating, setGenerating] = useState(false);
 
   // Setup fields
-  const [ownerFields, setOwnerFields] = useState<string[]>(() => [wallet.address ?? '']);
+  const [ownerFields, setOwnerFields] = useState<string[]>(['']);
   const [threshold, setThreshold] = useState('1');
   const [networkId, setNetworkId] = useState('1');
   const [formError, setFormError] = useState<string | null>(null);
@@ -46,6 +46,12 @@ export default function DeployPage() {
       generate();
     }
   }, [wallet.connected, keypair, generating, generate]);
+
+  useEffect(() => {
+    if (wallet.address) {
+      setOwnerFields([wallet.address]);
+    }
+  }, [wallet.address]);
 
   const parsedOwners = useMemo(
     () => ownerFields.map((s) => s.trim()).filter(Boolean),
