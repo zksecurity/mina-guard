@@ -107,6 +107,26 @@ afterAll(async () => {
 });
 
 describe('POST /api/contracts/:address/proposals', () => {
+  test('rejects invalid contract address param', async () => {
+    const res = await post('/api/contracts/not-a-valid-address/proposals', {
+      toAddress: owners[0].pub.toBase58(),
+      amount: '1000000000',
+      tokenId: '0',
+      txType: '0',
+      data: '0',
+      uid: '42',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: guardAddress.toBase58(),
+      proposalHash,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid contract address');
+  });
+
   test('creates an offchain proposal', async () => {
     const addr = guardAddress.toBase58();
     const res = await post(`/api/contracts/${addr}/proposals`, {
@@ -172,6 +192,19 @@ describe('POST /api/contracts/:address/proposals', () => {
 });
 
 describe('POST /api/contracts/:address/proposals/:proposalHash/signatures', () => {
+  test('rejects invalid proposal hash param', async () => {
+    const addr = guardAddress.toBase58();
+    const res = await post(`/api/contracts/${addr}/proposals/not-a-valid-hash/signatures`, {
+      signer: owners[0].pub.toBase58(),
+      signatureR: '1',
+      signatureS: '1',
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid proposal hash');
+  });
+
   test('accepts a valid signature from owner 0', async () => {
     const addr = guardAddress.toBase58();
     const sig = Signature.create(owners[0].key, [Field(proposalHash)]);
@@ -257,6 +290,23 @@ describe('POST /api/contracts/:address/proposals/:proposalHash/signatures', () =
 });
 
 describe('GET /api/contracts/:address/proposals/:proposalHash/batch-payload', () => {
+  test('rejects invalid contract address param', async () => {
+    const res = await get(`/api/contracts/not-a-valid-address/proposals/${proposalHash}/batch-payload`);
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid contract address');
+  });
+
+  test('rejects invalid proposal hash param', async () => {
+    const addr = guardAddress.toBase58();
+    const res = await get(`/api/contracts/${addr}/proposals/not-a-valid-hash/batch-payload`);
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid proposal hash');
+  });
+
   test('returns ready payload with correct structure', async () => {
     const addr = guardAddress.toBase58();
     const res = await get(`/api/contracts/${addr}/proposals/${proposalHash}/batch-payload`);

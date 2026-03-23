@@ -1,35 +1,65 @@
 import { Router } from 'express';
-import { PublicKey } from 'o1js';
+import { z } from 'zod';
 import { prisma } from './db.js';
 import type { MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
+import {
+  addressParamSchema,
+  clampedIntQuerySchema,
+  nullableBlockQuerySchema,
+  optionalBooleanQuerySchema,
+  optionalNonEmptyStringQuerySchema,
+  proposalHashParamSchema,
+  validateParams,
+  validateQuery,
+} from './request-validation.js';
 
-const PROPOSAL_HASH_RE = /^[0-9a-fA-F]{64}$/;
+const addressParamsSchema = z.object({
+  address: addressParamSchema,
+});
+
+const proposalParamsSchema = z.object({
+  address: addressParamSchema,
+  proposalHash: proposalHashParamSchema,
+});
+
+const ownersQuerySchema = z.object({
+  active: optionalBooleanQuerySchema,
+});
+
+const proposalsQuerySchema = z.object({
+  status: optionalNonEmptyStringQuerySchema,
+  limit: clampedIntQuerySchema(50, 1, 200),
+  offset: clampedIntQuerySchema(0, 0, 10_000),
+});
+
+const eventsQuerySchema = z.object({
+  fromBlock: nullableBlockQuerySchema,
+  toBlock: nullableBlockQuerySchema,
+  limit: clampedIntQuerySchema(100, 1, 500),
+  offset: clampedIntQuerySchema(0, 0, 50_000),
+});
+
+const addressParamsMiddleware = validateParams(addressParamsSchema, {
+  address: 'Invalid contract address',
+});
+
+const proposalParamsMiddleware = validateParams(proposalParamsSchema, {
+  address: 'Invalid contract address',
+  proposalHash: 'Invalid proposal hash',
+});
+
+type AddressParams = z.infer<typeof addressParamsSchema>;
+type ProposalParams = z.infer<typeof proposalParamsSchema>;
+type OwnersQuery = z.infer<typeof ownersQuerySchema>;
+type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
+type EventsQuery = z.infer<typeof eventsQuerySchema>;
 
 /** Creates the read-only API router bound to shared indexer status and Prisma data. */
 export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfig): Router {
   const router = Router();
   const safe = wrapAsyncRoute();
   router.use(requestLoggerMiddleware());
-
-  // Validate :address param on all routes
-  router.param('address', (_req, res, next, value) => {
-    try {
-      PublicKey.fromBase58(value);
-      next();
-    } catch {
-      res.status(400).json({ error: 'Invalid contract address' });
-    }
-  });
-
-  // Validate :proposalHash param on all routes
-  router.param('proposalHash', (_req, res, next, value) => {
-    if (PROPOSAL_HASH_RE.test(value)) {
-      next();
-    } else {
-      res.status(400).json({ error: 'Invalid proposal hash' });
-    }
-  });
 
   /** Returns basic health and process liveness metadata. */
   router.get('/health', safe(async (_req, res) => {
@@ -60,9 +90,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   }));
 
   /** Returns one tracked contract by base58 address. */
-  router.get('/api/contracts/:address', safe(async (req, res) => {
+  router.get('/api/contracts/:address', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+
     const contract = await prisma.contract.findUnique({
-      where: { address: req.params.address },
+      where: { address },
       include: {
         _count: {
           select: {
@@ -83,168 +115,194 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   }));
 
   /** Lists owner records for a contract with optional active-state filter. */
-  router.get('/api/contracts/:address/owners', safe(async (req, res) => {
-    const contract = await prisma.contract.findUnique({
-      where: { address: req.params.address },
-      select: { id: true },
-    });
+  router.get(
+    '/api/contracts/:address/owners',
+    addressParamsMiddleware,
+    validateQuery(ownersQuerySchema),
+    safe(async (req, res) => {
+      const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+      const { active } = ownersQuerySchema.parse(req.query) as OwnersQuery;
 
-    if (!contract) {
-      res.status(404).json({ error: 'Contract not found' });
-      return;
-    }
+      const contract = await prisma.contract.findUnique({
+        where: { address },
+        select: { id: true },
+      });
 
-    const activeParam = req.query.active;
-    const activeFilter =
-      activeParam === 'true' ? true : activeParam === 'false' ? false : undefined;
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
 
-    const owners = await prisma.owner.findMany({
-      where: {
-        contractId: contract.id,
-        ...(activeFilter === undefined ? {} : { active: activeFilter }),
-      },
-      orderBy: [{ index: 'asc' }, { createdAt: 'asc' }],
-    });
+      const owners = await prisma.owner.findMany({
+        where: {
+          contractId: contract.id,
+          ...(active === undefined ? {} : { active }),
+        },
+        orderBy: [{ index: 'asc' }, { createdAt: 'asc' }],
+      });
 
-    res.json(owners);
-  }));
+      res.json(owners);
+    })
+  );
 
   /** Lists proposals for a contract with optional status filter and pagination. */
-  router.get('/api/contracts/:address/proposals', safe(async (req, res) => {
-    const contract = await prisma.contract.findUnique({
-      where: { address: req.params.address },
-      select: { id: true },
-    });
+  router.get(
+    '/api/contracts/:address/proposals',
+    addressParamsMiddleware,
+    validateQuery(proposalsQuerySchema),
+    safe(async (req, res) => {
+      const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+      const { status, limit, offset } = proposalsQuerySchema.parse(req.query) as ProposalsQuery;
 
-    if (!contract) {
-      res.status(404).json({ error: 'Contract not found' });
-      return;
-    }
+      const contract = await prisma.contract.findUnique({
+        where: { address },
+        select: { id: true },
+      });
 
-    const status =
-      typeof req.query.status === 'string' && req.query.status.length > 0
-        ? req.query.status
-        : undefined;
-    const limit = clampInt(req.query.limit, 50, 1, 200);
-    const offset = clampInt(req.query.offset, 0, 0, 10_000);
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
 
-    const proposals = await prisma.proposal.findMany({
-      where: {
-        contractId: contract.id,
-        ...(status ? { status } : {}),
-      },
-      orderBy: [{ createdAtBlock: 'desc' }, { createdAt: 'desc' }],
-      take: limit,
-      skip: offset,
-    });
+      const proposals = await prisma.proposal.findMany({
+        where: {
+          contractId: contract.id,
+          ...(status ? { status } : {}),
+        },
+        orderBy: [{ createdAtBlock: 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        skip: offset,
+      });
 
-    res.json(proposals);
-  }));
+      res.json(proposals);
+    })
+  );
 
   /** Returns one proposal by contract + proposalHash identity. */
-  router.get('/api/contracts/:address/proposals/:proposalHash', safe(async (req, res) => {
-    const contract = await prisma.contract.findUnique({
-      where: { address: req.params.address },
-      select: { id: true },
-    });
+  router.get(
+    '/api/contracts/:address/proposals/:proposalHash',
+    proposalParamsMiddleware,
+    safe(async (req, res) => {
+      const { address, proposalHash } = proposalParamsSchema.parse(req.params) as ProposalParams;
 
-    if (!contract) {
-      res.status(404).json({ error: 'Contract not found' });
-      return;
-    }
+      const contract = await prisma.contract.findUnique({
+        where: { address },
+        select: { id: true },
+      });
 
-    const proposal = await prisma.proposal.findUnique({
-      where: {
-        contractId_proposalHash: {
-          contractId: contract.id,
-          proposalHash: req.params.proposalHash,
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
+
+      const proposal = await prisma.proposal.findUnique({
+        where: {
+          contractId_proposalHash: {
+            contractId: contract.id,
+            proposalHash,
+          },
         },
-      },
-    });
+      });
 
-    if (!proposal) {
-      res.status(404).json({ error: 'Proposal not found' });
-      return;
-    }
+      if (!proposal) {
+        res.status(404).json({ error: 'Proposal not found' });
+        return;
+      }
 
-    res.json(proposal);
-  }));
+      res.json(proposal);
+    })
+  );
 
   /** Lists per-approver records for a given proposal hash. */
-  router.get('/api/contracts/:address/proposals/:proposalHash/approvals', safe(async (req, res) => {
-    const contract = await prisma.contract.findUnique({
-      where: { address: req.params.address },
-      select: { id: true },
-    });
+  router.get(
+    '/api/contracts/:address/proposals/:proposalHash/approvals',
+    proposalParamsMiddleware,
+    safe(async (req, res) => {
+      const { address, proposalHash } = proposalParamsSchema.parse(req.params) as ProposalParams;
 
-    if (!contract) {
-      res.status(404).json({ error: 'Contract not found' });
-      return;
-    }
+      const contract = await prisma.contract.findUnique({
+        where: { address },
+        select: { id: true },
+      });
 
-    const proposal = await prisma.proposal.findUnique({
-      where: {
-        contractId_proposalHash: {
-          contractId: contract.id,
-          proposalHash: req.params.proposalHash,
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
+
+      const proposal = await prisma.proposal.findUnique({
+        where: {
+          contractId_proposalHash: {
+            contractId: contract.id,
+            proposalHash,
+          },
         },
-      },
-      select: { id: true },
-    });
+        select: { id: true },
+      });
 
-    if (!proposal) {
-      res.status(404).json({ error: 'Proposal not found' });
-      return;
-    }
+      if (!proposal) {
+        res.status(404).json({ error: 'Proposal not found' });
+        return;
+      }
 
-    const approvals = await prisma.approval.findMany({
-      where: { proposalId: proposal.id },
-      orderBy: [{ blockHeight: 'asc' }, { createdAt: 'asc' }],
-    });
+      const approvals = await prisma.approval.findMany({
+        where: { proposalId: proposal.id },
+        orderBy: [{ blockHeight: 'asc' }, { createdAt: 'asc' }],
+      });
 
-    res.json(approvals);
-  }));
+      res.json(approvals);
+    })
+  );
 
   /** Returns raw indexed events for a contract with block and pagination filters. */
-  router.get('/api/contracts/:address/events', safe(async (req, res) => {
-    const contract = await prisma.contract.findUnique({
-      where: { address: req.params.address },
-      select: { id: true },
-    });
+  router.get(
+    '/api/contracts/:address/events',
+    addressParamsMiddleware,
+    validateQuery(eventsQuerySchema),
+    safe(async (req, res) => {
+      const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+      const { fromBlock, toBlock, limit, offset } = eventsQuerySchema.parse(req.query) as EventsQuery;
 
-    if (!contract) {
-      res.status(404).json({ error: 'Contract not found' });
-      return;
-    }
+      const contract = await prisma.contract.findUnique({
+        where: { address },
+        select: { id: true },
+      });
 
-    const fromBlock = clampNullableInt(req.query.fromBlock);
-    const toBlock = clampNullableInt(req.query.toBlock);
-    const limit = clampInt(req.query.limit, 100, 1, 500);
-    const offset = clampInt(req.query.offset, 0, 0, 50_000);
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
 
-    const events = await prisma.eventRaw.findMany({
-      where: {
-        contractId: contract.id,
-        ...(fromBlock === null ? {} : { blockHeight: { gte: fromBlock } }),
-        ...(toBlock === null ? {} : { blockHeight: { lte: toBlock } }),
-      },
-      orderBy: [{ blockHeight: 'desc' }, { createdAt: 'desc' }],
-      take: limit,
-      skip: offset,
-    });
+      const blockHeightFilter = {
+        ...(fromBlock === null ? {} : { gte: fromBlock }),
+        ...(toBlock === null ? {} : { lte: toBlock }),
+      };
 
-    res.json(events);
-  }));
+      const events = await prisma.eventRaw.findMany({
+        where: {
+          contractId: contract.id,
+          ...(Object.keys(blockHeightFilter).length === 0 ? {} : { blockHeight: blockHeightFilter }),
+        },
+        orderBy: [{ blockHeight: 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        skip: offset,
+      });
+
+      res.json(events);
+    })
+  );
 
   /** Returns MINA token balance for an account address via daemon GraphQL. */
-  router.get('/api/account/:address/balance', safe(async (req, res) => {
+  router.get('/api/account/:address/balance', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+
     const endpoint = config?.minaEndpoint;
     if (!endpoint) {
       res.status(503).json({ error: 'Mina endpoint not configured' });
       return;
     }
 
-    const query = `{ account(publicKey: "${req.params.address}") { balance { total } } }`;
+    const query = `{ account(publicKey: "${address}") { balance { total } } }`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -343,20 +401,3 @@ function compactMeta(input: Record<string, unknown>): Record<string, unknown> {
     })
   );
 }
-
-/** Parses integer query params with bounds and defaults. */
-function clampInt(input: unknown, fallback: number, min: number, max: number): number {
-  if (typeof input !== 'string') return fallback;
-  const value = Number(input);
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(value)));
-}
-
-/** Parses nullable integer query params used for optional block filters. */
-function clampNullableInt(input: unknown): number | null {
-  if (typeof input !== 'string') return null;
-  const value = Number(input);
-  if (!Number.isFinite(value)) return null;
-  return Math.max(0, Math.floor(value));
-}
-
