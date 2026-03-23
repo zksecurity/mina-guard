@@ -34,10 +34,6 @@ export default function Dashboard() {
     clearWalletError,
     auroInstalled,
     ledgerSupported,
-    isOperating,
-    operationLabel,
-    operationBanner,
-    clearBanner,
   } = useAppContext();
 
   const recent = [...proposals].slice(0, 5);
@@ -68,28 +64,6 @@ export default function Dashboard() {
       />
 
       <div className="p-6">
-        {operationBanner && (
-          <div
-            className={`flex items-center justify-between rounded-lg px-4 py-3 mb-4 text-sm ${
-              operationBanner.type === 'success'
-                ? 'bg-safe-green/10 text-safe-green border border-safe-green/30'
-                : 'bg-red-500/10 text-red-400 border border-red-500/30'
-            }`}
-          >
-            <span className="font-mono text-xs break-all">{operationBanner.message}</span>
-            <button onClick={clearBanner} className="ml-3 shrink-0 hover:opacity-70">
-              &times;
-            </button>
-          </div>
-        )}
-
-        {isOperating && (
-          <div className="flex items-center gap-2 rounded-lg px-4 py-3 mb-4 text-sm bg-safe-gray border border-safe-border">
-            <span className="animate-spin w-4 h-4 border-2 border-safe-green border-t-transparent rounded-full" />
-            <span className="text-safe-text">{operationLabel}</span>
-          </div>
-        )}
-
         {!wallet.connected ? (
           <ConnectNotice
             onConnectAuro={connectAuro}
