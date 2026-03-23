@@ -8,7 +8,7 @@ const base58PublicKey = z.string().refine((addr) => {
   try { PublicKey.fromBase58(addr); return true; } catch { return false; }
 }, { message: 'Invalid Mina public key' });
 
-const fieldString = z.coerce.string().regex(/^\d+$/, 'Must be a numeric string');
+const fieldString = z.string().regex(/^\d+$/, 'Must be a numeric string');
 const hexHash = z.string().regex(/^[0-9a-fA-F]{64}$/, 'Must be a 64-char hex string');
 
 const createProposalSchema = z.object({
@@ -43,6 +43,7 @@ export function createBatchRouter(): Router {
       next();
     } catch {
       res.status(400).json({ error: 'Invalid contract address' });
+      return;
     }
   });
 
@@ -52,6 +53,7 @@ export function createBatchRouter(): Router {
       next();
     } else {
       res.status(400).json({ error: 'Invalid proposal hash' });
+      return;
     }
   });
 
