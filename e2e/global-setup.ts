@@ -1,5 +1,5 @@
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
-import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { getNetworkConfig, getDevnetAccounts, type TestAccount } from './network-config';
 
@@ -14,6 +14,12 @@ interface E2eState {
   accounts: TestAccount[];
   backendPid: number;
   frontendPid: number;
+}
+
+function requireDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error('DATABASE_URL is not set. Check your backend/.env file.');
+  return url;
 }
 
 function log(msg: string) {
@@ -177,15 +183,9 @@ export default async function globalSetup() {
 
     // Reset database
     log('Resetting backend database...');
-    const dbPath = resolve(ROOT, 'backend/prisma/dev.db');
-    if (existsSync(dbPath)) {
-      unlinkSync(dbPath);
-      log('Deleted existing dev.db');
-    }
-    execSync('bunx prisma db push', {
+    execSync('bunx prisma db push --force-reset', {
       cwd: resolve(ROOT, 'backend'),
       stdio: 'pipe',
-      env: { ...process.env, DATABASE_URL: 'file:./dev.db' },
     });
     log('Database schema pushed');
 
@@ -221,7 +221,7 @@ export default async function globalSetup() {
       INDEX_POLL_INTERVAL_MS: String(config.indexerPollIntervalMs),
       MINA_ENDPOINT: config.minaEndpoint,
       ARCHIVE_ENDPOINT: config.archiveEndpoint,
-      DATABASE_URL: 'file:./dev.db',
+      DATABASE_URL: requireDatabaseUrl(),
       PORT: '4000',
     };
     if (config.accountManagerUrl) {

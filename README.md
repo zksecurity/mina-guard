@@ -5,7 +5,7 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 ## Packages
 
 - `contracts/` - MinaGuard smart contract, stores, and tests.
-- `backend/` - Express + Prisma + SQLite read API and chain indexer.
+- `backend/` - Express + Prisma + PostgreSQL read API and chain indexer.
 - `ui/` - Next.js app with Auro wallet integration and on-chain actions.
 
 ## Key Features

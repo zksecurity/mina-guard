@@ -4,13 +4,13 @@ Read-only Express API + polling indexer for MinaGuard contracts.
 
 This package does two things:
 
-1. Indexes MinaGuard on-chain events into a local SQLite database.
+1. Indexes MinaGuard on-chain events into a PostgreSQL database.
 2. Exposes read APIs for contracts, owners, proposals, approvals, and raw events.
 
 ## What Is Included
 
 - `Express` server (`src/server.ts`)
-- `Prisma + SQLite` storage (`prisma/schema.prisma`)
+- `Prisma + PostgreSQL` storage (`prisma/schema.prisma`)
 - Polling indexer (`src/indexer.ts`)
 - Mina/Archive GraphQL client + event decoding (`src/mina-client.ts`)
 - Read-only API routes (`src/routes.ts`)
@@ -20,7 +20,7 @@ This package does two things:
 At startup:
 
 1. Environment is loaded from `.env`.
-2. Prisma connects to SQLite.
+2. Prisma connects to PostgreSQL.
 3. Indexer starts and runs one immediate sync tick.
 4. Express starts and serves API routes.
 
@@ -78,7 +78,7 @@ From `backend/`:
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `4000` | Express server port |
-| `DATABASE_URL` | `file:./dev.db` | Prisma SQLite URL (resolves to `backend/prisma/dev.db`) |
+| `DATABASE_URL` | *(required)* | PostgreSQL connection URL (see `.env.example`) |
 | `MINA_ENDPOINT` | `https://api.minascan.io/node/devnet/v1/graphql` | Primary Mina GraphQL endpoint |
 | `ARCHIVE_ENDPOINT` | `https://api.minascan.io/archive/devnet/v1/graphql` | Primary archive GraphQL endpoint |
 | `MINA_FALLBACK_ENDPOINT` | empty | Optional Mina fallback endpoint |

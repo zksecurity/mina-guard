@@ -9,23 +9,21 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
 
-    # Enable the following block if you also want to use the Lightnet in your tests.
-    #
-    # services:
-    #   mina-local-network:
-    #     image: o1labs/mina-local-network:compatible-latest-lightnet
-    #     env:
-    #       NETWORK_TYPE: 'single-node'
-    #       PROOF_LEVEL: 'none'
-    #       LOG_LEVEL: 'Info'
-    #     ports:
-    #       - 3085:3085
-    #       - 5432:5432
-    #       - 8080:8080
-    #       - 8181:8181
-    #       - 8282:8282
-    #     volumes:
-    #       - /tmp:/root/logs
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: minaguard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       #
       # Enable the following block if you also want to use the Lightnet in your tests.
@@ -50,6 +48,7 @@ jobs:
           bun run test
         env:
           CI: true
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
 
       # Enable the following block if you also want to use the Lightnet in your tests.
       #
