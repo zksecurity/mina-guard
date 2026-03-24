@@ -108,6 +108,15 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
   setDelegate: 'Set Delegate',
 };
 
+/** Proposal type options used by dashboard and new-proposal forms. */
+export const TX_TYPES: { value: TxType; label: string }[] = [
+  { value: 'transfer', label: 'Send MINA' },
+  { value: 'addOwner', label: 'Add Owner' },
+  { value: 'removeOwner', label: 'Remove Owner' },
+  { value: 'changeThreshold', label: 'Change Threshold' },
+  { value: 'setDelegate', label: 'Set Delegate' },
+];
+
 /** Truncates long addresses for compact UI chips and labels. */
 export function truncateAddress(addr: string, chars: number = 6): string {
   if (addr.length <= chars * 2 + 3) return addr;

@@ -5,17 +5,10 @@ import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import TransactionList from '@/components/TransactionList';
-import { truncateAddress, formatMina } from '@/lib/types';
+import { truncateAddress, formatMina, TX_TYPES } from '@/lib/types';
 import { fetchBalance } from '@/lib/api';
+import LedgerConnectModal from '@/components/LedgerConnectModal';
 import Link from 'next/link';
-
-const TX_TYPES = [
-  { value: 'transfer', label: 'Send MINA' },
-  { value: 'addOwner', label: 'Add Owner' },
-  { value: 'removeOwner', label: 'Remove Owner' },
-  { value: 'changeThreshold', label: 'Change Threshold' },
-  { value: 'setDelegate', label: 'Set Delegate' },
-] as const;
 
 /** Dashboard overview page for selected contract and latest indexed proposals. */
 export default function Dashboard() {
@@ -50,7 +43,6 @@ export default function Dashboard() {
     <div>
       <Header
         title="Dashboard"
-        subtitle=""
         walletAddress={wallet.address}
         connected={wallet.connected}
         isLoading={isLoading}
