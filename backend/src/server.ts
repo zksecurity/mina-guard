@@ -13,7 +13,6 @@ async function main(): Promise<void> {
 
   await prisma.$connect();
   const indexer = new MinaGuardIndexer(config);
-  await indexer.start();
 
   const app = express();
   app.use(cors());
@@ -25,6 +24,10 @@ async function main(): Promise<void> {
     console.log(`[backend] listening on http://localhost:${config.port}`);
   });
   const shutdown = createGracefulShutdown(server, indexer);
+
+  // Start the indexer after the HTTP server is listening so the /health
+  // endpoint is reachable while the first (potentially slow) tick runs.
+  await indexer.start();
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');
