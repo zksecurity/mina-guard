@@ -381,56 +381,6 @@ async function broadcastWithLedgerSig(
   return response?.data?.sendZkapp?.zkapp?.hash ?? null;
 }
 
-/**
- * Signs account updates using mina-signer instead of o1js tx.sign().
- *
- * o1js tx.sign() computes the transaction commitment using its own internal
- * types, which can diverge from the commitment computed by the Mina node
- * (and by mina-signer / Auro wallet). By signing via mina-signer on the
- * serialized JSON, we ensure the commitment matches the node exactly.
- */
-function signExtraKeysViaSigner(txJson: string, extraKeys: InstanceType<typeof PrivateKey>[]): string {
-  const parsed = JSON.parse(txJson);
-  const feePayerBody = parsed.feePayer.body;
-
-  for (const key of extraKeys) {
-    // Use mina-signer's signZkappCommand which computes commitments identically
-    // to the Mina node. It only signs account updates whose publicKey matches
-    // the provided key (and leaves the fee payer unsigned if keys differ).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = (signerClient as any).signZkappCommand(
-      {
-        feePayer: {
-          feePayer: feePayerBody.publicKey,
-          fee: feePayerBody.fee,
-          nonce: feePayerBody.nonce,
-          validUntil: feePayerBody.validUntil ?? undefined,
-          memo: '',
-        },
-        zkappCommand: parsed,
-      },
-      key.toBase58()
-    );
-
-    // Extract signed account updates from the result and patch them back.
-    // The fee payer authorization may be empty (key mismatch) — Auro/Ledger
-    // will replace it later.
-    const signed = result.data.zkappCommand;
-    for (let i = 0; i < parsed.accountUpdates.length; i++) {
-      const orig = parsed.accountUpdates[i];
-      const updated = signed.accountUpdates[i];
-      if (
-        orig.body?.authorizationKind?.isSigned === true &&
-        orig.body?.publicKey === key.toPublicKey().toBase58() &&
-        updated.authorization?.signature
-      ) {
-        orig.authorization = { ...orig.authorization, signature: updated.authorization.signature };
-      }
-    }
-  }
-  return JSON.stringify(parsed);
-}
-
 /** Dispatches transaction submission to test mode, Ledger, or Auro. */
 async function submitTx(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
@@ -442,20 +392,18 @@ async function submitTx(
   if (testPrivateKey) {
     return await signAndSend(tx, extraKeys);
   }
-  // Serialize first (without o1js signing) so we can sign via mina-signer
+  // Sign with extra keys (e.g. zkApp key for deploy) before Auro/Ledger submission
+  if (extraKeys.length > 0) {
+    tx.sign(extraKeys);
+  }
   const txJson = serializeTx(tx);
-  // Sign extra keys (e.g. zkApp key for deploy) using mina-signer commitments
-  const signedJson = extraKeys.length > 0
-    ? signExtraKeysViaSigner(txJson, extraKeys)
-    : txJson;
-  console.log('[MultisigWorker] Signed tx JSON (before wallet):', signedJson);
   // Ledger path: sign fee payer via Ledger and broadcast directly
   if (signFeePayerFn) {
-    return broadcastWithLedgerSig(signedJson, signFeePayerFn);
+    return broadcastWithLedgerSig(txJson, signFeePayerFn);
   }
   // Auro path: send via Auro wallet
   if (sendFn) {
-    return sendFn(signedJson);
+    return sendFn(txJson);
   }
   return null;
 }
