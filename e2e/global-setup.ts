@@ -14,9 +14,16 @@ interface E2eState {
   accounts: TestAccount[];
   backendPid: number;
   frontendPid: number;
+  /** Whether we stopped a local PostgreSQL and need to restart it in teardown. */
+  restoreLocalPg: boolean;
 }
 
-function requireDatabaseUrl(): string {
+// When using lightnet locally, lightnet's bundled PostgreSQL takes over port 5432.
+// We create a `minaguard` database inside it and return that URL.
+const LIGHTNET_DB_URL = 'postgresql://postgres:postgres@localhost:5432/minaguard';
+
+function requireDatabaseUrl(useLightnetPg: boolean): string {
+  if (useLightnetPg) return LIGHTNET_DB_URL;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set. Check your backend/.env file.');
   return url;
@@ -110,6 +117,11 @@ export default async function globalSetup() {
   // Lightnet — only managed locally; in CI it's a Docker service
   // Skipped entirely when running against devnet.
   // -----------------------------------------------------------------------
+  // Track whether we're using lightnet's PostgreSQL (so we can pass it to the backend)
+  let useLightnetPg = false;
+  // Track whether we stopped a running local PostgreSQL (so teardown can restart it)
+  let stoppedLocalPg = false;
+
   if (config.mode === 'lightnet') {
     if (!IS_CI) {
       log('Stopping any existing lightnet...');
@@ -120,6 +132,28 @@ export default async function globalSetup() {
         log('No existing lightnet to stop');
       }
 
+      // Stop local PostgreSQL so lightnet can bind to port 5432 — but only if it's running
+      const localPgRunning = (() => {
+        try {
+          const out = execSync('lsof -ti:5432 2>/dev/null || true', { stdio: 'pipe' }).toString().trim();
+          return out.length > 0;
+        } catch { return false; }
+      })();
+
+      if (localPgRunning) {
+        log('Stopping local PostgreSQL to free port 5432 for lightnet...');
+        try {
+          execSync('brew services stop postgresql@17', { stdio: 'pipe', timeout: 15_000 });
+          stoppedLocalPg = true;
+          log('Local PostgreSQL stopped');
+        } catch {
+          log('No local PostgreSQL to stop (or not managed by brew)');
+        }
+      } else {
+        log('Port 5432 is free — no need to stop local PostgreSQL');
+      }
+      await waitForPortFree(5432, 15_000);
+
       log('Starting lightnet (this may take 1-2 minutes)...');
       try {
         execSync('zk lightnet start', {
@@ -128,8 +162,26 @@ export default async function globalSetup() {
           timeout: 300_000,
         });
       } catch (err) {
+        // Restart local PostgreSQL before throwing (only if we stopped it)
+        if (stoppedLocalPg) {
+          try { execSync('brew services start postgresql@17', { stdio: 'pipe' }); } catch {}
+        }
         throw new Error(`Failed to start lightnet: ${err}`);
       }
+
+      // Create the minaguard database in lightnet's PostgreSQL
+      log('Creating minaguard database in lightnet PostgreSQL...');
+      try {
+        execSync(
+          'docker exec $(docker ps -q --filter ancestor=o1labs/mina-local-network) ' +
+            'psql -U postgres -c "CREATE DATABASE minaguard;" 2>/dev/null || true',
+          { stdio: 'pipe', timeout: 15_000 },
+        );
+        log('minaguard database ready');
+      } catch {
+        log('Warning: could not create minaguard database (may already exist)');
+      }
+      useLightnetPg = true;
     }
 
     // Wait for lightnet services (both CI and local)
@@ -183,11 +235,13 @@ export default async function globalSetup() {
 
     // Reset database
     log('Resetting backend database...');
+    const dbUrl = requireDatabaseUrl(useLightnetPg);
     execSync('bunx prisma db push --force-reset', {
       cwd: resolve(ROOT, 'backend'),
       stdio: 'pipe',
+      env: { ...process.env, DATABASE_URL: dbUrl },
     });
-    log('Database schema pushed');
+    log(`Database schema pushed (${useLightnetPg ? 'lightnet PG' : 'local PG'})`);
 
     // -----------------------------------------------------------------------
     // Verification key hash — compile the contract to get the vk hash so
@@ -221,7 +275,7 @@ export default async function globalSetup() {
       INDEX_POLL_INTERVAL_MS: String(config.indexerPollIntervalMs),
       MINA_ENDPOINT: config.minaEndpoint,
       ARCHIVE_ENDPOINT: config.archiveEndpoint,
-      DATABASE_URL: requireDatabaseUrl(),
+      DATABASE_URL: requireDatabaseUrl(useLightnetPg),
       PORT: '4000',
     };
     if (config.accountManagerUrl) {
@@ -266,6 +320,7 @@ export default async function globalSetup() {
     accounts,
     backendPid,
     frontendPid,
+    restoreLocalPg: stoppedLocalPg,
   };
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   log('State written to .e2e-state.json');
