@@ -16,7 +16,9 @@ export function configureNetwork(config: BackendConfig): void {
     Mina.Network({
       mina: config.minaEndpoint,
       archive: config.archiveEndpoint,
-      lightnetAccountManager: config.lightnetAccountManager,
+      ...(config.lightnetAccountManager
+        ? { lightnetAccountManager: config.lightnetAccountManager }
+        : {}),
     })
   );
 }
