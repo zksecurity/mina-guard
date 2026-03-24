@@ -397,6 +397,7 @@ async function submitTx(
     tx.sign(extraKeys);
   }
   const txJson = serializeTx(tx);
+  console.log('[MultisigWorker] Signed tx JSON (before wallet):', txJson);
   // Ledger path: sign fee payer via Ledger and broadcast directly
   if (signFeePayerFn) {
     return broadcastWithLedgerSig(txJson, signFeePayerFn);

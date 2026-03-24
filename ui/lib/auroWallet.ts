@@ -72,14 +72,16 @@ export async function sendTransaction(
 ): Promise<string | null> {
   if (!isAuroInstalled()) return null;
   try {
-    console.log('In sendtransaction, before sending');
+    console.log('[Auro] Transaction JSON being sent:', transaction);
+    console.log('[Auro] Parsed transaction:', JSON.parse(transaction));
     const result = await window.mina!.sendTransaction({
       transaction,
       feePayer: { fee, memo },
     });
-    console.log('In sendtransaction, after sending');
+    console.log('[Auro] sendTransaction result:', result);
     return result.hash;
-  } catch {
+  } catch (error) {
+    console.error('[Auro] sendTransaction error:', error);
     return null;
   }
 }
