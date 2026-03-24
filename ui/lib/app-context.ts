@@ -46,7 +46,7 @@ export interface AppContextType {
   clearBanner: () => void;
   /** Starts a worker operation: shows spinner, runs fn, shows result banner, refreshes state.
    *  The fn receives an onProgress callback to update the spinner label mid-operation. */
-  startOperation: (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => void;
+  startOperation: (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => Promise<void>;
   /** Whether the Ledger device is currently awaiting user interaction. */
   ledgerSigning: boolean;
 }
@@ -74,7 +74,7 @@ export const AppContext = createContext<AppContextType>({
   operationLabel: '',
   operationBanner: null,
   clearBanner: () => {},
-  startOperation: () => {},
+  startOperation: async () => {},
   ledgerSigning: false,
 });
 

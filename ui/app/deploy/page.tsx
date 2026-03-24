@@ -86,11 +86,10 @@ export default function DeployPage() {
       networkId,
     };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
-    startOperation('Building deploy transaction...', async (onProgress) => {
-      const result = await deployAndSetupContract(captured, onProgress, signer);
-      router.push('/');
-      return result;
+    void startOperation('Building deploy transaction...', async (onProgress) => {
+      return await deployAndSetupContract(captured, onProgress, signer);
     });
+    router.push('/');
   };
 
   return (

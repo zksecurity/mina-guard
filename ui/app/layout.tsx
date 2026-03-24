@@ -62,36 +62,34 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const clearBanner = useCallback(() => setOperationBanner(null), []);
 
   const startOperation = useCallback(
-    (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => {
+    async (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => {
       setIsOperating(true);
       setOperationLabel(label);
       setOperationBanner(null);
 
       const onProgress = (step: string) => setOperationLabel(step);
 
-      (async () => {
-        try {
-          console.log('[startOperation] awaiting fn...');
-          const result = await fn(onProgress);
-          console.log('[startOperation] fn resolved:', result);
-          if (!result) {
-            setOperationBanner({ type: 'error', message: `${label.replace(/\.\.\.$/, '')} failed.` });
-            return;
-          }
-          setOperationBanner({ type: 'success', message: result });
-          console.log('[startOperation] refreshing state...');
-          await refreshRef.current();
-          console.log('[startOperation] refresh done');
-        } catch (err) {
-          console.error('[startOperation] error:', err);
-          setOperationBanner({
-            type: 'error',
-            message: err instanceof Error ? err.message : `${label.replace(/\.\.\.$/, '')} failed`,
-          });
-        } finally {
-          setIsOperating(false);
+      try {
+        console.log('[startOperation] awaiting fn...');
+        const result = await fn(onProgress);
+        console.log('[startOperation] fn resolved:', result);
+        if (!result) {
+          setOperationBanner({ type: 'error', message: `${label.replace(/\.\.\.$/, '')} failed.` });
+          return;
         }
-      })();
+        setOperationBanner({ type: 'success', message: result });
+        console.log('[startOperation] refreshing state...');
+        await refreshRef.current();
+        console.log('[startOperation] refresh done');
+      } catch (err) {
+        console.error('[startOperation] error:', err);
+        setOperationBanner({
+          type: 'error',
+          message: err instanceof Error ? err.message : `${label.replace(/\.\.\.$/, '')} failed`,
+        });
+      } finally {
+        setIsOperating(false);
+      }
     },
     []
   );

@@ -5,17 +5,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ProposalForm from '@/components/ProposalForm';
-import { type NewProposalInput, type TxType } from '@/lib/types';
+import { type NewProposalInput, type TxType, TX_TYPES } from '@/lib/types';
 import { createOffchainProposal } from '@/lib/multisigClient';
 import { fetchContract } from '@/lib/api';
-
-const TX_TYPES: { value: TxType; label: string }[] = [
-  { value: 'transfer', label: 'Send MINA' },
-  { value: 'addOwner', label: 'Add Owner' },
-  { value: 'removeOwner', label: 'Remove Owner' },
-  { value: 'changeThreshold', label: 'Change Threshold' },
-  { value: 'setDelegate', label: 'Set Delegate' },
-];
 
 export default function NewTransactionPage() {
   return (
@@ -44,7 +36,8 @@ function NewTransactionPageInner() {
     isOperating,
   } = useAppContext();
 
-  const initialType = (searchParams.get('type') as TxType | null) ?? 'transfer';
+  const rawType = searchParams.get('type');
+  const initialType = TX_TYPES.some((t) => t.value === rawType) ? (rawType as TxType) : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,19 +51,18 @@ function NewTransactionPageInner() {
     const fallbackConfigNonce = multisig.configNonce ?? 0;
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
 
-    startOperation('Creating offchain proposal...', async (onProgress) => {
+    await startOperation('Creating offchain proposal...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      const result = await createOffchainProposal({
+      return await createOffchainProposal({
         contractAddress,
         proposerAddress,
         input: data,
         configNonce,
         networkId,
       }, onProgress, signer);
-      router.push('/transactions');
-      return result;
     });
+    router.push('/transactions');
   };
 
   return (
