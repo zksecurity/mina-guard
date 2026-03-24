@@ -60,19 +60,19 @@ export default function TransactionDetailPage() {
   const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold;
 
   /** Signs the proposal hash offchain and submits to the backend. */
-  const handleApprove = () => {
+  const handleApprove = async () => {
     if (!proposal || !multisig || !wallet.address) return;
 
     const captured = { contractAddress: multisig.address, signerAddress: wallet.address, proposalHash: proposal.proposalHash };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
-    startOperation('Signing proposal...', (onProgress) =>
-      submitOffchainSignature({
+    await startOperation('Signing proposal...', async (onProgress) => {
+      return await submitOffchainSignature({
         contractAddress: captured.contractAddress,
         signerAddress: captured.signerAddress,
         proposalHash: captured.proposalHash,
-      }, onProgress, signer)
-    );
-    router.push('/');
+      }, onProgress, signer);
+    });
+    router.push('/transactions');
   };
 
   /** Fetches batch payload and submits execute*BatchSig transaction on-chain. */
@@ -81,13 +81,13 @@ export default function TransactionDetailPage() {
 
     const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
-    startOperation('Building batch execute transaction...', (onProgress) =>
-      executeBatchTx({
+    void startOperation('Building batch execute transaction...', async (onProgress) => {
+      return await executeBatchTx({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
-      }, onProgress, signer)
-    );
+      }, onProgress, signer);
+    });
     router.push('/');
   };
 

@@ -213,11 +213,10 @@ test('2. Create offchain transfer proposal', async () => {
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
+  log('Clicking Send MINA proposal type...');
+  await page.getByRole('link', { name: 'Send MINA', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByRole('link', { name: 'Send MINA', exact: true }).click();
+  await page.waitForURL(/transactions\/new/);
 
   log('Filling transfer form...');
   const recipientInput = page.locator('input[placeholder*="B62"]').first();
@@ -328,15 +327,10 @@ test('6. Create offchain addOwner proposal', async () => {
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Add Owner type...');
-  const addOwnerType = page.getByText('Add Owner').first();
-  await addOwnerType.click();
+  log('Clicking Add Owner proposal type...');
+  await page.getByRole('link', { name: 'Add Owner', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByRole('link', { name: 'Add Owner', exact: true }).click();
+  await page.waitForURL(/transactions\/new/);
 
   const ownerInput = page.locator('input[placeholder*="B62"]').first();
   await ownerInput.waitFor({ state: 'visible', timeout: 5_000 });
@@ -433,23 +427,10 @@ test('9. Create offchain changeThreshold proposal (threshold=1)', async () => {
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Change Threshold type...');
-  const typeButtons = page.locator('button[type="button"]');
-  const count = await typeButtons.count();
-  for (let i = 0; i < count; i++) {
-    const text = await typeButtons.nth(i).textContent();
-    if (text?.includes('Change Threshold')) {
-      await typeButtons.nth(i).click({ force: true });
-      break;
-    }
-  }
-  await page.waitForTimeout(500);
+  log('Clicking Change Threshold proposal type...');
+  await page.getByRole('link', { name: 'Change Threshold', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByRole('link', { name: 'Change Threshold', exact: true }).click();
+  await page.waitForURL(/transactions\/new/);
 
   const slider = page.locator('input[type="range"]');
   if ((await slider.count()) > 0) {
@@ -545,16 +526,10 @@ test('12. Create offchain removeOwner proposal', async () => {
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Remove Owner type...');
-  const removeOwnerType = page.getByText('Remove Owner').first();
-  await removeOwnerType.click();
-  await page.waitForTimeout(500);
+  log('Clicking Remove Owner proposal type...');
+  await page.getByRole('link', { name: 'Remove Owner', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByRole('link', { name: 'Remove Owner', exact: true }).click();
+  await page.waitForURL(/transactions\/new/);
 
   // Select accounts[2] from the owner list (radio button)
   const ownerOption = page.locator(`text=${accounts[2].publicKey.slice(0, 8)}`).first();
@@ -663,23 +638,10 @@ test('15. Create offchain setDelegate proposal', async () => {
   await expect(page.locator('text=None')).toBeVisible({ timeout: 10_000 });
   log('Delegate card shows None');
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Set Delegate type...');
-  const typeButtons = page.locator('button[type="button"]');
-  const count = await typeButtons.count();
-  for (let i = 0; i < count; i++) {
-    const text = await typeButtons.nth(i).textContent();
-    if (text?.includes('Set Delegate')) {
-      await typeButtons.nth(i).click({ force: true });
-      break;
-    }
-  }
-  await page.waitForTimeout(500);
+  log('Clicking Set Delegate proposal type...');
+  await page.getByRole('link', { name: 'Set Delegate', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByRole('link', { name: 'Set Delegate', exact: true }).click();
+  await page.waitForURL(/transactions\/new/);
 
   const delegateInput = page.locator('input[placeholder*="B62"]').first();
   await delegateInput.waitFor({ state: 'visible', timeout: 5_000 });
@@ -762,23 +724,10 @@ test('18. Create offchain undelegate proposal', async () => {
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Set Delegate type...');
-  const typeButtons = page.locator('button[type="button"]');
-  const count = await typeButtons.count();
-  for (let i = 0; i < count; i++) {
-    const text = await typeButtons.nth(i).textContent();
-    if (text?.includes('Set Delegate')) {
-      await typeButtons.nth(i).click({ force: true });
-      break;
-    }
-  }
-  await page.waitForTimeout(500);
+  log('Clicking Set Delegate proposal type...');
+  await page.getByRole('link', { name: 'Set Delegate', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByRole('link', { name: 'Set Delegate', exact: true }).click();
+  await page.waitForURL(/transactions\/new/);
 
   log('Checking Undelegate checkbox...');
   const undelegateCheckbox = page.locator('input[type="checkbox"]').first();
@@ -852,15 +801,10 @@ test('20. Propose transfer with near-future expiry', async () => {
   await gotoWithWallet('/', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Send MINA type...');
-  const sendType = page.getByText('Send MINA').first();
-  await sendType.click();
+  log('Clicking Send MINA proposal type...');
+  await page.getByRole('link', { name: 'Send MINA', exact: true }).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByRole('link', { name: 'Send MINA', exact: true }).click();
+  await page.waitForURL(/transactions\/new/);
 
   const recipientInput = page.locator('input[placeholder*="B62"]').first();
   await recipientInput.waitFor({ state: 'visible', timeout: 5_000 });
