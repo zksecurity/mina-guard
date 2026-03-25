@@ -7,8 +7,8 @@ import { MinaApp } from '@zondax/ledger-mina-js';
 let transport: Transport | null = null;
 let app: MinaApp | null = null;
 
-/** Ledger network ID: 1 = mainnet, 0 = testnet/devnet. Defaults to mainnet. */
-let ledgerNetworkId = 1;
+/** Ledger network ID: 1 = mainnet, 0 = testnet/devnet. Defaults to testnet. */
+let ledgerNetworkId = 0;
 
 /** Updates the network ID used for Ledger signing at runtime. */
 export function setLedgerNetworkId(id: number): void {

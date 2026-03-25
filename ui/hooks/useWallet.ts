@@ -139,7 +139,7 @@ export function useWallet() {
       setWallet({
         connected: true,
         address,
-        network: 'mainnet',
+        network: 'testnet',
         type: 'ledger',
         ledgerAccountIndex: idx,
       });

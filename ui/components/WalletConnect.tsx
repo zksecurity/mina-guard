@@ -5,9 +5,9 @@ import { truncateAddress, type WalletType } from '@/lib/types';
 import LedgerConnectModal from './LedgerConnectModal';
 
 const LEDGER_NETWORKS = [
-  { label: 'Mainnet', id: 1 },
-  { label: 'Devnet', id: 0 },
   { label: 'Testnet', id: 0 },
+  { label: 'Devnet', id: 0 },
+  { label: 'Mainnet', id: 1 },
 ] as const;
 
 interface WalletConnectProps {
