@@ -87,6 +87,16 @@ function NewTransactionPageInner() {
       />
 
       <div className="p-6 max-w-2xl">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="flex items-center gap-1.5 text-sm text-safe-text/60 hover:text-safe-text mb-4 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
             <p className="text-safe-text">Connect your wallet and select a contract to create proposals.</p>
