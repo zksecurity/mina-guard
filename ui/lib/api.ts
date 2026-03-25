@@ -212,6 +212,7 @@ export async function postOffchainProposal(
     networkId: string;
     guardAddress: string;
     proposalHash: string;
+    proposer?: string;
   }
 ): Promise<{ proposalHash: string; origin: string; status: string } | null> {
   try {
