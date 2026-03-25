@@ -322,6 +322,57 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json({ balance: totalNano });
   }));
 
+  /** Funds an account on lightnet by acquiring a pre-funded keypair from the account manager. */
+  router.post('/api/fund', safe(async (req, res) => {
+    const accountManagerUrl = config?.lightnetAccountManager;
+    if (!accountManagerUrl) {
+      res.status(503).json({ error: 'LIGHTNET_ACCOUNT_MANAGER not configured' });
+      return;
+    }
+
+    const { address } = req.body as { address?: string };
+    if (!address || typeof address !== 'string') {
+      res.status(400).json({ error: 'address is required' });
+      return;
+    }
+
+    // Acquire a pre-funded keypair from the lightnet account manager
+    const acqRes = await fetch(`${accountManagerUrl}/acquire-account`);
+    if (!acqRes.ok) {
+      res.status(502).json({ error: `Account manager returned ${acqRes.status}` });
+      return;
+    }
+    const { pk, sk } = (await acqRes.json()) as { pk: string; sk: string };
+
+    const { Mina, PublicKey, PrivateKey, AccountUpdate, UInt64, fetchAccount } = await import('o1js');
+
+    const funderKey = PrivateKey.fromBase58(sk);
+    const funderPub = PublicKey.fromBase58(pk);
+    const target = PublicKey.fromBase58(address);
+
+    await fetchAccount({ publicKey: funderPub });
+    const { account: targetAccount } = await fetchAccount({ publicKey: target });
+    const isNew = !targetAccount;
+
+    const fee = UInt64.from(100_000_000);
+    const amount = UInt64.from(50_000_000_000); // 50 MINA
+
+    const tx = await Mina.transaction({ sender: funderPub, fee }, async () => {
+      if (isNew) AccountUpdate.fundNewAccount(funderPub);
+      const update = AccountUpdate.createSigned(funderPub);
+      update.send({ to: target, amount });
+    });
+
+    await tx.prove();
+    tx.sign([funderKey]);
+    const result = await tx.send();
+    const hash = typeof result.hash === 'function'
+      ? (result.hash as () => string)()
+      : result.hash;
+
+    res.json({ txHash: hash });
+  }));
+
   router.use((error: unknown, req: any, res: any, _next: any) => {
     const requestId = getRequestId(res);
     console.error(
