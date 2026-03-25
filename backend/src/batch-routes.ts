@@ -26,7 +26,7 @@ export function createBatchRouter(): Router {
     const {
       toAddress, amount, tokenId, txType, data,
       uid, configNonce, expiryBlock, networkId, guardAddress,
-      proposalHash,
+      proposalHash, proposer,
     } = req.body;
 
     if (!proposalHash || !toAddress || !guardAddress) {
@@ -99,6 +99,7 @@ export function createBatchRouter(): Router {
         expiryBlock: String(expiryBlock),
         networkId: String(networkId),
         guardAddress: String(guardAddress),
+        proposer: proposer ? String(proposer) : null,
         origin: 'offchain',
         status: 'pending',
       },
