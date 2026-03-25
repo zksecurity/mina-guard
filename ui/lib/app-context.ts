@@ -49,6 +49,8 @@ export interface AppContextType {
   startOperation: (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => Promise<void>;
   /** Whether the Ledger device is currently awaiting user interaction. */
   ledgerSigning: boolean;
+  /** Updates the wallet network label and Ledger signing network ID. */
+  setWalletNetwork: (network: string, ledgerNetworkId: number) => void;
 }
 
 export const AppContext = createContext<AppContextType>({
@@ -76,6 +78,7 @@ export const AppContext = createContext<AppContextType>({
   clearBanner: () => {},
   startOperation: async () => {},
   ledgerSigning: false,
+  setWalletNetwork: () => {},
 });
 
 /** Hook wrapper for typed context consumption in client components. */

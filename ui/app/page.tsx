@@ -6,6 +6,7 @@ import Header from '@/components/Header';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import TransactionList from '@/components/TransactionList';
 import { truncateAddress, formatMina, TX_TYPES } from '@/lib/types';
+import TxTypeIcon from '@/components/TxTypeIcon';
 import { fetchBalance } from '@/lib/api';
 import LedgerConnectModal from '@/components/LedgerConnectModal';
 import Link from 'next/link';
@@ -27,6 +28,7 @@ export default function Dashboard() {
     clearWalletError,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
   } = useAppContext();
 
   const recent = [...proposals].slice(0, 5);
@@ -53,6 +55,8 @@ export default function Dashboard() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6">
@@ -126,13 +130,14 @@ export default function Dashboard() {
 
             <div>
               <h3 className="text-base font-bold mb-3">New Proposal</h3>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <div className="flex flex-wrap gap-2">
                 {TX_TYPES.map((type) => (
                   <Link
                     key={type.value}
                     href={`/transactions/new?type=${type.value}`}
-                    className="p-3 rounded-lg border border-safe-border bg-safe-gray text-sm text-white font-medium text-left transition-colors hover:border-safe-green hover:text-safe-green"
+                    className="flex items-center gap-2 px-4 py-2 rounded-full bg-safe-gray border border-safe-border text-sm text-white font-semibold text-center transition-all hover:bg-safe-green hover:text-safe-dark hover:shadow-md hover:shadow-safe-green/20"
                   >
+                    <TxTypeIcon icon={type.icon} className="w-4 h-4" />
                     {type.label}
                   </Link>
                 ))}
@@ -224,8 +229,7 @@ function ConnectNotice({
       </div>
       {showLedgerModal && (
         <LedgerConnectModal
-          onConfirm={(accountIndex, _networkId) => {
-            // TODO: wire networkId to Ledger signing calls
+          onConfirm={(accountIndex) => {
             setShowLedgerModal(false);
             onConnectLedger(accountIndex);
           }}

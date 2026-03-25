@@ -1,8 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { truncateAddress, type WalletType } from '@/lib/types';
 import LedgerConnectModal from './LedgerConnectModal';
+
+const LEDGER_NETWORKS = [
+  { label: 'Mainnet', id: 1 },
+  { label: 'Devnet', id: 0 },
+  { label: 'Testnet', id: 0 },
+] as const;
 
 interface WalletConnectProps {
   address: string | null;
@@ -11,10 +17,12 @@ interface WalletConnectProps {
   auroInstalled: boolean;
   ledgerSupported: boolean;
   walletType: WalletType | null;
+  network: string | null;
   onConnect: () => void;
   onConnectAuro: () => void;
   onConnectLedger: (accountIndex?: number) => void;
   onDisconnect: () => void;
+  onNetworkChange?: (network: string, ledgerNetworkId: number) => void;
 }
 
 export default function WalletConnect({
@@ -24,13 +32,29 @@ export default function WalletConnect({
   auroInstalled,
   ledgerSupported,
   walletType,
+  network,
   onConnect,
   onConnectAuro,
   onConnectLedger,
   onDisconnect,
+  onNetworkChange,
 }: WalletConnectProps) {
   const [copied, setCopied] = useState(false);
   const [showLedgerModal, setShowLedgerModal] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!showMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMenu]);
 
   const handleCopy = () => {
     if (!address) return;
@@ -38,6 +62,10 @@ export default function WalletConnect({
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  const networkLabel = network
+    ? network.charAt(0).toUpperCase() + network.slice(1)
+    : 'Unknown';
 
   if (connected && address) {
     return (
@@ -66,12 +94,52 @@ export default function WalletConnect({
             )}
           </button>
         </div>
-        <button
-          onClick={onDisconnect}
-          className="text-xs text-safe-text hover:text-white transition-colors"
-        >
-          Disconnect
-        </button>
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setShowMenu((prev) => !prev)}
+            className="text-xs text-safe-text hover:text-white transition-colors flex items-center gap-1"
+          >
+            {networkLabel}
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {showMenu && (
+            <div className="absolute right-0 top-full mt-1 bg-safe-dark border border-safe-border rounded-lg py-1 min-w-[140px] z-50 shadow-lg">
+              {walletType === 'ledger' && onNetworkChange && (
+                <>
+                  {LEDGER_NETWORKS.map(({ label, id }) => (
+                    <button
+                      key={label}
+                      onClick={() => {
+                        onNetworkChange(label.toLowerCase(), id);
+                        setShowMenu(false);
+                      }}
+                      className={`w-full text-left text-xs px-3 py-1.5 transition-colors ${
+                        networkLabel === label
+                          ? 'text-safe-green'
+                          : 'text-safe-text hover:text-white hover:bg-safe-hover'
+                      }`}
+                    >
+                      {label}
+                      {networkLabel === label && ' ✓'}
+                    </button>
+                  ))}
+                  <div className="border-t border-safe-border my-1" />
+                </>
+              )}
+              <button
+                onClick={() => {
+                  setShowMenu(false);
+                  onDisconnect();
+                }}
+                className="w-full text-left text-xs px-3 py-1.5 text-red-400 hover:text-red-300 hover:bg-safe-hover transition-colors"
+              >
+                Disconnect
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -131,8 +199,7 @@ export default function WalletConnect({
         </button>
         {showLedgerModal && (
           <LedgerConnectModal
-            onConfirm={(accountIndex, _networkId) => {
-              // TODO: wire networkId to Ledger signing calls
+            onConfirm={(accountIndex) => {
               setShowLedgerModal(false);
               onConnectLedger(accountIndex);
             }}

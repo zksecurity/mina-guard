@@ -23,6 +23,7 @@ export default function TransactionsPage() {
     isLoading,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
   } = useAppContext();
   const [activeTab, setActiveTab] = useState<Tab>('all');
 
@@ -53,6 +54,8 @@ export default function TransactionsPage() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6">

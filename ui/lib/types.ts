@@ -109,12 +109,12 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
 };
 
 /** Proposal type options used by dashboard and new-proposal forms. */
-export const TX_TYPES: { value: TxType; label: string }[] = [
-  { value: 'transfer', label: 'Send MINA' },
-  { value: 'addOwner', label: 'Add Owner' },
-  { value: 'removeOwner', label: 'Remove Owner' },
-  { value: 'changeThreshold', label: 'Change Threshold' },
-  { value: 'setDelegate', label: 'Set Delegate' },
+export const TX_TYPES: { value: TxType; label: string; icon: string }[] = [
+  { value: 'transfer', label: 'Send MINA', icon: 'send' },
+  { value: 'addOwner', label: 'Add Owner', icon: 'user-plus' },
+  { value: 'removeOwner', label: 'Remove Owner', icon: 'user-minus' },
+  { value: 'changeThreshold', label: 'Change Threshold', icon: 'shield' },
+  { value: 'setDelegate', label: 'Set Delegate', icon: 'link' },
 ];
 
 /** Truncates long addresses for compact UI chips and labels. */
