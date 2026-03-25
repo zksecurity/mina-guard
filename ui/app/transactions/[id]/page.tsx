@@ -11,7 +11,7 @@ import {
   formatMina,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
-import { submitOffchainSignature, executeBatchTx } from '@/lib/multisigClient';
+import { submitOffchainSignature, executeBatchTx, assertLedgerReady } from '@/lib/multisigClient';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -77,11 +77,17 @@ export default function TransactionDetailPage() {
   };
 
   /** Fetches batch payload and submits execute*BatchSig transaction on-chain. */
-  const handleExecute = () => {
+  const handleExecute = async () => {
     if (!proposal || !multisig || !wallet.address) return;
 
     const captured = { contractAddress: multisig.address, executorAddress: wallet.address, proposal };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    try {
+      await assertLedgerReady(signer);
+    } catch (err) {
+      void startOperation('Execute proposal', async () => { throw err; });
+      return;
+    }
     void startOperation('Building batch execute transaction...', async (onProgress) => {
       return await executeBatchTx({
         contractAddress: captured.contractAddress,
