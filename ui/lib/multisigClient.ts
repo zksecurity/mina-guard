@@ -6,7 +6,7 @@ import * as Comlink from 'comlink';
 import type { WorkerApi } from './multisigClient.worker';
 import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
-import { signFields as ledgerSignFields, signFeePayer } from '@/lib/ledgerWallet';
+import { signFields as ledgerSignFields, signFeePayer, getLedgerAddress } from '@/lib/ledgerWallet';
 
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
@@ -49,6 +49,12 @@ function getWorkerApi(): Comlink.Remote<WorkerApi> {
     api = Comlink.wrap<WorkerApi>(worker);
   }
   return api;
+}
+
+/** Verifies the Ledger device is unlocked and the Mina app is open before starting expensive work. */
+export async function assertLedgerReady(signer?: SignerConfig): Promise<void> {
+  if (signer?.type !== 'ledger') return;
+  await getLedgerAddress(signer.ledgerAccountIndex);
 }
 
 /** Proxied Auro sendTransaction callback for use inside the worker. Returns null for Ledger. */
@@ -133,6 +139,7 @@ export async function deployContract(params: {
   feePayerAddress: string;
   zkAppPrivateKeyBase58: string;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  await assertLedgerReady(signer);
   return getWorkerApi().deployContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
@@ -144,6 +151,7 @@ export async function setupContract(params: {
   threshold: number;
   networkId: string;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  await assertLedgerReady(signer);
   return getWorkerApi().setupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
@@ -155,6 +163,7 @@ export async function deployAndSetupContract(params: {
   threshold: number;
   networkId: string;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  await assertLedgerReady(signer);
   return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
@@ -192,5 +201,6 @@ export async function executeBatchTx(params: {
   executorAddress: string;
   proposal: Proposal;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  await assertLedgerReady(signer);
   return getWorkerApi().executeBatchTx(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }

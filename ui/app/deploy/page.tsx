@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import { useAppContext } from '@/lib/app-context';
-import { deployAndSetupContract, generateKeypair } from '@/lib/multisigClient';
+import { deployAndSetupContract, generateKeypair, assertLedgerReady } from '@/lib/multisigClient';
 
 /** Deploy page for initializing new MinaGuard contracts from browser wallet session. */
 export default function DeployPage() {
@@ -73,7 +73,7 @@ export default function DeployPage() {
     return null;
   };
 
-  const handleDeploy = () => {
+  const handleDeploy = async () => {
     const error = validate();
     if (error) { setFormError(error); return; }
     if (!wallet.address || !keypair) return;
@@ -87,6 +87,12 @@ export default function DeployPage() {
       networkId,
     };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    try {
+      await assertLedgerReady(signer);
+    } catch (err) {
+      void startOperation('Deploy contract', async () => { throw err; });
+      return;
+    }
     void startOperation('Building deploy transaction...', async (onProgress) => {
       return await deployAndSetupContract(captured, onProgress, signer);
     });
