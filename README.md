@@ -35,6 +35,11 @@ cp backend/.env.example backend/.env
 cd backend && bunx prisma generate && cd ..
 ```
 
+To use the app with the Mesa Lightnet, start the network:
+```bash
+zk lightnet --mina-branch=mesa start
+```
+
 Prior to testing with lightnet, accounts must have funds. To fund them, add the
 public keys to `dev-helpers/.env` and run:
 ```bash
