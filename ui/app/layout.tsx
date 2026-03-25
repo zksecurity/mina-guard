@@ -199,7 +199,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
                 }`}
               >
                 <span className="shrink-0 text-base">
-                  {operationBanner.type === 'success' ? '\u2713' : '\u2717'}
+                  {operationBanner.type === 'success' ? '\u2713' : '\u26A0'}
                 </span>
                 <span className="font-mono text-xs break-all flex-1">
                   {(() => {
