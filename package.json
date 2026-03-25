@@ -22,5 +22,8 @@
     "@types/node": "^25.5.0",
     "e2e": "workspace:*",
     "ui": "workspace:*"
+  },
+  "overrides": {
+    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701"
   }
 }

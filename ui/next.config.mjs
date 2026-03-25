@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  webpack(config, { isServer }) {
+  webpack(config, { isServer, dev }) {
     // o1js uses top-level await and WASM
     config.experiments = {
       ...config.experiments,

@@ -14,8 +14,12 @@ import {
   PrivateKey,
   Signature,
   sendZkapp,
-  Bool
+  Bool,
+  TransactionVersion
 } from 'o1js';
+
+// Temporary MESA check — remove after confirming
+console.log('[MESA check] TransactionVersion:', TransactionVersion?.current?.()?.toString?.() ?? 'NOT FOUND (pre-MESA build)');
 
 import Client from 'mina-signer';
 
