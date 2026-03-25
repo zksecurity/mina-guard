@@ -75,7 +75,7 @@ export function useWallet() {
     });
 
     const unsubNetwork = onNetworkChange((network) => {
-      setWallet((prev) => ({ ...prev, network: network.name }));
+      setWallet((prev) => ({ ...prev, network: network.networkID.split(':')[1] ?? null }));
     });
 
     return () => {
@@ -139,7 +139,7 @@ export function useWallet() {
       setWallet({
         connected: true,
         address,
-        network: null,
+        network: 'mainnet',
         type: 'ledger',
         ledgerAccountIndex: idx,
       });
@@ -164,6 +164,10 @@ export function useWallet() {
 
   const clearError = useCallback(() => setError(null), []);
 
+  const setNetwork = useCallback((network: string) => {
+    setWallet((prev) => ({ ...prev, network }));
+  }, []);
+
   return {
     wallet,
     isLoading,
@@ -174,6 +178,7 @@ export function useWallet() {
     connectAuro,
     connectLedger,
     disconnect,
+    setNetwork,
     /** Backward-compatible alias for connectAuro. */
     connect: connectAuro,
   };

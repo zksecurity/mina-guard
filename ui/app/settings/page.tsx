@@ -20,6 +20,7 @@ export default function SettingsPage() {
     isLoading,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
   } = useAppContext();
 
   const activeOwners = owners.map((owner) => owner.address);
@@ -39,6 +40,8 @@ export default function SettingsPage() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6 max-w-2xl space-y-6">

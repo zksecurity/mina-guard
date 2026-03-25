@@ -124,6 +124,7 @@ export async function generateKeypair(): Promise<{ privateKey: string; publicKey
   return getWorkerApi().generateKeypair();
 }
 
+
 /**
  * Deploys MinaGuard contract account update and submits via Auro or Ledger.
  * The zkApp private key remains in browser memory for this call only.

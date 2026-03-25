@@ -9,6 +9,7 @@ import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext, type OperationBanner } from '@/lib/app-context';
 import { warmupWorker, onLedgerSigningChange, type LedgerSigningContext } from '@/lib/multisigClient';
+import { setLedgerNetworkId } from '@/lib/ledgerWallet';
 import LedgerSigningModal from '@/components/LedgerSigningModal';
 
 /** Root-level provider that wires wallet state with backend-indexed contract data. */
@@ -27,17 +28,23 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const {
     wallet, isLoading: walletLoading, error: walletError, clearError: clearWalletError,
     auroInstalled, ledgerSupported,
-    connect, connectAuro, connectLedger, disconnect,
+    connect, connectAuro, connectLedger, disconnect, setNetwork,
   } = useWallet();
+
+  const setWalletNetwork = useCallback((network: string, ledgerNetId: number) => {
+    setNetwork(network);
+    setLedgerNetworkId(ledgerNetId);
+  }, [setNetwork]);
 
   const {
     state: multisig,
     contracts,
     owners,
+    allContractOwners,
     indexerStatus,
     refreshState: refreshMultisig,
     selectContract,
-  } = useMultisig();
+  } = useMultisig(wallet.address);
 
   const {
     proposals,
@@ -55,19 +62,38 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   // Global operation state for worker-based transactions
   const [isOperating, setIsOperating] = useState(false);
   const [operationLabel, setOperationLabel] = useState('');
+  const [completedSteps, setCompletedSteps] = useState<string[]>([]);
   const [operationBanner, setOperationBanner] = useState<OperationBanner | null>(null);
   const refreshRef = useRef(refreshMultisig);
   refreshRef.current = refreshMultisig;
+  const currentLabelRef = useRef('');
 
   const clearBanner = useCallback(() => setOperationBanner(null), []);
+  const autoDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Auto-dismiss success banners after 30s
+  useEffect(() => {
+    if (autoDismissRef.current) clearTimeout(autoDismissRef.current);
+    if (operationBanner?.type === 'success') {
+      autoDismissRef.current = setTimeout(() => setOperationBanner(null), 30000);
+    }
+    return () => { if (autoDismissRef.current) clearTimeout(autoDismissRef.current); };
+  }, [operationBanner]);
 
   const startOperation = useCallback(
     async (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => {
       setIsOperating(true);
       setOperationLabel(label);
+      setCompletedSteps([]);
       setOperationBanner(null);
+      currentLabelRef.current = label;
 
-      const onProgress = (step: string) => setOperationLabel(step);
+      const onProgress = (step: string) => {
+        if (step === currentLabelRef.current) return;
+        setCompletedSteps((prev) => [...prev, currentLabelRef.current]);
+        currentLabelRef.current = step;
+        setOperationLabel(step);
+      };
 
       try {
         console.log('[startOperation] awaiting fn...');
@@ -121,41 +147,86 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         clearBanner,
         startOperation,
         ledgerSigning,
+        setWalletNetwork,
       }}
     >
       <div className="flex min-h-screen">
         <Sidebar
           multisigAddress={multisig?.address ?? null}
-          contracts={contracts.map((c) => c.address)}
+          contracts={contracts}
           pendingTxCount={pendingCount}
           indexerStatus={indexerStatus}
           onSelectContract={(address) => {
             void selectContract(address);
           }}
+          walletAddress={wallet.address}
+          allContractOwners={allContractOwners}
         />
         <main className="flex-1 min-h-screen">
-          {operationBanner && (
-            <div
-              className={`flex items-center justify-between rounded-lg px-4 py-3 m-6 mb-0 text-sm ${
-                operationBanner.type === 'success'
-                  ? 'bg-safe-green/10 text-safe-green border border-safe-green/30'
-                  : 'bg-red-500/10 text-red-400 border border-red-500/30'
-              }`}
-            >
-              <span className="font-mono text-xs break-all">{operationBanner.message}</span>
-              <button onClick={clearBanner} className="ml-3 shrink-0 hover:opacity-70">
-                &times;
-              </button>
-            </div>
-          )}
-          {isOperating && (
-            <div className="flex items-center gap-2 rounded-lg px-4 py-3 m-6 mb-0 text-sm bg-safe-gray border border-safe-border">
-              <span className="animate-spin w-4 h-4 border-2 border-safe-green border-t-transparent rounded-full" />
-              <span className="text-safe-text">{operationLabel}</span>
-            </div>
-          )}
           {children}
         </main>
+
+        {/* Fixed toast notifications – bottom-right corner */}
+        {(isOperating || operationBanner) && (
+          <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 w-96 max-w-[calc(100vw-3rem)]">
+            {isOperating && (
+              <div className="animate-toast-in rounded-xl px-4 py-3 text-sm bg-safe-gray border border-safe-border shadow-lg shadow-black/40">
+                <div className="space-y-2">
+                  {completedSteps.map((step, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <svg className="shrink-0 w-3.5 h-3.5 text-safe-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-safe-text/60 text-xs truncate">{step.replace(/\.{3}$/, '')}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <span className="animate-spin shrink-0 w-3.5 h-3.5 border-2 border-safe-green border-t-transparent rounded-full" />
+                    <span className="text-safe-text text-xs truncate">{operationLabel}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {operationBanner && (
+              <div
+                className={`animate-toast-in flex items-center gap-3 rounded-xl px-4 py-3 text-sm shadow-lg shadow-black/40 ${
+                  operationBanner.type === 'success'
+                    ? 'bg-safe-gray border border-safe-green/40 text-safe-green'
+                    : 'bg-safe-gray border border-red-500/40 text-red-400'
+                }`}
+              >
+                <span className="shrink-0 text-base">
+                  {operationBanner.type === 'success' ? '\u2713' : '\u2717'}
+                </span>
+                <span className="font-mono text-xs break-all flex-1">
+                  {(() => {
+                    const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
+                    const match = operationBanner.message.match(/^(Transaction submitted: )(5J\w+)$/);
+                    if (match && explorerUrl) {
+                      return (
+                        <>
+                          {match[1]}
+                          <a
+                            href={`${explorerUrl}/tx/${match[2]}?network=${wallet.network ?? ''}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:opacity-70"
+                          >
+                            {match[2]}
+                          </a>
+                        </>
+                      );
+                    }
+                    return operationBanner.message;
+                  })()}
+                </span>
+                <button onClick={clearBanner} className="shrink-0 hover:opacity-70 text-lg leading-none">
+                  &times;
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {ledgerSigning && <LedgerSigningModal context={ledgerContext} />}
       </div>
     </AppContext.Provider>

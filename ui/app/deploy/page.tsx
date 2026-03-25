@@ -18,6 +18,7 @@ export default function DeployPage() {
     isLoading,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -28,7 +29,7 @@ export default function DeployPage() {
   // Setup fields
   const [ownerFields, setOwnerFields] = useState<string[]>(['']);
   const [threshold, setThreshold] = useState('1');
-  const [networkId, setNetworkId] = useState('1');
+  const [networkId, setNetworkId] = useState(wallet.network === 'mainnet' ? '1' : '0');
   const [formError, setFormError] = useState<string | null>(null);
 
   const generate = useCallback(async () => {
@@ -107,6 +108,8 @@ export default function DeployPage() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6 max-w-3xl space-y-6">
@@ -199,7 +202,7 @@ export default function DeployPage() {
                   className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
                 />
                 <p className="text-xs text-safe-text">
-                  Mainnet: <code className="font-mono">1</code> · Devnet: <code className="font-mono">0</code> · Localnet: <code className="font-mono">0</code>
+                  Mainnet: <code className="font-mono">1</code> · Devnet: <code className="font-mono">0</code> · Testnet: <code className="font-mono">0</code>
                 </p>
               </label>
             </div>

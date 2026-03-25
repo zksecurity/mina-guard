@@ -2,14 +2,16 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { truncateAddress, type IndexerStatus } from '@/lib/types';
+import { truncateAddress, type ContractSummary, type IndexerStatus } from '@/lib/types';
 
 interface SidebarProps {
   multisigAddress: string | null;
-  contracts: string[];
+  contracts: ContractSummary[];
   pendingTxCount: number;
   indexerStatus: IndexerStatus | null;
   onSelectContract?: (address: string) => void;
+  walletAddress: string | null;
+  allContractOwners: Map<string, string[]>;
 }
 
 const navItems = [
@@ -53,6 +55,12 @@ const navItems = [
   },
 ];
 
+/** Formats a date string into a compact absolute label. */
+function formatDiscoveredDate(iso: string): string {
+  const date = new Date(iso);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 /** Sidebar navigation including contract selector and wallet/network context chips. */
 export default function Sidebar({
   multisigAddress,
@@ -60,8 +68,18 @@ export default function Sidebar({
   pendingTxCount,
   indexerStatus,
   onSelectContract,
+  walletAddress,
+  allContractOwners,
 }: SidebarProps) {
   const pathname = usePathname();
+
+  // Filter contracts to only show ones the connected wallet is an owner of
+  const visibleContracts = walletAddress
+    ? contracts.filter((c) => {
+        const owners = allContractOwners.get(c.address);
+        return owners ? owners.includes(walletAddress) : false;
+      })
+    : [];
 
   return (
     <aside className="w-[240px] min-h-screen bg-safe-dark border-r border-safe-border flex flex-col">
@@ -77,20 +95,40 @@ export default function Sidebar({
         </div>
       </div>
 
-      {contracts.length > 0 && (
+      {visibleContracts.length > 0 && (
         <div className="px-4 py-3 border-b border-safe-border">
-          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-1">Wallet</p>
-          <select
-            value={multisigAddress ?? ''}
-            onChange={(e) => onSelectContract?.(e.target.value)}
-            className="w-full bg-safe-gray border border-safe-border rounded-lg px-2 py-1.5 text-xs font-mono"
-          >
-            {contracts.map((address) => (
-              <option key={address} value={address}>
-                {truncateAddress(address, 8)}
-              </option>
-            ))}
-          </select>
+          <p className="text-[10px] text-safe-text uppercase tracking-wider mb-2">Your Wallets</p>
+          <div className="space-y-1.5 max-h-[calc(100vh-360px)] overflow-y-auto">
+            {visibleContracts.map((c) => {
+              const isActive = c.address === multisigAddress;
+              return (
+                <button
+                  key={c.address}
+                  onClick={() => onSelectContract?.(c.address)}
+                  className={`w-full text-left rounded-lg px-3 py-2 transition-colors border ${
+                    isActive
+                      ? 'bg-safe-hover border-safe-green'
+                      : 'bg-safe-gray border-safe-border hover:border-safe-text/40'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-safe-green' : 'bg-safe-border'}`} />
+                    <span className="text-xs font-mono truncate">{truncateAddress(c.address, 8)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 ml-4">
+                    {c.threshold != null && c.numOwners != null && (
+                      <span className={`text-[10px] ${isActive ? 'text-safe-green' : 'text-safe-text'}`}>
+                        {c.threshold}/{c.numOwners} signers
+                      </span>
+                    )}
+                    <span className="text-[10px] text-safe-text">
+                      Created: {formatDiscoveredDate(c.discoveredAt)}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 

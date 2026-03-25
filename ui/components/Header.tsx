@@ -1,6 +1,7 @@
 'use client';
 
 import WalletConnect from './WalletConnect';
+import TestnetFundButton from './TestnetFundButton';
 import type { WalletType } from '@/lib/types';
 
 interface HeaderProps {
@@ -12,10 +13,12 @@ interface HeaderProps {
   auroInstalled: boolean;
   ledgerSupported: boolean;
   walletType: WalletType | null;
+  network: string | null;
   onConnect: () => void;
   onConnectAuro: () => void;
   onConnectLedger: (accountIndex?: number) => void;
   onDisconnect: () => void;
+  onNetworkChange?: (network: string, ledgerNetworkId: number) => void;
 }
 
 export default function Header({
@@ -27,10 +30,12 @@ export default function Header({
   auroInstalled,
   ledgerSupported,
   walletType,
+  network,
   onConnect,
   onConnectAuro,
   onConnectLedger,
   onDisconnect,
+  onNetworkChange,
 }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-6 py-4 border-b border-safe-border">
@@ -40,18 +45,29 @@ export default function Header({
           <p className="text-sm text-safe-text mt-0.5">{subtitle}</p>
         )}
       </div>
-      <WalletConnect
-        address={walletAddress}
-        connected={connected}
-        isLoading={isLoading}
-        auroInstalled={auroInstalled}
-        ledgerSupported={ledgerSupported}
-        walletType={walletType}
-        onConnect={onConnect}
-        onConnectAuro={onConnectAuro}
-        onConnectLedger={onConnectLedger}
-        onDisconnect={onDisconnect}
-      />
+      <div className="flex items-center gap-3">
+        {network && network !== 'mainnet' && connected && walletAddress && (
+          <TestnetFundButton
+            address={walletAddress}
+            network={network}
+            explorerUrl={process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? ''}
+          />
+        )}
+        <WalletConnect
+          address={walletAddress}
+          connected={connected}
+          isLoading={isLoading}
+          auroInstalled={auroInstalled}
+          ledgerSupported={ledgerSupported}
+          walletType={walletType}
+          network={network}
+          onConnect={onConnect}
+          onConnectAuro={onConnectAuro}
+          onConnectLedger={onConnectLedger}
+          onDisconnect={onDisconnect}
+          onNetworkChange={onNetworkChange}
+        />
+      </div>
     </header>
   );
 }

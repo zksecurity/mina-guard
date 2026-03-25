@@ -9,7 +9,7 @@ declare global {
 interface MinaProvider {
   requestAccounts(): Promise<string[]>;
   getAccounts(): Promise<string[]>;
-  requestNetwork(): Promise<{ chainId: string; name: string }>;
+  requestNetwork(): Promise<{ networkID: string }>;
   sendTransaction(params: {
     transaction: string;
     feePayer?: { fee?: number; memo?: string };
@@ -58,7 +58,8 @@ export async function getAuroNetwork(): Promise<string | null> {
   if (!isAuroInstalled()) return null;
   try {
     const network = await window.mina!.requestNetwork();
-    return network.name;
+    // networkID format: "mina:testnet", "mina:mainnet", "mina:devnet"
+    return network.networkID.split(':')[1] ?? null;
   } catch {
     return null;
   }
@@ -125,11 +126,11 @@ export function onAccountChange(
 
 /** Subscribes to wallet network-change events and returns an unsubscribe callback. */
 export function onNetworkChange(
-  handler: (network: { chainId: string; name: string }) => void
+  handler: (network: { networkID: string }) => void
 ): () => void {
   if (!isAuroInstalled()) return () => {};
   const wrappedHandler = (...args: unknown[]) =>
-    handler(args[0] as { chainId: string; name: string });
+    handler(args[0] as { networkID: string });
   window.mina!.on('chainChanged', wrappedHandler);
   return () => window.mina!.removeListener('chainChanged', wrappedHandler);
 }

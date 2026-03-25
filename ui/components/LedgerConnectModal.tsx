@@ -3,13 +3,12 @@
 import { useState } from 'react';
 
 interface LedgerConnectModalProps {
-  onConfirm: (accountIndex: number, networkId: number) => void;
+  onConfirm: (accountIndex: number) => void;
   onClose: () => void;
 }
 
 export default function LedgerConnectModal({ onConfirm, onClose }: LedgerConnectModalProps) {
   const [accountIndex, setAccountIndex] = useState(0);
-  const [networkId, setNetworkId] = useState(1);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -37,18 +36,6 @@ export default function LedgerConnectModal({ onConfirm, onClose }: LedgerConnect
           />
         </label>
 
-        <label className="block space-y-1">
-          <span className="text-xs text-safe-text">Network</span>
-          <select
-            value={networkId}
-            onChange={(e) => setNetworkId(Number(e.target.value))}
-            className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm focus:border-safe-green focus:outline-none appearance-none"
-          >
-            <option value={1}>Mainnet</option>
-            <option value={0}>Testnet</option>
-          </select>
-        </label>
-
         <div className="flex gap-3 pt-2">
           <button
             onClick={onClose}
@@ -57,7 +44,7 @@ export default function LedgerConnectModal({ onConfirm, onClose }: LedgerConnect
             Cancel
           </button>
           <button
-            onClick={() => onConfirm(accountIndex, networkId)}
+            onClick={() => onConfirm(accountIndex)}
             className="flex-1 bg-safe-green text-safe-dark font-semibold rounded-lg px-4 py-2.5 text-sm hover:brightness-110 transition-all"
           >
             Connect

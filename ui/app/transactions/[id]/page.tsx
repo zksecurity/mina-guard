@@ -29,6 +29,7 @@ export default function TransactionDetailPage() {
     isLoading,
     auroInstalled,
     ledgerSupported,
+    setWalletNetwork,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -106,6 +107,8 @@ export default function TransactionDetailPage() {
           onConnectAuro={connectAuro}
           onConnectLedger={connectLedger}
           onDisconnect={disconnect}
+          network={wallet.network}
+          onNetworkChange={setWalletNetwork}
         />
         <div className="p-6 text-center py-20">
           <p className="text-safe-text">Connect wallet to view proposal details</p>
@@ -129,6 +132,8 @@ export default function TransactionDetailPage() {
           onConnectAuro={connectAuro}
           onConnectLedger={connectLedger}
           onDisconnect={disconnect}
+          network={wallet.network}
+          onNetworkChange={setWalletNetwork}
         />
         <div className="p-6 text-center py-20">
           <p className="text-safe-text">Proposal not found</p>
@@ -166,6 +171,8 @@ export default function TransactionDetailPage() {
         onConnectAuro={connectAuro}
         onConnectLedger={connectLedger}
         onDisconnect={disconnect}
+        network={wallet.network}
+        onNetworkChange={setWalletNetwork}
       />
 
       <div className="p-6 max-w-3xl space-y-6">
@@ -227,7 +234,7 @@ export default function TransactionDetailPage() {
               <button
                 onClick={handleExecute}
                 disabled={isOperating}
-                className="flex-1 bg-blue-500 text-white font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 border border-safe-green text-safe-green font-semibold rounded-lg py-3 text-sm hover:bg-safe-green/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
               </button>
@@ -259,7 +266,7 @@ function DetailRow({
   return (
     <div className="flex justify-between items-center py-2 border-b border-safe-border/50 last:border-0">
       <span className="text-sm text-safe-text">{label}</span>
-      <span className={`text-sm ${mono ? 'font-mono' : ''}`}>{value}</span>
+      <span className={`text-sm ml-4 truncate ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   );
 }
