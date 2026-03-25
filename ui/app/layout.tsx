@@ -90,9 +90,12 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
       const onProgress = (step: string) => {
         if (step === currentLabelRef.current) return;
-        setCompletedSteps((prev) => [...prev, currentLabelRef.current]);
+        const prev = currentLabelRef.current;
         currentLabelRef.current = step;
         setOperationLabel(step);
+        setCompletedSteps((steps) =>
+          steps.includes(prev) ? steps : [...steps, prev]
+        );
       };
 
       try {
