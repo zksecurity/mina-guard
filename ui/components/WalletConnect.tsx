@@ -42,19 +42,24 @@ export default function WalletConnect({
   const [copied, setCopied] = useState(false);
   const [showLedgerModal, setShowLedgerModal] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showWalletMenu, setShowWalletMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const walletMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
+  // Close dropdowns on outside click
   useEffect(() => {
-    if (!showMenu) return;
+    if (!showMenu && !showWalletMenu) return;
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (showMenu && menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
+      }
+      if (showWalletMenu && walletMenuRef.current && !walletMenuRef.current.contains(e.target as Node)) {
+        setShowWalletMenu(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu]);
+  }, [showMenu, showWalletMenu]);
 
   const handleCopy = () => {
     if (!address) return;
@@ -70,71 +75,104 @@ export default function WalletConnect({
   if (connected && address) {
     return (
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 bg-safe-gray border border-safe-border rounded-lg px-3 py-2">
-          <div className="w-2 h-2 rounded-full bg-safe-green" />
-          <span className="text-[10px] text-safe-text uppercase tracking-wider">
-            {walletType === 'ledger' ? 'Ledger' : 'Auro'}
-          </span>
-          <span className="text-sm font-mono">
-            {truncateAddress(address)}
-          </span>
-          <button
-            onClick={handleCopy}
-            title="Copy address"
-            className="text-safe-text hover:text-white transition-colors ml-1"
-          >
-            {copied ? (
-              <svg className="w-3.5 h-3.5 text-safe-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
+        {walletType === 'ledger' && onNetworkChange ? (
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setShowMenu((prev) => !prev)}
+              className="text-sm font-medium text-safe-text hover:text-white transition-colors flex items-center gap-1"
+            >
+              {networkLabel}
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
+            </button>
+            {showMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-safe-dark border border-safe-border rounded-lg py-1 min-w-[140px] z-50 shadow-lg">
+                {LEDGER_NETWORKS.map(({ label, id }) => (
+                  <button
+                    key={label}
+                    onClick={() => {
+                      onNetworkChange(label.toLowerCase(), id);
+                      setShowMenu(false);
+                    }}
+                    className={`w-full text-left text-xs px-3 py-1.5 transition-colors ${
+                      networkLabel === label
+                        ? 'text-safe-green'
+                        : 'text-safe-text hover:text-white hover:bg-safe-hover'
+                    }`}
+                  >
+                    {label}
+                    {networkLabel === label && ' ✓'}
+                  </button>
+                ))}
+              </div>
             )}
-          </button>
-        </div>
-        <div className="relative" ref={menuRef}>
-          <button
-            onClick={() => setShowMenu((prev) => !prev)}
-            className="text-xs text-safe-text hover:text-white transition-colors flex items-center gap-1"
-          >
+          </div>
+        ) : (
+          <span className="text-sm font-medium text-safe-text">
             {networkLabel}
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          </span>
+        )}
+        <div className="relative" ref={walletType === 'ledger' && onNetworkChange ? walletMenuRef : menuRef}>
+          <button
+            onClick={() => {
+              if (walletType === 'ledger' && onNetworkChange) {
+                setShowWalletMenu((prev) => !prev);
+              } else {
+                setShowMenu((prev) => !prev);
+              }
+            }}
+            className="flex items-center gap-2 bg-safe-gray border border-safe-border rounded-lg px-3 py-2 hover:bg-safe-hover transition-colors cursor-pointer"
+          >
+            <div className="w-2 h-2 rounded-full bg-safe-green" />
+            <span className="text-[10px] text-safe-text uppercase tracking-wider">
+              {walletType === 'ledger' ? 'Ledger' : 'Auro'}
+            </span>
+            <span className="text-sm font-mono">
+              {truncateAddress(address)}
+            </span>
+            <svg className="w-3.5 h-3.5 text-safe-text ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          {showMenu && (
-            <div className="absolute right-0 top-full mt-1 bg-safe-dark border border-safe-border rounded-lg py-1 min-w-[140px] z-50 shadow-lg">
-              {walletType === 'ledger' && onNetworkChange && (
-                <>
-                  {LEDGER_NETWORKS.map(({ label, id }) => (
-                    <button
-                      key={label}
-                      onClick={() => {
-                        onNetworkChange(label.toLowerCase(), id);
-                        setShowMenu(false);
-                      }}
-                      className={`w-full text-left text-xs px-3 py-1.5 transition-colors ${
-                        networkLabel === label
-                          ? 'text-safe-green'
-                          : 'text-safe-text hover:text-white hover:bg-safe-hover'
-                      }`}
-                    >
-                      {label}
-                      {networkLabel === label && ' ✓'}
-                    </button>
-                  ))}
-                  <div className="border-t border-safe-border my-1" />
-                </>
-              )}
+          {(walletType === 'ledger' && onNetworkChange ? showWalletMenu : showMenu) && (
+            <div className="absolute right-0 top-full mt-1 bg-safe-dark border border-safe-border rounded-lg py-1 min-w-[160px] z-50 shadow-lg">
+              <button
+                onClick={() => {
+                  handleCopy();
+                  setShowMenu(false);
+                  setShowWalletMenu(false);
+                }}
+                className="w-full text-left text-xs px-3 py-1.5 text-safe-text hover:text-white hover:bg-safe-hover transition-colors flex items-center gap-2"
+              >
+                {copied ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 text-safe-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy address
+                  </>
+                )}
+              </button>
+              <div className="border-t border-safe-border my-1" />
               <button
                 onClick={() => {
                   setShowMenu(false);
+                  setShowWalletMenu(false);
                   onDisconnect();
                 }}
-                className="w-full text-left text-xs px-3 py-1.5 text-red-400 hover:text-red-300 hover:bg-safe-hover transition-colors"
+                className="w-full text-left text-xs px-3 py-1.5 text-red-400 hover:text-red-300 hover:bg-safe-hover transition-colors flex items-center gap-2"
               >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
                 Disconnect
               </button>
             </div>
