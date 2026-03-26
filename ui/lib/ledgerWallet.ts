@@ -96,6 +96,18 @@ async function getApp(): Promise<MinaApp> {
   return app;
 }
 
+/** Checks that the Ledger is connected, unlocked, and the Mina app is open. */
+export async function checkLedgerReady(): Promise<void> {
+  const ledger = await getApp();
+  let result;
+  try {
+    result = await ledger.getAppVersion();
+  } catch (err) {
+    throw toLedgerError(err);
+  }
+  assertLedgerSuccess(result);
+}
+
 /** Closes the active transport connection. */
 export async function disconnectLedger(): Promise<void> {
   if (transport) {

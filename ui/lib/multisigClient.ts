@@ -6,7 +6,7 @@ import * as Comlink from 'comlink';
 import type { WorkerApi } from './multisigClient.worker';
 import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
-import { signFields as ledgerSignFields, signFeePayer, getLedgerAddress } from '@/lib/ledgerWallet';
+import { signFields as ledgerSignFields, signFeePayer, checkLedgerReady } from '@/lib/ledgerWallet';
 
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
@@ -54,7 +54,7 @@ function getWorkerApi(): Comlink.Remote<WorkerApi> {
 /** Verifies the Ledger device is unlocked and the Mina app is open before starting expensive work. */
 export async function assertLedgerReady(signer?: SignerConfig): Promise<void> {
   if (signer?.type !== 'ledger') return;
-  await getLedgerAddress(signer.ledgerAccountIndex);
+  await checkLedgerReady();
 }
 
 /** Proxied Auro sendTransaction callback for use inside the worker. Returns null for Ledger. */

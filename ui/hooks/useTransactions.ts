@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchProposals } from '@/lib/api';
 import { Proposal } from '@/lib/types';
 
@@ -8,6 +8,8 @@ import { Proposal } from '@/lib/types';
 export function useTransactions(multisigAddress: string | null) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const addressRef = useRef(multisigAddress);
+  addressRef.current = multisigAddress;
 
   /** Pulls latest proposals for the active contract. */
   const refresh = useCallback(async () => {
@@ -19,6 +21,8 @@ export function useTransactions(multisigAddress: string | null) {
     setIsLoading(true);
     try {
       const rows = await fetchProposals(multisigAddress, { limit: 200, offset: 0 });
+      // Bail if the address changed while fetching
+      if (addressRef.current !== multisigAddress) return;
       setProposals(rows);
     } finally {
       setIsLoading(false);
