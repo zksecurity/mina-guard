@@ -53,6 +53,7 @@ const createProposalSchema = z.object({
   networkId: fieldString,
   guardAddress: base58PublicKey,
   proposalHash: hexHash,
+  proposer: base58PublicKey,
 });
 
 const submitSignatureSchema = z.object({
@@ -93,7 +94,7 @@ export function createBatchRouter(): Router {
     const {
       toAddress, amount, tokenId, txType, data,
       uid, configNonce, expiryBlock, networkId, guardAddress,
-      proposalHash,
+      proposalHash, proposer,
     } = parsed.data;
 
     if (guardAddress !== contract.address) {
@@ -161,6 +162,7 @@ export function createBatchRouter(): Router {
         expiryBlock,
         networkId,
         guardAddress,
+        proposer,
         origin: 'offchain',
         status: 'pending',
       },

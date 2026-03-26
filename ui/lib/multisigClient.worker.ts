@@ -663,6 +663,7 @@ const workerApi = {
       networkId: params.networkId,
       guardAddress: params.contractAddress,
       proposalHash: hashStr,
+      proposer: params.proposerAddress,
     });
 
     progressFn('Submitting signature to backend...');
