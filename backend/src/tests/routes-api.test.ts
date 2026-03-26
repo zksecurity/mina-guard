@@ -15,10 +15,10 @@ const ownerA = PrivateKey.random().toPublicKey().toBase58();
 const ownerB = PrivateKey.random().toPublicKey().toBase58();
 const ownerC = PrivateKey.random().toPublicKey().toBase58();
 
-const proposalHashA = 'a'.repeat(64);
-const proposalHashB = 'b'.repeat(64);
-const proposalHashC = 'c'.repeat(64);
-const otherProposalHash = 'd'.repeat(64);
+const proposalHashA = '101';
+const proposalHashB = '202';
+const proposalHashC = '303';
+const otherProposalHash = '404';
 
 function get(path: string) {
   return fetch(`${baseUrl}${path}`);

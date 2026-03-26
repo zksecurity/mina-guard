@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { PublicKey } from 'o1js';
 import { z, type ZodRawShape } from 'zod';
 
-const PROPOSAL_HASH_RE = /^[0-9a-fA-F]{64}$/;
+const FIELD_STRING_RE = /^\d+$/;
 
 /** Shared Mina base58 public key validator used by params and request bodies. */
 export const minaPublicKeySchema = z.string().refine((value) => {
@@ -17,10 +17,10 @@ export const minaPublicKeySchema = z.string().refine((value) => {
 /** Route param schema for contract/account addresses. */
 export const addressParamSchema = minaPublicKeySchema;
 
-/** Route param/body schema for proposal hashes. */
+/** Route param/body schema for proposal hashes encoded as o1js Field strings. */
 export const proposalHashParamSchema = z.string().regex(
-  PROPOSAL_HASH_RE,
-  'Must be a 64-char hex string'
+  FIELD_STRING_RE,
+  'Must be a numeric string'
 );
 
 /** Zod query schema that preserves existing bounded integer parsing semantics. */
