@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { PublicKey } from 'o1js';
 import { z } from 'zod';
 import { prisma } from './db.js';
 import { computeProposalHash, verifySignature, buildBatchPayload } from './batch-sig-service.js';
@@ -10,6 +11,11 @@ import {
 } from './request-validation.js';
 
 const base58PublicKey = minaPublicKeySchema;
+const EMPTY_PUBLIC_KEY_BASE58 = PublicKey.empty().toBase58();
+const proposalTargetPublicKey = z.string().refine((value) => {
+  if (value === EMPTY_PUBLIC_KEY_BASE58) return true;
+  return base58PublicKey.safeParse(value).success;
+}, { message: 'Invalid Mina public key' });
 
 const fieldString = z.string().regex(/^\d+$/, 'Must be a numeric string');
 const hexHash = proposalHashParamSchema;
@@ -36,7 +42,7 @@ type AddressParams = z.infer<typeof addressParamsSchema>;
 type ProposalParams = z.infer<typeof proposalParamsSchema>;
 
 const createProposalSchema = z.object({
-  toAddress: base58PublicKey,
+  toAddress: proposalTargetPublicKey,
   amount: fieldString,
   tokenId: fieldString,
   txType: fieldString,
