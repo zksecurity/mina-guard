@@ -22,6 +22,7 @@ export default function TransactionDetailPage() {
     multisig,
     owners,
     proposals,
+    proposalsAddress,
     connect,
     connectAuro,
     connectLedger,
@@ -39,13 +40,29 @@ export default function TransactionDetailPage() {
 
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
 
+  // If the selected contract changes, leave the detail page immediately
   useEffect(() => {
-    if (!multisig || !proposalHash) return;
+    if (!multisig) return;
+    // Contract switched — go to proposals list immediately
+    if (proposalsAddress !== null && proposalsAddress !== multisig.address) {
+      router.push('/transactions');
+      return;
+    }
+    // Proposals loaded for current contract but this one doesn't exist
+    if (proposals.length > 0 && !proposal) {
+      router.push('/transactions');
+    }
+  }, [multisig, proposals, proposal, proposalsAddress, router]);
+
+  useEffect(() => {
+    if (!multisig || !proposal) return;
+    // Don't fetch until proposals have been loaded for the current contract
+    if (proposalsAddress !== multisig.address) return;
     (async () => {
       const rows = await fetchApprovals(multisig.address, proposalHash);
       setApprovalAddresses(rows.map((row) => row.approver));
     })();
-  }, [multisig, proposalHash]);
+  }, [multisig, proposal, proposalHash, proposalsAddress]);
 
   const isOwner = useMemo(() => {
     return owners.some((owner) => owner.address === wallet.address);

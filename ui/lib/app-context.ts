@@ -22,6 +22,8 @@ export interface AppContextType {
   contracts: ContractSummary[];
   owners: OwnerRecord[];
   proposals: Proposal[];
+  /** The contract address that `proposals` were fetched for (null while loading). */
+  proposalsAddress: string | null;
   pendingCount: number;
   indexerStatus: IndexerStatus | null;
   connect: () => void;
@@ -59,6 +61,7 @@ export const AppContext = createContext<AppContextType>({
   contracts: [],
   owners: [],
   proposals: [],
+  proposalsAddress: null,
   pendingCount: 0,
   indexerStatus: null,
   connect: () => {},

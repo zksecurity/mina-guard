@@ -48,6 +48,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   const {
     proposals,
+    proposalsAddress,
     pendingCount,
   } = useTransactions(multisig?.address ?? null);
 
@@ -131,6 +132,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         contracts,
         owners,
         proposals,
+        proposalsAddress,
         pendingCount,
         indexerStatus,
         connect,
