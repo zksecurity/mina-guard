@@ -1,5 +1,5 @@
 import { Field, PublicKey, Signature, UInt64 } from 'o1js';
-import { TransactionProposal, MAX_OWNERS } from 'contracts';
+import { MAX_OWNERS, MAX_RECEIVERS, Receiver, TransactionProposal, TxType } from 'contracts';
 import { prisma } from './db.js';
 
 const EMPTY_PUBLIC_KEY_BASE58 = PublicKey.empty().toBase58();
@@ -12,8 +12,7 @@ function safePublicKey(base58: string): InstanceType<typeof PublicKey> {
 
 /** Recomputes the Poseidon proposal hash from individual fields. */
 export function computeProposalHash(params: {
-  toAddress: string;
-  amount: string;
+  receivers: Array<{ address: string; amount: string }>;
   tokenId: string;
   txType: string;
   data: string;
@@ -23,9 +22,16 @@ export function computeProposalHash(params: {
   networkId: string;
   guardAddress: string;
 }): string {
+  const paddedReceivers = params.receivers.map((receiver) => new Receiver({
+    address: safePublicKey(receiver.address),
+    amount: UInt64.from(receiver.amount),
+  }));
+  while (paddedReceivers.length < MAX_RECEIVERS) {
+    paddedReceivers.push(Receiver.empty());
+  }
+
   const proposal = new TransactionProposal({
-    to: safePublicKey(params.toAddress),
-    amount: UInt64.from(params.amount),
+    receivers: paddedReceivers.slice(0, MAX_RECEIVERS),
     tokenId: Field(params.tokenId),
     txType: Field(params.txType),
     data: Field(params.data),
@@ -62,7 +68,7 @@ export async function buildBatchPayload(
   ready: boolean;
   threshold: number;
   approvalCount: number;
-  proposal: Record<string, string | null>;
+  proposal: Record<string, string | number | null | Array<{ index: number; address: string; amount: string }>>;
   inputs: Array<{
     isSome: boolean;
     signer: string | null;
@@ -81,6 +87,11 @@ export async function buildBatchPayload(
       contractId_proposalHash: {
         contractId: contract.id,
         proposalHash,
+      },
+    },
+    include: {
+      receivers: {
+        orderBy: { idx: 'asc' },
       },
     },
   });
@@ -135,6 +146,15 @@ export async function buildBatchPayload(
   }
 
   const threshold = contract.threshold ?? 1;
+  const receivers = proposal.receivers.length > 0
+    ? proposal.receivers.map((receiver) => ({
+        index: receiver.idx,
+        address: receiver.address,
+        amount: receiver.amount,
+      }))
+    : proposal.txType === TxType.TRANSFER.toString() && proposal.toAddress && proposal.amount
+      ? [{ index: 0, address: proposal.toAddress, amount: proposal.amount }]
+      : [];
 
   return {
     ready: approvals.length >= threshold,
@@ -152,6 +172,11 @@ export async function buildBatchPayload(
       expiryBlock: proposal.expiryBlock,
       networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
+      receivers,
+      recipientCount: proposal.txType === TxType.TRANSFER.toString() ? receivers.length : 0,
+      totalAmount: proposal.txType === TxType.TRANSFER.toString()
+        ? receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n).toString()
+        : null,
     },
     inputs,
   };

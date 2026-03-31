@@ -4,6 +4,7 @@ import {
   type IndexerStatus,
   type OwnerRecord,
   type Proposal,
+  type ProposalReceiver,
   normalizeTxType,
 } from '@/lib/types';
 
@@ -124,6 +125,11 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
 
 /** Normalizes backend proposal rows and txType encodings for UI components. */
 function toProposal(input: Record<string, unknown>): Proposal {
+  const receivers = asReceivers(input.receivers);
+  const totalAmount = asNullableString(input.totalAmount)
+    ?? (receivers.length > 0
+      ? receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n).toString()
+      : null);
   return {
     proposalHash: asString(input.proposalHash) ?? '',
     proposer: asNullableString(input.proposer),
@@ -144,6 +150,9 @@ function toProposal(input: Record<string, unknown>): Proposal {
     executedAtBlock: asNullableNumber(input.executedAtBlock),
     createdAt: asString(input.createdAt) ?? new Date(0).toISOString(),
     updatedAt: asString(input.updatedAt) ?? new Date(0).toISOString(),
+    receivers,
+    recipientCount: asNullableNumber(input.recipientCount) ?? receivers.length,
+    totalAmount,
   };
 }
 
@@ -201,8 +210,9 @@ function asProposalStatus(value: unknown): Proposal['status'] {
 export async function postOffchainProposal(
   contractAddress: string,
   data: {
-    toAddress: string;
-    amount: string;
+    receivers?: Array<{ address: string; amount: string }>;
+    toAddress?: string;
+    amount?: string;
     tokenId: string;
     txType: string;
     data: string;
@@ -269,7 +279,7 @@ export async function fetchBatchPayload(
   ready: boolean;
   threshold: number;
   approvalCount: number;
-  proposal: Record<string, string | null>;
+  proposal: Record<string, string | null | number | Array<Record<string, unknown>>>;
   inputs: Array<{
     isSome: boolean;
     signer: string | null;
@@ -281,6 +291,18 @@ export async function fetchBatchPayload(
   return getJson(
     `/api/contracts/${contractAddress}/proposals/${proposalHash}/batch-payload`
   );
+}
+
+function asReceivers(value: unknown): ProposalReceiver[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const record = typeof item === 'object' && item !== null ? item as Record<string, unknown> : {};
+    return {
+      index: asNullableNumber(record.index) ?? index,
+      address: asString(record.address) ?? '',
+      amount: asString(record.amount) ?? '0',
+    };
+  });
 }
 
 /** Fetches all raw indexed events for a contract using paginated backend API reads. */

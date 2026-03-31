@@ -176,14 +176,15 @@ export class MinaGuardIndexer {
       setupOwner: 2,
       proposal: 3,
       approval: 4,
-      execution: 5,
-      executionBatch: 5,
-      ownerChange: 6,
-      ownerChangeBatch: 6,
-      thresholdChange: 7,
-      thresholdChangeBatch: 7,
-      delegate: 8,
-      delegateBatch: 8,
+      transfer: 5,
+      execution: 6,
+      executionBatch: 6,
+      ownerChange: 7,
+      ownerChangeBatch: 7,
+      thresholdChange: 8,
+      thresholdChangeBatch: 8,
+      delegate: 9,
+      delegateBatch: 9,
     };
     events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
 
@@ -234,6 +235,10 @@ export class MinaGuardIndexer {
       case 'execution':
       case 'executionBatch': {
         await this.applyExecutionEvent(contractId, chainEvent);
+        return;
+      }
+      case 'transfer': {
+        await this.applyTransferEvent(contractId, chainEvent.event);
         return;
       }
       case 'ownerChange':
@@ -353,8 +358,6 @@ export class MinaGuardIndexer {
         contractId,
         proposalHash,
         proposer: asString(event.proposer),
-        toAddress: asString(event.to),
-        amount: asString(event.amount),
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
@@ -367,8 +370,6 @@ export class MinaGuardIndexer {
         status: 'pending',
       },
       update: {
-        toAddress: asString(event.to),
-        amount: asString(event.amount),
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
@@ -377,6 +378,57 @@ export class MinaGuardIndexer {
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
+      },
+    });
+  }
+
+  /** Persists transfer receiver rows from execution-time transfer events. */
+  private async applyTransferEvent(
+    contractId: number,
+    event: Record<string, unknown>
+  ): Promise<void> {
+    const proposalHash = asString(event.proposalHash);
+    const address = asString(event.receiver);
+    const amount = asString(event.amount);
+
+    if (!proposalHash || !address || !amount || address === EMPTY_PUBLIC_KEY || amount === '0') {
+      return;
+    }
+
+    const proposal = await prisma.proposal.findUnique({
+      where: {
+        contractId_proposalHash: {
+          contractId,
+          proposalHash,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!proposal) return;
+
+    const nextIndex = await prisma.proposalReceiver.count({
+      where: { proposalId: proposal.id },
+    });
+
+    await prisma.proposalReceiver.upsert({
+      where: {
+        proposalId_idx: {
+          proposalId: proposal.id,
+          idx: nextIndex,
+        },
+      },
+      create: {
+        proposalId: proposal.id,
+        idx: nextIndex,
+        address,
+        amount,
+      },
+      update: {
+        address,
+        amount,
       },
     });
   }

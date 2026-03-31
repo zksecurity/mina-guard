@@ -21,11 +21,13 @@ import Client from 'mina-signer';
 
 import {
   MinaGuard,
+  Receiver,
   TransactionProposal,
   ownerKey,
   EXECUTED_MARKER,
   PROPOSED_MARKER,
   MAX_OWNERS,
+  MAX_RECEIVERS,
   SetupOwnersInput,
   OwnerStore,
   VoteNullifierStore,
@@ -349,6 +351,47 @@ function buildProposalDataField(input: NewProposalInput): any {
   return Field(0);
 }
 
+function buildTransferReceivers(
+  receivers: Array<{ address: string; amount: string }>
+): InstanceType<typeof Receiver>[] {
+  const normalized = receivers.map((receiver) => new Receiver({
+    address: PublicKey.fromBase58(receiver.address),
+    amount: UInt64.from(receiver.amount),
+  }));
+
+  while (normalized.length < MAX_RECEIVERS) {
+    normalized.push(Receiver.empty());
+  }
+
+  return normalized.slice(0, MAX_RECEIVERS);
+}
+
+function buildProposalStruct(
+  proposal: Pick<
+    Proposal,
+    'receivers' | 'toAddress' | 'amount' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress'
+  >,
+  fallbackGuardAddress: string
+): InstanceType<typeof TransactionProposal> {
+  const txType = normalizeTxType(proposal.txType);
+  const receivers = proposal.receivers.length > 0
+    ? proposal.receivers
+    : txType === 'transfer' && proposal.toAddress && proposal.amount
+      ? [{ address: proposal.toAddress, amount: proposal.amount }]
+      : [];
+  return new TransactionProposal({
+    receivers: buildTransferReceivers(receivers),
+    tokenId: Field(proposal.tokenId ?? '0'),
+    txType: txType ? uiTxTypeToField(txType) : Field(0),
+    data: Field(proposal.data ?? '0'),
+    uid: Field(proposal.uid ?? '0'),
+    configNonce: Field(proposal.configNonce ?? '0'),
+    expiryBlock: Field(proposal.expiryBlock ?? '0'),
+    networkId: Field(proposal.networkId ?? '0'),
+    guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
+  });
+}
+
 /** Safely serializes tx.toJSON() regardless of whether it returns a string or object. */
 function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
   const json = tx.toJSON();
@@ -607,31 +650,17 @@ const workerApi = {
   ): Promise<string | null> {
     progressFn('Computing proposal hash...');
     configureNetwork();
-
-    const to = (() => {
-      if (params.input.txType === 'transfer' && params.input.to)
-        return PublicKey.fromBase58(params.input.to);
-      if (params.input.txType === 'addOwner' && params.input.newOwner)
-        return PublicKey.fromBase58(params.input.newOwner);
-      if (params.input.txType === 'removeOwner' && params.input.removeOwnerAddress)
-        return PublicKey.fromBase58(params.input.removeOwnerAddress);
-      if (params.input.txType === 'setDelegate' && params.input.delegate)
-        return PublicKey.fromBase58(params.input.delegate);
-      return PublicKey.empty();
-    })();
-
-    const amount =
+    const transferReceivers =
       params.input.txType === 'transfer'
-        ? UInt64.from(Math.floor(Number(params.input.amount ?? '0') * 1_000_000_000))
-        : UInt64.from(0);
+        ? buildTransferReceivers(params.input.receivers ?? [])
+        : buildTransferReceivers([]);
 
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input);
     const uid = Field.random();
 
     const proposal = new TransactionProposal({
-      to,
-      amount,
+      receivers: transferReceivers,
       tokenId: Field(0),
       txType,
       data,
@@ -652,8 +681,16 @@ const workerApi = {
 
     progressFn('Submitting proposal to backend...');
     await postOffchainProposal(params.contractAddress, {
-      toAddress: to.toBase58(),
-      amount: amount.toString(),
+      receivers: params.input.txType === 'transfer' ? (params.input.receivers ?? []) : undefined,
+      toAddress:
+        params.input.txType === 'addOwner'
+          ? params.input.newOwner
+          : params.input.txType === 'removeOwner'
+            ? params.input.removeOwnerAddress
+            : params.input.txType === 'setDelegate' && !params.input.undelegate
+              ? params.input.delegate
+              : PublicKey.empty().toBase58(),
+      amount: params.input.txType === 'transfer' ? undefined : '0',
       tokenId: '0',
       txType: txType.toString(),
       data: data.toString(),
@@ -674,7 +711,7 @@ const workerApi = {
       signatureS: sigJson.s,
     });
 
-    return 'Proposal created';
+    return hashStr;
   },
 
   /**
@@ -751,18 +788,12 @@ const workerApi = {
 
     // Build TransactionProposal struct from the proposal record
     const txType = normalizeTxType(params.proposal.txType);
-    const proposalStruct = new TransactionProposal({
-      to: safePublicKey(params.proposal.toAddress),
-      amount: UInt64.from(params.proposal.amount ?? '0'),
-      tokenId: Field(params.proposal.tokenId ?? '0'),
-      txType: txType ? uiTxTypeToField(txType) : Field(0),
-      data: Field(params.proposal.data ?? '0'),
-      uid: Field(params.proposal.uid ?? '0'),
-      configNonce: Field(params.proposal.configNonce ?? contractState.configNonce),
-      expiryBlock: Field(params.proposal.expiryBlock ?? '0'),
-      networkId: Field(params.proposal.networkId ?? contractState.networkId),
-      guardAddress: safePublicKey(params.proposal.guardAddress ?? params.contractAddress),
-    });
+    const proposalStruct = buildProposalStruct({
+      ...params.proposal,
+      configNonce: params.proposal.configNonce ?? String(contractState.configNonce),
+      networkId: params.proposal.networkId ?? contractState.networkId,
+      guardAddress: params.proposal.guardAddress ?? params.contractAddress,
+    }, params.contractAddress);
 
     const proposalHash = proposalStruct.hash();
     const approvalWitness = approvalStore.getWitness(proposalHash);

@@ -11,6 +11,13 @@ export type TxType =
   | 'changeThreshold'
   | 'setDelegate';
 
+/** One transfer receiver entry persisted and returned by the backend. */
+export interface ProposalReceiver {
+  index: number;
+  address: string;
+  amount: string;
+}
+
 /** Proposal record returned by the backend indexer API. */
 export interface Proposal {
   proposalHash: string;
@@ -32,6 +39,9 @@ export interface Proposal {
   executedAtBlock: number | null;
   createdAt: string;
   updatedAt: string;
+  receivers: ProposalReceiver[];
+  recipientCount: number;
+  totalAmount: string | null;
 }
 
 /** Indexed owner membership record for one MinaGuard contract. */
@@ -90,8 +100,7 @@ export interface IndexerStatus {
 /** User input payload used by proposal creation forms. */
 export interface NewProposalInput {
   txType: TxType;
-  to?: string;
-  amount?: string;
+  receivers?: Array<{ address: string; amount: string }>;
   newOwner?: string;
   removeOwnerAddress?: string;
   newThreshold?: number;
@@ -116,6 +125,9 @@ export const TX_TYPES: { value: TxType; label: string; icon: string }[] = [
   { value: 'changeThreshold', label: 'Change Threshold', icon: 'shield' },
   { value: 'setDelegate', label: 'Set Delegate', icon: 'link' },
 ];
+
+/** UI-side mirror of the contract transfer recipient cap. */
+export const MAX_TRANSFER_RECEIVERS = 5;
 
 /** Truncates long addresses for compact UI chips and labels. */
 export function truncateAddress(addr: string, chars: number = 6): string {

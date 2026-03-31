@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from './db.js';
 import type { MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
+import { serializeProposalRecord } from './proposal-record.js';
 import {
   addressParamSchema,
   clampedIntQuerySchema,
@@ -169,12 +170,17 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
           contractId: contract.id,
           ...(status ? { status } : {}),
         },
+        include: {
+          receivers: {
+            orderBy: { idx: 'asc' },
+          },
+        },
         orderBy: [{ createdAtBlock: 'desc' }, { createdAt: 'desc' }],
         take: limit,
         skip: offset,
       });
 
-      res.json(proposals);
+      res.json(proposals.map((proposal) => serializeProposalRecord(proposal)));
     })
   );
 
@@ -202,6 +208,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
             proposalHash,
           },
         },
+        include: {
+          receivers: {
+            orderBy: { idx: 'asc' },
+          },
+        },
       });
 
       if (!proposal) {
@@ -209,7 +220,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      res.json(proposal);
+      res.json(serializeProposalRecord(proposal));
     })
   );
 

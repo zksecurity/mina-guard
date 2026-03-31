@@ -53,18 +53,20 @@ function NewTransactionPageInner() {
     const fallbackConfigNonce = multisig.configNonce ?? 0;
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
 
+    let createdHash: string | null = null;
     await startOperation('Creating offchain proposal...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      return await createOffchainProposal({
+      createdHash = await createOffchainProposal({
         contractAddress,
         proposerAddress,
         input: data,
         configNonce,
         networkId,
       }, onProgress, signer);
+      return createdHash ? `Proposal created: ${createdHash}` : null;
     });
-    router.push('/transactions');
+    router.push(createdHash ? `/transactions/${createdHash}` : '/transactions');
   };
 
   return (

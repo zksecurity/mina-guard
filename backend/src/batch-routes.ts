@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { PublicKey } from 'o1js';
 import { z } from 'zod';
+import { TxType } from 'contracts';
 import { prisma } from './db.js';
 import { computeProposalHash, verifySignature, buildBatchPayload } from './batch-sig-service.js';
+import { serializeProposalRecord } from './proposal-record.js';
 import {
   addressParamSchema,
   minaPublicKeySchema,
@@ -19,6 +21,10 @@ const proposalTargetPublicKey = z.string().refine((value) => {
 
 const fieldString = z.string().regex(/^\d+$/, 'Must be a numeric string');
 const hexHash = proposalHashParamSchema;
+const receiverSchema = z.object({
+  address: proposalTargetPublicKey,
+  amount: fieldString,
+});
 
 const addressParamsSchema = z.object({
   address: addressParamSchema,
@@ -42,8 +48,9 @@ type AddressParams = z.infer<typeof addressParamsSchema>;
 type ProposalParams = z.infer<typeof proposalParamsSchema>;
 
 const createProposalSchema = z.object({
-  toAddress: proposalTargetPublicKey,
-  amount: fieldString,
+  toAddress: proposalTargetPublicKey.optional(),
+  amount: fieldString.optional(),
+  receivers: z.array(receiverSchema).max(5).optional(),
   tokenId: fieldString,
   txType: fieldString,
   data: fieldString,
@@ -92,10 +99,21 @@ export function createBatchRouter(): Router {
     }
 
     const {
-      toAddress, amount, tokenId, txType, data,
+      toAddress, amount, receivers, tokenId, txType, data,
       uid, configNonce, expiryBlock, networkId, guardAddress,
       proposalHash, proposer,
     } = parsed.data;
+
+    const normalizedReceivers = normalizeProposalReceivers({
+      txType,
+      receivers,
+      toAddress,
+      amount,
+    });
+    if (!normalizedReceivers.ok) {
+      res.status(400).json({ error: normalizedReceivers.error });
+      return;
+    }
 
     if (guardAddress !== contract.address) {
       res.status(400).json({ error: 'guardAddress does not match contract address' });
@@ -116,7 +134,8 @@ export function createBatchRouter(): Router {
     let computedHash: string;
     try {
       computedHash = computeProposalHash({
-        toAddress, amount, tokenId, txType, data,
+        receivers: normalizedReceivers.receivers,
+        tokenId, txType, data,
         uid, configNonce, expiryBlock, networkId, guardAddress,
       });
     } catch (err) {
@@ -165,10 +184,22 @@ export function createBatchRouter(): Router {
         proposer,
         origin: 'offchain',
         status: 'pending',
+        receivers: normalizedReceivers.receivers.length > 0 ? {
+          create: normalizedReceivers.receivers.map((receiver, index) => ({
+            idx: index,
+            address: receiver.address,
+            amount: receiver.amount,
+          })),
+        } : undefined,
+      },
+      include: {
+        receivers: {
+          orderBy: { idx: 'asc' },
+        },
       },
     });
 
-    res.status(201).json(proposal);
+    res.status(201).json(serializeProposalRecord(proposal));
   }));
 
   /** Submits a signature for an offchain proposal. */
@@ -318,6 +349,41 @@ export function createBatchRouter(): Router {
   );
 
   return router;
+}
+
+function normalizeProposalReceivers(params: {
+  txType: string;
+  receivers?: Array<{ address: string; amount: string }>;
+  toAddress?: string;
+  amount?: string;
+}):
+  | { ok: true; receivers: Array<{ address: string; amount: string }> }
+  | { ok: false; error: string } {
+  const isTransfer = params.txType === TxType.TRANSFER.toString();
+  if (!isTransfer) {
+    return { ok: true, receivers: [] };
+  }
+
+  const receivers = params.receivers ?? [];
+  if (receivers.length === 0) {
+    if (params.toAddress && params.amount) {
+      return {
+        ok: true,
+        receivers: [{ address: params.toAddress, amount: params.amount }],
+      };
+    }
+    return { ok: false, error: 'Transfer proposals must include at least one receiver' };
+  }
+
+  const seen = new Set<string>();
+  for (const receiver of receivers) {
+    if (seen.has(receiver.address)) {
+      return { ok: false, error: 'Transfer proposals cannot contain duplicate receivers' };
+    }
+    seen.add(receiver.address);
+  }
+
+  return { ok: true, receivers };
 }
 
 /** Wraps async route handlers so thrown errors are forwarded to Express error middleware. */

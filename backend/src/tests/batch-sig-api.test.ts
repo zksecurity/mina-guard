@@ -5,7 +5,7 @@ import type { Server } from 'http';
 import { prisma } from '../db.js';
 import { createBatchRouter } from '../batch-routes.js';
 import {
-  TransactionProposal, TxType, MinaGuard, SetupOwnersInput, MAX_OWNERS,
+  Receiver, TransactionProposal, TxType, MinaGuard, SetupOwnersInput, MAX_OWNERS,
   computeOwnerChain, ApprovalStore, SignatureInputs, SignatureInput, SignatureOption,
 } from 'contracts';
 
@@ -22,10 +22,15 @@ const owners = Array.from({ length: 3 }, () => {
 
 const guardKey = PrivateKey.random();
 const guardAddress = guardKey.toPublicKey();
+const transferReceivers = [
+  new Receiver({
+    address: owners[0].pub,
+    amount: UInt64.from(1_000_000_000),
+  }),
+];
 
 const proposal = new TransactionProposal({
-  to: owners[0].pub,
-  amount: UInt64.from(1_000_000_000),
+  receivers: [...transferReceivers, ...Array.from({ length: 4 }, () => Receiver.empty())],
   tokenId: Field(0),
   txType: TxType.TRANSFER,
   data: Field(0),
@@ -69,6 +74,7 @@ async function seedDatabase() {
 
 async function clearDatabase() {
   await prisma.approval.deleteMany();
+  await prisma.proposalReceiver.deleteMany();
   await prisma.proposal.deleteMany();
   await prisma.owner.deleteMany();
   await prisma.contract.deleteMany();
@@ -109,8 +115,7 @@ afterAll(async () => {
 describe('POST /api/contracts/:address/proposals', () => {
   test('rejects invalid contract address param', async () => {
     const res = await post('/api/contracts/not-a-valid-address/proposals', {
-      toAddress: owners[0].pub.toBase58(),
-      amount: '1000000000',
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
       tokenId: '0',
       txType: '0',
       data: '0',
@@ -130,8 +135,7 @@ describe('POST /api/contracts/:address/proposals', () => {
   test('creates an offchain proposal', async () => {
     const addr = guardAddress.toBase58();
     const res = await post(`/api/contracts/${addr}/proposals`, {
-      toAddress: owners[0].pub.toBase58(),
-      amount: '1000000000',
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
       tokenId: '0',
       txType: '0',
       data: '0',
@@ -148,13 +152,15 @@ describe('POST /api/contracts/:address/proposals', () => {
     expect(body.proposalHash).toBe(proposalHash);
     expect(body.origin).toBe('offchain');
     expect(body.status).toBe('pending');
+    expect(body.receivers).toEqual([{ index: 0, address: owners[0].pub.toBase58(), amount: '1000000000' }]);
+    expect(body.recipientCount).toBe(1);
+    expect(body.totalAmount).toBe('1000000000');
   });
 
   test('rejects duplicate proposal', async () => {
     const addr = guardAddress.toBase58();
     const res = await post(`/api/contracts/${addr}/proposals`, {
-      toAddress: owners[0].pub.toBase58(),
-      amount: '1000000000',
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
       tokenId: '0',
       txType: '0',
       data: '0',
@@ -172,8 +178,7 @@ describe('POST /api/contracts/:address/proposals', () => {
   test('rejects mismatched proposal hash', async () => {
     const addr = guardAddress.toBase58();
     const res = await post(`/api/contracts/${addr}/proposals`, {
-      toAddress: owners[0].pub.toBase58(),
-      amount: '1000000000',
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
       tokenId: '0',
       txType: '0',
       data: '0',
@@ -342,7 +347,8 @@ describe('GET /api/contracts/:address/proposals/:proposalHash/batch-payload', ()
 
     // Proposal data is included
     expect(body.proposal.proposalHash).toBe(proposalHash);
-    expect(body.proposal.amount).toBe('1000000000');
+    expect(body.proposal.receivers).toEqual([{ index: 0, address: owners[0].pub.toBase58(), amount: '1000000000' }]);
+    expect(body.proposal.totalAmount).toBe('1000000000');
   });
 
   test('returns 404 for unknown proposal', async () => {
@@ -419,8 +425,10 @@ describe('cross-flow edge cases', () => {
 
     // Build a valid proposal so we can compute its hash
     const conflictProposal = new TransactionProposal({
-      to: owners[0].pub,
-      amount: UInt64.from(999),
+      receivers: [
+        new Receiver({ address: owners[0].pub, amount: UInt64.from(999) }),
+        ...Array.from({ length: 4 }, () => Receiver.empty()),
+      ],
       tokenId: Field(0),
       txType: TxType.TRANSFER,
       data: Field(0),
@@ -445,8 +453,7 @@ describe('cross-flow edge cases', () => {
     // Try to create the same proposal offchain — should get 409
     const addr = guardAddress.toBase58();
     const res = await post(`/api/contracts/${addr}/proposals`, {
-      toAddress: owners[0].pub.toBase58(),
-      amount: '999',
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '999' }],
       tokenId: '0',
       txType: '0',
       data: '0',
@@ -557,8 +564,10 @@ describe('executeTransferBatchSig with API payload', () => {
     // 2. Create a fresh proposal for this on-chain contract
     const recipient = Local.testAccounts[1];
     const chainProposal = new TransactionProposal({
-      to: recipient,
-      amount: UInt64.from(500_000_000),
+      receivers: [
+        new Receiver({ address: recipient, amount: UInt64.from(500_000_000) }),
+        ...Array.from({ length: 4 }, () => Receiver.empty()),
+      ],
       tokenId: Field(0),
       txType: TxType.TRANSFER,
       data: Field(0),
@@ -597,8 +606,7 @@ describe('executeTransferBatchSig with API payload', () => {
     // 3. Create offchain proposal via API
     const addr = zkAppAddress.toBase58();
     const createRes = await post(`/api/contracts/${addr}/proposals`, {
-      toAddress: recipient.toBase58(),
-      amount: '500000000',
+      receivers: [{ address: recipient.toBase58(), amount: '500000000' }],
       tokenId: '0',
       txType: '0',
       data: '0',

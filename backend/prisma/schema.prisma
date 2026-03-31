@@ -65,9 +65,24 @@ model Proposal {
   updatedAt       DateTime  @updatedAt
   contract        Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
   approvals       Approval[]
+  receivers       ProposalReceiver[]
 
   @@unique([contractId, proposalHash])
   @@index([contractId, status])
+}
+
+model ProposalReceiver {
+  id         Int      @id @default(autoincrement())
+  proposalId Int
+  idx        Int
+  address    String
+  amount     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, idx])
+  @@index([proposalId])
 }
 
 model Approval {

@@ -6,12 +6,14 @@ import { loadConfig } from './config.js';
 import { MinaGuardIndexer } from './indexer.js';
 import { createApiRouter } from './routes.js';
 import { createBatchRouter } from './batch-routes.js';
+import { backfillLegacyTransferReceivers } from './proposal-record.js';
 
 /** Boots the Express API server and starts the polling chain indexer. */
 async function main(): Promise<void> {
   const config = loadConfig();
 
   await prisma.$connect();
+  await backfillLegacyTransferReceivers();
   const indexer = new MinaGuardIndexer(config);
 
   const app = express();

@@ -47,7 +47,9 @@ export default function TransactionCard({
                 </span>
               </div>
               {proposal.txType === 'transfer' && (
-                <p className="text-xs text-safe-text mt-0.5">{formatMina(proposal.amount)} MINA transfer</p>
+                <p className="text-xs text-safe-text mt-0.5">
+                  {proposal.recipientCount} recipients · {formatMina(proposal.totalAmount)} MINA
+                </p>
               )}
               {proposal.txType === 'changeThreshold' && (
                 <p className="text-xs text-safe-text mt-0.5">Change threshold to {proposal.data ?? '?'}</p>
