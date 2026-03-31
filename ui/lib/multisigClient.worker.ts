@@ -82,6 +82,25 @@ function txSender(pub: InstanceType<typeof PublicKey>) {
   return { sender: pub, fee: ZKAPP_TX_FEE };
 }
 
+/**
+ * Force-clear any stale o1js transaction context left by a previous failed
+ * Mina.transaction() call.  o1js's createTransaction has code paths where a
+ * thrown error skips currentTransaction.leave(), leaving the global context
+ * dirty so that every subsequent Mina.transaction() call throws
+ * "Cannot start new transaction within another transaction".
+ *
+ * Safe to call unconditionally: this worker is single-threaded, so if
+ * currentTransaction.has() is true right before we start a new transaction,
+ * it is always stale.
+ */
+function clearStaleTransaction() {
+  const ctx = Mina.currentTransaction;
+  while (ctx.has()) {
+    console.warn('[MultisigWorker] Clearing stale o1js transaction context');
+    ctx.leave(ctx.id());
+  }
+}
+
 /** Contract state snapshot read directly from chain. */
 interface ContractState {
   ownersCommitment: string;
@@ -444,8 +463,8 @@ const workerApi = {
     const zkAppAddress = zkAppKey.toPublicKey();
     const zkApp = new MinaGuard(zkAppAddress);
 
-    console.log('built');
-
+    await fetchAccount({ publicKey: feePayer });
+    clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
@@ -495,6 +514,8 @@ const workerApi = {
       paddedOwners.push(PublicKey.empty());
     }
 
+    await fetchAccount({ publicKey: feePayer });
+    clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
@@ -545,6 +566,8 @@ const workerApi = {
     const feePayer = PublicKey.fromBase58(params.feePayerAddress);
     const zkApp = new MinaGuard(zkAppAddress);
 
+    await fetchAccount({ publicKey: feePayer });
+    clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
       await zkApp.setup(
         ownerStore.getCommitment(),
@@ -797,6 +820,8 @@ const workerApi = {
     const contract = new MinaGuard(PublicKey.fromBase58(params.contractAddress));
     const executor = PublicKey.fromBase58(params.executorAddress);
 
+    await fetchAccount({ publicKey: executor });
+    clearStaleTransaction();
     const tx = await Mina.transaction(txSender(executor), async () => {
       if (txType === 'transfer') {
         await contract.executeTransferBatchSig(proposalStruct, approvalWitness, sigInputs);

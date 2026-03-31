@@ -7,6 +7,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
   webpack(config, { isServer }) {
+    // Disable minification: SWC/terser minifiers are known to mangle BigInt
+    // operations (see terser/terser#546, terser/terser#525). o1js relies on
+    // BigInt for field arithmetic and Poseidon hashing; minified builds
+    // silently produce wrong transaction commitments, causing the Mina node
+    // to reject signatures with Invalid_signature.
+    config.optimization = {
+      ...config.optimization,
+      minimize: false,
+    };
     // o1js uses top-level await and WASM
     config.experiments = {
       ...config.experiments,
@@ -40,7 +49,7 @@ const nextConfig = {
         source: '/(.*)',
         headers: [
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+          { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
         ],
       },
     ];
