@@ -26,7 +26,7 @@ jobs:
           --health-retries 5
 
       mina-local-network:
-        image: o1labs/mina-local-network:compatible-latest-lightnet
+        image: o1labs/mina-local-network:compatible-latest-lightnet-amd64
         env:
           NETWORK_TYPE: 'single-node'
           PROOF_LEVEL: 'none'
@@ -54,7 +54,7 @@ jobs:
           docker ps -a
           echo ""
           echo "=== Mina container logs (last 100 lines) ==="
-          docker logs $(docker ps -aq --filter "ancestor=o1labs/mina-local-network:compatible-latest-lightnet") 2>&1 | tail -100
+          docker logs $(docker ps -aq --filter "ancestor=o1labs/mina-local-network:compatible-latest-lightnet-amd64") 2>&1 | tail -100
 
       - name: Git checkout
         uses: actions/checkout@v6
