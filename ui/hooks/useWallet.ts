@@ -136,13 +136,13 @@ export function useWallet() {
     try {
       const address = await getLedgerAddress(idx);
       localStorage.setItem('wallet-type', 'ledger');
-      setWallet({
+      setWallet((prev) => ({
         connected: true,
         address,
-        network: 'testnet',
+        network: prev.network ?? 'testnet',
         type: 'ledger',
         ledgerAccountIndex: idx,
-      });
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ledger connection failed');
     } finally {

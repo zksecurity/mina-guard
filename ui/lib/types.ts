@@ -126,8 +126,8 @@ export const TX_TYPES: { value: TxType; label: string; icon: string }[] = [
   { value: 'setDelegate', label: 'Set Delegate', icon: 'link' },
 ];
 
-/** UI-side mirror of the contract transfer recipient cap. */
-export const MAX_TRANSFER_RECEIVERS = 5;
+/** UI-side mirror of the contract transfer recipient cap (MAX_RECEIVERS in contracts). */
+export const MAX_TRANSFER_RECEIVERS = 9;
 
 /** Truncates long addresses for compact UI chips and labels. */
 export function truncateAddress(addr: string, chars: number = 6): string {
@@ -138,12 +138,16 @@ export function truncateAddress(addr: string, chars: number = 6): string {
 /** Formats nanomina string values into human-readable MINA decimal text. */
 export function formatMina(nanomina: string | null): string {
   if (!nanomina) return '0';
-  const NANO = 1_000_000_000;
-  const n = Number(nanomina);
-  if (!Number.isFinite(n)) return '0';
-  const whole = Math.floor(n / NANO);
+  let n: bigint;
+  try {
+    n = BigInt(nanomina);
+  } catch {
+    return '0';
+  }
+  const NANO = 1_000_000_000n;
+  const whole = n / NANO;
   const frac = n % NANO;
-  if (frac === 0) return whole.toString();
+  if (frac === 0n) return whole.toString();
   const fracStr = frac.toString().padStart(9, '0').replace(/0+$/, '');
   return `${whole}.${fracStr}`;
 }

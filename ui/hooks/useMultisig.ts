@@ -87,9 +87,11 @@ export function useMultisig(walletAddress: string | null) {
     return stillValid ? currentAddress : ownedContracts[0]?.address ?? null;
   }, [walletAddress]);
 
+  const initialLoadDone = useRef(false);
+
   /** Pulls latest global state, resolves selection, and loads detail. */
   const refreshState = useCallback(async () => {
-    setIsLoading(true);
+    if (!initialLoadDone.current) setIsLoading(true);
     try {
       const { contractRows, ownerMap } = await refreshGlobalState();
 
@@ -108,6 +110,7 @@ export function useMultisig(walletAddress: string | null) {
       }
     } finally {
       setIsLoading(false);
+      initialLoadDone.current = true;
     }
   }, [refreshGlobalState, resolveSelectedContract, loadContractDetail]);
 

@@ -5,24 +5,19 @@ import type { MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
 import { serializeProposalRecord } from './proposal-record.js';
 import {
-  addressParamSchema,
   clampedIntQuerySchema,
   nullableBlockQuerySchema,
   optionalBooleanQuerySchema,
   optionalNonEmptyStringQuerySchema,
-  proposalHashParamSchema,
-  validateParams,
+  addressParamsSchema,
+  proposalParamsSchema,
+  addressParamsMiddleware,
+  proposalParamsMiddleware,
+  type AddressParams,
+  type ProposalParams,
   validateQuery,
 } from './request-validation.js';
-
-const addressParamsSchema = z.object({
-  address: addressParamSchema,
-});
-
-const proposalParamsSchema = z.object({
-  address: addressParamSchema,
-  proposalHash: proposalHashParamSchema,
-});
+import { wrapAsyncRoute } from './route-utils.js';
 
 const ownersQuerySchema = z.object({
   active: optionalBooleanQuerySchema,
@@ -41,17 +36,6 @@ const eventsQuerySchema = z.object({
   offset: clampedIntQuerySchema(0, 0, 50_000),
 });
 
-const addressParamsMiddleware = validateParams(addressParamsSchema, {
-  address: 'Invalid contract address',
-});
-
-const proposalParamsMiddleware = validateParams(proposalParamsSchema, {
-  address: 'Invalid contract address',
-  proposalHash: 'Invalid proposal hash',
-});
-
-type AddressParams = z.infer<typeof addressParamsSchema>;
-type ProposalParams = z.infer<typeof proposalParamsSchema>;
 type OwnersQuery = z.infer<typeof ownersQuerySchema>;
 type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
 type EventsQuery = z.infer<typeof eventsQuerySchema>;
@@ -317,7 +301,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query, variables: { publicKey: req.params.address } }),
+      body: JSON.stringify({ query, variables: { publicKey: address } }),
     });
 
     if (!response.ok) {
@@ -344,6 +328,14 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     const { address } = req.body as { address?: string };
     if (!address || typeof address !== 'string') {
       res.status(400).json({ error: 'address is required' });
+      return;
+    }
+
+    try {
+      const { PublicKey: PK } = await import('o1js');
+      PK.fromBase58(address);
+    } catch {
+      res.status(400).json({ error: 'Invalid Mina public key' });
       return;
     }
 
@@ -405,15 +397,6 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   });
 
   return router;
-}
-
-/** Wraps async route handlers so thrown errors are forwarded to Express error middleware. */
-function wrapAsyncRoute() {
-  return (handler: (req: any, res: any) => Promise<void>) => {
-    return (req: any, res: any, next: any) => {
-      void handler(req, res).catch(next);
-    };
-  };
 }
 
 /** Emits request start/end logs with request id, status code, and duration. */

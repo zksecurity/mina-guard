@@ -1,16 +1,21 @@
 import { Router } from 'express';
 import { PublicKey } from 'o1js';
 import { z } from 'zod';
-import { TxType } from 'contracts';
+import { MAX_RECEIVERS, TxType } from 'contracts';
 import { prisma } from './db.js';
 import { computeProposalHash, verifySignature, buildBatchPayload } from './batch-sig-service.js';
 import { serializeProposalRecord } from './proposal-record.js';
 import {
-  addressParamSchema,
   minaPublicKeySchema,
   proposalHashParamSchema,
-  validateParams,
+  addressParamsSchema,
+  proposalParamsSchema,
+  addressParamsMiddleware,
+  proposalParamsMiddleware,
+  type AddressParams,
+  type ProposalParams,
 } from './request-validation.js';
+import { wrapAsyncRoute } from './route-utils.js';
 
 const base58PublicKey = minaPublicKeySchema;
 const EMPTY_PUBLIC_KEY_BASE58 = PublicKey.empty().toBase58();
@@ -26,31 +31,10 @@ const receiverSchema = z.object({
   amount: fieldString,
 });
 
-const addressParamsSchema = z.object({
-  address: addressParamSchema,
-});
-
-const proposalParamsSchema = z.object({
-  address: addressParamSchema,
-  proposalHash: proposalHashParamSchema,
-});
-
-const addressParamsMiddleware = validateParams(addressParamsSchema, {
-  address: 'Invalid contract address',
-});
-
-const proposalParamsMiddleware = validateParams(proposalParamsSchema, {
-  address: 'Invalid contract address',
-  proposalHash: 'Invalid proposal hash',
-});
-
-type AddressParams = z.infer<typeof addressParamsSchema>;
-type ProposalParams = z.infer<typeof proposalParamsSchema>;
-
 const createProposalSchema = z.object({
   toAddress: proposalTargetPublicKey.optional(),
   amount: fieldString.optional(),
-  receivers: z.array(receiverSchema).max(5).optional(),
+  receivers: z.array(receiverSchema).max(MAX_RECEIVERS).optional(),
   tokenId: fieldString,
   txType: fieldString,
   data: fieldString,
@@ -348,6 +332,16 @@ export function createBatchRouter(): Router {
     })
   );
 
+  router.use((error: unknown, req: any, res: any, _next: any) => {
+    console.error(
+      `[batch-api] ${req.method} ${req.originalUrl}`,
+      error instanceof Error ? error.stack ?? error.message : error
+    );
+    const message =
+      error instanceof Error ? error.message : 'Unknown backend error';
+    res.status(500).json({ error: message });
+  });
+
   return router;
 }
 
@@ -384,13 +378,4 @@ function normalizeProposalReceivers(params: {
   }
 
   return { ok: true, receivers };
-}
-
-/** Wraps async route handlers so thrown errors are forwarded to Express error middleware. */
-function wrapAsyncRoute() {
-  return (handler: (req: any, res: any) => Promise<void>) => {
-    return (req: any, res: any, next: any) => {
-      void handler(req, res).catch(next);
-    };
-  };
 }

@@ -5,12 +5,12 @@ import type { Server } from 'http';
 import { prisma } from '../db.js';
 import { createBatchRouter } from '../batch-routes.js';
 import {
-  Receiver, TransactionProposal, TxType, MinaGuard, SetupOwnersInput, MAX_OWNERS,
+  Receiver, TransactionProposal, TxType, MinaGuard, SetupOwnersInput, MAX_OWNERS, MAX_RECEIVERS,
   computeOwnerChain, ApprovalStore, SignatureInputs, SignatureInput, SignatureOption,
 } from 'contracts';
 
-const PORT = 4444;
-const BASE = `http://localhost:${PORT}`;
+let PORT: number;
+let BASE: string;
 
 let server: Server;
 
@@ -30,7 +30,7 @@ const transferReceivers = [
 ];
 
 const proposal = new TransactionProposal({
-  receivers: [...transferReceivers, ...Array.from({ length: 4 }, () => Receiver.empty())],
+  receivers: [...transferReceivers, ...Array.from({ length: MAX_RECEIVERS - 1 }, () => Receiver.empty())],
   tokenId: Field(0),
   txType: TxType.TRANSFER,
   data: Field(0),
@@ -103,7 +103,9 @@ beforeAll(async () => {
     console.error('[test] route error:', err);
     res.status(500).json({ error: err.message });
   });
-  server = app.listen(PORT);
+  server = app.listen(0);
+  PORT = (server.address() as { port: number }).port;
+  BASE = `http://localhost:${PORT}`;
 });
 
 afterAll(async () => {
@@ -427,7 +429,7 @@ describe('cross-flow edge cases', () => {
     const conflictProposal = new TransactionProposal({
       receivers: [
         new Receiver({ address: owners[0].pub, amount: UInt64.from(999) }),
-        ...Array.from({ length: 4 }, () => Receiver.empty()),
+        ...Array.from({ length: MAX_RECEIVERS - 1 }, () => Receiver.empty()),
       ],
       tokenId: Field(0),
       txType: TxType.TRANSFER,
@@ -566,7 +568,7 @@ describe('executeTransferBatchSig with API payload', () => {
     const chainProposal = new TransactionProposal({
       receivers: [
         new Receiver({ address: recipient, amount: UInt64.from(500_000_000) }),
-        ...Array.from({ length: 4 }, () => Receiver.empty()),
+        ...Array.from({ length: MAX_RECEIVERS - 1 }, () => Receiver.empty()),
       ],
       tokenId: Field(0),
       txType: TxType.TRANSFER,

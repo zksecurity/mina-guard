@@ -100,7 +100,7 @@ export async function buildBatchPayload(
 
   const owners = await prisma.owner.findMany({
     where: { contractId: contract.id, active: true },
-    orderBy: [{ address: 'asc' }],
+    orderBy: [{ index: 'asc' }, { createdAt: 'asc' }],
   });
 
   const approvals = await prisma.approval.findMany({

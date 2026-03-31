@@ -235,10 +235,10 @@ export async function postOffchainProposal(
       }
     );
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as any).error ?? `HTTP ${res.status}`);
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
+      throw new Error((err as Record<string, unknown>).error as string ?? `HTTP ${res.status}`);
     }
-    return (await res.json()) as any;
+    return (await res.json()) as { proposalHash: string; origin: string; status: string };
   } catch (err) {
     console.error('[api] postOffchainProposal failed:', err);
     throw err;
@@ -261,10 +261,10 @@ export async function postSignature(
       }
     );
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as any).error ?? `HTTP ${res.status}`);
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
+      throw new Error((err as Record<string, unknown>).error as string ?? `HTTP ${res.status}`);
     }
-    return (await res.json()) as any;
+    return (await res.json()) as { approvalCount: number; threshold: number; ready: boolean };
   } catch (err) {
     console.error('[api] postSignature failed:', err);
     throw err;
@@ -317,7 +317,10 @@ export async function fetchAllEvents(contractAddress: string): Promise<Array<{ e
       { cache: 'no-store' }
     );
 
-    if (!response.ok) break;
+    if (!response.ok) {
+      console.error(`[api] fetchAllEvents page at offset=${offset} returned ${response.status}`);
+      break;
+    }
 
     const batch = (await response.json()) as Array<{ eventType: string; payload: unknown }>;
     events.push(

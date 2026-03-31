@@ -79,14 +79,17 @@ export default function TransactionDetailPage() {
 
     const captured = { contractAddress: multisig.address, signerAddress: wallet.address, proposalHash: proposal.proposalHash };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    let success = false;
     await startOperation('Signing proposal...', async (onProgress) => {
-      return await submitOffchainSignature({
+      const result = await submitOffchainSignature({
         contractAddress: captured.contractAddress,
         signerAddress: captured.signerAddress,
         proposalHash: captured.proposalHash,
       }, onProgress, signer);
+      if (result) success = true;
+      return result;
     });
-    router.push('/transactions');
+    if (success) router.push('/transactions');
   };
 
   /** Fetches batch payload and submits execute*BatchSig transaction on-chain. */
@@ -101,14 +104,17 @@ export default function TransactionDetailPage() {
       void startOperation('Execute proposal', async () => { throw err; });
       return;
     }
-    void startOperation('Building batch execute transaction...', async (onProgress) => {
-      return await executeBatchTx({
+    let success = false;
+    await startOperation('Building batch execute transaction...', async (onProgress) => {
+      const result = await executeBatchTx({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
       }, onProgress, signer);
+      if (result) success = true;
+      return result;
     });
-    router.push('/');
+    if (success) router.push('/');
   };
 
   if (!wallet.connected || !multisig) {

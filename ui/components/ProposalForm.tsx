@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
 import { MAX_OWNERS } from '@/lib/constants';
+import { useEffect, useState } from 'react';
 import { MAX_TRANSFER_RECEIVERS, NewProposalInput, TxType } from '@/lib/types';
 
 interface ProposalFormProps {
@@ -25,7 +25,10 @@ export default function ProposalForm({
   const [transferLines, setTransferLines] = useState('');
   const [newOwner, setNewOwner] = useState('');
   const [removeOwnerAddress, setRemoveOwnerAddress] = useState('');
-  const [newThreshold, setNewThreshold] = useState<number | string>('');
+  const [newThreshold, setNewThreshold] = useState(Math.max(1, currentThreshold));
+  useEffect(() => {
+    setNewThreshold(Math.max(1, currentThreshold));
+  }, [currentThreshold]);
   const [delegate, setDelegate] = useState('');
   const [undelegate, setUndelegate] = useState(false);
   const [expiryBlock, setExpiryBlock] = useState('0');
@@ -56,10 +59,6 @@ export default function ProposalForm({
     }
     if (txType === 'removeOwner' && numOwners - 1 < currentThreshold) {
       setValidationError('Reduce the threshold first before removing an owner.');
-      return;
-    }
-    if (txType === 'changeThreshold' && (newThreshold === '' || isNaN(Number(newThreshold)))) {
-      setValidationError('Please choose a new threshold.');
       return;
     }
     if (txType === 'changeThreshold' && Number(newThreshold) === currentThreshold) {
@@ -140,8 +139,8 @@ export default function ProposalForm({
               <label
                 key={owner}
                 className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${removeOwnerAddress === owner
-                    ? 'border-red-400 bg-red-400/5'
-                    : 'border-safe-border hover:border-safe-text'
+                  ? 'border-red-400 bg-red-400/5'
+                  : 'border-safe-border hover:border-safe-text'
                   }`}
               >
                 <input

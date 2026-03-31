@@ -19,9 +19,20 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** Parses a numeric env var, throwing if the value is not a valid finite number. */
+function numericEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new Error(`Env var ${name} must be a valid number, got: "${raw}"`);
+  }
+  return value;
+}
+
 /** Reads and validates environment variables. Requires MINA_ENDPOINT and ARCHIVE_ENDPOINT. */
 export function loadConfig(): BackendConfig {
-  const port = Number(process.env.PORT ?? '4000');
+  const port = numericEnv('PORT', 4000);
   const databaseUrl = requireEnv('DATABASE_URL');
   const minaEndpoint = requireEnv('MINA_ENDPOINT');
   const archiveEndpoint = requireEnv('ARCHIVE_ENDPOINT');
@@ -35,8 +46,8 @@ export function loadConfig(): BackendConfig {
     lightnetAccountManager,
     minaFallbackEndpoint: process.env.MINA_FALLBACK_ENDPOINT ?? null,
     archiveFallbackEndpoint: process.env.ARCHIVE_FALLBACK_ENDPOINT ?? null,
-    indexPollIntervalMs: Number(process.env.INDEX_POLL_INTERVAL_MS ?? '15000'),
-    indexStartHeight: Number(process.env.INDEX_START_HEIGHT ?? '0'),
+    indexPollIntervalMs: numericEnv('INDEX_POLL_INTERVAL_MS', 15000),
+    indexStartHeight: numericEnv('INDEX_START_HEIGHT', 0),
     minaguardVkHash: process.env.MINAGUARD_VK_HASH ?? null,
   };
 }

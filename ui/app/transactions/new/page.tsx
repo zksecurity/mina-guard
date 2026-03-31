@@ -41,11 +41,9 @@ function NewTransactionPageInner() {
   const rawType = searchParams.get('type');
   const initialType = TX_TYPES.some((t) => t.value === rawType) ? (rawType as TxType) : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
-  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (data: NewProposalInput) => {
     if (!wallet.address || !multisig) return;
-    setError(null);
 
     const contractAddress = multisig.address;
     const proposerAddress = wallet.address;
@@ -141,7 +139,6 @@ function NewTransactionPageInner() {
                   There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
                 </div>
               )}
-              {error && <p className="text-sm text-red-400">{error}</p>}
               <ProposalForm
                 owners={owners.map((owner) => owner.address)}
                 currentThreshold={multisig.threshold ?? 1}
