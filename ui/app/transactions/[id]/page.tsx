@@ -48,10 +48,6 @@ export default function TransactionDetailPage() {
       router.push('/transactions');
       return;
     }
-    // Proposals loaded for current contract but this one doesn't exist
-    if (proposals.length > 0 && !proposal) {
-      router.push('/transactions');
-    }
   }, [multisig, proposals, proposal, proposalsAddress, router]);
 
   useEffect(() => {
