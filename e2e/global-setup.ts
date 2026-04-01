@@ -156,7 +156,7 @@ export default async function globalSetup() {
 
       log('Starting lightnet (this may take 1-2 minutes)...');
       try {
-        execSync('zk lightnet start', {
+        execSync('zk lightnet start -o 1000', {
           cwd: ROOT,
           stdio: 'inherit',
           timeout: 300_000,
