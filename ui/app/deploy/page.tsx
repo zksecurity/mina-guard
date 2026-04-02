@@ -59,6 +59,10 @@ export default function DeployPage() {
     [ownerFields]
   );
 
+  useEffect(() => {
+    setThreshold(String(parsedOwners.length || 1));
+  }, [parsedOwners.length]);
+
   const validate = (): string | null => {
     if (parsedOwners.length === 0) return 'Add at least one owner address.';
     const invalid = parsedOwners.find((addr) => !addr.startsWith('B62') || addr.length < 50);
@@ -189,27 +193,53 @@ export default function DeployPage() {
             {/* Threshold + Network ID */}
             <div className="grid grid-cols-2 gap-3">
               <label className="space-y-1">
-                <span className="text-xs text-safe-text">Threshold</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={threshold}
-                  onChange={(e) => { setThreshold(e.target.value); setFormError(null); }}
-                  className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
-                />
+                <span className="text-xs text-safe-text flex items-center gap-1">
+                  Threshold
+                  <span className="relative group">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-safe-border text-[10px] leading-none text-safe-text cursor-help">?</span>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 transition-all duration-200 pointer-events-none opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0">
+                      <div className="bg-safe-green/70 backdrop-blur-md text-white text-xs font-semibold rounded-lg px-2.5 py-1 shadow-lg whitespace-nowrap">
+                        Minimum approvals required to execute a proposal.
+                      </div>
+                      <svg className="mx-auto -mt-px" width="10" height="6" viewBox="0 0 10 6">
+                        <path d="M0 0L5 6L10 0Z" className="fill-safe-green/70" />
+                      </svg>
+                    </div>
+                  </span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={threshold}
+                    onChange={(e) => { setThreshold(e.target.value); setFormError(null); }}
+                    className="w-20 bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
+                  />
+                  <span className="text-sm text-safe-text">out of {parsedOwners.length}</span>
+                </div>
               </label>
               <label className="space-y-1">
-                <span className="text-xs text-safe-text">Network ID</span>
+                <span className="text-xs text-safe-text flex items-center gap-1">
+                  Network ID
+                  <span className="relative group">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-safe-border text-[10px] leading-none text-safe-text cursor-help">?</span>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 transition-all duration-200 pointer-events-none opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0">
+                      <div className="bg-safe-green/70 backdrop-blur-md text-white text-xs font-semibold rounded-lg px-2.5 py-1 shadow-lg whitespace-nowrap">
+                        Mainnet: 1 · Devnet: 0 · Testnet: 0
+                      </div>
+                      <svg className="mx-auto -mt-px" width="10" height="6" viewBox="0 0 10 6">
+                        <path d="M0 0L5 6L10 0Z" className="fill-safe-green/70" />
+                      </svg>
+                    </div>
+                  </span>
+                </span>
                 <input
                   type="text"
                   value={networkId}
                   onChange={(e) => { setNetworkId(e.target.value.trim()); setFormError(null); }}
                   className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
                 />
-                <p className="text-xs text-safe-text">
-                  Mainnet: <code className="font-mono">1</code> · Devnet: <code className="font-mono">0</code> · Testnet: <code className="font-mono">0</code>
-                </p>
               </label>
             </div>
 
