@@ -211,7 +211,7 @@ export default function DeployPage() {
                   <input
                     type="number"
                     min={1}
-                    max={20}
+                    max={Math.max(1, parsedOwners.length)}
                     value={threshold}
                     onChange={(e) => { setThreshold(e.target.value); setFormError(null); }}
                     className="w-20 bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"

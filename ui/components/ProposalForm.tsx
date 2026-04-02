@@ -49,6 +49,10 @@ export default function ProposalForm({
       setValidationError('Reduce the threshold first before removing an owner.');
       return;
     }
+    if (txType === 'changeThreshold' && newThreshold === currentThreshold) {
+      setValidationError('The new threshold is the same as the current one.');
+      return;
+    }
 
     onSubmit({
       txType,
@@ -139,20 +143,30 @@ export default function ProposalForm({
 
       {txType === 'changeThreshold' && (
         <div>
-          <label className="block text-sm text-safe-text mb-2">New Threshold</label>
-          <div className="flex items-center gap-4">
+          <label className="text-sm text-safe-text mb-2 flex items-center gap-1">
+            New Threshold
+            <span className="relative group">
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-safe-border text-[10px] leading-none text-safe-text cursor-help">?</span>
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 transition-all duration-200 pointer-events-none opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0">
+                <div className="bg-safe-green/70 backdrop-blur-md text-white text-xs font-semibold rounded-lg px-2.5 py-1 shadow-lg whitespace-nowrap">
+                  Minimum approvals required to execute a proposal.
+                </div>
+                <svg className="mx-auto -mt-px" width="10" height="6" viewBox="0 0 10 6">
+                  <path d="M0 0L5 6L10 0Z" className="fill-safe-green/70" />
+                </svg>
+              </div>
+            </span>
+          </label>
+          <div className="flex items-center gap-2">
             <input
-              type="range"
-              min="1"
+              type="number"
+              min={1}
               max={Math.max(1, numOwners)}
               value={newThreshold}
-              onChange={(e) => setNewThreshold(parseInt(e.target.value, 10))}
-              className="flex-1 accent-safe-green"
+              onChange={(e) => setNewThreshold(parseInt(e.target.value, 10) || 1)}
+              className="w-20 bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
             />
-            <span className="text-2xl font-mono text-safe-green min-w-[3ch] text-center">
-              {newThreshold}
-            </span>
-            <span className="text-sm text-safe-text">of {numOwners} owners</span>
+            <span className="text-sm text-safe-text">out of {numOwners}</span>
           </div>
         </div>
       )}
