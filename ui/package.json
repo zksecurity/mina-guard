@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "cd deps/o1js/src/mina-signer && npx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs"
+    "postinstall": "cd deps/o1js/src/mina-signer && npx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256"
   },
   "dependencies": {
     "@ledgerhq/hw-transport": "^6.33.0",
@@ -31,5 +31,8 @@
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "typescript": "^5.5.0"
+  },
+  "overrides": {
+    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701"
   }
 }
