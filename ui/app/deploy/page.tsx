@@ -28,7 +28,7 @@ export default function DeployPage() {
 
   // Setup fields
   const [ownerFields, setOwnerFields] = useState<string[]>(['']);
-  const [threshold, setThreshold] = useState('1');
+  const [threshold, setThreshold] = useState('');
   const [networkId, setNetworkId] = useState(wallet.network === 'mainnet' ? '1' : '0');
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -59,10 +59,6 @@ export default function DeployPage() {
     [ownerFields]
   );
 
-  useEffect(() => {
-    setThreshold(String(parsedOwners.length || 1));
-  }, [parsedOwners.length]);
-
   const validate = (): string | null => {
     if (parsedOwners.length === 0) return 'Add at least one owner address.';
     const invalid = parsedOwners.find((addr) => !addr.startsWith('B62') || addr.length < 50);
@@ -71,6 +67,7 @@ export default function DeployPage() {
     if (unique.size !== parsedOwners.length) return 'Duplicate owner addresses.';
     if (parsedOwners.length > 20) return 'Maximum 20 owners allowed.';
     const t = Number(threshold);
+    if (!threshold.trim()) return 'Please choose a threshold.';
     if (!t || t < 1) return 'Threshold must be at least 1.';
     if (t > parsedOwners.length) return `Threshold (${t}) cannot exceed number of owners (${parsedOwners.length}).`;
     if (!networkId.trim()) return 'Network ID is required.';
