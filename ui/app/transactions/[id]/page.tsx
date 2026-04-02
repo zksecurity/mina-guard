@@ -215,7 +215,7 @@ export default function TransactionDetailPage() {
             <DetailRow label="Proposed by" value={proposal.proposer ?? '-'} mono copyable />
             {proposal.txType === 'transfer' && (
               <>
-                <DetailRow label="Recipient" value={proposal.toAddress ? truncateAddress(proposal.toAddress, 10) : '-'} mono />
+                <DetailRow label="Recipient" value={proposal.toAddress ?? '-'} mono copyable />
                 <DetailRow label="Amount" value={`${formatMina(proposal.amount)} MINA`} />
               </>
             )}
