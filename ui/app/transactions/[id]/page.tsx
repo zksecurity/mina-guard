@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
@@ -210,9 +210,9 @@ export default function TransactionDetailPage() {
           <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Details</h3>
           <div className="space-y-3">
             <DetailRow label="Type" value={txLabel} />
-            <DetailRow label="Proposal Hash" value={truncateAddress(proposal.proposalHash, 12)} mono />
-            <DetailRow label="UID" value={proposal.uid ?? '-'} mono />
-            <DetailRow label="Proposed by" value={proposal.proposer ? truncateAddress(proposal.proposer, 10) : '-'} mono />
+            <DetailRow label="Proposal Hash" value={proposal.proposalHash} mono copyable />
+            <DetailRow label="UID" value={proposal.uid ?? '-'} mono copyable />
+            <DetailRow label="Proposed by" value={proposal.proposer ?? '-'} mono copyable />
             {proposal.txType === 'transfer' && (
               <>
                 <DetailRow label="Recipient" value={proposal.toAddress ? truncateAddress(proposal.toAddress, 10) : '-'} mono />
@@ -277,15 +277,48 @@ function DetailRow({
   label,
   value,
   mono = false,
+  copyable = false,
 }: {
   label: string;
   value: string;
   mono?: boolean;
+  copyable?: boolean;
 }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(value);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setShowTooltip(true);
+    timerRef.current = setTimeout(() => setShowTooltip(false), 1200);
+  };
+
+  const valueClass = `text-sm truncate ${mono ? 'font-mono' : ''}`;
+
   return (
     <div className="flex justify-between items-center py-2 border-b border-safe-border/50 last:border-0">
-      <span className="text-sm text-safe-text">{label}</span>
-      <span className={`text-sm ml-4 truncate ${mono ? 'font-mono' : ''}`}>{value}</span>
+      <span className="text-sm text-safe-text shrink-0">{label}</span>
+      {copyable ? (
+        <div className="relative ml-12 min-w-0">
+          <button
+            onClick={handleCopy}
+            className={`${valueClass} underline decoration-dotted underline-offset-4 decoration-safe-text/30 cursor-pointer hover:opacity-70 transition-opacity w-full text-right`}
+          >
+            {value}
+          </button>
+          <div className={`absolute -top-7 left-1/2 -translate-x-1/2 z-50 transition-all duration-200 pointer-events-none ${showTooltip ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'}`}>
+            <div className="bg-safe-green/70 backdrop-blur-md text-white text-xs font-semibold rounded-lg px-2.5 py-1 shadow-lg whitespace-nowrap">
+              Copied!
+            </div>
+            <svg className="mx-auto -mt-px" width="10" height="6" viewBox="0 0 10 6">
+              <path d="M0 0L5 6L10 0Z" className="fill-safe-green/70" />
+            </svg>
+          </div>
+        </div>
+      ) : (
+        <span className={`${valueClass} ml-12`}>{value}</span>
+      )}
     </div>
   );
 }
