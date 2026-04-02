@@ -1,6 +1,7 @@
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
 import { PublicKey } from 'o1js';
+import { MAX_RECEIVERS } from 'contracts';
 import {
   configureNetwork,
   discoverCandidateAddresses,
@@ -164,6 +165,7 @@ export class MinaGuardIndexer {
     fromHeight: number,
     toHeight: number
   ): Promise<void> {
+    const transferState = new Map<string, { count: number; skip: boolean; checked: boolean }>();
     const events = await fetchDecodedContractEvents(address, fromHeight, toHeight);
 
     // Sort so 'proposal' events are processed before 'approval'/'execution' within
@@ -204,7 +206,7 @@ export class MinaGuardIndexer {
         },
       });
 
-      await this.applyEvent(contractId, chainEvent);
+      await this.applyEvent(contractId, chainEvent, transferState);
     }
 
     await prisma.contract.update({
@@ -214,7 +216,11 @@ export class MinaGuardIndexer {
   }
 
   /** Applies event-specific state updates to proposal/owner/contract aggregate tables. */
-  private async applyEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
+  private async applyEvent(
+    contractId: number,
+    chainEvent: ChainEvent,
+    transferState: Map<string, { count: number; skip: boolean; checked: boolean }>
+  ): Promise<void> {
     switch (chainEvent.type) {
       case 'setup': {
         await this.applySetupEvent(contractId, chainEvent.event);
@@ -238,7 +244,7 @@ export class MinaGuardIndexer {
         return;
       }
       case 'transfer': {
-        await this.applyTransferEvent(contractId, chainEvent.event);
+        await this.applyTransferEvent(contractId, chainEvent.event, transferState);
         return;
       }
       case 'ownerChange':
@@ -382,18 +388,40 @@ export class MinaGuardIndexer {
     });
   }
 
-  /** Persists transfer receiver rows from propose/execution transfer events. */
+  /**
+   * Persists transfer receiver rows from propose/execution transfer events.
+   *
+   * The contract emits exactly MAX_RECEIVERS transfer events per emit point
+   * (padded with empties). By counting all events per proposal we detect
+   * batch boundaries: count 1–MAX_RECEIVERS is the first (accepted) batch,
+   * anything beyond is a re-emit (execution after propose) and is skipped.
+   *
+   * For proposals that already have receivers (offchain API insertion or a
+   * completed prior sync), the first non-empty event marks the proposal as
+   * skip for the remainder of the sync.
+   */
   private async applyTransferEvent(
     contractId: number,
-    event: Record<string, unknown>
+    event: Record<string, unknown>,
+    transferState: Map<string, { count: number; skip: boolean; checked: boolean }>
   ): Promise<void> {
     const proposalHash = asString(event.proposalHash);
+    if (!proposalHash) return;
+
+    const cacheKey = `${contractId}:${proposalHash}`;
+    let state = transferState.get(cacheKey);
+    if (!state) {
+      state = { count: 0, skip: false, checked: false };
+      transferState.set(cacheKey, state);
+    }
+
+    state.count++;
+    if (state.count > MAX_RECEIVERS) return;
+    if (state.skip) return;
+
     const address = asString(event.receiver);
     const amount = asString(event.amount);
-
-    if (!proposalHash || !address || !amount || address === EMPTY_PUBLIC_KEY || amount === '0') {
-      return;
-    }
+    if (!address || !amount || address === EMPTY_PUBLIC_KEY || amount === '0') return;
 
     const proposal = await prisma.proposal.findUnique({
       where: {
@@ -402,19 +430,20 @@ export class MinaGuardIndexer {
           proposalHash,
         },
       },
-      select: {
-        id: true,
-      },
+      select: { id: true },
     });
-
     if (!proposal) return;
 
-    // Skip if this receiver already exists (offchain proposals insert receivers
-    // at creation time, and execution re-emits the same transfer events).
-    const existing = await prisma.proposalReceiver.findFirst({
-      where: { proposalId: proposal.id, address },
-    });
-    if (existing) return;
+    if (!state.checked) {
+      state.checked = true;
+      const existingCount = await prisma.proposalReceiver.count({
+        where: { proposalId: proposal.id },
+      });
+      if (existingCount > 0) {
+        state.skip = true;
+        return;
+      }
+    }
 
     const nextIndex = await prisma.proposalReceiver.count({
       where: { proposalId: proposal.id },

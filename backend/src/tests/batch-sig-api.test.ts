@@ -4,6 +4,8 @@ import express from 'express';
 import type { Server } from 'http';
 import { prisma } from '../db.js';
 import { createBatchRouter } from '../batch-routes.js';
+import { MinaGuardIndexer } from '../indexer.js';
+import type { BackendConfig } from '../config.js';
 import {
   Receiver, TransactionProposal, TxType, MinaGuard, SetupOwnersInput, MAX_OWNERS, MAX_RECEIVERS,
   computeOwnerChain, ApprovalStore, SignatureInputs, SignatureInput, SignatureOption,
@@ -655,5 +657,186 @@ describe('executeTransferBatchSig with API payload', () => {
 
     const balanceAfter = Mina.getBalance(recipient);
     expect(balanceAfter.sub(balanceBefore)).toEqual(UInt64.from(500_000_000));
+  });
+});
+
+describe('indexer transfer event batch dedup', () => {
+  const dummyConfig: BackendConfig = {
+    port: 0,
+    databaseUrl: '',
+    minaEndpoint: 'http://localhost:1',
+    archiveEndpoint: 'http://localhost:1',
+    lightnetAccountManager: undefined,
+    minaFallbackEndpoint: null,
+    archiveFallbackEndpoint: null,
+    indexPollIntervalMs: 99999,
+    indexStartHeight: 0,
+    minaguardVkHash: null,
+  };
+
+  const recipient1 = PrivateKey.random().toPublicKey().toBase58();
+  const recipient2 = PrivateKey.random().toPublicKey().toBase58();
+  const emptyAddress = PublicKey.empty().toBase58();
+
+  function makeTransferEvent(pHash: string, receiver: string, amount: string) {
+    return { proposalHash: pHash, receiver, amount };
+  }
+
+  /** Creates a bound applyTransferEvent with its own local transferState. */
+  function createApplyFn(indexer: MinaGuardIndexer) {
+    const transferState = new Map<string, { count: number; skip: boolean; checked: boolean }>();
+    const fn = (indexer as any).applyTransferEvent.bind(indexer);
+    return (contractId: number, event: Record<string, unknown>) =>
+      fn(contractId, event, transferState);
+  }
+
+  test('propose + execute in one sync with duplicate addresses and null txHash', async () => {
+    const indexer = new MinaGuardIndexer(dummyConfig);
+    const applyTransferEvent = createApplyFn(indexer);
+
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+
+    // Create an on-chain proposal with no receivers
+    const testHash = 'dedup-test-hash';
+    const testProposal = await prisma.proposal.create({
+      data: {
+        contractId: contract!.id,
+        proposalHash: testHash,
+        origin: 'onchain',
+        status: 'pending',
+        txType: '0',
+      },
+    });
+
+    // Simulate propose-time transfer events: 2 receivers (recipient1 appears twice
+    // with different amounts) + (MAX_RECEIVERS - 2) empty slots = MAX_RECEIVERS total
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient1, '1000000000'));
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient1, '500000000'));
+    for (let i = 0; i < MAX_RECEIVERS - 2; i++) {
+      await applyTransferEvent(contract!.id, makeTransferEvent(testHash, emptyAddress, '0'));
+    }
+
+    // Verify both duplicate-address receivers were inserted
+    let receivers = await prisma.proposalReceiver.findMany({
+      where: { proposalId: testProposal.id },
+      orderBy: { idx: 'asc' },
+    });
+    expect(receivers).toHaveLength(2);
+    expect(receivers[0].address).toBe(recipient1);
+    expect(receivers[0].amount).toBe('1000000000');
+    expect(receivers[1].address).toBe(recipient1);
+    expect(receivers[1].amount).toBe('500000000');
+
+    // Simulate execute-time transfer events (second batch, same sync, null txHash)
+    // These should ALL be skipped because count > MAX_RECEIVERS
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient1, '1000000000'));
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient1, '500000000'));
+    for (let i = 0; i < MAX_RECEIVERS - 2; i++) {
+      await applyTransferEvent(contract!.id, makeTransferEvent(testHash, emptyAddress, '0'));
+    }
+
+    // Verify no duplicates from execution batch
+    receivers = await prisma.proposalReceiver.findMany({
+      where: { proposalId: testProposal.id },
+      orderBy: { idx: 'asc' },
+    });
+    expect(receivers).toHaveLength(2);
+
+    // Cleanup
+    await prisma.proposalReceiver.deleteMany({ where: { proposalId: testProposal.id } });
+    await prisma.proposal.delete({ where: { id: testProposal.id } });
+  });
+
+  test('preserves existing receivers on retry without deleting them', async () => {
+    const indexer = new MinaGuardIndexer(dummyConfig);
+
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+
+    const testHash = 'partial-retry-hash';
+    const testProposal = await prisma.proposal.create({
+      data: {
+        contractId: contract!.id,
+        proposalHash: testHash,
+        origin: 'onchain',
+        status: 'pending',
+        txType: '0',
+      },
+    });
+
+    // Simulate a first sync that inserted 1 receiver before crashing
+    await prisma.proposalReceiver.create({
+      data: { proposalId: testProposal.id, idx: 0, address: recipient1, amount: '100' },
+    });
+
+    // Retry sync — existing receivers should be preserved (skipped, not deleted)
+    const applyTransferEvent = createApplyFn(indexer);
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient1, '100'));
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient2, '200'));
+    for (let i = 0; i < MAX_RECEIVERS - 2; i++) {
+      await applyTransferEvent(contract!.id, makeTransferEvent(testHash, emptyAddress, '0'));
+    }
+
+    // The original receiver is preserved — not deleted, not duplicated
+    const receivers = await prisma.proposalReceiver.findMany({
+      where: { proposalId: testProposal.id },
+      orderBy: { idx: 'asc' },
+    });
+    expect(receivers).toHaveLength(1);
+    expect(receivers[0]).toMatchObject({ address: recipient1, amount: '100' });
+
+    // Cleanup
+    await prisma.proposalReceiver.deleteMany({ where: { proposalId: testProposal.id } });
+    await prisma.proposal.delete({ where: { id: testProposal.id } });
+  });
+
+  test('skips transfer events for offchain proposals with pre-existing receivers', async () => {
+    const indexer = new MinaGuardIndexer(dummyConfig);
+    const applyTransferEvent = createApplyFn(indexer);
+
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+
+    // Create offchain proposal with receivers already from the batch API
+    const testHash = 'offchain-dedup-hash';
+    const testProposal = await prisma.proposal.create({
+      data: {
+        contractId: contract!.id,
+        proposalHash: testHash,
+        origin: 'offchain',
+        status: 'pending',
+        txType: '0',
+        receivers: {
+          create: [
+            { idx: 0, address: recipient1, amount: '1000000000' },
+            { idx: 1, address: recipient2, amount: '2000000000' },
+          ],
+        },
+      },
+    });
+
+    // Simulate execution transfer events arriving on-chain
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient1, '1000000000'));
+    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient2, '2000000000'));
+    for (let i = 0; i < MAX_RECEIVERS - 2; i++) {
+      await applyTransferEvent(contract!.id, makeTransferEvent(testHash, emptyAddress, '0'));
+    }
+
+    // Verify still exactly 2 receivers (no duplicates from chain events)
+    const receivers = await prisma.proposalReceiver.findMany({
+      where: { proposalId: testProposal.id },
+      orderBy: { idx: 'asc' },
+    });
+    expect(receivers).toHaveLength(2);
+    expect(receivers[0].amount).toBe('1000000000');
+    expect(receivers[1].amount).toBe('2000000000');
+
+    // Cleanup
+    await prisma.proposalReceiver.deleteMany({ where: { proposalId: testProposal.id } });
+    await prisma.proposal.delete({ where: { id: testProposal.id } });
   });
 });
