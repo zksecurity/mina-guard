@@ -382,7 +382,7 @@ export class MinaGuardIndexer {
     });
   }
 
-  /** Persists transfer receiver rows from execution-time transfer events. */
+  /** Persists transfer receiver rows from propose/execution transfer events. */
   private async applyTransferEvent(
     contractId: number,
     event: Record<string, unknown>
@@ -409,24 +409,21 @@ export class MinaGuardIndexer {
 
     if (!proposal) return;
 
+    // Skip if this receiver already exists (offchain proposals insert receivers
+    // at creation time, and execution re-emits the same transfer events).
+    const existing = await prisma.proposalReceiver.findFirst({
+      where: { proposalId: proposal.id, address },
+    });
+    if (existing) return;
+
     const nextIndex = await prisma.proposalReceiver.count({
       where: { proposalId: proposal.id },
     });
 
-    await prisma.proposalReceiver.upsert({
-      where: {
-        proposalId_idx: {
-          proposalId: proposal.id,
-          idx: nextIndex,
-        },
-      },
-      create: {
+    await prisma.proposalReceiver.create({
+      data: {
         proposalId: proposal.id,
         idx: nextIndex,
-        address,
-        amount,
-      },
-      update: {
         address,
         amount,
       },

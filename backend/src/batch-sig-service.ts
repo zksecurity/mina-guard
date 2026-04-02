@@ -146,15 +146,11 @@ export async function buildBatchPayload(
   }
 
   const threshold = contract.threshold ?? 1;
-  const receivers = proposal.receivers.length > 0
-    ? proposal.receivers.map((receiver) => ({
-        index: receiver.idx,
-        address: receiver.address,
-        amount: receiver.amount,
-      }))
-    : proposal.txType === TxType.TRANSFER.toString() && proposal.toAddress && proposal.amount
-      ? [{ index: 0, address: proposal.toAddress, amount: proposal.amount }]
-      : [];
+  const receivers = proposal.receivers.map((receiver) => ({
+    index: receiver.idx,
+    address: receiver.address,
+    amount: receiver.amount,
+  }));
 
   return {
     ready: approvals.length >= threshold,
@@ -163,7 +159,6 @@ export async function buildBatchPayload(
     proposal: {
       proposalHash: proposal.proposalHash,
       toAddress: proposal.toAddress,
-      amount: proposal.amount,
       tokenId: proposal.tokenId,
       txType: proposal.txType,
       data: proposal.data,

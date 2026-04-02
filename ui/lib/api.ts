@@ -134,7 +134,6 @@ function toProposal(input: Record<string, unknown>): Proposal {
     proposalHash: asString(input.proposalHash) ?? '',
     proposer: asNullableString(input.proposer),
     toAddress: asNullableString(input.toAddress),
-    amount: asNullableString(input.amount),
     tokenId: asNullableString(input.tokenId),
     txType: normalizeTxType(asNullableString(input.txType)),
     data: asNullableString(input.data),
@@ -212,7 +211,6 @@ export async function postOffchainProposal(
   data: {
     receivers?: Array<{ address: string; amount: string }>;
     toAddress?: string;
-    amount?: string;
     tokenId: string;
     txType: string;
     data: string;

@@ -23,7 +23,6 @@ export interface Proposal {
   proposalHash: string;
   proposer: string | null;
   toAddress: string | null;
-  amount: string | null;
   tokenId: string | null;
   txType: TxType | null;
   data: string | null;

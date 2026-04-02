@@ -104,8 +104,8 @@ export class SetupOwnerEvent extends Struct({
 
 /**
  * Emitted when a new proposal is created and indexed by proposalHash.
- * Receiver/amount data is emitted separately via ProposalReceiverEvent
- * (one per MAX_RECEIVERS slot) since Mina limits events to 16 field elements.
+ * Receiver/amount data is emitted via TransferEvent (one per MAX_RECEIVERS
+ * slot, padded with empties) since Mina limits events to 16 field elements.
  */
 export class ProposalEvent extends Struct({
   proposalHash: Field,
@@ -120,7 +120,7 @@ export class ProposalEvent extends Struct({
   guardAddress: PublicKey,
 }) { }
 
-/** Emitted once per receiver slot during transfer execution (fixed-size, padded with empties). */
+/** Emitted once per receiver slot during propose and execution (fixed-size, padded with empties). */
 export class TransferEvent extends Struct({
   proposalHash: Field,
   receiver: PublicKey,
@@ -422,6 +422,13 @@ export class MinaGuard extends SmartContract {
       networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
     });
+
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const isEmpty = r.address.equals(PublicKey.empty());
+      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
+      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
+    }
 
     this.emitEvent('approval', {
       proposalHash,

@@ -371,18 +371,13 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'toAddress' | 'amount' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
   const txType = normalizeTxType(proposal.txType);
-  const receivers = proposal.receivers.length > 0
-    ? proposal.receivers
-    : txType === 'transfer' && proposal.toAddress && proposal.amount
-      ? [{ address: proposal.toAddress, amount: proposal.amount }]
-      : [];
   return new TransactionProposal({
-    receivers: buildTransferReceivers(receivers),
+    receivers: buildTransferReceivers(proposal.receivers),
     tokenId: Field(proposal.tokenId ?? '0'),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
@@ -699,8 +694,7 @@ const workerApi = {
             ? params.input.removeOwnerAddress
             : params.input.txType === 'setDelegate' && !params.input.undelegate
               ? params.input.delegate
-              : PublicKey.empty().toBase58(),
-      amount: params.input.txType === 'transfer' ? undefined : '0',
+              : undefined,
       tokenId: '0',
       txType: txType.toString(),
       data: data.toString(),

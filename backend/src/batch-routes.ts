@@ -33,7 +33,6 @@ const receiverSchema = z.object({
 
 const createProposalSchema = z.object({
   toAddress: proposalTargetPublicKey.optional(),
-  amount: fieldString.optional(),
   receivers: z.array(receiverSchema).max(MAX_RECEIVERS).optional(),
   tokenId: fieldString,
   txType: fieldString,
@@ -83,7 +82,7 @@ export function createBatchRouter(): Router {
     }
 
     const {
-      toAddress, amount, receivers, tokenId, txType, data,
+      toAddress, receivers, tokenId, txType, data,
       uid, configNonce, expiryBlock, networkId, guardAddress,
       proposalHash, proposer,
     } = parsed.data;
@@ -91,8 +90,6 @@ export function createBatchRouter(): Router {
     const normalizedReceivers = normalizeProposalReceivers({
       txType,
       receivers,
-      toAddress,
-      amount,
     });
     if (!normalizedReceivers.ok) {
       res.status(400).json({ error: normalizedReceivers.error });
@@ -156,7 +153,6 @@ export function createBatchRouter(): Router {
         contractId: contract.id,
         proposalHash,
         toAddress,
-        amount,
         tokenId,
         txType,
         data,
@@ -348,8 +344,6 @@ export function createBatchRouter(): Router {
 function normalizeProposalReceivers(params: {
   txType: string;
   receivers?: Array<{ address: string; amount: string }>;
-  toAddress?: string;
-  amount?: string;
 }):
   | { ok: true; receivers: Array<{ address: string; amount: string }> }
   | { ok: false; error: string } {
@@ -360,12 +354,6 @@ function normalizeProposalReceivers(params: {
 
   const receivers = params.receivers ?? [];
   if (receivers.length === 0) {
-    if (params.toAddress && params.amount) {
-      return {
-        ok: true,
-        receivers: [{ address: params.toAddress, amount: params.amount }],
-      };
-    }
     return { ok: false, error: 'Transfer proposals must include at least one receiver' };
   }
 

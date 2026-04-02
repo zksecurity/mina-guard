@@ -47,7 +47,6 @@ model Proposal {
   proposalHash    String
   proposer        String?
   toAddress       String?
-  amount          String?
   tokenId         String?
   txType          String?
   data            String?
