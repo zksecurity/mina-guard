@@ -1,0 +1,12 @@
+# Local overrides — use with:
+#   docker compose -f preview-env/docker-compose.preview.yml -f preview-env/docker-compose.local.yml -p pr-1 up -d --build
+services:
+  frontend:
+    build:
+      args:
+        - NEXT_PUBLIC_BASE_PATH=/preview/${PR_NUMBER:-1}
+        - NEXT_PUBLIC_API_BASE_URL=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}
+        - NEXT_PUBLIC_MINA_ENDPOINT=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/graphql
+        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/archive
+        - NEXT_PUBLIC_MINA_NETWORK=testnet
+        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/explorer
