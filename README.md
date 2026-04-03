@@ -128,12 +128,7 @@ Requests hit the main Caddy (TLS + COOP/COEP headers) which reverse-proxies to a
 
 ### Server setup
 
-The self-hosted runner needs scoped sudo for Caddy config management:
-
-```bash
-sudo cp preview-env/sudoers-preview /etc/sudoers.d/preview-env
-sudo chmod 440 /etc/sudoers.d/preview-env
-```
+Preview routes are managed via the Caddy admin API (`localhost:2019`) — no sudo required. The self-hosted runner only needs Docker access (`docker` group).
 
 ### Gotchas
 

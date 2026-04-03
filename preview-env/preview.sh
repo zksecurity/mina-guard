@@ -7,64 +7,123 @@
 #   ./preview.sh list               — list active previews
 #
 # Expects to be run from the repo root directory.
+# Uses the Caddy admin API (localhost:2019) — no sudo required.
 
 set -euo pipefail
 
 COMMAND="${1:-}"
 PR_NUMBER="${2:-}"
 BASE_PORT=10000
+# Caddy exposes a REST API on localhost:2019 for dynamic config changes.
+# We use it to add/remove preview reverse-proxy routes without editing the Caddyfile.
+CADDY_API="http://localhost:2019"
 
-# Validate PR number to prevent sed injection into Caddyfile
+# Path to the routes array inside Caddy's JSON config. Caddy converts the Caddyfile
+# into a JSON structure in memory. For a Caddyfile like:
+#
+#   mina-nodes.duckdns.org {        <- apps/http/servers/srv0/routes/0
+#     handle /lightnet/graphql {}   <- .../handle/0/routes/0
+#     handle /lightnet/archive {}   <- .../handle/0/routes/1
+#     ...
+#   }
+#
+# All handle blocks become entries in this routes array. We POST new preview
+# routes here and DELETE them by @id when tearing down.
+ROUTES_PATH="apps/http/servers/srv0/routes/0/handle/0/routes"
+
+# Validate PR number
 if [ -n "$PR_NUMBER" ] && ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
     echo "ERROR: PR number must be a positive integer, got: $PR_NUMBER"
     exit 1
 fi
-MAIN_CADDYFILE="/etc/caddy/Caddyfile"
-HOME_CADDYFILE="$HOME/Caddyfile"
 
 add_caddy_route() {
     local pr=$1
     local port=$2
 
-    # Skip if already present
-    if grep -q "# PREVIEW-START-${pr}" "$MAIN_CADDYFILE" 2>/dev/null; then
-        echo "Caddy route for PR #${pr} already exists, updating..."
-        remove_caddy_route "$pr"
+    # Remove existing route first (idempotent)
+    remove_caddy_route "$pr" 2>/dev/null || true
+
+    # Read the group name from the first existing route. Caddy assigns all handle
+    # blocks the same group so they're mutually exclusive (only one matches per
+    # request, like an if/else chain). We need our preview route in the same group.
+    local group
+    group=$(curl -s "${CADDY_API}/config/${ROUTES_PATH}/0" | python3 -c "import sys,json; print(json.load(sys.stdin).get('group','group0'))" 2>/dev/null || echo "group0")
+
+    # Build the route JSON:
+    #   @id        — label for deletion by ID later (DELETE /id/preview-N)
+    #   group      — matches existing routes so only one handle block runs
+    #   match      — path with and without trailing slash/subpath
+    #   handle     — subroute (equivalent to handle {} in Caddyfile) that:
+    #     1. Sets COOP/COEP headers (needed for SharedArrayBuffer / o1js WASM)
+    #     2. Strips upstream COOP/COEP from Next.js to prevent duplicates
+    #     3. Reverse proxies to the preview's Caddy container port
+    local route_json
+    route_json=$(cat <<EOJSON
+{
+  "@id": "preview-${pr}",
+  "group": "${group}",
+  "match": [{"path": ["/preview/${pr}", "/preview/${pr}/*"]}],
+  "handle": [{
+    "handler": "subroute",
+    "routes": [{
+      "handle": [
+        {
+          "handler": "headers",
+          "response": {
+            "set": {
+              "Cross-Origin-Opener-Policy": ["same-origin"],
+              "Cross-Origin-Embedder-Policy": ["credentialless"]
+            }
+          }
+        },
+        {
+          "handler": "reverse_proxy",
+          "headers": {
+            "response": {
+              "delete": ["Cross-Origin-Opener-Policy", "Cross-Origin-Embedder-Policy"]
+            }
+          },
+          "upstreams": [{"dial": "localhost:${port}"}]
+        }
+      ]
+    }]
+  }]
+}
+EOJSON
+)
+
+    # POST appends the route to the end of the routes array. Caddy applies it
+    # immediately — no reload needed.
+    local status
+    status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "$route_json" \
+        "${CADDY_API}/config/${ROUTES_PATH}")
+
+    if [ "$status" = "200" ]; then
+        echo "Caddy route added: /preview/${pr}/ → localhost:${port}"
+    else
+        echo "ERROR: Failed to add Caddy route (HTTP ${status})"
+        exit 1
     fi
-
-    # Insert preview block before the closing } of the site block
-    sudo sed -i "/^}$/i\\
-\\
-    # PREVIEW-START-${pr}\\
-    @preview${pr} path /preview/${pr} /preview/${pr}/*\\
-    handle @preview${pr} {\\
-        reverse_proxy localhost:${port} {\\
-            header_down -Cross-Origin-Opener-Policy\\
-            header_down -Cross-Origin-Embedder-Policy\\
-        }\\
-        header Cross-Origin-Opener-Policy \"same-origin\"\\
-        header Cross-Origin-Embedder-Policy \"credentialless\"\\
-    }\\
-    # PREVIEW-END-${pr}" "$MAIN_CADDYFILE"
-
-    # Keep home copy in sync
-    sudo cp "$MAIN_CADDYFILE" "$HOME_CADDYFILE"
-
-    # Reload Caddy
-    sudo systemctl reload caddy
-    echo "Caddy route added: /preview/${pr}/ → localhost:${port}"
 }
 
 remove_caddy_route() {
     local pr=$1
 
-    if grep -q "# PREVIEW-START-${pr}" "$MAIN_CADDYFILE" 2>/dev/null; then
-        sudo sed -i "/# PREVIEW-START-${pr}/,/# PREVIEW-END-${pr}/d" "$MAIN_CADDYFILE"
-        # Clean up any blank lines left behind
-        sudo sed -i '/^$/N;/^\n$/d' "$MAIN_CADDYFILE"
-        sudo cp "$MAIN_CADDYFILE" "$HOME_CADDYFILE"
-        sudo systemctl reload caddy
+    # Delete by the @id we assigned when creating the route
+    local status
+    status=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+        "${CADDY_API}/id/preview-${pr}")
+
+    if [ "$status" = "200" ]; then
         echo "Caddy route removed for PR #${pr}"
+    elif [ "$status" = "404" ]; then
+        echo "No Caddy route found for PR #${pr}"
+    else
+        echo "ERROR: Failed to remove Caddy route (HTTP ${status})"
+        exit 1
     fi
 }
 
