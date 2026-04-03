@@ -19,6 +19,10 @@ on:
     types: [opened, synchronize, reopened, closed]
     branches: [main]
 
+permissions:
+  pull-requests: write
+  issues: write
+
 concurrency:
   group: preview-${{ github.event.number }}
   cancel-in-progress: false
