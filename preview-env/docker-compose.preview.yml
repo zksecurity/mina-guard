@@ -17,7 +17,7 @@ services:
       - NETWORK_TYPE=single-node
       - LOG_LEVEL=Info
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"query":"{ syncStatus }"}', "http://localhost:8080/graphql"]
+      test: ["CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"query\":\"{ syncStatus }\"}' http://localhost:8080/graphql && curl -sf -X POST -H 'Content-Type: application/json' -d '{\"query\":\"{ networkState { maxBlockHeight { pendingMaxBlockHeight } } }\"}' http://localhost:8282"]
       interval: 10s
       timeout: 5s
       retries: 30
