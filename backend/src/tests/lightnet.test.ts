@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { acquireLightnetAccount, computeFundingAmount } from '../lightnet.js';
+import {
+  acquireLightnetAccount,
+  computeFundingAmount,
+  LightnetAcquireError,
+  withLightnetAccount,
+} from '../lightnet.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -65,5 +70,61 @@ describe('computeFundingAmount', () => {
 
   test('returns zero when the reserve cannot be covered', () => {
     expect(computeFundingAmount(1_000_000_000n)).toBe(0n);
+  });
+});
+
+describe('withLightnetAccount', () => {
+  test('releases the acquired account after an early return', async () => {
+    const release = mock(async () => {});
+    const run = mock(async () => null);
+
+    await expect(
+      withLightnetAccount(
+        'http://127.0.0.1:8181',
+        run,
+        {
+          acquireLightnetAccount: async () => ({ pk: 'B62test', sk: 'EKFtest' }),
+          releaseLightnetAccount: release,
+        }
+      )
+    ).resolves.toBeNull();
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledWith('http://127.0.0.1:8181', { pk: 'B62test', sk: 'EKFtest' });
+  });
+
+  test('releases the acquired account when the callback throws', async () => {
+    const release = mock(async () => {});
+
+    await expect(
+      withLightnetAccount(
+        'http://127.0.0.1:8181',
+        async () => {
+          throw new Error('send failed');
+        },
+        {
+          acquireLightnetAccount: async () => ({ pk: 'B62test', sk: 'EKFtest' }),
+          releaseLightnetAccount: release,
+        }
+      )
+    ).rejects.toThrow('send failed');
+
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  test('wraps acquisition failures so callers can return 502', async () => {
+    await expect(
+      withLightnetAccount(
+        'http://127.0.0.1:8181',
+        async () => ({ ok: true }),
+        {
+          acquireLightnetAccount: async () => {
+            throw new Error('Account manager returned invalid JSON');
+          },
+          releaseLightnetAccount: async () => {},
+        }
+      )
+    ).rejects.toBeInstanceOf(LightnetAcquireError);
   });
 });

@@ -9,8 +9,10 @@ import { serializeProposalRecord } from './proposal-record.js';
 import {
   acquireLightnetAccount,
   computeFundingAmount,
+  LightnetAcquireError,
   releaseLightnetAccount,
   sendSignedLightnetPayment,
+  withLightnetAccount,
 } from './lightnet.js';
 import {
   clampedIntQuerySchema,
@@ -346,40 +348,44 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    let acquired: { pk: string; sk: string };
     try {
-      acquired = await acquireLightnetAccount(accountManagerUrl);
+      const result = await withLightnetAccount(accountManagerUrl, async (acquired) => {
+        const funderPub = PublicKey.fromBase58(acquired.pk);
+        const { account: funderAccount } = await fetchAccount({ publicKey: funderPub });
+        const funderBalance = BigInt(funderAccount?.balance?.toBigInt() ?? 0n);
+        const amountNano = computeFundingAmount(funderBalance);
+        if (amountNano <= 0n) {
+          return null;
+        }
+        const nonce = String(funderAccount?.nonce.toBigint() ?? 0n);
+
+        const txHash = await sendSignedLightnetPayment({
+          minaEndpoint: config.minaEndpoint,
+          from: acquired.pk,
+          to: address,
+          amount: amountNano.toString(),
+          fee: '100000000',
+          nonce,
+          privateKey: acquired.sk,
+        });
+
+        return { txHash };
+      }, {
+        acquireLightnetAccount,
+        releaseLightnetAccount,
+      });
+
+      if (!result) {
+        res.status(503).json({ error: 'No funded Lightnet accounts are currently available' });
+        return;
+      }
+
+      res.json(result);
     } catch (error) {
-      res.status(502).json({
-        error: error instanceof Error ? error.message : 'Failed to acquire funded account',
-      });
-      return;
-    }
-
-    const funderPub = PublicKey.fromBase58(acquired.pk);
-    const { account: funderAccount } = await fetchAccount({ publicKey: funderPub });
-    const funderBalance = BigInt(funderAccount?.balance?.toBigInt() ?? 0n);
-    const amountNano = computeFundingAmount(funderBalance);
-    if (amountNano <= 0n) {
-      res.status(503).json({ error: 'No funded Lightnet accounts are currently available' });
-      return;
-    }
-    const nonce = String(funderAccount?.nonce.toBigint() ?? 0n);
-
-    try {
-      const txHash = await sendSignedLightnetPayment({
-        minaEndpoint: config.minaEndpoint,
-        from: acquired.pk,
-        to: address,
-        amount: amountNano.toString(),
-        fee: '100000000',
-        nonce,
-        privateKey: acquired.sk,
-      });
-
-      res.json({ txHash });
-    } finally {
-      await releaseLightnetAccount(accountManagerUrl, acquired);
+      const message =
+        error instanceof Error ? error.message : 'Failed to acquire funded account';
+      const status = error instanceof LightnetAcquireError ? 502 : 500;
+      res.status(status).json({ error: message });
     }
   }));
 

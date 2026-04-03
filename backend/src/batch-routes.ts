@@ -52,6 +52,15 @@ const submitSignatureSchema = z.object({
   signatureS: fieldString,
 });
 
+function getProposalTargetRequirement(params: { txType: string; data: string }): 'required' | 'optional' {
+  if (params.txType === TxType.ADD_OWNER.toString()) return 'required';
+  if (params.txType === TxType.REMOVE_OWNER.toString()) return 'required';
+  if (params.txType === TxType.SET_DELEGATE.toString()) {
+    return params.data === '0' ? 'optional' : 'required';
+  }
+  return 'optional';
+}
+
 /** Creates the batch-sig API router for offchain signature aggregation. */
 export function createBatchRouter(): Router {
   const router = Router();
@@ -93,6 +102,12 @@ export function createBatchRouter(): Router {
     });
     if (!normalizedReceivers.ok) {
       res.status(400).json({ error: normalizedReceivers.error });
+      return;
+    }
+
+    const targetRequirement = getProposalTargetRequirement({ txType, data });
+    if (targetRequirement === 'required' && !toAddress) {
+      res.status(400).json({ error: 'Proposal toAddress is required for this transaction type' });
       return;
     }
 

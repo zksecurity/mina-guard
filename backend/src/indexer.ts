@@ -396,9 +396,10 @@ export class MinaGuardIndexer {
    * batch boundaries: count 1–MAX_RECEIVERS is the first (accepted) batch,
    * anything beyond is a re-emit (execution after propose) and is skipped.
    *
-   * For proposals that already have receivers (offchain API insertion or a
-   * completed prior sync), the first non-empty event marks the proposal as
-   * skip for the remainder of the sync.
+   * Offchain proposals already persist their receiver list via the API, so
+   * matching transfer events are skipped. On-chain proposals instead resume
+   * from any receivers already written, which lets retries backfill the
+   * remaining rows after a partial crash.
    */
   private async applyTransferEvent(
     contractId: number,
@@ -430,7 +431,7 @@ export class MinaGuardIndexer {
           proposalHash,
         },
       },
-      select: { id: true },
+      select: { id: true, origin: true },
     });
     if (!proposal) return;
 
@@ -439,7 +440,7 @@ export class MinaGuardIndexer {
       const existingCount = await prisma.proposalReceiver.count({
         where: { proposalId: proposal.id },
       });
-      if (existingCount > 0) {
+      if (proposal.origin === 'offchain' && existingCount > 0) {
         state.skip = true;
         return;
       }

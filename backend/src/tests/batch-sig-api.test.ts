@@ -44,6 +44,7 @@ const proposal = new TransactionProposal({
 });
 
 const proposalHash = proposal.hash().toString();
+const defaultProposer = owners[0].pub.toBase58();
 
 /** Seed the DB with a contract and owners so routes can find them. */
 async function seedDatabase() {
@@ -129,6 +130,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       networkId: '1',
       guardAddress: guardAddress.toBase58(),
       proposalHash,
+      proposer: defaultProposer,
     });
 
     expect(res.status).toBe(400);
@@ -149,6 +151,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       networkId: '1',
       guardAddress: addr,
       proposalHash,
+      proposer: defaultProposer,
     });
 
     expect(res.status).toBe(201);
@@ -174,6 +177,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       networkId: '1',
       guardAddress: addr,
       proposalHash,
+      proposer: defaultProposer,
     });
 
     expect(res.status).toBe(409);
@@ -192,11 +196,76 @@ describe('POST /api/contracts/:address/proposals', () => {
       networkId: '1',
       guardAddress: addr,
       proposalHash: '999999999',
+      proposer: defaultProposer,
     });
 
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe('Proposal hash mismatch');
+  });
+
+  test('rejects addOwner proposals without toAddress', async () => {
+    const addr = guardAddress.toBase58();
+    const addOwnerProposal = new TransactionProposal({
+      receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
+      tokenId: Field(0),
+      txType: TxType.ADD_OWNER,
+      data: Field(123),
+      uid: Field(88),
+      configNonce: Field(0),
+      expiryBlock: Field(0),
+      networkId: Field(1),
+      guardAddress,
+    });
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      tokenId: '0',
+      txType: TxType.ADD_OWNER.toString(),
+      data: addOwnerProposal.data.toString(),
+      uid: '88',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: addOwnerProposal.hash().toString(),
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Proposal toAddress is required for this transaction type');
+  });
+
+  test('rejects setDelegate proposals without toAddress when setting a delegate', async () => {
+    const addr = guardAddress.toBase58();
+    const delegateProposal = new TransactionProposal({
+      receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
+      tokenId: Field(0),
+      txType: TxType.SET_DELEGATE,
+      data: Field(1),
+      uid: Field(89),
+      configNonce: Field(0),
+      expiryBlock: Field(0),
+      networkId: Field(1),
+      guardAddress,
+    });
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      tokenId: '0',
+      txType: TxType.SET_DELEGATE.toString(),
+      data: '1',
+      uid: '89',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: delegateProposal.hash().toString(),
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Proposal toAddress is required for this transaction type');
   });
 });
 
@@ -355,6 +424,57 @@ describe('GET /api/contracts/:address/proposals/:proposalHash/batch-payload', ()
     expect(body.proposal.totalAmount).toBe('1000000000');
   });
 
+  test('orders payload owners by base58 address rather than persisted index', async () => {
+    const contractAddress = PrivateKey.random().toPublicKey().toBase58();
+    const sortedOwners = Array.from({ length: 3 }, () => PrivateKey.random()).sort((a, b) =>
+      a.toPublicKey().toBase58().localeCompare(b.toPublicKey().toBase58())
+    );
+    const proposalHash = '987654321';
+
+    const contract = await prisma.contract.create({
+      data: {
+        address: contractAddress,
+        ownersCommitment: 'ordered',
+        threshold: 2,
+        numOwners: 3,
+        configNonce: 0,
+        networkId: '1',
+      },
+    });
+
+    try {
+      await prisma.owner.createMany({
+        data: [
+          { contractId: contract.id, address: sortedOwners[0].toPublicKey().toBase58(), index: 0, active: true },
+          { contractId: contract.id, address: sortedOwners[1].toPublicKey().toBase58(), index: 2, active: true },
+          { contractId: contract.id, address: sortedOwners[2].toPublicKey().toBase58(), index: 1, active: true },
+        ],
+      });
+
+      await prisma.proposal.create({
+        data: {
+          contractId: contract.id,
+          proposalHash,
+          origin: 'offchain',
+          status: 'pending',
+          txType: TxType.TRANSFER.toString(),
+        },
+      });
+
+      const res = await get(`/api/contracts/${contractAddress}/proposals/${proposalHash}/batch-payload`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.inputs.slice(0, 3).map((input: { signer: string }) => input.signer)).toEqual(
+        sortedOwners.map((owner) => owner.toPublicKey().toBase58())
+      );
+    } finally {
+      await prisma.proposal.deleteMany({ where: { contractId: contract.id } });
+      await prisma.owner.deleteMany({ where: { contractId: contract.id } });
+      await prisma.contract.delete({ where: { id: contract.id } });
+    }
+  });
+
   test('returns 404 for unknown proposal', async () => {
     const addr = guardAddress.toBase58();
     const res = await get(`/api/contracts/${addr}/proposals/nonexistent/batch-payload`);
@@ -467,6 +587,7 @@ describe('cross-flow edge cases', () => {
       networkId: '1',
       guardAddress: addr,
       proposalHash: conflictHash,
+      proposer: defaultProposer,
     });
 
     expect(res.status).toBe(409);
@@ -620,6 +741,7 @@ describe('executeTransferBatchSig with API payload', () => {
       networkId: '1',
       guardAddress: addr,
       proposalHash: chainProposalHash,
+      proposer: defaultProposer,
     });
     expect(createRes.status).toBe(201);
 
@@ -749,7 +871,7 @@ describe('indexer transfer event batch dedup', () => {
     await prisma.proposal.delete({ where: { id: testProposal.id } });
   });
 
-  test('preserves existing receivers on retry without deleting them', async () => {
+  test('resumes a partially applied on-chain receiver batch from remaining events', async () => {
     const indexer = new MinaGuardIndexer(dummyConfig);
 
     const contract = await prisma.contract.findUnique({
@@ -772,21 +894,23 @@ describe('indexer transfer event batch dedup', () => {
       data: { proposalId: testProposal.id, idx: 0, address: recipient1, amount: '100' },
     });
 
-    // Retry sync — existing receivers should be preserved (skipped, not deleted)
+    // Retry sync after the first transfer event was already persisted. Only
+    // the remaining transfer events are replayed, so the missing receiver
+    // rows must be appended instead of skipping the batch.
     const applyTransferEvent = createApplyFn(indexer);
-    await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient1, '100'));
     await applyTransferEvent(contract!.id, makeTransferEvent(testHash, recipient2, '200'));
-    for (let i = 0; i < MAX_RECEIVERS - 2; i++) {
+    for (let i = 0; i < MAX_RECEIVERS - 1; i++) {
       await applyTransferEvent(contract!.id, makeTransferEvent(testHash, emptyAddress, '0'));
     }
 
-    // The original receiver is preserved — not deleted, not duplicated
+    // The original receiver is preserved and the missing receiver is backfilled.
     const receivers = await prisma.proposalReceiver.findMany({
       where: { proposalId: testProposal.id },
       orderBy: { idx: 'asc' },
     });
-    expect(receivers).toHaveLength(1);
-    expect(receivers[0]).toMatchObject({ address: recipient1, amount: '100' });
+    expect(receivers).toHaveLength(2);
+    expect(receivers[0]).toMatchObject({ idx: 0, address: recipient1, amount: '100' });
+    expect(receivers[1]).toMatchObject({ idx: 1, address: recipient2, amount: '200' });
 
     // Cleanup
     await prisma.proposalReceiver.deleteMany({ where: { proposalId: testProposal.id } });

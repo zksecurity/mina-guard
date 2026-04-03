@@ -100,7 +100,9 @@ export async function buildBatchPayload(
 
   const owners = await prisma.owner.findMany({
     where: { contractId: contract.id, active: true },
-    orderBy: [{ index: 'asc' }, { createdAt: 'asc' }],
+    // Batch verification rebuilds the owner commitment by hashing owners in
+    // ascending base58 order, so the payload must preserve that exact order.
+    orderBy: { address: 'asc' },
   });
 
   const approvals = await prisma.approval.findMany({

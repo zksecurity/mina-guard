@@ -5,6 +5,13 @@ const acquiredAccountSchema = z.object({
   sk: z.string().min(1),
 });
 
+export class LightnetAcquireError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'LightnetAcquireError';
+  }
+}
+
 /**
  * Acquires a regular funded account from the Lightnet account manager and
  * validates the returned keypair payload.
@@ -59,6 +66,34 @@ export async function releaseLightnetAccount(
     });
   } catch {
     // Release failures are non-fatal for the funding flow.
+  }
+}
+
+/** Acquires a Lightnet account, runs the callback, and always releases the account afterward. */
+export async function withLightnetAccount<T>(
+  accountManagerUrl: string,
+  run: (account: { pk: string; sk: string }) => Promise<T>,
+  deps: {
+    acquireLightnetAccount: typeof acquireLightnetAccount;
+    releaseLightnetAccount: typeof releaseLightnetAccount;
+  } = {
+    acquireLightnetAccount,
+    releaseLightnetAccount,
+  }
+): Promise<T> {
+  let account: { pk: string; sk: string };
+  try {
+    account = await deps.acquireLightnetAccount(accountManagerUrl);
+  } catch (error) {
+    throw new LightnetAcquireError(
+      error instanceof Error ? error.message : 'Failed to acquire funded account',
+      { cause: error }
+    );
+  }
+  try {
+    return await run(account);
+  } finally {
+    await deps.releaseLightnetAccount(accountManagerUrl, account);
   }
 }
 
