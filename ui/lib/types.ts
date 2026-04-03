@@ -125,9 +125,6 @@ export const TX_TYPES: { value: TxType; label: string; icon: string }[] = [
   { value: 'setDelegate', label: 'Set Delegate', icon: 'link' },
 ];
 
-/** UI-side mirror of the contract transfer recipient cap (MAX_RECEIVERS in contracts). */
-export const MAX_TRANSFER_RECEIVERS = 9;
-
 /** Truncates long addresses for compact UI chips and labels. */
 export function truncateAddress(addr: string, chars: number = 6): string {
   if (addr.length <= chars * 2 + 3) return addr;

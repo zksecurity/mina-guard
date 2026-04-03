@@ -2,7 +2,8 @@
 
 import { MAX_OWNERS } from '@/lib/constants';
 import { useEffect, useState } from 'react';
-import { MAX_TRANSFER_RECEIVERS, NewProposalInput, TxType } from '@/lib/types';
+import { MAX_RECEIVERS } from "contracts";
+import { NewProposalInput, TxType } from '@/lib/types';
 
 interface ProposalFormProps {
   owners: string[];
@@ -95,7 +96,7 @@ export default function ProposalForm({
             <div className="flex items-center justify-between gap-4">
               <span className="text-safe-text">Parsed recipients</span>
               <span className="font-mono text-safe-green">
-                {transferParse.recipientCount}/{MAX_TRANSFER_RECEIVERS}
+                {transferParse.recipientCount}/{MAX_RECEIVERS}
               </span>
             </div>
             <div className="flex items-center justify-between gap-4 mt-2">
@@ -107,7 +108,7 @@ export default function ProposalForm({
             <div className="flex items-center justify-between gap-4 mt-2">
               <span className="text-safe-text">Remaining slots</span>
               <span className="font-mono text-safe-text">
-                {Math.max(0, MAX_TRANSFER_RECEIVERS - transferParse.recipientCount)}
+                {Math.max(0, MAX_RECEIVERS - transferParse.recipientCount)}
               </span>
             </div>
           </div>
@@ -274,13 +275,13 @@ function parseTransferLines(input: string): TransferParseResult {
     };
   }
 
-  if (lines.length > MAX_TRANSFER_RECEIVERS) {
+  if (lines.length > MAX_RECEIVERS) {
     return {
       ok: false,
       receivers: [],
       recipientCount: lines.length,
       totalAmount: '0',
-      error: `Too many recipients. The contract limit is ${MAX_TRANSFER_RECEIVERS}.`,
+      error: `Too many recipients. The contract limit is ${MAX_RECEIVERS}.`,
     };
   }
 

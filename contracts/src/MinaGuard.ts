@@ -319,6 +319,27 @@ export class MinaGuard extends SmartContract {
     this.approvalRoot.set(newApprovalRoot);
   }
 
+  /** Emits a transfer event per receiver slot (padded with empties). */
+  private emitTransferEvents(proposal: TransactionProposal, proposalHash: Field): void {
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const isEmpty = r.address.equals(PublicKey.empty());
+      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
+      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
+    }
+  }
+
+  /** Sends MINA to each receiver slot and emits transfer events. */
+  private executeTransfers(proposal: TransactionProposal, proposalHash: Field): void {
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const isEmpty = r.address.equals(PublicKey.empty());
+      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
+      this.send({ to: r.address, amount: effectiveAmount });
+      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
+    }
+  }
+
 
   /** Method to initialize the contract. Cannot call twice.
    *
@@ -423,12 +444,7 @@ export class MinaGuard extends SmartContract {
       guardAddress: proposal.guardAddress,
     });
 
-    for (let i = 0; i < MAX_RECEIVERS; i++) {
-      const r = proposal.receivers[i];
-      const isEmpty = r.address.equals(PublicKey.empty());
-      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
-      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
-    }
+    this.emitTransferEvents(proposal, proposalHash);
 
     this.emitEvent('approval', {
       proposalHash,
@@ -517,13 +533,7 @@ export class MinaGuard extends SmartContract {
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
-    for (let i = 0; i < MAX_RECEIVERS; i++) {
-      const r = proposal.receivers[i];
-      const isEmpty = r.address.equals(PublicKey.empty());
-      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
-      this.send({ to: r.address, amount: effectiveAmount });
-      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
-    }
+    this.executeTransfers(proposal, proposalHash);
 
     this.markExecuted(approvalWitness);
 
@@ -563,13 +573,7 @@ export class MinaGuard extends SmartContract {
     verificationRes.approvalCount.assertGreaterThanOrEqual(threshold, 'Insufficient approvals');
 
     // Execute transfers
-    for (let i = 0; i < MAX_RECEIVERS; i++) {
-      const r = proposal.receivers[i];
-      const isEmpty = r.address.equals(PublicKey.empty());
-      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
-      this.send({ to: r.address, amount: effectiveAmount });
-      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
-    }
+    this.executeTransfers(proposal, proposalHash);
 
     // Mark as executed
     this.markExecuted(approvalWitness);
