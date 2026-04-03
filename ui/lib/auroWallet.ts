@@ -73,10 +73,15 @@ export async function sendTransaction(
 ): Promise<string | null> {
   if (!isAuroInstalled()) return null;
   try {
-    const result = await window.mina!.sendTransaction({
-      transaction,
-      feePayer: { fee, memo },
-    });
+    // Only include feePayer when fee or memo are explicitly provided.
+    // Passing { fee: undefined } causes Auro to override the fee embedded in
+    // the transaction JSON, which changes the commitment and invalidates any
+    // pre-existing signatures (e.g. the zkApp key signature on deploy).
+    const params: Parameters<MinaProvider['sendTransaction']>[0] = { transaction };
+    if (fee !== undefined || memo !== undefined) {
+      params.feePayer = { fee, memo };
+    }
+    const result = await window.mina!.sendTransaction(params);
     return result.hash;
   } catch {
     return null;

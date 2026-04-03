@@ -1,9 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { PublicKey, fetchAccount } from 'o1js';
+
 import { prisma } from './db.js';
 import type { MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
 import { serializeProposalRecord } from './proposal-record.js';
+import {
+  acquireLightnetAccount,
+  computeFundingAmount,
+  releaseLightnetAccount,
+  sendSignedLightnetPayment,
+} from './lightnet.js';
 import {
   clampedIntQuerySchema,
   nullableBlockQuerySchema,
@@ -332,48 +340,47 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     }
 
     try {
-      const { PublicKey: PK } = await import('o1js');
-      PK.fromBase58(address);
+      PublicKey.fromBase58(address);
     } catch {
       res.status(400).json({ error: 'Invalid Mina public key' });
       return;
     }
 
-    // Acquire a pre-funded keypair from the lightnet account manager
-    const acqRes = await fetch(`${accountManagerUrl}/acquire-account`);
-    if (!acqRes.ok) {
-      res.status(502).json({ error: `Account manager returned ${acqRes.status}` });
+    let acquired: { pk: string; sk: string };
+    try {
+      acquired = await acquireLightnetAccount(accountManagerUrl);
+    } catch (error) {
+      res.status(502).json({
+        error: error instanceof Error ? error.message : 'Failed to acquire funded account',
+      });
       return;
     }
-    const { pk, sk } = (await acqRes.json()) as { pk: string; sk: string };
 
-    const { Mina, PublicKey, PrivateKey, AccountUpdate, UInt64, fetchAccount } = await import('o1js');
+    const funderPub = PublicKey.fromBase58(acquired.pk);
+    const { account: funderAccount } = await fetchAccount({ publicKey: funderPub });
+    const funderBalance = BigInt(funderAccount?.balance?.toBigInt() ?? 0n);
+    const amountNano = computeFundingAmount(funderBalance);
+    if (amountNano <= 0n) {
+      res.status(503).json({ error: 'No funded Lightnet accounts are currently available' });
+      return;
+    }
+    const nonce = String(funderAccount?.nonce.toBigint() ?? 0n);
 
-    const funderKey = PrivateKey.fromBase58(sk);
-    const funderPub = PublicKey.fromBase58(pk);
-    const target = PublicKey.fromBase58(address);
+    try {
+      const txHash = await sendSignedLightnetPayment({
+        minaEndpoint: config.minaEndpoint,
+        from: acquired.pk,
+        to: address,
+        amount: amountNano.toString(),
+        fee: '100000000',
+        nonce,
+        privateKey: acquired.sk,
+      });
 
-    await fetchAccount({ publicKey: funderPub });
-    const { account: targetAccount } = await fetchAccount({ publicKey: target });
-    const isNew = !targetAccount;
-
-    const fee = UInt64.from(100_000_000);
-    const amount = UInt64.from(50_000_000_000); // 50 MINA
-
-    const tx = await Mina.transaction({ sender: funderPub, fee }, async () => {
-      if (isNew) AccountUpdate.fundNewAccount(funderPub);
-      const update = AccountUpdate.createSigned(funderPub);
-      update.send({ to: target, amount });
-    });
-
-    await tx.prove();
-    tx.sign([funderKey]);
-    const result = await tx.send();
-    const hash = typeof result.hash === 'function'
-      ? (result.hash as () => string)()
-      : result.hash;
-
-    res.json({ txHash: hash });
+      res.json({ txHash });
+    } finally {
+      await releaseLightnetAccount(accountManagerUrl, acquired);
+    }
   }));
 
   router.use((error: unknown, req: any, res: any, _next: any) => {

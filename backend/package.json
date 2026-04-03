@@ -17,7 +17,7 @@
     "contracts": "workspace:*",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "o1js": "^2.13.0",
+    "o1js": "2.13.0",
     "zod": "^3.25"
   },
   "devDependencies": {

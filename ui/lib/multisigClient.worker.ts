@@ -117,6 +117,7 @@ interface ContractState {
 
 function configureNetwork() {
   const network = Mina.Network({
+    networkId: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
     mina: MINA_ENDPOINT,
     archive: ARCHIVE_ENDPOINT,
   });

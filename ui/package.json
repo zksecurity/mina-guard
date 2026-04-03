@@ -17,9 +17,10 @@
     "blakejs": "^1.2.1",
     "comlink": "^4.4.2",
     "contracts": "workspace:*",
+    "js-sha256": "^0.9.0",
     "mina-signer": "file:deps/o1js/src/mina-signer",
     "next": "^14.2.0",
-    "o1js": "^2.13.0",
+    "o1js": "2.13.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
@@ -31,8 +32,5 @@
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "typescript": "^5.5.0"
-  },
-  "overrides": {
-    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701"
   }
 }
