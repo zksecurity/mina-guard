@@ -1,0 +1,30 @@
+FROM oven/bun:1 AS base
+WORKDIR /app
+
+# Copy root workspace config + all workspace package.jsons
+COPY package.json ./
+COPY contracts/package.json contracts/
+COPY backend/package.json backend/
+COPY ui/package.json ui/
+COPY ui/deps/ ui/deps/
+COPY dev-helpers/package.json dev-helpers/
+COPY e2e/package.json e2e/
+
+# Install dependencies
+RUN bun install
+
+# Copy source
+COPY contracts/ contracts/
+COPY backend/ backend/
+
+# Build contracts first (workspace dependency)
+RUN cd contracts && bun run build
+
+# Generate Prisma client
+RUN cd backend && bunx prisma generate
+
+# Build backend
+RUN cd backend && bun run build
+
+EXPOSE 4000
+CMD ["bun", "run", "--cwd", "backend", "start"]

@@ -80,3 +80,38 @@ bun run --filter contracts build
 bun run --filter backend build
 bun run --filter ui build
 ```
+
+## PR Preview Environments
+
+Each PR targeting `main` gets an isolated preview stack deployed to the Hetzner server via a self-hosted GitHub Actions runner. Preview URLs follow the pattern `https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/`.
+
+Each stack includes: lightnet, PostgreSQL, backend, frontend, block explorer, and a Caddy reverse proxy.
+
+### Manual management
+
+```bash
+# From repo root
+./preview-env/preview.sh up <PR_NUMBER>    # deploy
+./preview-env/preview.sh down <PR_NUMBER>  # teardown
+./preview-env/preview.sh list              # show active previews
+```
+
+### Architecture
+
+Requests hit the main Caddy (TLS + COOP/COEP headers) which reverse-proxies to a per-preview Caddy container that routes to individual services. COOP/COEP headers are set at the main Caddy level and upstream copies are stripped to prevent duplicates.
+
+### Server setup
+
+The self-hosted runner needs scoped sudo for Caddy config management:
+
+```bash
+sudo cp preview-env/sudoers-preview /etc/sudoers.d/preview-env
+sudo chmod 440 /etc/sudoers.d/preview-env
+```
+
+### Gotchas
+
+- **SharedArrayBuffer**: o1js WASM requires `crossOriginIsolated`, which needs COOP + COEP headers over HTTPS. Do not add `Cross-Origin-Resource-Policy: same-origin` — it blocks o1js blob URL sub-workers.
+- **Bun workspaces**: `ui/deps/` must be copied into Dockerfiles because `mina-signer` is a `file:` dependency.
+- **Minification disabled**: SWC/terser mangle BigInt ops used by o1js.
+- **Server limits**: ~2GB RAM per preview stack, max 2–3 concurrent previews on the 30GB server. Run `docker image prune -f` periodically.

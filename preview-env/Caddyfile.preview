@@ -1,0 +1,76 @@
+:80 {
+    # Backend health
+    handle /preview/{$PR_NUMBER}/health {
+        uri strip_prefix /preview/{$PR_NUMBER}
+        reverse_proxy backend:4000
+    }
+
+    # Backend API
+    handle /preview/{$PR_NUMBER}/api/* {
+        uri strip_prefix /preview/{$PR_NUMBER}
+        reverse_proxy backend:4000
+    }
+
+    # Lightnet GraphQL
+    handle /preview/{$PR_NUMBER}/graphql {
+        uri strip_prefix /preview/{$PR_NUMBER}
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        @options method OPTIONS
+        respond @options 204
+        reverse_proxy lightnet:8080 {
+            header_down -Access-Control-Allow-Origin
+            header_down -Access-Control-Allow-Methods
+            header_down -Access-Control-Allow-Headers
+        }
+    }
+
+    # Lightnet accounts manager
+    handle /preview/{$PR_NUMBER}/accounts/* {
+        uri strip_prefix /preview/{$PR_NUMBER}/accounts
+        reverse_proxy lightnet:8181
+    }
+
+    # Lightnet archive node
+    handle /preview/{$PR_NUMBER}/archive {
+        uri strip_prefix /preview/{$PR_NUMBER}
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        @options method OPTIONS
+        respond @options 204
+        reverse_proxy lightnet:8282 {
+            header_down -Access-Control-Allow-Origin
+            header_down -Access-Control-Allow-Methods
+            header_down -Access-Control-Allow-Headers
+        }
+    }
+
+    # Block explorer
+    handle /preview/{$PR_NUMBER}/explorer/* {
+        reverse_proxy explorer:3000
+    }
+    handle /preview/{$PR_NUMBER}/explorer {
+        reverse_proxy explorer:3000
+    }
+
+    # Static assets (content-hashed filenames, safe to cache long-term)
+    handle /preview/{$PR_NUMBER}/_next/static/* {
+        reverse_proxy frontend:3000
+    }
+
+    # Frontend (catch-all — HTML pages get no-cache to prevent stale chunk references after rebuilds)
+    handle /preview/{$PR_NUMBER}/* {
+        reverse_proxy frontend:3000 {
+            header_down -Cache-Control
+        }
+        header Cache-Control "no-cache"
+    }
+    handle /preview/{$PR_NUMBER} {
+        reverse_proxy frontend:3000 {
+            header_down -Cache-Control
+        }
+        header Cache-Control "no-cache"
+    }
+}

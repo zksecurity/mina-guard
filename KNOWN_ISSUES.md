@@ -1,5 +1,21 @@
 # Known Issues
 
+## [Resolved] Stale browser cache causes worker crash after preview rebuild
+
+**Symptom:** "Generating keypair..." hangs indefinitely. The Web Worker crashes with an undefined error. `crossOriginIsolated` and `SharedArrayBuffer` are both `true` — the issue is not COOP/COEP.
+
+**Root cause:** Next.js sets `Cache-Control: s-maxage=31536000, stale-while-revalidate` on statically generated HTML pages. After a preview environment rebuild, the browser serves the old cached HTML which references old JS chunk URLs. When old and new chunks mix, the o1js Web Worker fails to load and every Comlink call (including `generateKeypair`) hangs forever.
+
+This does not affect content-hashed static assets (`/_next/static/chunks/273-47bc1a09b6f3af9c.js`) — those have unique URLs per build and cache correctly. The problem is only with the HTML page, which has a stable URL (`/preview/1/`) but changing content between builds.
+
+**Fix:** The preview Caddy overrides `Cache-Control` to `no-cache` on HTML responses, while letting hashed static assets keep their long-term cache headers. See `preview-env/Caddyfile.preview` — the `/_next/static/*` handler passes upstream headers through, while the catch-all frontend handler strips `Cache-Control` and sets `no-cache`.
+
+`no-cache` does not mean "don't cache" — it means "always revalidate with the server before using a cached copy." If nothing changed, the server returns 304 with no data transfer.
+
+**Why this doesn't affect production (Render):** Platforms like Vercel and Render automatically purge their CDN cache on deploy, so stale HTML is never served. The preview environment uses Caddy without CDN cache purging, which is why the override is needed.
+
+---
+
 ## UI state staleness after on-chain operations
 
 **Status:** Partially mitigated

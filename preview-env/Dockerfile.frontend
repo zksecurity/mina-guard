@@ -1,0 +1,49 @@
+FROM oven/bun:1 AS base
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+# Copy root workspace config + all workspace package.jsons
+COPY package.json ./
+COPY contracts/package.json contracts/
+COPY ui/package.json ui/
+COPY backend/package.json backend/
+COPY dev-helpers/package.json dev-helpers/
+COPY e2e/package.json e2e/
+
+# Copy o1js submodule (needed by ui postinstall to build mina-signer)
+COPY ui/deps/ ui/deps/
+
+# Install dependencies
+RUN bun install
+
+# Copy source
+COPY contracts/ contracts/
+COPY ui/ ui/
+
+# Build contracts first (workspace dependency)
+RUN cd contracts && bun run build
+
+# Build args for environment URLs (baked into NEXT_PUBLIC_ at build time)
+ARG NEXT_PUBLIC_BASE_PATH=""
+ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_MINA_ENDPOINT
+ARG NEXT_PUBLIC_ARCHIVE_ENDPOINT
+ARG NEXT_PUBLIC_MINA_NETWORK
+ARG NEXT_PUBLIC_BLOCK_EXPLORER_URL
+
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_MINA_ENDPOINT=$NEXT_PUBLIC_MINA_ENDPOINT
+ENV NEXT_PUBLIC_ARCHIVE_ENDPOINT=$NEXT_PUBLIC_ARCHIVE_ENDPOINT
+ENV NEXT_PUBLIC_MINA_NETWORK=$NEXT_PUBLIC_MINA_NETWORK
+ENV NEXT_PUBLIC_BLOCK_EXPLORER_URL=$NEXT_PUBLIC_BLOCK_EXPLORER_URL
+
+# Inject basePath into next.config.mjs for preview environments
+RUN if [ -n "$NEXT_PUBLIC_BASE_PATH" ]; then \
+      sed -i "s|const nextConfig = {|const nextConfig = {\n  basePath: '${NEXT_PUBLIC_BASE_PATH}',|" ui/next.config.mjs; \
+    fi
+
+# Build frontend
+RUN cd ui && bun run build
+
+EXPOSE 3000
+CMD ["bun", "run", "--cwd", "ui", "start"]

@@ -1,0 +1,109 @@
+# .github/workflows/preview-deploy.yml
+#
+# Automatically deploys/tears down preview environments for PRs targeting main.
+# Requires a self-hosted GitHub Actions runner on the Hetzner server.
+#
+# Setup:
+#   1. On the server: mkdir actions-runner && cd actions-runner
+#   2. Download: curl -o actions-runner-linux-x64-2.333.1.tar.gz -L https://github.com/actions/runner/releases/download/v2.333.1/actions-runner-linux-x64-2.333.1.tar.gz
+#   3. Extract: tar xzf actions-runner-linux-x64-2.333.1.tar.gz
+#   4. Configure: ./config.sh --url https://github.com/<org>/<repo> --token <token>
+#   5. Install as service: sudo ./svc.sh install && sudo ./svc.sh start
+#   6. Stop: sudo ./svc.sh stop
+#   7. Uninstall: sudo ./svc.sh uninstall
+
+name: Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+concurrency:
+  group: preview-${{ github.event.number }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only run on PRs from the same repo (not forks) to prevent arbitrary code execution on the server
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Deploy preview
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          chmod +x preview-env/preview.sh
+          ./preview-env/preview.sh up $PR_NUMBER
+
+      - name: Wait for services
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          # Must match BASE_PORT in preview.sh
+          PREVIEW_PORT=$((10000 + PR_NUMBER))
+          echo "Waiting for services to be ready..."
+          for i in $(seq 1 36); do
+            if curl -sf "http://localhost:${PREVIEW_PORT}/preview/${PR_NUMBER}/health" > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            echo "Attempt $i/36: not ready yet..."
+            sleep 5
+          done
+
+      - name: Comment PR with preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = ${{ github.event.number }};
+            const base = `https://mina-nodes.duckdns.org/preview/${pr}`;
+            const body = [
+              '### Preview Environment',
+              '',
+              '| Service | URL |',
+              '|---------|-----|',
+              `| Frontend | ${base}/ |`,
+              `| API | ${base}/health |`,
+              `| GraphQL | ${base}/graphql |`,
+              `| Accounts | ${base}/accounts/acquire-account |`,
+              `| Explorer | ${base}/explorer |`,
+            ].join('\n');
+
+            // Delete previous preview comments
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const comment of comments.data) {
+              if (comment.body.includes('### Preview Environment')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body,
+            });
+
+  teardown:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Teardown preview
+        run: |
+          chmod +x preview-env/preview.sh
+          ./preview-env/preview.sh down ${{ github.event.number }}

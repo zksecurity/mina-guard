@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+*.md
+LICENSE
+e2e/test-results
+e2e/playwright-report
+ui/deps/o1js/.git
+ui/deps/o1js/src/mina
+ui/deps/o1js/tests
+ui/deps/o1js/benchmark

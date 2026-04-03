@@ -1,0 +1,12 @@
+# /etc/sudoers.d/preview-env
+# Scoped sudo for the GitHub Actions runner (preview environments).
+# Install: sudo cp preview-env/sudoers-preview /etc/sudoers.d/preview-env && sudo chmod 440 /etc/sudoers.d/preview-env
+#
+# Only allows the three commands preview.sh needs:
+#   - sed to edit /etc/caddy/Caddyfile
+#   - cp to sync /etc/caddy/Caddyfile to ~/Caddyfile
+#   - systemctl reload caddy
+
+github-runner ALL=(root) NOPASSWD: /usr/bin/sed -i * /etc/caddy/Caddyfile
+github-runner ALL=(root) NOPASSWD: /usr/bin/cp /etc/caddy/Caddyfile /home/github-runner/Caddyfile
+github-runner ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy

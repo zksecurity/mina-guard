@@ -1,0 +1,96 @@
+# PR Preview Environment for MinaGuard
+#
+# Usage (run from repo root):
+#   PR_NUMBER=1 PREVIEW_PORT=10001 docker compose -f preview-env/docker-compose.preview.yml -p pr-1 up -d --build
+#   docker compose -p pr-1 down -v
+#
+# Access: https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/
+
+services:
+  lightnet:
+    image: o1labs/mina-local-network:compatible-latest-lightnet
+    restart: unless-stopped
+    environment:
+      - SLOT_TIME=10000
+      - PROOF_LEVEL=none
+      - RUN_ARCHIVE_NODE=true
+      - NETWORK_TYPE=single-node
+      - LOG_LEVEL=Info
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"query":"{ syncStatus }"}', "http://localhost:8080/graphql"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=minaguard
+      - POSTGRES_PASSWORD=minaguard
+      - POSTGRES_DB=minaguard
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minaguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: preview-env/Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
+      - MINA_ENDPOINT=http://lightnet:8080/graphql
+      - ARCHIVE_ENDPOINT=http://lightnet:8282
+      - LIGHTNET_ACCOUNT_MANAGER=http://lightnet:8181
+      - PORT=4000
+    depends_on:
+      lightnet:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: preview-env/Dockerfile.frontend
+      args:
+        - NEXT_PUBLIC_BASE_PATH=/preview/${PR_NUMBER:-1}
+        - NEXT_PUBLIC_API_BASE_URL=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}
+        - NEXT_PUBLIC_MINA_ENDPOINT=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/graphql
+        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/archive
+        - NEXT_PUBLIC_MINA_NETWORK=testnet
+        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/explorer
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  explorer:
+    build:
+      context: .
+      dockerfile: Dockerfile.explorer
+      args:
+        - NEXT_PUBLIC_BASE_PATH=/preview/${PR_NUMBER:-1}/explorer
+        - TESTNET_GRAPHQL_URL=http://lightnet:8080/graphql
+    restart: unless-stopped
+    depends_on:
+      lightnet:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      - PR_NUMBER=${PR_NUMBER:-1}
+    ports:
+      - "${PREVIEW_PORT:-10001}:80"
+    volumes:
+      - ./Caddyfile.preview:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - frontend
+      - backend
+      - explorer
+      - lightnet
