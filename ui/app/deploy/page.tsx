@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
+import { MAX_OWNERS } from '@/lib/constants';
 import { useAppContext } from '@/lib/app-context';
 import { deployAndSetupContract, generateKeypair, assertLedgerReady } from '@/lib/multisigClient';
 
@@ -65,7 +66,7 @@ export default function DeployPage() {
     if (invalid) return `Invalid address: ${invalid.slice(0, 20)}...`;
     const unique = new Set(parsedOwners);
     if (unique.size !== parsedOwners.length) return 'Duplicate owner addresses.';
-    if (parsedOwners.length > 20) return 'Maximum 20 owners allowed.';
+    if (parsedOwners.length > MAX_OWNERS) return `Maximum ${MAX_OWNERS} owners allowed.`;
     const t = Number(threshold);
     if (!threshold.trim()) return 'Please choose a threshold.';
     if (!t || t < 1) return 'Threshold must be at least 1.';
@@ -181,7 +182,8 @@ export default function DeployPage() {
               <button
                 type="button"
                 onClick={() => setOwnerFields([...ownerFields, ''])}
-                className="text-xs text-safe-green hover:underline"
+                disabled={ownerFields.length >= MAX_OWNERS}
+                className="text-xs text-safe-green hover:underline disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
               >
                 + Add owner
               </button>

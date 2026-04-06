@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { NewProposalInput, TxType } from '@/lib/types';
+import { MAX_OWNERS } from '@/lib/constants';
 
 interface ProposalFormProps {
   owners: string[];
@@ -37,6 +38,10 @@ export default function ProposalForm({
     e.preventDefault();
     setValidationError(null);
 
+    if (txType === 'addOwner' && numOwners >= MAX_OWNERS) {
+      setValidationError(`Cannot exceed the maximum of ${MAX_OWNERS} owners.`);
+      return;
+    }
     if (txType === 'addOwner' && owners.includes(newOwner.trim())) {
       setValidationError('This address is already an owner.');
       return;

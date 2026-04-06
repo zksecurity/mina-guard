@@ -414,14 +414,9 @@ test('5. Propose change threshold to 2/2', async () => { const page = sharedPage
   const thresholdType = page.getByText('Change Threshold').first();
   await thresholdType.click();
 
-  // Set new threshold to 2 (slider or input)
-  const slider = page.locator('input[type="range"]');
-  if ((await slider.count()) > 0) {
-    await slider.first().fill('2');
-  } else {
-    const numInput = page.locator('input[type="number"]').first();
-    await numInput.fill('2');
-  }
+  // Set new threshold to 2
+  const thresholdInput = page.locator('input[type="number"]').first();
+  await thresholdInput.fill('2');
 
   // Set expiry to 0
   const expiryInput = page.locator('input[placeholder="0"]');
@@ -746,17 +741,9 @@ test('12. Propose threshold change to 1/2', async () => { const page = sharedPag
   }
   await page.waitForTimeout(1_000);
 
-  // Set threshold to 1 — the Change Threshold form shows a range slider
-  const slider = page.locator('input[type="range"]');
-  if ((await slider.count()) > 0) {
-    await slider.first().fill('1');
-  } else {
-    // Fallback: try the large number display or any number input
-    const numInput = page.locator('input[type="number"]').first();
-    if ((await numInput.count()) > 0) {
-      await numInput.fill('1');
-    }
-  }
+  // Set threshold to 1
+  const thresholdInput = page.locator('input[type="number"]').first();
+  await thresholdInput.fill('1');
 
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
