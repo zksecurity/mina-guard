@@ -39,6 +39,7 @@ import {
 } from 'contracts';
 
 import {
+  type OffchainProposalSubmission,
   type NewProposalInput,
   type Proposal,
   normalizeTxType,
@@ -640,8 +641,8 @@ const workerApi = {
 
   /**
    * Creates an offchain proposal in the backend and submits the proposer's
-   * signature as the first approval.  No on-chain transaction is sent.
-   * Returns the proposal hash string on success.
+   * signature as the first approval. No on-chain transaction is sent.
+   * Returns the created proposal hash plus any non-fatal backend warnings.
    */
   async createOffchainProposal(
     params: {
@@ -653,7 +654,7 @@ const workerApi = {
     },
     signFn: SignFieldsFn,
     progressFn: ProgressFn
-  ): Promise<string | null> {
+  ): Promise<OffchainProposalSubmission | null> {
     progressFn('Computing proposal hash...');
     configureNetwork();
     const transferReceivers =
@@ -686,7 +687,7 @@ const workerApi = {
     if (!signature) return null;
 
     progressFn('Submitting proposal to backend...');
-    await postOffchainProposal(params.contractAddress, {
+    const createdProposal = await postOffchainProposal(params.contractAddress, {
       receivers: params.input.txType === 'transfer' ? (params.input.receivers ?? []) : undefined,
       toAddress:
         params.input.txType === 'addOwner'
@@ -707,6 +708,7 @@ const workerApi = {
       proposalHash: hashStr,
       proposer: params.proposerAddress,
     });
+    if (!createdProposal) return null;
 
     progressFn('Submitting signature to backend...');
     const sigJson = signature.toJSON();
@@ -716,7 +718,7 @@ const workerApi = {
       signatureS: sigJson.s,
     });
 
-    return hashStr;
+    return createdProposal;
   },
 
   /**

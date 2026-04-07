@@ -452,35 +452,6 @@ describe('MinaGuard - Execute Transfer BatchSig', () => {
     expect(getBalance(recipient2).sub(balance2Before)).toEqual(amount2);
   });
 
-  it('should execute a full 5-receiver transfer', async () => {
-    const recipients = Array.from({ length: 5 }, () => PrivateKey.random());
-    for (const r of recipients) {
-      await fundAccount(ctx, r.toPublicKey());
-    }
-
-    const amounts = [100_000_000, 200_000_000, 300_000_000, 150_000_000, 250_000_000];
-    const proposal = createTransferProposal(
-      recipients.map((r, i) => new Receiver({ address: r.toPublicKey(), amount: UInt64.from(amounts[i]) })),
-      Field(0), Field(0), ctx.zkAppAddress
-    );
-    const proposalHash = await proposeTransaction(ctx, proposal, 0);
-    await approveTransaction(ctx, proposal, 1);
-
-    const balancesBefore = recipients.map((r) => getBalance(r.toPublicKey()));
-
-    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-      await ctx.zkApp.executeTransfer(proposal, approvalWitness, Field(3));
-    });
-    await txn.prove();
-    await txn.sign([ctx.deployerKey]).send();
-
-    for (let i = 0; i < 5; i++) {
-      const gained = getBalance(recipients[i].toPublicKey()).sub(balancesBefore[i]);
-      expect(gained).toEqual(UInt64.from(amounts[i]));
-    }
-  });
-
   it('maxReceivers: should execute MAX_RECEIVERS transfers', async () => {
     const recipients = Array.from({ length: MAX_RECEIVERS }, () => PrivateKey.random());
     for (const r of recipients) {

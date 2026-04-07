@@ -1,4 +1,4 @@
-import { prisma } from './db.js';
+import type { Proposal, ProposalReceiver } from '@prisma/client';
 
 export interface ProposalReceiverRecord {
   index: number;
@@ -30,8 +30,8 @@ export interface SerializedProposalRecord {
   totalAmount: string | null;
 }
 
-type ProposalWithReceivers = Awaited<ReturnType<typeof prisma.proposal.findFirst>> & {
-  receivers: Array<{ idx: number; address: string; amount: string }>;
+type ProposalWithReceivers = Proposal & {
+  receivers: ProposalReceiver[];
 };
 
 /** Converts Prisma proposal rows into the API shape expected by the UI. */

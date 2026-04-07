@@ -4,6 +4,28 @@ import { prisma } from './db.js';
 
 const EMPTY_PUBLIC_KEY_BASE58 = PublicKey.empty().toBase58();
 
+export interface BatchPayloadProposal {
+  proposalHash: string;
+  toAddress: string | null;
+  tokenId: string | null;
+  txType: string | null;
+  data: string | null;
+  uid: string | null;
+  configNonce: string | null;
+  expiryBlock: string | null;
+  networkId: string | null;
+  guardAddress: string | null;
+  receivers: Array<{ index: number; address: string; amount: string }>;
+  recipientCount: number;
+  totalAmount: string | null;
+}
+
+function assertReceiverCount(receivers: Array<{ address: string; amount: string }>) {
+  if (receivers.length > MAX_RECEIVERS) {
+    throw new Error(`Too many receivers; maximum is ${MAX_RECEIVERS}`);
+  }
+}
+
 function safePublicKey(base58: string): InstanceType<typeof PublicKey> {
   if (!base58) throw new Error('Missing public key');
   if (base58 === EMPTY_PUBLIC_KEY_BASE58) return PublicKey.empty();
@@ -22,6 +44,8 @@ export function computeProposalHash(params: {
   networkId: string;
   guardAddress: string;
 }): string {
+  assertReceiverCount(params.receivers);
+
   const paddedReceivers = params.receivers.map((receiver) => new Receiver({
     address: safePublicKey(receiver.address),
     amount: UInt64.from(receiver.amount),
@@ -31,7 +55,7 @@ export function computeProposalHash(params: {
   }
 
   const proposal = new TransactionProposal({
-    receivers: paddedReceivers.slice(0, MAX_RECEIVERS),
+    receivers: paddedReceivers,
     tokenId: Field(params.tokenId),
     txType: Field(params.txType),
     data: Field(params.data),
@@ -68,7 +92,7 @@ export async function buildBatchPayload(
   ready: boolean;
   threshold: number;
   approvalCount: number;
-  proposal: Record<string, string | number | null | Array<{ index: number; address: string; amount: string }>>;
+  proposal: BatchPayloadProposal;
   inputs: Array<{
     isSome: boolean;
     signer: string | null;

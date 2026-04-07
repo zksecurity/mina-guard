@@ -55,14 +55,21 @@ function NewTransactionPageInner() {
     await startOperation('Creating offchain proposal...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      createdHash = await createOffchainProposal({
+      const createdProposal = await createOffchainProposal({
         contractAddress,
         proposerAddress,
         input: data,
         configNonce,
         networkId,
       }, onProgress, signer);
-      return createdHash ? `Proposal created: ${createdHash}` : null;
+      createdHash = createdProposal?.proposalHash ?? null;
+      if (!createdProposal) return null;
+
+      const warningText = createdProposal.warnings.length > 0
+        ? ` Warning: ${createdProposal.warnings.join(' ')}`
+        : '';
+
+      return `Proposal created: ${createdProposal.proposalHash}${warningText}`;
     });
     router.push(createdHash ? `/transactions/${createdHash}` : '/transactions');
   };

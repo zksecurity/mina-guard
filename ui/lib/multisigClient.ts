@@ -4,7 +4,7 @@
 
 import * as Comlink from 'comlink';
 import type { WorkerApi } from './multisigClient.worker';
-import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
+import type { NewProposalInput, OffchainProposalSubmission, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
 import { signFields as ledgerSignFields, signFeePayer, checkLedgerReady } from '@/lib/ledgerWallet';
 
@@ -174,7 +174,7 @@ export async function createOffchainProposal(params: {
   input: NewProposalInput;
   configNonce: number;
   networkId: string;
-}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<OffchainProposalSubmission | null> {
   return getWorkerApi().createOffchainProposal(
     params,
     proxiedSignFields(signer),

@@ -135,7 +135,12 @@ export function createBatchRouter(): Router {
         uid, configNonce, expiryBlock, networkId, guardAddress,
       });
     } catch (err) {
-      res.status(400).json({ error: 'Invalid proposal fields', detail: String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.startsWith('Too many receivers;')) {
+        res.status(400).json({ error: message });
+        return;
+      }
+      res.status(400).json({ error: 'Invalid proposal fields', detail: message });
       return;
     }
 
@@ -194,7 +199,10 @@ export function createBatchRouter(): Router {
       },
     });
 
-    res.status(201).json(serializeProposalRecord(proposal));
+    res.status(201).json({
+      ...serializeProposalRecord(proposal),
+      warnings: normalizedReceivers.warnings,
+    });
   }));
 
   /** Submits a signature for an offchain proposal. */
@@ -360,11 +368,11 @@ function normalizeProposalReceivers(params: {
   txType: string;
   receivers?: Array<{ address: string; amount: string }>;
 }):
-  | { ok: true; receivers: Array<{ address: string; amount: string }> }
+  | { ok: true; receivers: Array<{ address: string; amount: string }>; warnings: string[] }
   | { ok: false; error: string } {
   const isTransfer = params.txType === TxType.TRANSFER.toString();
   if (!isTransfer) {
-    return { ok: true, receivers: [] };
+    return { ok: true, receivers: [], warnings: [] };
   }
 
   const receivers = params.receivers ?? [];
@@ -373,12 +381,20 @@ function normalizeProposalReceivers(params: {
   }
 
   const seen = new Set<string>();
+  let hasDuplicateReceiver = false;
   for (const receiver of receivers) {
     if (seen.has(receiver.address)) {
-      return { ok: false, error: 'Transfer proposals cannot contain duplicate receivers' };
+      hasDuplicateReceiver = true;
+      continue;
     }
     seen.add(receiver.address);
   }
 
-  return { ok: true, receivers };
+  return {
+    ok: true,
+    receivers,
+    warnings: hasDuplicateReceiver
+      ? ['Transfer proposal contains duplicate receiver addresses; duplicates were allowed.']
+      : [],
+  };
 }
