@@ -276,23 +276,17 @@ export class MinaGuard extends SmartContract {
     expectedKey: Field,
     witness: MerkleMapWitness,
     expectedValue: Field,
-    rootMessage: string,
-    keyMessage: string
+    rootErrorMessage: string,
+    keyErrorMessage: string
   ): void {
     const [computedRoot, computedKey] = witness.computeRootAndKey(expectedValue);
-    computedRoot.assertEquals(expectedRoot, rootMessage);
-    computedKey.assertEquals(expectedKey, keyMessage);
+    computedRoot.assertEquals(expectedRoot, rootErrorMessage);
+    computedKey.assertEquals(expectedKey, keyErrorMessage);
   }
 
   private getGovernanceState(): { threshold: Field; numOwners: Field } {
     const threshold = this.threshold.getAndRequireEquals();
     const numOwners = this.numOwners.getAndRequireEquals();
-    threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
-    numOwners.assertGreaterThanOrEqual(
-      threshold,
-      'Owners must be >= threshold'
-    );
-    numOwners.assertLessThanOrEqual(Field(MAX_OWNERS), 'Too many owners');
 
     return { threshold, numOwners };
   }
@@ -323,10 +317,8 @@ export class MinaGuard extends SmartContract {
       .assertTrue('Proposal not for this child');
   }
 
-  private assertIsChild(): PublicKey {
-    const parent = this.parent.getAndRequireEquals();
+  private assertIsChild(parent: PublicKey): void {
     parent.equals(PublicKey.empty()).assertFalse('Not a child account');
-    return parent;
   }
 
   private assertProposalConfigNetworkAndGuardValues(
@@ -334,9 +326,8 @@ export class MinaGuard extends SmartContract {
     configNonce: Field,
     networkId: Field,
     guardAddress: PublicKey,
-    configNonceMessage: string
   ): void {
-    proposal.configNonce.assertEquals(configNonce, configNonceMessage);
+    proposal.configNonce.assertEquals(configNonce, 'Config nonce mismatch - governance changed since proposal',);
     proposal.networkId.assertEquals(networkId, 'Network ID mismatch');
     proposal.guardAddress.assertEquals(guardAddress);
   }
@@ -344,7 +335,6 @@ export class MinaGuard extends SmartContract {
   /** Validates proposal binding to current config nonce, network and contract address. */
   private assertProposalConfigNetworkAndGuard(
     proposal: TransactionProposal,
-    configNonceMessage: string
   ): void {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     const currentNetworkId = this.networkId.getAndRequireEquals();
@@ -352,8 +342,7 @@ export class MinaGuard extends SmartContract {
       proposal,
       currentConfigNonce,
       currentNetworkId,
-      this.address,
-      configNonceMessage
+      this.address
     );
   }
 
@@ -543,7 +532,7 @@ export class MinaGuard extends SmartContract {
     const currentCounter = this.proposalCounter.getAndRequireEquals();
     this.proposalCounter.set(currentCounter.add(1));
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalLifecycleRouting(proposal);
 
     const proposalHash = proposal.hash();
@@ -608,7 +597,7 @@ export class MinaGuard extends SmartContract {
   ) {
     const ownersCommitment = this.getInitializedOwnersCommitment();
     this.assertOwnerMembership(approver, ownerWitness, ownersCommitment);
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalLifecycleRouting(proposal);
 
     const proposalHash = proposal.hash();
@@ -664,10 +653,7 @@ export class MinaGuard extends SmartContract {
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(
-      proposal,
-      'Config nonce mismatch - governance changed since proposal'
-    );
+    this.assertProposalConfigNetworkAndGuard(proposal);
 
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
@@ -697,10 +683,7 @@ export class MinaGuard extends SmartContract {
     const ownersCommitment = this.getInitializedOwnersCommitment();
     proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
     this.assertProposalTargetsMainAccount(proposal);
-    this.assertProposalConfigNetworkAndGuard(
-      proposal,
-      'Config nonce mismatch - governance changed since proposal'
-    );
+    this.assertProposalConfigNetworkAndGuard(proposal);
 
     const currentCounter = this.proposalCounter.getAndRequireEquals();
     this.proposalCounter.set(currentCounter.add(1));
@@ -748,7 +731,7 @@ export class MinaGuard extends SmartContract {
     isAdd.or(isRemove).assertTrue('Not an owner change tx');
     this.assertProposalTargetsMainAccount(proposal);
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
 
     const currentCounter = this.proposalCounter.getAndRequireEquals();
     this.proposalCounter.set(currentCounter.add(1));
@@ -822,7 +805,7 @@ export class MinaGuard extends SmartContract {
     );
     this.assertProposalTargetsMainAccount(proposal);
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
 
     const currentCounter = this.proposalCounter.getAndRequireEquals();
     this.proposalCounter.set(currentCounter.add(1));
@@ -889,7 +872,7 @@ export class MinaGuard extends SmartContract {
     );
     this.assertProposalTargetsMainAccount(proposal);
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
 
     const currentCounter = this.proposalCounter.getAndRequireEquals();
     this.proposalCounter.set(currentCounter.add(1));
@@ -950,7 +933,7 @@ export class MinaGuard extends SmartContract {
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
     this.assertProposalExists(approvalCount);
@@ -1018,7 +1001,7 @@ export class MinaGuard extends SmartContract {
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
     this.assertProposalExists(approvalCount);
@@ -1076,7 +1059,7 @@ export class MinaGuard extends SmartContract {
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
     this.assertProposalExists(approvalCount);
@@ -1123,7 +1106,8 @@ export class MinaGuard extends SmartContract {
     );
 
     const proposalHash = proposal.hash();
-    const parentAddress = this.assertIsChild();
+    const parentAddress = this.parent.getAndRequireEquals();
+    this.assertIsChild(parentAddress);
     this.assertProposalTargetsThisChild(proposal);
 
     const parentGuard = new MinaGuard(parentAddress);
@@ -1137,7 +1121,6 @@ export class MinaGuard extends SmartContract {
       parentConfigNonce,
       parentNetworkId,
       parentAddress,
-      'Config nonce mismatch'
     );
 
     this.assertProposalNotExpired(proposal);
