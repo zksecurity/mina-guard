@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { NewProposalInput, TxType } from '@/lib/types';
+import { MAX_OWNERS } from '@/lib/constants';
 
 interface ProposalFormProps {
   owners: string[];
@@ -25,7 +26,7 @@ export default function ProposalForm({
   const [amount, setAmount] = useState('');
   const [newOwner, setNewOwner] = useState('');
   const [removeOwnerAddress, setRemoveOwnerAddress] = useState('');
-  const [newThreshold, setNewThreshold] = useState(Math.max(1, currentThreshold));
+  const [newThreshold, setNewThreshold] = useState<number | string>('');
   const [delegate, setDelegate] = useState('');
   const [undelegate, setUndelegate] = useState(false);
   const [expiryBlock, setExpiryBlock] = useState('0');
@@ -37,6 +38,10 @@ export default function ProposalForm({
     e.preventDefault();
     setValidationError(null);
 
+    if (txType === 'addOwner' && numOwners >= MAX_OWNERS) {
+      setValidationError(`Cannot exceed the maximum of ${MAX_OWNERS} owners.`);
+      return;
+    }
     if (txType === 'addOwner' && owners.includes(newOwner.trim())) {
       setValidationError('This address is already an owner.');
       return;
@@ -49,6 +54,14 @@ export default function ProposalForm({
       setValidationError('Reduce the threshold first before removing an owner.');
       return;
     }
+    if (txType === 'changeThreshold' && (newThreshold === '' || isNaN(Number(newThreshold)))) {
+      setValidationError('Please choose a new threshold.');
+      return;
+    }
+    if (txType === 'changeThreshold' && Number(newThreshold) === currentThreshold) {
+      setValidationError('The new threshold is the same as the current one.');
+      return;
+    }
 
     onSubmit({
       txType,
@@ -56,7 +69,7 @@ export default function ProposalForm({
       amount: txType === 'transfer' ? amount : undefined,
       newOwner: txType === 'addOwner' ? newOwner : undefined,
       removeOwnerAddress: txType === 'removeOwner' ? removeOwnerAddress : undefined,
-      newThreshold: txType === 'changeThreshold' ? newThreshold : undefined,
+      newThreshold: txType === 'changeThreshold' ? Number(newThreshold) : undefined,
       delegate: txType === 'setDelegate' && !undelegate ? delegate : undefined,
       undelegate: txType === 'setDelegate' ? undelegate : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
@@ -139,20 +152,30 @@ export default function ProposalForm({
 
       {txType === 'changeThreshold' && (
         <div>
-          <label className="block text-sm text-safe-text mb-2">New Threshold</label>
-          <div className="flex items-center gap-4">
+          <label className="text-sm text-safe-text mb-2 flex items-center gap-1">
+            New Threshold
+            <span className="relative group">
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-safe-border text-[10px] leading-none text-safe-text cursor-help">?</span>
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 transition-all duration-200 pointer-events-none opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0">
+                <div className="bg-safe-green/70 backdrop-blur-md text-white text-xs font-semibold rounded-lg px-2.5 py-1 shadow-lg whitespace-nowrap">
+                  Minimum approvals required to execute a proposal.
+                </div>
+                <svg className="mx-auto -mt-px" width="10" height="6" viewBox="0 0 10 6">
+                  <path d="M0 0L5 6L10 0Z" className="fill-safe-green/70" />
+                </svg>
+              </div>
+            </span>
+          </label>
+          <div className="flex items-center gap-2">
             <input
-              type="range"
-              min="1"
+              type="number"
+              min={1}
               max={Math.max(1, numOwners)}
               value={newThreshold}
-              onChange={(e) => setNewThreshold(parseInt(e.target.value, 10))}
-              className="flex-1 accent-safe-green"
+              onChange={(e) => setNewThreshold(e.target.value === '' ? '' : (parseInt(e.target.value, 10) || ''))}
+              className="w-20 bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
             />
-            <span className="text-2xl font-mono text-safe-green min-w-[3ch] text-center">
-              {newThreshold}
-            </span>
-            <span className="text-sm text-safe-text">of {numOwners} owners</span>
+            <span className="text-sm text-safe-text">out of {numOwners}</span>
           </div>
         </div>
       )}

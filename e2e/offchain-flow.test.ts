@@ -432,10 +432,8 @@ test('9. Create offchain changeThreshold proposal (threshold=1)', async () => {
   await page.getByRole('link', { name: 'Change Threshold', exact: true }).click();
   await page.waitForURL(/transactions\/new/);
 
-  const slider = page.locator('input[type="range"]');
-  if ((await slider.count()) > 0) {
-    await slider.first().fill('1');
-  }
+  const thresholdInput = page.locator('input[type="number"]').first();
+  await thresholdInput.fill('1');
 
   log('Submitting changeThreshold proposal...');
   const submitBtn = page.getByRole('button', { name: /submit proposal/i });

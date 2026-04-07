@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
+import { MAX_OWNERS } from '@/lib/constants';
 import { useAppContext } from '@/lib/app-context';
 import { deployAndSetupContract, generateKeypair, assertLedgerReady } from '@/lib/multisigClient';
 
@@ -28,7 +29,7 @@ export default function DeployPage() {
 
   // Setup fields
   const [ownerFields, setOwnerFields] = useState<string[]>(['']);
-  const [threshold, setThreshold] = useState('1');
+  const [threshold, setThreshold] = useState('');
   const [networkId, setNetworkId] = useState(wallet.network === 'mainnet' ? '1' : '0');
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -65,8 +66,9 @@ export default function DeployPage() {
     if (invalid) return `Invalid address: ${invalid.slice(0, 20)}...`;
     const unique = new Set(parsedOwners);
     if (unique.size !== parsedOwners.length) return 'Duplicate owner addresses.';
-    if (parsedOwners.length > 20) return 'Maximum 20 owners allowed.';
+    if (parsedOwners.length > MAX_OWNERS) return `Maximum ${MAX_OWNERS} owners allowed.`;
     const t = Number(threshold);
+    if (!threshold.trim()) return 'Please choose a threshold.';
     if (!t || t < 1) return 'Threshold must be at least 1.';
     if (t > parsedOwners.length) return `Threshold (${t}) cannot exceed number of owners (${parsedOwners.length}).`;
     if (!networkId.trim()) return 'Network ID is required.';
@@ -180,7 +182,8 @@ export default function DeployPage() {
               <button
                 type="button"
                 onClick={() => setOwnerFields([...ownerFields, ''])}
-                className="text-xs text-safe-green hover:underline"
+                disabled={ownerFields.length >= MAX_OWNERS}
+                className="text-xs text-safe-green hover:underline disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
               >
                 + Add owner
               </button>
@@ -189,27 +192,53 @@ export default function DeployPage() {
             {/* Threshold + Network ID */}
             <div className="grid grid-cols-2 gap-3">
               <label className="space-y-1">
-                <span className="text-xs text-safe-text">Threshold</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={threshold}
-                  onChange={(e) => { setThreshold(e.target.value); setFormError(null); }}
-                  className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
-                />
+                <span className="text-xs text-safe-text flex items-center gap-1">
+                  Threshold
+                  <span className="relative group">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-safe-border text-[10px] leading-none text-safe-text cursor-help">?</span>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 transition-all duration-200 pointer-events-none opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0">
+                      <div className="bg-safe-green/70 backdrop-blur-md text-white text-xs font-semibold rounded-lg px-2.5 py-1 shadow-lg whitespace-nowrap">
+                        Minimum approvals required to execute a proposal.
+                      </div>
+                      <svg className="mx-auto -mt-px" width="10" height="6" viewBox="0 0 10 6">
+                        <path d="M0 0L5 6L10 0Z" className="fill-safe-green/70" />
+                      </svg>
+                    </div>
+                  </span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, parsedOwners.length)}
+                    value={threshold}
+                    onChange={(e) => { setThreshold(e.target.value); setFormError(null); }}
+                    className="w-20 bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
+                  />
+                  <span className="text-sm text-safe-text">out of {parsedOwners.length}</span>
+                </div>
               </label>
               <label className="space-y-1">
-                <span className="text-xs text-safe-text">Network ID</span>
+                <span className="text-xs text-safe-text flex items-center gap-1">
+                  Network ID
+                  <span className="relative group">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-safe-border text-[10px] leading-none text-safe-text cursor-help">?</span>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 transition-all duration-200 pointer-events-none opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0">
+                      <div className="bg-safe-green/70 backdrop-blur-md text-white text-xs font-semibold rounded-lg px-2.5 py-1 shadow-lg whitespace-nowrap">
+                        Mainnet: 1 · Devnet: 0 · Testnet: 0
+                      </div>
+                      <svg className="mx-auto -mt-px" width="10" height="6" viewBox="0 0 10 6">
+                        <path d="M0 0L5 6L10 0Z" className="fill-safe-green/70" />
+                      </svg>
+                    </div>
+                  </span>
+                </span>
                 <input
                   type="text"
                   value={networkId}
                   onChange={(e) => { setNetworkId(e.target.value.trim()); setFormError(null); }}
                   className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
                 />
-                <p className="text-xs text-safe-text">
-                  Mainnet: <code className="font-mono">1</code> · Devnet: <code className="font-mono">0</code> · Testnet: <code className="font-mono">0</code>
-                </p>
               </label>
             </div>
 
