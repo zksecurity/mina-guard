@@ -62,7 +62,18 @@ export default function ProposalForm({
       setValidationError('Reduce the threshold first before removing an owner.');
       return;
     }
-    if (txType === 'changeThreshold' && Number(newThreshold) === currentThreshold) {
+    if (
+      txType === 'changeThreshold'
+      && (
+        !Number.isInteger(newThreshold)
+        || newThreshold < 1
+        || newThreshold > Math.max(1, numOwners)
+      )
+    ) {
+      setValidationError(`Threshold must be between 1 and ${Math.max(1, numOwners)}.`);
+      return;
+    }
+    if (txType === 'changeThreshold' && newThreshold === currentThreshold) {
       setValidationError('The new threshold is the same as the current one.');
       return;
     }
@@ -72,7 +83,7 @@ export default function ProposalForm({
       receivers: txType === 'transfer' ? transferParse.receivers : undefined,
       newOwner: txType === 'addOwner' ? newOwner : undefined,
       removeOwnerAddress: txType === 'removeOwner' ? removeOwnerAddress : undefined,
-      newThreshold: txType === 'changeThreshold' ? Number(newThreshold) : undefined,
+      newThreshold: txType === 'changeThreshold' ? newThreshold : undefined,
       delegate: txType === 'setDelegate' && !undelegate ? delegate : undefined,
       undelegate: txType === 'setDelegate' ? undelegate : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
@@ -192,7 +203,11 @@ export default function ProposalForm({
               min={1}
               max={Math.max(1, numOwners)}
               value={newThreshold}
-              onChange={(e) => setNewThreshold(e.target.value === '' ? '' : (parseInt(e.target.value, 10) || ''))}
+              onChange={(e) => {
+                const value = e.currentTarget.valueAsNumber;
+                if (Number.isNaN(value)) return;
+                setNewThreshold(value);
+              }}
               className="w-20 bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm"
             />
             <span className="text-sm text-safe-text">out of {numOwners}</span>

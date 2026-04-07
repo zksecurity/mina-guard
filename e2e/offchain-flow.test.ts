@@ -219,12 +219,12 @@ test('2. Create offchain transfer proposal', async () => {
   await page.waitForURL(/transactions\/new/);
 
   log('Filling transfer form...');
-  const recipientInput = page.locator('input[placeholder*="B62"]').first();
-  await recipientInput.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientInput.fill(accounts[2].publicKey);
-
-  const amountInput = page.locator('input[placeholder*="0"]').first();
-  await amountInput.fill('1');
+  const recipientsInput = page.locator('textarea');
+  await recipientsInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await recipientsInput.fill([
+    `${accounts[2].publicKey},1`,
+    `${accounts[0].publicKey},0.5`,
+  ].join('\n'));
 
   log('Submitting offchain proposal...');
   const submitBtn = page.getByRole('button', { name: /submit proposal/i });
@@ -241,6 +241,12 @@ test('2. Create offchain transfer proposal', async () => {
   const transferProposal = proposals.find((p: any) => p.txType === 'transfer');
   expect(transferProposal).toBeDefined();
   expect(transferProposal.approvalCount).toBe(1); // proposer auto-signed
+  expect(transferProposal.receivers).toEqual([
+    { index: 0, address: accounts[2].publicKey, amount: '1000000000' },
+    { index: 1, address: accounts[0].publicKey, amount: '500000000' },
+  ]);
+  expect(transferProposal.recipientCount).toBe(2);
+  expect(transferProposal.totalAmount).toBe('1500000000');
   proposalHashes.push(transferProposal.proposalHash);
   log(`Transfer proposal created: hash=${proposalHashes[0].slice(0, 12)}..., approvals=${transferProposal.approvalCount}`);
 });
@@ -314,6 +320,12 @@ test('5. Indexer reconciles transfer as executed', async () => {
   expect(proposal.status).toBe('executed');
   expect(proposal.origin).toBe('offchain');
   expect(proposal.executedAtBlock).not.toBeNull();
+  expect(proposal.receivers).toEqual([
+    { index: 0, address: accounts[2].publicKey, amount: '1000000000' },
+    { index: 1, address: accounts[0].publicKey, amount: '500000000' },
+  ]);
+  expect(proposal.recipientCount).toBe(2);
+  expect(proposal.totalAmount).toBe('1500000000');
   log(`Transfer reconciled: status=${proposal.status}, executedAtBlock=${proposal.executedAtBlock}`);
 });
 

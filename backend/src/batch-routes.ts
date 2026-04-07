@@ -126,6 +126,11 @@ export function createBatchRouter(): Router {
       return;
     }
 
+    if (normalizedReceivers.receivers.length > MAX_RECEIVERS) {
+      res.status(400).json({ error: `Too many receivers; maximum is ${MAX_RECEIVERS}` });
+      return;
+    }
+
     // Verify proposal hash matches the provided fields
     let computedHash: string;
     try {
@@ -136,10 +141,6 @@ export function createBatchRouter(): Router {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.startsWith('Too many receivers;')) {
-        res.status(400).json({ error: message });
-        return;
-      }
       res.status(400).json({ error: 'Invalid proposal fields', detail: message });
       return;
     }

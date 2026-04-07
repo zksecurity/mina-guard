@@ -20,12 +20,6 @@ export interface BatchPayloadProposal {
   totalAmount: string | null;
 }
 
-function assertReceiverCount(receivers: Array<{ address: string; amount: string }>) {
-  if (receivers.length > MAX_RECEIVERS) {
-    throw new Error(`Too many receivers; maximum is ${MAX_RECEIVERS}`);
-  }
-}
-
 function safePublicKey(base58: string): InstanceType<typeof PublicKey> {
   if (!base58) throw new Error('Missing public key');
   if (base58 === EMPTY_PUBLIC_KEY_BASE58) return PublicKey.empty();
@@ -44,8 +38,6 @@ export function computeProposalHash(params: {
   networkId: string;
   guardAddress: string;
 }): string {
-  assertReceiverCount(params.receivers);
-
   const paddedReceivers = params.receivers.map((receiver) => new Receiver({
     address: safePublicKey(receiver.address),
     amount: UInt64.from(receiver.amount),
