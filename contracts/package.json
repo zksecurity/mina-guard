@@ -14,7 +14,7 @@
   "main": "build/src/index.js",
   "types": "build/src/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf build && tsc",
     "buildw": "tsc --watch",
     "coverage": "bun test --timeout 20000 --coverage",
     "format": "prettier --write --ignore-unknown **/*",
@@ -39,7 +39,7 @@
     "typescript": "^5.4.5"
   },
   "peerDependencies": {
-    "o1js": "^2.13.0"
+    "o1js": "2.13.0"
   },
   "engines": {
     "node": ">=18.14.0"

@@ -34,6 +34,15 @@ function log(msg: string) {
   console.log(`[e2e-setup ${ts}] ${msg}`);
 }
 
+function ensureContractsBuild() {
+  log('Building contracts workspace...');
+  execSync('bun run --filter contracts build', {
+    cwd: ROOT,
+    stdio: 'pipe',
+  });
+  log('Contracts workspace built');
+}
+
 async function waitForUrl(
   url: string,
   label: string,
@@ -42,7 +51,10 @@ async function waitForUrl(
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(url);
+      const remainingMs = timeoutMs - (Date.now() - start);
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(Math.max(1_000, Math.min(10_000, remainingMs))),
+      });
       if (res.ok) {
         log(`${label} is ready`);
         return;
@@ -70,13 +82,13 @@ function spawnService(
   cmd: string,
   args: string[],
   env: Record<string, string>,
-  label: string
+  label: string,
+  cwd = ROOT
 ): ChildProcess {
   const child = spawn(cmd, args, {
-    cwd: ROOT,
+    cwd,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
   });
 
   child.stdout?.on('data', (data: Buffer) => {
@@ -107,6 +119,20 @@ async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> 
     await new Promise((r) => setTimeout(r, 500));
   }
   log(`Warning: port ${port} still in use after ${timeoutMs / 1000}s`);
+}
+
+async function clearPorts(ports: number[]): Promise<void> {
+  log(`Killing any stale processes on ports ${ports.join(', ')}...`);
+  for (const port of ports) {
+    try {
+      execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: 'pipe' });
+    } catch {
+      // fine
+    }
+  }
+  for (const port of ports) {
+    await waitForPortFree(port);
+  }
 }
 
 export default async function globalSetup() {
@@ -221,17 +247,12 @@ export default async function globalSetup() {
   let frontendPid = 0;
 
   if (!IS_CI) {
-    // Kill stale processes on our ports and wait for them to release
-    log('Killing any stale processes on ports 3000 and 4000...');
-    try {
-      execSync('lsof -ti:3000 | xargs kill -9 2>/dev/null || true', { stdio: 'pipe' });
-      execSync('lsof -ti:4000 | xargs kill -9 2>/dev/null || true', { stdio: 'pipe' });
-    } catch {
-      // fine
-    }
-    // Wait until ports are actually free
-    await waitForPortFree(4000);
-    await waitForPortFree(3000);
+    ensureContractsBuild();
+
+    // Next.js auto-increments its dev port (3001, 3002, ...) if a stale process
+    // survived a prior run. Clear the common fallback ports so the test harness
+    // can always rely on frontendUrl=http://localhost:3000.
+    await clearPorts([3000, 3001, 3002, 4000]);
 
     // Reset database
     log('Resetting backend database...');
@@ -292,29 +313,28 @@ export default async function globalSetup() {
     );
 
     // Start frontend
+    const frontendEnv: Record<string, string> = {
+      NEXT_PUBLIC_API_BASE_URL: config.backendUrl,
+      NEXT_PUBLIC_MINA_ENDPOINT: config.minaEndpoint,
+      NEXT_PUBLIC_ARCHIVE_ENDPOINT: config.archiveEndpoint,
+      NEXT_PUBLIC_E2E_TEST: 'true',
+    };
     log('Starting frontend...');
     const frontendChild = spawnService(
-      'bun',
-      ['run', '--filter', 'ui', 'dev'],
-      {
-        NEXT_PUBLIC_API_BASE_URL: config.backendUrl,
-        NEXT_PUBLIC_MINA_ENDPOINT: config.minaEndpoint,
-        NEXT_PUBLIC_ARCHIVE_ENDPOINT: config.archiveEndpoint,
-        NEXT_PUBLIC_E2E_TEST: 'true',
-      },
-      'frontend'
+      'node',
+      [resolve(ROOT, 'ui/node_modules/.bin/next'), 'dev', '-p', '3000'],
+      frontendEnv,
+      'frontend',
+      resolve(ROOT, 'ui')
     );
 
     backendPid = backendChild.pid!;
     frontendPid = frontendChild.pid!;
-
-    backendChild.unref();
-    frontendChild.unref();
   }
 
   // Wait for services (both CI and local)
   await waitForUrl(`${config.backendUrl}/health`, 'Backend');
-  await waitForUrl(config.frontendUrl, 'Frontend');
+  await waitForUrl(config.frontendUrl, 'Frontend', config.bannerTimeoutMs);
 
   // Write state for tests and teardown
   const state: E2eState = {

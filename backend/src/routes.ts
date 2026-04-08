@@ -1,27 +1,33 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { PublicKey, fetchAccount } from 'o1js';
+
 import { prisma } from './db.js';
 import type { MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
+import { serializeProposalRecord } from './proposal-record.js';
 import {
-  addressParamSchema,
+  acquireLightnetAccount,
+  computeFundingAmount,
+  LightnetAcquireError,
+  releaseLightnetAccount,
+  sendSignedLightnetPayment,
+  withLightnetAccount,
+} from './lightnet.js';
+import {
   clampedIntQuerySchema,
   nullableBlockQuerySchema,
   optionalBooleanQuerySchema,
   optionalNonEmptyStringQuerySchema,
-  proposalHashParamSchema,
-  validateParams,
+  addressParamsSchema,
+  proposalParamsSchema,
+  addressParamsMiddleware,
+  proposalParamsMiddleware,
+  type AddressParams,
+  type ProposalParams,
   validateQuery,
 } from './request-validation.js';
-
-const addressParamsSchema = z.object({
-  address: addressParamSchema,
-});
-
-const proposalParamsSchema = z.object({
-  address: addressParamSchema,
-  proposalHash: proposalHashParamSchema,
-});
+import { wrapAsyncRoute } from './route-utils.js';
 
 const ownersQuerySchema = z.object({
   active: optionalBooleanQuerySchema,
@@ -40,17 +46,6 @@ const eventsQuerySchema = z.object({
   offset: clampedIntQuerySchema(0, 0, 50_000),
 });
 
-const addressParamsMiddleware = validateParams(addressParamsSchema, {
-  address: 'Invalid contract address',
-});
-
-const proposalParamsMiddleware = validateParams(proposalParamsSchema, {
-  address: 'Invalid contract address',
-  proposalHash: 'Invalid proposal hash',
-});
-
-type AddressParams = z.infer<typeof addressParamsSchema>;
-type ProposalParams = z.infer<typeof proposalParamsSchema>;
 type OwnersQuery = z.infer<typeof ownersQuerySchema>;
 type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
 type EventsQuery = z.infer<typeof eventsQuerySchema>;
@@ -169,12 +164,17 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
           contractId: contract.id,
           ...(status ? { status } : {}),
         },
+        include: {
+          receivers: {
+            orderBy: { idx: 'asc' },
+          },
+        },
         orderBy: [{ createdAtBlock: 'desc' }, { createdAt: 'desc' }],
         take: limit,
         skip: offset,
       });
 
-      res.json(proposals);
+      res.json(proposals.map((proposal) => serializeProposalRecord(proposal)));
     })
   );
 
@@ -202,6 +202,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
             proposalHash,
           },
         },
+        include: {
+          receivers: {
+            orderBy: { idx: 'asc' },
+          },
+        },
       });
 
       if (!proposal) {
@@ -209,7 +214,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      res.json(proposal);
+      res.json(serializeProposalRecord(proposal));
     })
   );
 
@@ -302,11 +307,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    const query = `{ account(publicKey: "${address}") { balance { total } } }`;
+    const query = `query($publicKey: PublicKey!) { account(publicKey: $publicKey) { balance { total } } }`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, variables: { publicKey: address } }),
     });
 
     if (!response.ok) {
@@ -336,41 +341,52 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    // Acquire a pre-funded keypair from the lightnet account manager
-    const acqRes = await fetch(`${accountManagerUrl}/acquire-account`);
-    if (!acqRes.ok) {
-      res.status(502).json({ error: `Account manager returned ${acqRes.status}` });
+    try {
+      PublicKey.fromBase58(address);
+    } catch {
+      res.status(400).json({ error: 'Invalid Mina public key' });
       return;
     }
-    const { pk, sk } = (await acqRes.json()) as { pk: string; sk: string };
 
-    const { Mina, PublicKey, PrivateKey, AccountUpdate, UInt64, fetchAccount } = await import('o1js');
+    try {
+      const result = await withLightnetAccount(accountManagerUrl, async (acquired) => {
+        const funderPub = PublicKey.fromBase58(acquired.pk);
+        const { account: funderAccount } = await fetchAccount({ publicKey: funderPub });
+        const funderBalance = BigInt(funderAccount?.balance?.toBigInt() ?? 0n);
+        const amountNano = computeFundingAmount(funderBalance);
+        if (amountNano <= 0n) {
+          return null;
+        }
+        const nonce = String(funderAccount?.nonce.toBigint() ?? 0n);
 
-    const funderKey = PrivateKey.fromBase58(sk);
-    const funderPub = PublicKey.fromBase58(pk);
-    const target = PublicKey.fromBase58(address);
+        const txHash = await sendSignedLightnetPayment({
+          minaEndpoint: config.minaEndpoint,
+          from: acquired.pk,
+          to: address,
+          amount: amountNano.toString(),
+          fee: '100000000',
+          nonce,
+          privateKey: acquired.sk,
+        });
 
-    await fetchAccount({ publicKey: funderPub });
-    const { account: targetAccount } = await fetchAccount({ publicKey: target });
-    const isNew = !targetAccount;
+        return { txHash };
+      }, {
+        acquireLightnetAccount,
+        releaseLightnetAccount,
+      });
 
-    const fee = UInt64.from(100_000_000);
-    const amount = UInt64.from(50_000_000_000); // 50 MINA
+      if (!result) {
+        res.status(503).json({ error: 'No funded Lightnet accounts are currently available' });
+        return;
+      }
 
-    const tx = await Mina.transaction({ sender: funderPub, fee }, async () => {
-      if (isNew) AccountUpdate.fundNewAccount(funderPub);
-      const update = AccountUpdate.createSigned(funderPub);
-      update.send({ to: target, amount });
-    });
-
-    await tx.prove();
-    tx.sign([funderKey]);
-    const result = await tx.send();
-    const hash = typeof result.hash === 'function'
-      ? (result.hash as () => string)()
-      : result.hash;
-
-    res.json({ txHash: hash });
+      res.json(result);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to acquire funded account';
+      const status = error instanceof LightnetAcquireError ? 502 : 500;
+      res.status(status).json({ error: message });
+    }
   }));
 
   router.use((error: unknown, req: any, res: any, _next: any) => {
@@ -394,15 +410,6 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   });
 
   return router;
-}
-
-/** Wraps async route handlers so thrown errors are forwarded to Express error middleware. */
-function wrapAsyncRoute() {
-  return (handler: (req: any, res: any) => Promise<void>) => {
-    return (req: any, res: any, next: any) => {
-      void handler(req, res).catch(next);
-    };
-  };
 }
 
 /** Emits request start/end logs with request id, status code, and duration. */

@@ -1,8 +1,24 @@
 import { Field, PublicKey, Signature, UInt64 } from 'o1js';
-import { TransactionProposal, MAX_OWNERS } from 'contracts';
+import { MAX_OWNERS, MAX_RECEIVERS, Receiver, TransactionProposal, TxType } from 'contracts';
 import { prisma } from './db.js';
 
 const EMPTY_PUBLIC_KEY_BASE58 = PublicKey.empty().toBase58();
+
+export interface BatchPayloadProposal {
+  proposalHash: string;
+  toAddress: string | null;
+  tokenId: string | null;
+  txType: string | null;
+  data: string | null;
+  uid: string | null;
+  configNonce: string | null;
+  expiryBlock: string | null;
+  networkId: string | null;
+  guardAddress: string | null;
+  receivers: Array<{ index: number; address: string; amount: string }>;
+  recipientCount: number;
+  totalAmount: string | null;
+}
 
 function safePublicKey(base58: string): InstanceType<typeof PublicKey> {
   if (!base58) throw new Error('Missing public key');
@@ -12,8 +28,7 @@ function safePublicKey(base58: string): InstanceType<typeof PublicKey> {
 
 /** Recomputes the Poseidon proposal hash from individual fields. */
 export function computeProposalHash(params: {
-  toAddress: string;
-  amount: string;
+  receivers: Array<{ address: string; amount: string }>;
   tokenId: string;
   txType: string;
   data: string;
@@ -23,9 +38,16 @@ export function computeProposalHash(params: {
   networkId: string;
   guardAddress: string;
 }): string {
+  const paddedReceivers = params.receivers.map((receiver) => new Receiver({
+    address: safePublicKey(receiver.address),
+    amount: UInt64.from(receiver.amount),
+  }));
+  while (paddedReceivers.length < MAX_RECEIVERS) {
+    paddedReceivers.push(Receiver.empty());
+  }
+
   const proposal = new TransactionProposal({
-    to: safePublicKey(params.toAddress),
-    amount: UInt64.from(params.amount),
+    receivers: paddedReceivers,
     tokenId: Field(params.tokenId),
     txType: Field(params.txType),
     data: Field(params.data),
@@ -62,7 +84,7 @@ export async function buildBatchPayload(
   ready: boolean;
   threshold: number;
   approvalCount: number;
-  proposal: Record<string, string | null>;
+  proposal: BatchPayloadProposal;
   inputs: Array<{
     isSome: boolean;
     signer: string | null;
@@ -83,13 +105,20 @@ export async function buildBatchPayload(
         proposalHash,
       },
     },
+    include: {
+      receivers: {
+        orderBy: { idx: 'asc' },
+      },
+    },
   });
   if (!proposal) return null;
   if (proposal.origin !== 'offchain') return null;
 
   const owners = await prisma.owner.findMany({
     where: { contractId: contract.id, active: true },
-    orderBy: [{ address: 'asc' }],
+    // Batch verification rebuilds the owner commitment by hashing owners in
+    // ascending base58 order, so the payload must preserve that exact order.
+    orderBy: { address: 'asc' },
   });
 
   const approvals = await prisma.approval.findMany({
@@ -135,6 +164,11 @@ export async function buildBatchPayload(
   }
 
   const threshold = contract.threshold ?? 1;
+  const receivers = proposal.receivers.map((receiver) => ({
+    index: receiver.idx,
+    address: receiver.address,
+    amount: receiver.amount,
+  }));
 
   return {
     ready: approvals.length >= threshold,
@@ -143,7 +177,6 @@ export async function buildBatchPayload(
     proposal: {
       proposalHash: proposal.proposalHash,
       toAddress: proposal.toAddress,
-      amount: proposal.amount,
       tokenId: proposal.tokenId,
       txType: proposal.txType,
       data: proposal.data,
@@ -152,6 +185,11 @@ export async function buildBatchPayload(
       expiryBlock: proposal.expiryBlock,
       networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
+      receivers,
+      recipientCount: proposal.txType === TxType.TRANSFER.toString() ? receivers.length : 0,
+      totalAmount: proposal.txType === TxType.TRANSFER.toString()
+        ? receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n).toString()
+        : null,
     },
     inputs,
   };

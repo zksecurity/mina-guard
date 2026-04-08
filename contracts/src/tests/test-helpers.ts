@@ -10,10 +10,11 @@ import {
 } from 'o1js';
 import {
   MinaGuard,
+  Receiver,
   SetupOwnersInput,
   TransactionProposal,
 } from '../MinaGuard.js';
-import { TxType, PROPOSED_MARKER, MAX_OWNERS } from '../constants.js';
+import { TxType, PROPOSED_MARKER, MAX_OWNERS, MAX_RECEIVERS } from '../constants.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
 import { SignatureInputs, SignatureInput, SignatureOption } from '../batch-verify.js';
@@ -201,19 +202,21 @@ export async function deployAndSetup(
 
 // -- Proposal Helpers --------------------------------------------------------
 
-/** Builds a transfer proposal payload. */
+/** Builds a transfer proposal payload. Pads receivers to MAX_RECEIVERS. */
 export function createTransferProposal(
-  to: PublicKey,
-  amount: UInt64,
+  receivers: Receiver[],
   uid: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1)
 ): TransactionProposal {
+  const padded = [...receivers];
+  while (padded.length < MAX_RECEIVERS) {
+    padded.push(Receiver.empty());
+  }
   return new TransactionProposal({
-    to,
-    amount,
+    receivers: padded,
     tokenId: Field(0),
     txType: TxType.TRANSFER,
     data: Field(0),
@@ -223,6 +226,10 @@ export function createTransferProposal(
     networkId,
     guardAddress,
   });
+}
+
+function emptyReceivers(): Receiver[] {
+  return Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty());
 }
 
 /** Builds an add-owner governance proposal payload. */
@@ -235,8 +242,7 @@ export function createAddOwnerProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    to: PublicKey.empty(),
-    amount: UInt64.from(0),
+    receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
     data: ownerKey(newOwner),
@@ -258,8 +264,7 @@ export function createRemoveOwnerProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    to: PublicKey.empty(),
-    amount: UInt64.from(0),
+    receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.REMOVE_OWNER,
     data: ownerKey(ownerToRemove),
@@ -281,8 +286,7 @@ export function createThresholdProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    to: PublicKey.empty(),
-    amount: UInt64.from(0),
+    receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.CHANGE_THRESHOLD,
     data: newThreshold,
@@ -304,8 +308,7 @@ export function createDelegateProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    to: PublicKey.empty(),
-    amount: UInt64.from(0),
+    receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: ownerKey(delegate),
@@ -326,8 +329,7 @@ export function createUndelegateProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    to: PublicKey.empty(),
-    amount: UInt64.from(0),
+    receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: Field(0),

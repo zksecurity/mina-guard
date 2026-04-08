@@ -41,11 +41,9 @@ function NewTransactionPageInner() {
   const rawType = searchParams.get('type');
   const initialType = TX_TYPES.some((t) => t.value === rawType) ? (rawType as TxType) : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
-  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (data: NewProposalInput) => {
     if (!wallet.address || !multisig) return;
-    setError(null);
 
     const contractAddress = multisig.address;
     const proposerAddress = wallet.address;
@@ -53,18 +51,27 @@ function NewTransactionPageInner() {
     const fallbackConfigNonce = multisig.configNonce ?? 0;
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
 
+    let createdHash: string | null = null;
     await startOperation('Creating offchain proposal...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      return await createOffchainProposal({
+      const createdProposal = await createOffchainProposal({
         contractAddress,
         proposerAddress,
         input: data,
         configNonce,
         networkId,
       }, onProgress, signer);
+      createdHash = createdProposal?.proposalHash ?? null;
+      if (!createdProposal) return null;
+
+      const warningText = createdProposal.warnings.length > 0
+        ? ` Warning: ${createdProposal.warnings.join(' ')}`
+        : '';
+
+      return `Proposal created: ${createdProposal.proposalHash}${warningText}`;
     });
-    router.push('/transactions');
+    router.push(createdHash ? `/transactions/${createdHash}` : '/transactions');
   };
 
   return (
@@ -139,7 +146,6 @@ function NewTransactionPageInner() {
                   There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
                 </div>
               )}
-              {error && <p className="text-sm text-red-400">{error}</p>}
               <ProposalForm
                 owners={owners.map((owner) => owner.address)}
                 currentThreshold={multisig.threshold ?? 1}

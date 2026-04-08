@@ -10,6 +10,7 @@ export function useTransactions(multisigAddress: string | null) {
   const [proposalsAddress, setProposalsAddress] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const addressRef = useRef(multisigAddress);
+  const initialLoadDone = useRef(false);
   addressRef.current = multisigAddress;
 
   /** Pulls latest proposals for the active contract. */
@@ -19,7 +20,7 @@ export function useTransactions(multisigAddress: string | null) {
       return;
     }
 
-    setIsLoading(true);
+    if (!initialLoadDone.current) setIsLoading(true);
     try {
       const rows = await fetchProposals(multisigAddress, { limit: 200, offset: 0 });
       // Bail if the address changed while fetching
@@ -28,6 +29,7 @@ export function useTransactions(multisigAddress: string | null) {
       setProposalsAddress(multisigAddress);
     } finally {
       setIsLoading(false);
+      initialLoadDone.current = true;
     }
   }, [multisigAddress]);
 
@@ -35,6 +37,7 @@ export function useTransactions(multisigAddress: string | null) {
     // Clear stale proposals immediately so consumers don't mix old data with the new address
     setProposals([]);
     setProposalsAddress(null);
+    initialLoadDone.current = false;
     void refresh();
     const interval = setInterval(() => {
       void refresh();

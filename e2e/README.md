@@ -5,7 +5,6 @@ End-to-end tests for MinaGuard using [Playwright](https://playwright.dev/). The 
 ## Prerequisites
 
 - [Bun](https://bun.sh/) installed
-- Contracts built: `bun run --filter contracts build` (from monorepo root)
 - Playwright browsers installed: `bunx playwright install` (from `e2e/`)
 
 For **lightnet** mode you also need the `zkapp-cli` (`zk`) installed globally:
@@ -16,7 +15,7 @@ npm install -g zkapp-cli
 
 ## Quick start (lightnet)
 
-Lightnet is the default mode. The test harness automatically starts a local Mina network, backend, and frontend, then tears everything down when done.
+Lightnet is the default mode. The test harness automatically builds the contracts/frontend, starts a local Mina network, backend, and frontend, then tears everything down when done.
 
 ```bash
 cd e2e

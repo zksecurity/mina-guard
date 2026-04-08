@@ -18,20 +18,35 @@ import {
 
 import { ownerKey } from './utils';
 
-import { MAX_OWNERS, PROPOSED_MARKER, EXECUTED_MARKER, EMPTY_MERKLE_MAP_ROOT, TxType } from './constants';
+import { MAX_OWNERS, MAX_RECEIVERS, PROPOSED_MARKER, EXECUTED_MARKER, EMPTY_MERKLE_MAP_ROOT, TxType } from './constants';
 
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption } from './list-commitment';
 import { batchVerify, SignatureInputs } from './batch-verify';
 
 // -- Types -------------------------------------------------------------------
 
+/** A single receiver slot: address + amount. Empty slots use PublicKey.empty() and UInt64(0). */
+export class Receiver extends Struct({
+  address: PublicKey,
+  amount: UInt64,
+}) {
+  static empty(): Receiver {
+    return new Receiver({ address: PublicKey.empty(), amount: UInt64.from(0) });
+  }
+}
+
+const ReceiversArray = Provable.Array(Receiver, MAX_RECEIVERS);
+
 /**
  * Canonical proposal payload hashed for signatures and proposal indexing.
  * All fields participate in hash() to prevent replay/substitution attacks.
+ *
+ * Transfers support up to MAX_RECEIVERS recipients per proposal.
+ * Unused receiver slots must use Receiver.empty().
+ * Non-transfer proposals (governance, delegation) use all-empty receiver slots.
  */
 export class TransactionProposal extends Struct({
-  to: PublicKey,
-  amount: UInt64,
+  receivers: ReceiversArray,
   tokenId: Field,
   txType: Field,
   data: Field,
@@ -43,9 +58,12 @@ export class TransactionProposal extends Struct({
 }) {
   /** Returns the unique proposal hash used as map key and signature message. */
   hash(): Field {
+    const fields: Field[] = [];
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      fields.push(...Receiver.toFields(this.receivers[i]));
+    }
     return Poseidon.hash([
-      ...this.to.toFields(),
-      ...this.amount.toFields(),
+      ...fields,
       this.tokenId,
       this.txType,
       this.data,
@@ -86,14 +104,12 @@ export class SetupOwnerEvent extends Struct({
 
 /**
  * Emitted when a new proposal is created and indexed by proposalHash.
- * Includes all TransactionProposal fields so the indexer can reconstruct
- * proposal details purely from on-chain events.
+ * Receiver/amount data is emitted via TransferEvent (one per MAX_RECEIVERS
+ * slot, padded with empties) since Mina limits events to 16 field elements.
  */
 export class ProposalEvent extends Struct({
   proposalHash: Field,
   proposer: PublicKey,
-  to: PublicKey,
-  amount: UInt64,
   tokenId: Field,
   txType: Field,
   data: Field,
@@ -102,6 +118,13 @@ export class ProposalEvent extends Struct({
   expiryBlock: Field,
   networkId: Field,
   guardAddress: PublicKey,
+}) { }
+
+/** Emitted once per receiver slot during propose and execution (fixed-size, padded with empties). */
+export class TransferEvent extends Struct({
+  proposalHash: Field,
+  receiver: PublicKey,
+  amount: UInt64,
 }) { }
 
 /** Emitted whenever a valid owner approval is recorded. */
@@ -114,15 +137,11 @@ export class ApprovalEvent extends Struct({
 /** Emitted for all execution paths to provide a unified lifecycle signal. */
 export class ExecutionEvent extends Struct({
   proposalHash: Field,
-  to: PublicKey,
-  amount: UInt64,
   txType: Field,
 }) { }
 
 export class ExecutionBatchEvent extends Struct({
   proposalHash: Field,
-  to: PublicKey,
-  amount: UInt64,
   txType: Field,
   approverChain: Field,
 }) { }
@@ -191,6 +210,7 @@ export class MinaGuard extends SmartContract {
     setup: SetupEvent,
     setupOwner: SetupOwnerEvent,
     proposal: ProposalEvent,
+    transfer: TransferEvent,
     approval: ApprovalEvent,
     execution: ExecutionEvent,
     executionBatch: ExecutionBatchEvent,
@@ -299,7 +319,27 @@ export class MinaGuard extends SmartContract {
     this.approvalRoot.set(newApprovalRoot);
   }
 
-  // TODO: verify if we need an additional check here, to avoid front-running
+  /** Emits a transfer event per receiver slot (padded with empties). */
+  private emitTransferEvents(proposal: TransactionProposal, proposalHash: Field): void {
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const isEmpty = r.address.equals(PublicKey.empty());
+      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
+      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
+    }
+  }
+
+  /** Sends MINA to each receiver slot and emits transfer events. */
+  private executeTransfers(proposal: TransactionProposal, proposalHash: Field): void {
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const isEmpty = r.address.equals(PublicKey.empty());
+      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
+      this.send({ to: r.address, amount: effectiveAmount });
+      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
+    }
+  }
+
 
   /** Method to initialize the contract. Cannot call twice.
    *
@@ -394,8 +434,6 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('proposal', {
       proposalHash,
       proposer,
-      to: proposal.to,
-      amount: proposal.amount,
       tokenId: proposal.tokenId,
       txType: proposal.txType,
       data: proposal.data,
@@ -405,6 +443,8 @@ export class MinaGuard extends SmartContract {
       networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
     });
+
+    this.emitTransferEvents(proposal, proposalHash);
 
     this.emitEvent('approval', {
       proposalHash,
@@ -493,14 +533,12 @@ export class MinaGuard extends SmartContract {
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
-    this.send({ to: proposal.to, amount: proposal.amount });
+    this.executeTransfers(proposal, proposalHash);
 
     this.markExecuted(approvalWitness);
 
     this.emitEvent('execution', {
       proposalHash,
-      to: proposal.to,
-      amount: proposal.amount,
       txType: proposal.txType,
     });
   }
@@ -534,16 +572,14 @@ export class MinaGuard extends SmartContract {
     // Bypass the normal threshold verification (skip PROPOSED_MARKER handling)
     verificationRes.approvalCount.assertGreaterThanOrEqual(threshold, 'Insufficient approvals');
 
-    // Execute transfer
-    this.send({ to: proposal.to, amount: proposal.amount });
+    // Execute transfers
+    this.executeTransfers(proposal, proposalHash);
 
     // Mark as executed
     this.markExecuted(approvalWitness);
 
     this.emitEvent('executionBatch', {
       proposalHash,
-      to: proposal.to,
-      amount: proposal.amount,
       txType: proposal.txType,
       approverChain: verificationRes.signerChain
     });
@@ -611,11 +647,8 @@ export class MinaGuard extends SmartContract {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
-    // TODO: revisit to see if it can be removed
     this.emitEvent('executionBatch', {
       proposalHash,
-      to: PublicKey.empty(),
-      amount: UInt64.from(0),
       txType: proposal.txType,
       approverChain: verificationRes.signerChain,
     });
@@ -682,11 +715,8 @@ export class MinaGuard extends SmartContract {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     this.configNonce.set(currentConfigNonce.add(1));
 
-    // TODO: revisit to see if it can be removed
     this.emitEvent('executionBatch', {
       proposalHash,
-      to: PublicKey.empty(),
-      amount: UInt64.from(0),
       txType: proposal.txType,
       approverChain: verificationRes.signerChain,
     });
@@ -745,8 +775,6 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('executionBatch', {
       proposalHash,
-      to: targetDelegate,
-      amount: UInt64.from(0),
       txType: proposal.txType,
       approverChain: verificationRes.signerChain,
     });
@@ -816,8 +844,6 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('execution', {
       proposalHash,
-      to: PublicKey.empty(),
-      amount: UInt64.from(0),
       txType: proposal.txType,
     });
 
@@ -877,8 +903,6 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('execution', {
       proposalHash,
-      to: PublicKey.empty(),
-      amount: UInt64.from(0),
       txType: proposal.txType,
     });
 
@@ -929,8 +953,6 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('execution', {
       proposalHash,
-      to: targetDelegate,
-      amount: UInt64.from(0),
       txType: proposal.txType,
     });
 

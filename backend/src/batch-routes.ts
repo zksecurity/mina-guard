@@ -1,14 +1,21 @@
 import { Router } from 'express';
 import { PublicKey } from 'o1js';
 import { z } from 'zod';
+import { MAX_RECEIVERS, TxType } from 'contracts';
 import { prisma } from './db.js';
 import { computeProposalHash, verifySignature, buildBatchPayload } from './batch-sig-service.js';
+import { serializeProposalRecord } from './proposal-record.js';
 import {
-  addressParamSchema,
   minaPublicKeySchema,
   proposalHashParamSchema,
-  validateParams,
+  addressParamsSchema,
+  proposalParamsSchema,
+  addressParamsMiddleware,
+  proposalParamsMiddleware,
+  type AddressParams,
+  type ProposalParams,
 } from './request-validation.js';
+import { wrapAsyncRoute } from './route-utils.js';
 
 const base58PublicKey = minaPublicKeySchema;
 const EMPTY_PUBLIC_KEY_BASE58 = PublicKey.empty().toBase58();
@@ -19,31 +26,14 @@ const proposalTargetPublicKey = z.string().refine((value) => {
 
 const fieldString = z.string().regex(/^\d+$/, 'Must be a numeric string');
 const hexHash = proposalHashParamSchema;
-
-const addressParamsSchema = z.object({
-  address: addressParamSchema,
+const receiverSchema = z.object({
+  address: proposalTargetPublicKey,
+  amount: fieldString,
 });
-
-const proposalParamsSchema = z.object({
-  address: addressParamSchema,
-  proposalHash: proposalHashParamSchema,
-});
-
-const addressParamsMiddleware = validateParams(addressParamsSchema, {
-  address: 'Invalid contract address',
-});
-
-const proposalParamsMiddleware = validateParams(proposalParamsSchema, {
-  address: 'Invalid contract address',
-  proposalHash: 'Invalid proposal hash',
-});
-
-type AddressParams = z.infer<typeof addressParamsSchema>;
-type ProposalParams = z.infer<typeof proposalParamsSchema>;
 
 const createProposalSchema = z.object({
-  toAddress: proposalTargetPublicKey,
-  amount: fieldString,
+  toAddress: proposalTargetPublicKey.optional(),
+  receivers: z.array(receiverSchema).max(MAX_RECEIVERS).optional(),
   tokenId: fieldString,
   txType: fieldString,
   data: fieldString,
@@ -61,6 +51,15 @@ const submitSignatureSchema = z.object({
   signatureR: fieldString,
   signatureS: fieldString,
 });
+
+function getProposalTargetRequirement(params: { txType: string; data: string }): 'required' | 'optional' {
+  if (params.txType === TxType.ADD_OWNER.toString()) return 'required';
+  if (params.txType === TxType.REMOVE_OWNER.toString()) return 'required';
+  if (params.txType === TxType.SET_DELEGATE.toString()) {
+    return params.data === '0' ? 'optional' : 'required';
+  }
+  return 'optional';
+}
 
 /** Creates the batch-sig API router for offchain signature aggregation. */
 export function createBatchRouter(): Router {
@@ -92,10 +91,25 @@ export function createBatchRouter(): Router {
     }
 
     const {
-      toAddress, amount, tokenId, txType, data,
+      toAddress, receivers, tokenId, txType, data,
       uid, configNonce, expiryBlock, networkId, guardAddress,
       proposalHash, proposer,
     } = parsed.data;
+
+    const normalizedReceivers = normalizeProposalReceivers({
+      txType,
+      receivers,
+    });
+    if (!normalizedReceivers.ok) {
+      res.status(400).json({ error: normalizedReceivers.error });
+      return;
+    }
+
+    const targetRequirement = getProposalTargetRequirement({ txType, data });
+    if (targetRequirement === 'required' && !toAddress) {
+      res.status(400).json({ error: 'Proposal toAddress is required for this transaction type' });
+      return;
+    }
 
     if (guardAddress !== contract.address) {
       res.status(400).json({ error: 'guardAddress does not match contract address' });
@@ -112,15 +126,22 @@ export function createBatchRouter(): Router {
       return;
     }
 
+    if (normalizedReceivers.receivers.length > MAX_RECEIVERS) {
+      res.status(400).json({ error: `Too many receivers; maximum is ${MAX_RECEIVERS}` });
+      return;
+    }
+
     // Verify proposal hash matches the provided fields
     let computedHash: string;
     try {
       computedHash = computeProposalHash({
-        toAddress, amount, tokenId, txType, data,
+        receivers: normalizedReceivers.receivers,
+        tokenId, txType, data,
         uid, configNonce, expiryBlock, networkId, guardAddress,
       });
     } catch (err) {
-      res.status(400).json({ error: 'Invalid proposal fields', detail: String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: 'Invalid proposal fields', detail: message });
       return;
     }
 
@@ -153,7 +174,6 @@ export function createBatchRouter(): Router {
         contractId: contract.id,
         proposalHash,
         toAddress,
-        amount,
         tokenId,
         txType,
         data,
@@ -165,10 +185,25 @@ export function createBatchRouter(): Router {
         proposer,
         origin: 'offchain',
         status: 'pending',
+        receivers: normalizedReceivers.receivers.length > 0 ? {
+          create: normalizedReceivers.receivers.map((receiver, index) => ({
+            idx: index,
+            address: receiver.address,
+            amount: receiver.amount,
+          })),
+        } : undefined,
+      },
+      include: {
+        receivers: {
+          orderBy: { idx: 'asc' },
+        },
       },
     });
 
-    res.status(201).json(proposal);
+    res.status(201).json({
+      ...serializeProposalRecord(proposal),
+      warnings: normalizedReceivers.warnings,
+    });
   }));
 
   /** Submits a signature for an offchain proposal. */
@@ -317,14 +352,50 @@ export function createBatchRouter(): Router {
     })
   );
 
+  router.use((error: unknown, req: any, res: any, _next: any) => {
+    console.error(
+      `[batch-api] ${req.method} ${req.originalUrl}`,
+      error instanceof Error ? error.stack ?? error.message : error
+    );
+    const message =
+      error instanceof Error ? error.message : 'Unknown backend error';
+    res.status(500).json({ error: message });
+  });
+
   return router;
 }
 
-/** Wraps async route handlers so thrown errors are forwarded to Express error middleware. */
-function wrapAsyncRoute() {
-  return (handler: (req: any, res: any) => Promise<void>) => {
-    return (req: any, res: any, next: any) => {
-      void handler(req, res).catch(next);
-    };
+function normalizeProposalReceivers(params: {
+  txType: string;
+  receivers?: Array<{ address: string; amount: string }>;
+}):
+  | { ok: true; receivers: Array<{ address: string; amount: string }>; warnings: string[] }
+  | { ok: false; error: string } {
+  const isTransfer = params.txType === TxType.TRANSFER.toString();
+  if (!isTransfer) {
+    return { ok: true, receivers: [], warnings: [] };
+  }
+
+  const receivers = params.receivers ?? [];
+  if (receivers.length === 0) {
+    return { ok: false, error: 'Transfer proposals must include at least one receiver' };
+  }
+
+  const seen = new Set<string>();
+  let hasDuplicateReceiver = false;
+  for (const receiver of receivers) {
+    if (seen.has(receiver.address)) {
+      hasDuplicateReceiver = true;
+      continue;
+    }
+    seen.add(receiver.address);
+  }
+
+  return {
+    ok: true,
+    receivers,
+    warnings: hasDuplicateReceiver
+      ? ['Transfer proposal contains duplicate receiver addresses; duplicates were allowed.']
+      : [],
   };
 }

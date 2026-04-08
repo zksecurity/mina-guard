@@ -11,12 +11,59 @@ export type TxType =
   | 'changeThreshold'
   | 'setDelegate';
 
+/** One transfer receiver entry persisted and returned by the backend. */
+export interface ProposalReceiver {
+  index: number;
+  address: string;
+  amount: string;
+}
+
+/** Transfer/gov proposal payload returned by the batch-payload API. */
+export interface BatchPayloadProposal {
+  proposalHash: string;
+  toAddress: string | null;
+  tokenId: string | null;
+  txType: string | null;
+  data: string | null;
+  uid: string | null;
+  configNonce: string | null;
+  expiryBlock: string | null;
+  networkId: string | null;
+  guardAddress: string | null;
+  receivers: ProposalReceiver[];
+  recipientCount: number;
+  totalAmount: string | null;
+}
+
+/** One owner/signature slot returned by the batch-payload API. */
+export interface BatchPayloadInput {
+  isSome: boolean;
+  signer: string | null;
+  hasSignature: boolean;
+  signatureR: string | null;
+  signatureS: string | null;
+}
+
+/** Response shape returned by the batch-payload API. */
+export interface BatchPayload {
+  ready: boolean;
+  threshold: number;
+  approvalCount: number;
+  proposal: BatchPayloadProposal;
+  inputs: BatchPayloadInput[];
+}
+
+/** Minimal success response needed after creating an offchain proposal. */
+export interface OffchainProposalSubmission {
+  proposalHash: string;
+  warnings: string[];
+}
+
 /** Proposal record returned by the backend indexer API. */
 export interface Proposal {
   proposalHash: string;
   proposer: string | null;
   toAddress: string | null;
-  amount: string | null;
   tokenId: string | null;
   txType: TxType | null;
   data: string | null;
@@ -32,6 +79,9 @@ export interface Proposal {
   executedAtBlock: number | null;
   createdAt: string;
   updatedAt: string;
+  receivers: ProposalReceiver[];
+  recipientCount: number;
+  totalAmount: string | null;
 }
 
 /** Indexed owner membership record for one MinaGuard contract. */
@@ -90,8 +140,7 @@ export interface IndexerStatus {
 /** User input payload used by proposal creation forms. */
 export interface NewProposalInput {
   txType: TxType;
-  to?: string;
-  amount?: string;
+  receivers?: Array<{ address: string; amount: string }>;
   newOwner?: string;
   removeOwnerAddress?: string;
   newThreshold?: number;
@@ -126,12 +175,16 @@ export function truncateAddress(addr: string, chars: number = 6): string {
 /** Formats nanomina string values into human-readable MINA decimal text. */
 export function formatMina(nanomina: string | null): string {
   if (!nanomina) return '0';
-  const NANO = 1_000_000_000;
-  const n = Number(nanomina);
-  if (!Number.isFinite(n)) return '0';
-  const whole = Math.floor(n / NANO);
+  let n: bigint;
+  try {
+    n = BigInt(nanomina);
+  } catch {
+    return '0';
+  }
+  const NANO = 1_000_000_000n;
+  const whole = n / NANO;
   const frac = n % NANO;
-  if (frac === 0) return whole.toString();
+  if (frac === 0n) return whole.toString();
   const fracStr = frac.toString().padStart(9, '0').replace(/0+$/, '');
   return `${whole}.${fracStr}`;
 }

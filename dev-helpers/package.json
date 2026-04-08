@@ -5,7 +5,7 @@
   "type": "module",
   "dependencies": {
     "commander": "^13.1.0",
-    "o1js": "^2.13.0",
+    "o1js": "2.13.0",
     "contracts": "workspace:*"
   },
   "devDependencies": {

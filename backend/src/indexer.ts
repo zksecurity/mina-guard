@@ -1,6 +1,7 @@
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
 import { PublicKey } from 'o1js';
+import { MAX_RECEIVERS } from 'contracts';
 import {
   configureNetwork,
   discoverCandidateAddresses,
@@ -164,6 +165,7 @@ export class MinaGuardIndexer {
     fromHeight: number,
     toHeight: number
   ): Promise<void> {
+    const transferState = new Map<string, { count: number; skip: boolean; checked: boolean }>();
     const events = await fetchDecodedContractEvents(address, fromHeight, toHeight);
 
     // Sort so 'proposal' events are processed before 'approval'/'execution' within
@@ -176,14 +178,15 @@ export class MinaGuardIndexer {
       setupOwner: 2,
       proposal: 3,
       approval: 4,
-      execution: 5,
-      executionBatch: 5,
-      ownerChange: 6,
-      ownerChangeBatch: 6,
-      thresholdChange: 7,
-      thresholdChangeBatch: 7,
-      delegate: 8,
-      delegateBatch: 8,
+      transfer: 5,
+      execution: 6,
+      executionBatch: 6,
+      ownerChange: 7,
+      ownerChangeBatch: 7,
+      thresholdChange: 8,
+      thresholdChangeBatch: 8,
+      delegate: 9,
+      delegateBatch: 9,
     };
     events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
 
@@ -203,7 +206,7 @@ export class MinaGuardIndexer {
         },
       });
 
-      await this.applyEvent(contractId, chainEvent);
+      await this.applyEvent(contractId, chainEvent, transferState);
     }
 
     await prisma.contract.update({
@@ -213,7 +216,11 @@ export class MinaGuardIndexer {
   }
 
   /** Applies event-specific state updates to proposal/owner/contract aggregate tables. */
-  private async applyEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
+  private async applyEvent(
+    contractId: number,
+    chainEvent: ChainEvent,
+    transferState: Map<string, { count: number; skip: boolean; checked: boolean }>
+  ): Promise<void> {
     switch (chainEvent.type) {
       case 'setup': {
         await this.applySetupEvent(contractId, chainEvent.event);
@@ -234,6 +241,10 @@ export class MinaGuardIndexer {
       case 'execution':
       case 'executionBatch': {
         await this.applyExecutionEvent(contractId, chainEvent);
+        return;
+      }
+      case 'transfer': {
+        await this.applyTransferEvent(contractId, chainEvent.event, transferState);
         return;
       }
       case 'ownerChange':
@@ -353,8 +364,6 @@ export class MinaGuardIndexer {
         contractId,
         proposalHash,
         proposer: asString(event.proposer),
-        toAddress: asString(event.to),
-        amount: asString(event.amount),
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
@@ -367,8 +376,6 @@ export class MinaGuardIndexer {
         status: 'pending',
       },
       update: {
-        toAddress: asString(event.to),
-        amount: asString(event.amount),
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
@@ -377,6 +384,78 @@ export class MinaGuardIndexer {
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
+      },
+    });
+  }
+
+  /**
+   * Persists transfer receiver rows from propose/execution transfer events.
+   *
+   * The contract emits exactly MAX_RECEIVERS transfer events per emit point
+   * (padded with empties). By counting all events per proposal we detect
+   * batch boundaries: count 1–MAX_RECEIVERS is the first (accepted) batch,
+   * anything beyond is a re-emit (execution after propose) and is skipped.
+   *
+   * Offchain proposals already persist their receiver list via the API, so
+   * matching transfer events are skipped. On-chain proposals instead resume
+   * from any receivers already written, which lets retries backfill the
+   * remaining rows after a partial crash.
+   */
+  private async applyTransferEvent(
+    contractId: number,
+    event: Record<string, unknown>,
+    transferState: Map<string, { count: number; skip: boolean; checked: boolean }>
+  ): Promise<void> {
+    const proposalHash = asString(event.proposalHash);
+    if (!proposalHash) return;
+
+    const cacheKey = `${contractId}:${proposalHash}`;
+    let state = transferState.get(cacheKey);
+    if (!state) {
+      state = { count: 0, skip: false, checked: false };
+      transferState.set(cacheKey, state);
+    }
+
+    state.count++;
+    if (state.count > MAX_RECEIVERS) return;
+    if (state.skip) return;
+
+    const address = asString(event.receiver);
+    const amount = asString(event.amount);
+    if (!address || !amount || address === EMPTY_PUBLIC_KEY || amount === '0') return;
+
+    const proposal = await prisma.proposal.findUnique({
+      where: {
+        contractId_proposalHash: {
+          contractId,
+          proposalHash,
+        },
+      },
+      select: { id: true, origin: true },
+    });
+    if (!proposal) return;
+
+    if (!state.checked) {
+      state.checked = true;
+      const existingCount = await prisma.proposalReceiver.count({
+        where: { proposalId: proposal.id },
+      });
+      if (proposal.origin === 'offchain' && existingCount > 0) {
+        state.skip = true;
+        return;
+      }
+    }
+
+    const nextIndex = await prisma.proposalReceiver.count({
+      where: { proposalId: proposal.id },
+    });
+
+    await prisma.proposalReceiver.create({
+      data: {
+        proposalId: proposal.id,
+        idx: nextIndex,
+        address,
+        amount,
       },
     });
   }

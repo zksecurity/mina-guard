@@ -1,9 +1,13 @@
 import {
+  type BatchPayload,
+  type BatchPayloadProposal,
+  type OffchainProposalSubmission,
   type ApprovalRecord,
   type ContractSummary,
   type IndexerStatus,
   type OwnerRecord,
   type Proposal,
+  type ProposalReceiver,
   normalizeTxType,
 } from '@/lib/types';
 
@@ -124,11 +128,15 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
 
 /** Normalizes backend proposal rows and txType encodings for UI components. */
 function toProposal(input: Record<string, unknown>): Proposal {
+  const receivers = asReceivers(input.receivers);
+  const totalAmount = asNullableString(input.totalAmount)
+    ?? (receivers.length > 0
+      ? receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n).toString()
+      : null);
   return {
     proposalHash: asString(input.proposalHash) ?? '',
     proposer: asNullableString(input.proposer),
     toAddress: asNullableString(input.toAddress),
-    amount: asNullableString(input.amount),
     tokenId: asNullableString(input.tokenId),
     txType: normalizeTxType(asNullableString(input.txType)),
     data: asNullableString(input.data),
@@ -144,6 +152,9 @@ function toProposal(input: Record<string, unknown>): Proposal {
     executedAtBlock: asNullableNumber(input.executedAtBlock),
     createdAt: asString(input.createdAt) ?? new Date(0).toISOString(),
     updatedAt: asString(input.updatedAt) ?? new Date(0).toISOString(),
+    receivers,
+    recipientCount: asNullableNumber(input.recipientCount) ?? receivers.length,
+    totalAmount,
   };
 }
 
@@ -201,8 +212,8 @@ function asProposalStatus(value: unknown): Proposal['status'] {
 export async function postOffchainProposal(
   contractAddress: string,
   data: {
-    toAddress: string;
-    amount: string;
+    receivers?: Array<{ address: string; amount: string }>;
+    toAddress?: string;
     tokenId: string;
     txType: string;
     data: string;
@@ -214,7 +225,7 @@ export async function postOffchainProposal(
     proposalHash: string;
     proposer?: string;
   }
-): Promise<{ proposalHash: string; origin: string; status: string } | null> {
+): Promise<OffchainProposalSubmission | null> {
   try {
     const res = await fetch(
       `${API_BASE}/api/contracts/${contractAddress}/proposals`,
@@ -225,10 +236,16 @@ export async function postOffchainProposal(
       }
     );
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as any).error ?? `HTTP ${res.status}`);
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
+      throw new Error((err as Record<string, unknown>).error as string ?? `HTTP ${res.status}`);
     }
-    return (await res.json()) as any;
+    const body = await res.json() as Record<string, unknown>;
+    return {
+      proposalHash: asString(body.proposalHash) ?? '',
+      warnings: Array.isArray(body.warnings)
+        ? body.warnings.map((warning) => asString(warning) ?? '').filter(Boolean)
+        : [],
+    };
   } catch (err) {
     console.error('[api] postOffchainProposal failed:', err);
     throw err;
@@ -251,10 +268,10 @@ export async function postSignature(
       }
     );
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as any).error ?? `HTTP ${res.status}`);
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
+      throw new Error((err as Record<string, unknown>).error as string ?? `HTTP ${res.status}`);
     }
-    return (await res.json()) as any;
+    return (await res.json()) as { approvalCount: number; threshold: number; ready: boolean };
   } catch (err) {
     console.error('[api] postSignature failed:', err);
     throw err;
@@ -265,22 +282,67 @@ export async function postSignature(
 export async function fetchBatchPayload(
   contractAddress: string,
   proposalHash: string
-): Promise<{
-  ready: boolean;
-  threshold: number;
-  approvalCount: number;
-  proposal: Record<string, string | null>;
-  inputs: Array<{
-    isSome: boolean;
-    signer: string | null;
-    hasSignature: boolean;
-    signatureR: string | null;
-    signatureS: string | null;
-  }>;
-} | null> {
-  return getJson(
+): Promise<BatchPayload | null> {
+  const data = await getJson<Record<string, unknown>>(
     `/api/contracts/${contractAddress}/proposals/${proposalHash}/batch-payload`
   );
+  if (!data) return null;
+
+  const proposalRecord =
+    typeof data.proposal === 'object' && data.proposal !== null
+      ? data.proposal as Record<string, unknown>
+      : {};
+  const rawInputs = Array.isArray(data.inputs) ? data.inputs : [];
+
+  return {
+    ready: asBoolean(data.ready),
+    threshold: asNumber(data.threshold),
+    approvalCount: asNumber(data.approvalCount),
+    proposal: toBatchPayloadProposal(proposalRecord),
+    inputs: rawInputs.map((input) => {
+      const record =
+        typeof input === 'object' && input !== null
+          ? input as Record<string, unknown>
+          : {};
+      return {
+        isSome: asBoolean(record.isSome),
+        signer: asNullableString(record.signer),
+        hasSignature: asBoolean(record.hasSignature),
+        signatureR: asNullableString(record.signatureR),
+        signatureS: asNullableString(record.signatureS),
+      };
+    }),
+  };
+}
+
+function toBatchPayloadProposal(input: Record<string, unknown>): BatchPayloadProposal {
+  return {
+    proposalHash: asString(input.proposalHash) ?? '',
+    toAddress: asNullableString(input.toAddress),
+    tokenId: asNullableString(input.tokenId),
+    txType: asNullableString(input.txType),
+    data: asNullableString(input.data),
+    uid: asNullableString(input.uid),
+    configNonce: asNullableString(input.configNonce),
+    expiryBlock: asNullableString(input.expiryBlock),
+    networkId: asNullableString(input.networkId),
+    guardAddress: asNullableString(input.guardAddress),
+    receivers: asReceivers(input.receivers),
+    recipientCount: asNumber(input.recipientCount),
+    totalAmount: asNullableString(input.totalAmount),
+  };
+}
+
+function asReceivers(value: unknown): ProposalReceiver[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const record = typeof item === 'object' && item !== null ? item as Record<string, unknown> : {};
+    return {
+      index: asNullableNumber(record.index) ?? index,
+      address: asString(record.address) ?? '',
+      amount: asString(record.amount) ?? '0',
+    };
+  });
 }
 
 /** Fetches all raw indexed events for a contract using paginated backend API reads. */
@@ -295,7 +357,10 @@ export async function fetchAllEvents(contractAddress: string): Promise<Array<{ e
       { cache: 'no-store' }
     );
 
-    if (!response.ok) break;
+    if (!response.ok) {
+      console.error(`[api] fetchAllEvents page at offset=${offset} returned ${response.status}`);
+      break;
+    }
 
     const batch = (await response.json()) as Array<{ eventType: string; payload: unknown }>;
     events.push(

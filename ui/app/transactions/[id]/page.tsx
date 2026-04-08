@@ -79,14 +79,17 @@ export default function TransactionDetailPage() {
 
     const captured = { contractAddress: multisig.address, signerAddress: wallet.address, proposalHash: proposal.proposalHash };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    let success = false;
     await startOperation('Signing proposal...', async (onProgress) => {
-      return await submitOffchainSignature({
+      const result = await submitOffchainSignature({
         contractAddress: captured.contractAddress,
         signerAddress: captured.signerAddress,
         proposalHash: captured.proposalHash,
       }, onProgress, signer);
+      if (result) success = true;
+      return result;
     });
-    router.push('/transactions');
+    if (success) router.push('/transactions');
   };
 
   /** Fetches batch payload and submits execute*BatchSig transaction on-chain. */
@@ -101,14 +104,17 @@ export default function TransactionDetailPage() {
       void startOperation('Execute proposal', async () => { throw err; });
       return;
     }
-    void startOperation('Building batch execute transaction...', async (onProgress) => {
-      return await executeBatchTx({
+    let success = false;
+    await startOperation('Building batch execute transaction...', async (onProgress) => {
+      const result = await executeBatchTx({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
       }, onProgress, signer);
+      if (result) success = true;
+      return result;
     });
-    router.push('/');
+    if (success) router.push('/');
   };
 
   if (!wallet.connected || !multisig) {
@@ -215,8 +221,8 @@ export default function TransactionDetailPage() {
             <DetailRow label="Proposed by" value={proposal.proposer ?? '-'} mono copyable />
             {proposal.txType === 'transfer' && (
               <>
-                <DetailRow label="Recipient" value={proposal.toAddress ?? '-'} mono copyable />
-                <DetailRow label="Amount" value={`${formatMina(proposal.amount)} MINA`} />
+                <DetailRow label="Recipients" value={String(proposal.recipientCount)} />
+                <DetailRow label="Total Amount" value={`${formatMina(proposal.totalAmount)} MINA`} />
               </>
             )}
             {proposal.txType === 'changeThreshold' && (
@@ -227,6 +233,28 @@ export default function TransactionDetailPage() {
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>
         </div>
+
+        {proposal.txType === 'transfer' && (
+          <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
+            <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Recipients</h3>
+            <div className="space-y-2">
+              {proposal.receivers.map((receiver) => (
+                <div
+                  key={`${receiver.index}-${receiver.address}-${receiver.amount}`}
+                  className="flex items-center justify-between gap-4 rounded-lg border border-safe-border/60 px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs text-safe-text">Recipient #{receiver.index + 1}</p>
+                    <p className="text-sm font-mono truncate">{receiver.address}</p>
+                  </div>
+                  <p className="text-sm font-mono text-safe-green shrink-0">
+                    {formatMina(receiver.amount)} MINA
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
           <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Confirmations</h3>

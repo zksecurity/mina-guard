@@ -21,11 +21,13 @@ import Client from 'mina-signer';
 
 import {
   MinaGuard,
+  Receiver,
   TransactionProposal,
   ownerKey,
   EXECUTED_MARKER,
   PROPOSED_MARKER,
   MAX_OWNERS,
+  MAX_RECEIVERS,
   SetupOwnersInput,
   OwnerStore,
   VoteNullifierStore,
@@ -37,6 +39,7 @@ import {
 } from 'contracts';
 
 import {
+  type OffchainProposalSubmission,
   type NewProposalInput,
   type Proposal,
   normalizeTxType,
@@ -115,6 +118,7 @@ interface ContractState {
 
 function configureNetwork() {
   const network = Mina.Network({
+    networkId: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
     mina: MINA_ENDPOINT,
     archive: ARCHIVE_ENDPOINT,
   });
@@ -122,19 +126,21 @@ function configureNetwork() {
   Mina.setActiveInstance(network);
 }
 
-async function compileContract(): Promise<boolean> {
-  if (compilePromise) {
-    await compilePromise;
-    return true;
-  }
+let compileSucceeded = false;
 
-  compilePromise = (async () => {
-    configureNetwork();
-    await MinaGuard.compile();
-  })();
+async function compileContract(): Promise<boolean> {
+  if (compileSucceeded) return true;
+
+  if (!compilePromise) {
+    compilePromise = (async () => {
+      configureNetwork();
+      await MinaGuard.compile();
+    })();
+  }
 
   try {
     await compilePromise;
+    compileSucceeded = true;
     return true;
   } catch (error) {
     console.error('[MultisigWorker] Contract compile failed', error);
@@ -322,7 +328,7 @@ function safePublicKey(base58: string | null | undefined): InstanceType<typeof P
   }
 }
 
-function uiTxTypeToField(type: string): any {
+function uiTxTypeToField(type: string): InstanceType<typeof Field> {
   if (type === 'transfer') return Field(0);
   if (type === 'addOwner') return Field(1);
   if (type === 'removeOwner') return Field(2);
@@ -330,7 +336,7 @@ function uiTxTypeToField(type: string): any {
   return Field(4);
 }
 
-function buildProposalDataField(input: NewProposalInput): any {
+function buildProposalDataField(input: NewProposalInput): InstanceType<typeof Field> {
   if (input.txType === 'changeThreshold') {
     return Field(input.newThreshold ?? 0);
   }
@@ -347,6 +353,42 @@ function buildProposalDataField(input: NewProposalInput): any {
     }
   }
   return Field(0);
+}
+
+function buildTransferReceivers(
+  receivers: Array<{ address: string; amount: string }>
+): InstanceType<typeof Receiver>[] {
+  const normalized = receivers.map((receiver) => new Receiver({
+    address: PublicKey.fromBase58(receiver.address),
+    amount: UInt64.from(receiver.amount),
+  }));
+
+  while (normalized.length < MAX_RECEIVERS) {
+    normalized.push(Receiver.empty());
+  }
+
+  return normalized.slice(0, MAX_RECEIVERS);
+}
+
+function buildProposalStruct(
+  proposal: Pick<
+    Proposal,
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress'
+  >,
+  fallbackGuardAddress: string
+): InstanceType<typeof TransactionProposal> {
+  const txType = normalizeTxType(proposal.txType);
+  return new TransactionProposal({
+    receivers: buildTransferReceivers(proposal.receivers),
+    tokenId: Field(proposal.tokenId ?? '0'),
+    txType: txType ? uiTxTypeToField(txType) : Field(0),
+    data: Field(proposal.data ?? '0'),
+    uid: Field(proposal.uid ?? '0'),
+    configNonce: Field(proposal.configNonce ?? '0'),
+    expiryBlock: Field(proposal.expiryBlock ?? '0'),
+    networkId: Field(proposal.networkId ?? '0'),
+    guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
+  });
 }
 
 /** Safely serializes tx.toJSON() regardless of whether it returns a string or object. */
@@ -434,11 +476,19 @@ async function submitTx(
 const workerApi = {
   /** Sets the private key for e2e test mode (direct sign/send, no Auro). */
   setTestKey(privateKeyBase58: string) {
+    if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') {
+      console.warn('[MultisigWorker] setTestKey called outside E2E mode, ignoring');
+      return;
+    }
     testPrivateKey = PrivateKey.fromBase58(privateKeyBase58);
   },
 
   /** Disables proof generation (for use with lightnet / test environments). */
   setSkipProofs(skip: boolean) {
+    if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') {
+      console.warn('[MultisigWorker] setSkipProofs called outside E2E mode, ignoring');
+      return;
+    }
     skipProofs = skip;
   },
 
@@ -591,8 +641,8 @@ const workerApi = {
 
   /**
    * Creates an offchain proposal in the backend and submits the proposer's
-   * signature as the first approval.  No on-chain transaction is sent.
-   * Returns the proposal hash string on success.
+   * signature as the first approval. No on-chain transaction is sent.
+   * Returns the created proposal hash plus any non-fatal backend warnings.
    */
   async createOffchainProposal(
     params: {
@@ -604,34 +654,20 @@ const workerApi = {
     },
     signFn: SignFieldsFn,
     progressFn: ProgressFn
-  ): Promise<string | null> {
+  ): Promise<OffchainProposalSubmission | null> {
     progressFn('Computing proposal hash...');
     configureNetwork();
-
-    const to = (() => {
-      if (params.input.txType === 'transfer' && params.input.to)
-        return PublicKey.fromBase58(params.input.to);
-      if (params.input.txType === 'addOwner' && params.input.newOwner)
-        return PublicKey.fromBase58(params.input.newOwner);
-      if (params.input.txType === 'removeOwner' && params.input.removeOwnerAddress)
-        return PublicKey.fromBase58(params.input.removeOwnerAddress);
-      if (params.input.txType === 'setDelegate' && params.input.delegate)
-        return PublicKey.fromBase58(params.input.delegate);
-      return PublicKey.empty();
-    })();
-
-    const amount =
+    const transferReceivers =
       params.input.txType === 'transfer'
-        ? UInt64.from(Math.floor(Number(params.input.amount ?? '0') * 1_000_000_000))
-        : UInt64.from(0);
+        ? buildTransferReceivers(params.input.receivers ?? [])
+        : buildTransferReceivers([]);
 
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input);
     const uid = Field.random();
 
     const proposal = new TransactionProposal({
-      to,
-      amount,
+      receivers: transferReceivers,
       tokenId: Field(0),
       txType,
       data,
@@ -651,9 +687,16 @@ const workerApi = {
     if (!signature) return null;
 
     progressFn('Submitting proposal to backend...');
-    await postOffchainProposal(params.contractAddress, {
-      toAddress: to.toBase58(),
-      amount: amount.toString(),
+    const createdProposal = await postOffchainProposal(params.contractAddress, {
+      receivers: params.input.txType === 'transfer' ? (params.input.receivers ?? []) : undefined,
+      toAddress:
+        params.input.txType === 'addOwner'
+          ? params.input.newOwner
+          : params.input.txType === 'removeOwner'
+            ? params.input.removeOwnerAddress
+            : params.input.txType === 'setDelegate' && !params.input.undelegate
+              ? params.input.delegate
+              : undefined,
       tokenId: '0',
       txType: txType.toString(),
       data: data.toString(),
@@ -665,6 +708,7 @@ const workerApi = {
       proposalHash: hashStr,
       proposer: params.proposerAddress,
     });
+    if (!createdProposal) return null;
 
     progressFn('Submitting signature to backend...');
     const sigJson = signature.toJSON();
@@ -674,7 +718,7 @@ const workerApi = {
       signatureS: sigJson.s,
     });
 
-    return 'Proposal created';
+    return createdProposal;
   },
 
   /**
@@ -751,18 +795,12 @@ const workerApi = {
 
     // Build TransactionProposal struct from the proposal record
     const txType = normalizeTxType(params.proposal.txType);
-    const proposalStruct = new TransactionProposal({
-      to: safePublicKey(params.proposal.toAddress),
-      amount: UInt64.from(params.proposal.amount ?? '0'),
-      tokenId: Field(params.proposal.tokenId ?? '0'),
-      txType: txType ? uiTxTypeToField(txType) : Field(0),
-      data: Field(params.proposal.data ?? '0'),
-      uid: Field(params.proposal.uid ?? '0'),
-      configNonce: Field(params.proposal.configNonce ?? contractState.configNonce),
-      expiryBlock: Field(params.proposal.expiryBlock ?? '0'),
-      networkId: Field(params.proposal.networkId ?? contractState.networkId),
-      guardAddress: safePublicKey(params.proposal.guardAddress ?? params.contractAddress),
-    });
+    const proposalStruct = buildProposalStruct({
+      ...params.proposal,
+      configNonce: params.proposal.configNonce ?? String(contractState.configNonce),
+      networkId: params.proposal.networkId ?? contractState.networkId,
+      guardAddress: params.proposal.guardAddress ?? params.contractAddress,
+    }, params.contractAddress);
 
     const proposalHash = proposalStruct.hash();
     const approvalWitness = approvalStore.getWitness(proposalHash);

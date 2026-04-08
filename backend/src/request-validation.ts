@@ -91,9 +91,35 @@ export function validateQuery<Shape extends ZodRawShape>(
       return;
     }
 
+    (req as Request & { query: z.infer<typeof schema> }).query = parsed.data;
     next();
   };
 }
+
+/** Shared route param schema for :address endpoints. */
+export const addressParamsSchema = z.object({
+  address: addressParamSchema,
+});
+
+/** Shared route param schema for :address/proposals/:proposalHash endpoints. */
+export const proposalParamsSchema = z.object({
+  address: addressParamSchema,
+  proposalHash: proposalHashParamSchema,
+});
+
+export type AddressParams = z.infer<typeof addressParamsSchema>;
+export type ProposalParams = z.infer<typeof proposalParamsSchema>;
+
+/** Preconfigured address params middleware with standard error messages. */
+export const addressParamsMiddleware = validateParams(addressParamsSchema, {
+  address: 'Invalid contract address',
+});
+
+/** Preconfigured proposal params middleware with standard error messages. */
+export const proposalParamsMiddleware = validateParams(proposalParamsSchema, {
+  address: 'Invalid contract address',
+  proposalHash: 'Invalid proposal hash',
+});
 
 function getValidationMessage(
   error: z.ZodError,

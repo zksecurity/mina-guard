@@ -1,4 +1,5 @@
 import { Field, Mina, PrivateKey, Signature, UInt64, Bool } from 'o1js';
+import { Receiver } from '../MinaGuard.js';
 import { EXECUTED_MARKER } from '../constants.js';
 import {
   setupLocalBlockchain,
@@ -382,7 +383,7 @@ describe('MinaGuard - Delegate BatchSig', () => {
   it('should reject wrong txType', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      recipient, UInt64.from(1_000_000_000), Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
 
