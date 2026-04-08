@@ -816,12 +816,9 @@ test('20. Propose transfer with near-future expiry', async () => {
   await page.getByRole('link', { name: 'Send MINA', exact: true }).click();
   await page.waitForURL(/transactions\/new/);
 
-  const recipientInput = page.locator('input[placeholder*="B62"]').first();
-  await recipientInput.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientInput.fill(accounts[2].publicKey);
-
-  const amountInput = page.locator('input[placeholder*="0.0"]').first();
-  await amountInput.fill('0.5');
+  const recipientsInput = page.locator('textarea');
+  await recipientsInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await recipientsInput.fill(`${accounts[2].publicKey},0.5`);
 
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
