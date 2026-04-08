@@ -274,7 +274,7 @@ export default function TransactionDetailPage() {
                 disabled={isOperating}
                 className="flex-1 bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isOperating ? 'Waiting for pending transaction...' : 'Sign Proposal'}
+                {isOperating ? 'Waiting for pending transaction...' : 'Approve Proposal'}
               </button>
             )}
             {canExecute && (

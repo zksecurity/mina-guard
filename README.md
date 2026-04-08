@@ -60,12 +60,7 @@ bun run --filter contracts test
 
 Full end-to-end tests live in `e2e/` and exercise the deploy → propose → approve → execute lifecycle against a real Mina network. See [e2e/README.md](e2e/README.md) for setup details.
 
-**Important:** The contracts must be built before running E2E tests — the test harness does not build them automatically.
-
 ```bash
-# Build contracts first
-bun run --filter contracts build
-
 # Quick start with local lightnet (default)
 bun run test:e2e
 

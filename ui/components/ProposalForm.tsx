@@ -1,8 +1,7 @@
 'use client';
 
-import { MAX_OWNERS } from '@/lib/constants';
+import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
 import { useEffect, useState } from 'react';
-import { MAX_RECEIVERS } from "contracts";
 import { NewProposalInput, TxType } from '@/lib/types';
 
 interface ProposalFormProps {
