@@ -388,6 +388,8 @@ function buildProposalStruct(
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
+    destination: Field(0),
+    childAccount: PublicKey.empty(),
   });
 }
 
@@ -676,6 +678,8 @@ const workerApi = {
       expiryBlock: Field(params.input.expiryBlock ?? 0),
       networkId: Field(params.networkId),
       guardAddress: PublicKey.fromBase58(params.contractAddress),
+      destination: Field(0),
+      childAccount: PublicKey.empty(),
     });
 
     const proposalHash = proposal.hash();
