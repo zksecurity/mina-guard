@@ -25,7 +25,7 @@ import {
   EXECUTED_MARKER,
   EMPTY_MERKLE_MAP_ROOT,
   TxType,
-  ExecutionMode,
+  Destination,
 } from './constants';
 
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption } from './list-commitment';
@@ -63,7 +63,7 @@ export class TransactionProposal extends Struct({
   expiryBlock: Field,
   networkId: Field,
   guardAddress: PublicKey,
-  executionMode: Field,
+  destination: Field,
   childAccount: PublicKey,
 }) {
   /** Returns the unique proposal hash used as map key and signature message. */
@@ -82,7 +82,7 @@ export class TransactionProposal extends Struct({
       this.expiryBlock,
       this.networkId,
       ...this.guardAddress.toFields(),
-      this.executionMode,
+      this.destination,
       ...this.childAccount.toFields(),
     ]);
   }
@@ -131,7 +131,7 @@ export class ProposalEvent extends Struct({
   expiryBlock: Field,
   networkId: Field,
   guardAddress: PublicKey,
-  executionMode: Field,
+  destination: Field,
   childAccount: PublicKey,
 }) { }
 
@@ -204,6 +204,36 @@ export class DelegateBatchEvent extends Struct({
   approverChain: Field,
 }) { }
 
+export class CreateChildEvent extends Struct({
+  proposalHash: Field,
+  childAddress: PublicKey,
+  parentAddress: PublicKey,
+  ownersCommitment: Field,
+  threshold: Field,
+  numOwners: Field,
+}) { }
+
+export class AllocateChildEvent extends Struct({
+  proposalHash: Field,
+  childAddress: PublicKey,
+  amount: UInt64,
+}) { }
+
+export class ReclaimChildEvent extends Struct({
+  proposalHash: Field,
+  amount: UInt64,
+}) { }
+
+export class DestroyChildEvent extends Struct({
+  proposalHash: Field,
+  reclaimedAmount: UInt64,
+}) { }
+
+export class TogglePolicyEvent extends Struct({
+  proposalHash: Field,
+  enabled: Field,
+}) { }
+
 // -- Contract ----------------------------------------------------------------
 
 /**
@@ -221,6 +251,7 @@ export class MinaGuard extends SmartContract {
   @state(Field) networkId = State<Field>();
   @state(PublicKey) parent = State<PublicKey>();
   @state(Field) childExecutionRoot = State<Field>();
+  @state(Field) policyEnabled = State<Field>();
 
   events = {
     deployed: DeployEvent,
@@ -237,6 +268,11 @@ export class MinaGuard extends SmartContract {
     thresholdChangeBatch: ThresholdChangeBatchEvent,
     delegate: DelegateEvent,
     delegateBatch: DelegateBatchEvent,
+    createChild: CreateChildEvent,
+    allocateChild: AllocateChildEvent,
+    reclaimChild: ReclaimChildEvent,
+    destroyChild: DestroyChildEvent,
+    togglePolicy: TogglePolicyEvent,
   };
 
   /** Configures account permissions and emits a deploy discovery event. */
@@ -248,7 +284,13 @@ export class MinaGuard extends SmartContract {
       send: Permissions.proof(),
       receive: Permissions.none(),
       setDelegate: Permissions.proof(),
-      setPermissions: Permissions.proof(),
+      setPermissions: Permissions.impossible(),
+      setVerificationKey: Permissions.VerificationKey.impossibleDuringCurrentVersion(),
+      setZkappUri: Permissions.impossible(),
+      setTokenSymbol: Permissions.impossible(),
+      incrementNonce: Permissions.impossible(),
+      setVotingFor: Permissions.impossible(),
+      setTiming: Permissions.impossible(),
     });
 
     this.emitEvent('deployed', {
@@ -296,32 +338,35 @@ export class MinaGuard extends SmartContract {
     this.numOwners.set(numOwners);
   }
 
-  private assertProposalTargetsMainAccount(proposal: TransactionProposal): void {
-    proposal.executionMode.assertEquals(
-      ExecutionMode.LOCAL,
-      'Not a local execution proposal'
-    );
-    proposal.childAccount
-      .equals(PublicKey.empty())
-      .assertTrue('Local proposal cannot target child accounts');
+  private assertPolicyEnabledIfChild(): void {
+    const parent = this.parent.getAndRequireEquals();
+    const isChild = parent.equals(PublicKey.empty()).not();
+    const policyEnabled = this.policyEnabled.getAndRequireEquals();
+    // Either is not a child or is a child and policy is enabled
+    isChild.not().or(policyEnabled.equals(Field(1))).assertTrue('Independent policy disabled');
   }
 
-  private assertProposalTargetsThisChild(proposal: TransactionProposal): void {
-    proposal.executionMode.assertEquals(
-      ExecutionMode.CHILD,
-      'Not a child execution proposal'
+  private assertLocalProposal(proposal: TransactionProposal): void {
+    proposal.destination.assertEquals(
+      Destination.LOCAL,
+      'Not a local destination proposal'
     );
-    const isWildcard = proposal.childAccount.equals(PublicKey.empty());
-    isWildcard
-      .or(proposal.childAccount.equals(this.address))
+  }
+
+  private assertValidRemoteProposal(proposal: TransactionProposal): void {
+    proposal.destination.assertEquals(
+      Destination.REMOTE,
+      'Not a remote destination proposal'
+    );
+    proposal.childAccount.equals(this.address)
       .assertTrue('Proposal not for this child');
   }
 
-  private assertIsChild(parent: PublicKey): void {
+  private assertCurrAccountIsChild(parent: PublicKey): void {
     parent.equals(PublicKey.empty()).assertFalse('Not a child account');
   }
 
-  private assertProposalConfigNetworkAndGuardValues(
+  private assertValidProposalConfigNetworkAndGuard(
     proposal: TransactionProposal,
     configNonce: Field,
     networkId: Field,
@@ -329,7 +374,7 @@ export class MinaGuard extends SmartContract {
   ): void {
     proposal.configNonce.assertEquals(configNonce, 'Config nonce mismatch - governance changed since proposal',);
     proposal.networkId.assertEquals(networkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(guardAddress);
+    proposal.guardAddress.equals(guardAddress).assertTrue('Guard address mismatch');
   }
 
   /** Validates proposal binding to current config nonce, network and contract address. */
@@ -338,7 +383,7 @@ export class MinaGuard extends SmartContract {
   ): void {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
     const currentNetworkId = this.networkId.getAndRequireEquals();
-    this.assertProposalConfigNetworkAndGuardValues(
+    this.assertValidProposalConfigNetworkAndGuard(
       proposal,
       currentConfigNonce,
       currentNetworkId,
@@ -346,21 +391,23 @@ export class MinaGuard extends SmartContract {
     );
   }
 
-  private assertProposalLifecycleRouting(proposal: TransactionProposal): void {
-    const isLocal = proposal.executionMode.equals(ExecutionMode.LOCAL);
-    const isChild = proposal.executionMode.equals(ExecutionMode.CHILD);
-    isLocal.or(isChild).assertTrue('Invalid execution mode');
+  // Checks that:
+  //   1. Proposal either has remote destination or has local destination and does not target child accounts
+  //   2. Proposal either has local destination or has remote destination and is not a child account
+  private assertProposalDestinationAndChildAccount(proposal: TransactionProposal): void {
+    const isDestinationLocal = proposal.destination.equals(Destination.LOCAL);
+    const isDestinationRemote = proposal.destination.equals(Destination.REMOTE);
+    isDestinationLocal.or(isDestinationRemote).assertTrue('Invalid execution mode');
 
-    isLocal
-      .not()
-      .or(proposal.childAccount.equals(PublicKey.empty()))
-      .assertTrue('Local proposal cannot target child accounts');
+    const isNotTargetingChildAccount = proposal.childAccount.equals(PublicKey.empty());
+    isDestinationRemote
+      .or(isNotTargetingChildAccount)
+      .assertTrue('Local destination (Parent or Child) proposals cannot target child accounts');
 
-    const parent = this.parent.getAndRequireEquals();
-    isChild
-      .not()
-      .or(parent.equals(PublicKey.empty()))
-      .assertTrue('Child-routed proposals must be stored on a parent guard');
+    const isParent = this.parent.getAndRequireEquals().equals(PublicKey.empty());
+    isDestinationLocal
+      .or(isParent)
+      .assertTrue('Remote destination proposals must be proposed/approved on a parent account');
   }
 
   /** Asserts optional expiry block has not passed. */
@@ -429,6 +476,37 @@ export class MinaGuard extends SmartContract {
     }
   }
 
+  /** Verifies batch signatures from parent owners against the parent's on-chain state. */
+  private verifyParentBatchSig(
+    proposal: TransactionProposal,
+    parentAddress: PublicKey,
+    sigs: SignatureInputs,
+  ): Field {
+    const parentGuard = new MinaGuard(parentAddress);
+    const parentOwnersCommitment = parentGuard.ownersCommitment.getAndRequireEquals();
+    parentOwnersCommitment.assertNotEquals(Field(0), 'Parent not initialized');
+
+    const parentConfigNonce = parentGuard.configNonce.getAndRequireEquals();
+    const parentNetworkId = parentGuard.networkId.getAndRequireEquals();
+    this.assertValidProposalConfigNetworkAndGuard(
+      proposal,
+      parentConfigNonce,
+      parentNetworkId,
+      parentAddress,
+    );
+
+    this.assertProposalNotExpired(proposal);
+
+    const proposalHash = proposal.hash();
+    const verificationRes = batchVerify(sigs, proposalHash);
+    verificationRes.ownerChain.assertEquals(parentOwnersCommitment, 'Owner list mismatch');
+
+    const { threshold: parentThreshold } = parentGuard.getGovernanceState();
+    verificationRes.approvalCount.assertGreaterThanOrEqual(parentThreshold, 'Insufficient approvals');
+
+    return proposalHash;
+  }
+
   /** Sends MINA to each receiver slot and emits transfer events. */
   private executeTransfers(proposal: TransactionProposal, proposalHash: Field): void {
     for (let i = 0; i < MAX_RECEIVERS; i++) {
@@ -457,29 +535,23 @@ export class MinaGuard extends SmartContract {
 
   private markChildExecuted(childExecutionWitness: MerkleMapWitness): void {
     const [newChildExecutionRoot] =
-      childExecutionWitness.computeRootAndKey(Field(1));
+      childExecutionWitness.computeRootAndKey(EXECUTED_MARKER);
     this.childExecutionRoot.set(newChildExecutionRoot);
   }
 
-
-  /** Method to initialize the contract. Cannot call twice.
-   *
-   * IMPORTANT: Assuming an untrusted deployer, a client must compute the expected commitment
-   * themselves and cross-check with the one on chain. numOwners as well, for sync.
-   *
-   * Emits fixed-size owner bootstrap events for indexers.
-   */
-  @method async setup(
+  /** Shared initialization: validates config, sets all state, emits setup + owner events. */
+  private initializeState(
     ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
     networkId: Field,
     parent: PublicKey,
-    initialOwners: SetupOwnersInput
-  ) {
+    initialOwners: SetupOwnersInput,
+  ): void {
     // Use requireEquals instead of getAndRequireEquals so deploy+setup can
     // be combined in a single transaction (no account cache read needed).
     this.ownersCommitment.requireEquals(Field(0));
+    ownersCommitment.assertNotEquals(Field(0), 'Owners commitment must not be zero');
 
     threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
     numOwners.assertGreaterThanOrEqual(
@@ -495,14 +567,9 @@ export class MinaGuard extends SmartContract {
     this.networkId.set(networkId);
     this.parent.set(parent);
     this.childExecutionRoot.set(EMPTY_MERKLE_MAP_ROOT);
+    this.policyEnabled.set(Field(1));
 
-    this.emitEvent('setup', {
-      ownersCommitment,
-      threshold,
-      numOwners,
-      networkId,
-      parent,
-    });
+    this.emitEvent('setup', { ownersCommitment, threshold, numOwners, networkId, parent });
 
     for (let i = 0; i < MAX_OWNERS; i++) {
       const index = Field(i);
@@ -512,6 +579,67 @@ export class MinaGuard extends SmartContract {
         index,
       });
     }
+  }
+
+  /**
+   * Initializes a root guard (no parent). Cannot call twice.
+   *
+   * IMPORTANT: Assuming an untrusted deployer, a client must compute the expected commitment
+   * themselves and cross-check with the one on chain. numOwners as well, for sync.
+   */
+  @method async setup(
+    ownersCommitment: Field,
+    threshold: Field,
+    numOwners: Field,
+    networkId: Field,
+    initialOwners: SetupOwnersInput
+  ) {
+    this.initializeState(ownersCommitment, threshold, numOwners, networkId, PublicKey.empty(), initialOwners);
+  }
+
+  /**
+   * Initializes a child guard linked to a parent. Parent owners sign off on
+   * a CREATE_CHILD proposal via batch signatures. No on-chain proposal needed
+   * on the parent.
+   *
+   * The proposal's `childAccount` must equal this contract's address and
+   * `data` must equal Poseidon.hash(ownersCommitment, threshold, numOwners).
+   */
+  @method async setupChild(
+    ownersCommitment: Field,
+    threshold: Field,
+    numOwners: Field,
+    networkId: Field,
+    initialOwners: SetupOwnersInput,
+    proposal: TransactionProposal,
+    sigs: SignatureInputs,
+  ) {
+    const parentAddress = proposal.guardAddress;
+    parentAddress.equals(PublicKey.empty()).assertFalse('Parent address required');
+
+    // Verify proposal is CREATE_CHILD targeting this address
+    proposal.txType.assertEquals(TxType.CREATE_CHILD, 'Not a create child tx');
+    proposal.destination.assertEquals(Destination.REMOTE, 'Not a remote execution proposal');
+    proposal.childAccount.assertEquals(this.address);
+
+    // Verify proposal data matches child config
+    const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
+
+    const proposalHash = this.verifyParentBatchSig(proposal, parentAddress, sigs);
+
+    this.initializeState(ownersCommitment, threshold, numOwners, networkId, parentAddress, initialOwners);
+
+    this.policyEnabled.set(Field(1));
+
+    this.emitEvent('createChild', {
+      proposalHash,
+      childAddress: this.address,
+      parentAddress,
+      ownersCommitment,
+      threshold,
+      numOwners,
+    });
   }
 
   /**
@@ -526,6 +654,7 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness
   ) {
     // --- propose logic ---
+    this.assertPolicyEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
     this.assertOwnerMembership(proposer, ownerWitness, ownersCommitment);
 
@@ -533,7 +662,7 @@ export class MinaGuard extends SmartContract {
     this.proposalCounter.set(currentCounter.add(1));
 
     this.assertProposalConfigNetworkAndGuard(proposal);
-    this.assertProposalLifecycleRouting(proposal);
+    this.assertProposalDestinationAndChildAccount(proposal);
 
     const proposalHash = proposal.hash();
 
@@ -572,7 +701,7 @@ export class MinaGuard extends SmartContract {
       expiryBlock: proposal.expiryBlock,
       networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
-      executionMode: proposal.executionMode,
+      destination: proposal.destination,
       childAccount: proposal.childAccount,
     });
 
@@ -595,10 +724,11 @@ export class MinaGuard extends SmartContract {
     currentApprovalCount: Field,
     voteNullifierWitness: MerkleMapWitness
   ) {
+    this.assertPolicyEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
     this.assertOwnerMembership(approver, ownerWitness, ownersCommitment);
     this.assertProposalConfigNetworkAndGuard(proposal);
-    this.assertProposalLifecycleRouting(proposal);
+    this.assertProposalDestinationAndChildAccount(proposal);
 
     const proposalHash = proposal.hash();
     signature.verify(approver, [proposalHash]).assertTrue('Invalid signature');
@@ -646,10 +776,11 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness,
     approvalCount: Field
   ) {
+    this.assertPolicyEnabledIfChild();
     this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
@@ -679,10 +810,10 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness,
     sigs: SignatureInputs
   ) {
-
+    this.assertPolicyEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
     proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
     this.assertProposalConfigNetworkAndGuard(proposal);
 
     const currentCounter = this.proposalCounter.getAndRequireEquals();
@@ -723,13 +854,14 @@ export class MinaGuard extends SmartContract {
     ownerWitness: OwnerWitness,
     insertAfter: PublicKeyOption,
   ) {
+    this.assertPolicyEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
 
     // Must be ADD_OWNER or REMOVE_OWNER
     const isAdd = proposal.txType.equals(TxType.ADD_OWNER);
     const isRemove = proposal.txType.equals(TxType.REMOVE_OWNER);
     isAdd.or(isRemove).assertTrue('Not an owner change tx');
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
 
     this.assertProposalConfigNetworkAndGuard(proposal);
 
@@ -797,13 +929,14 @@ export class MinaGuard extends SmartContract {
     sigs: SignatureInputs,
     newThreshold: Field,
   ) {
+    this.assertPolicyEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(
       TxType.CHANGE_THRESHOLD,
       'Not a threshold change tx'
     );
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
 
     this.assertProposalConfigNetworkAndGuard(proposal);
 
@@ -864,13 +997,14 @@ export class MinaGuard extends SmartContract {
     sigs: SignatureInputs,
     delegate: PublicKey,
   ) {
+    this.assertPolicyEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(
       TxType.SET_DELEGATE,
       'Not a delegate tx'
     );
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
 
     this.assertProposalConfigNetworkAndGuard(proposal);
 
@@ -924,12 +1058,13 @@ export class MinaGuard extends SmartContract {
     ownerWitness: OwnerWitness,
     insertAfter: PublicKeyOption,
   ) {
+    this.assertPolicyEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
 
     const isAdd = proposal.txType.equals(TxType.ADD_OWNER);
     const isRemove = proposal.txType.equals(TxType.REMOVE_OWNER);
     isAdd.or(isRemove).assertTrue('Not an owner change tx');
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
@@ -991,13 +1126,14 @@ export class MinaGuard extends SmartContract {
     approvalCount: Field,
     newThreshold: Field
   ) {
+    this.assertPolicyEnabledIfChild();
     this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(
       TxType.CHANGE_THRESHOLD,
       'Not a threshold change tx'
     );
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
@@ -1049,13 +1185,14 @@ export class MinaGuard extends SmartContract {
     approvalCount: Field,
     delegate: PublicKey
   ) {
+    this.assertPolicyEnabledIfChild();
     this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(
       TxType.SET_DELEGATE,
       'Not a delegate tx'
     );
-    this.assertProposalTargetsMainAccount(proposal);
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
@@ -1091,80 +1228,167 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  @method async child_executeDelegate(
+  // -- Child Lifecycle Methods ------------------------------------------------
+
+  /**
+   * Parent allocates MINA to child accounts. Uses receivers array as (childAddress, amount) pairs.
+   * 
+   * Note: Should be called on the parent account.
+   */
+  @method async allocateChildren(
     proposal: TransactionProposal,
-    parentApprovalWitness: MerkleMapWitness,
-    parentApprovalCount: Field,
+    approvalWitness: MerkleMapWitness,
+    sigs: SignatureInputs
+  ) {
+    const ownersCommitment = this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.ALLOCATE_CHILD, 'Not an allocate child tx');
+    this.assertLocalProposal(proposal);
+    this.assertProposalConfigNetworkAndGuard(proposal);
+
+    const currentCounter = this.proposalCounter.getAndRequireEquals();
+    this.proposalCounter.set(currentCounter.add(1));
+
+    this.assertProposalNotExpired(proposal);
+    const proposalHash = proposal.hash();
+
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, Field(0));
+
+    const verificationRes = batchVerify(sigs, proposalHash);
+    verificationRes.ownerChain.assertEquals(ownersCommitment, 'Owner list mismatch');
+
+    const { threshold } = this.getGovernanceState();
+    verificationRes.approvalCount.assertGreaterThanOrEqual(threshold, 'Insufficient approvals');
+
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const isEmpty = r.address.equals(PublicKey.empty());
+      const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
+      this.send({ to: r.address, amount: effectiveAmount });
+      this.emitEvent('allocateChild', {
+        proposalHash,
+        childAddress: r.address,
+        amount: effectiveAmount,
+      });
+    }
+
+    this.markExecuted(approvalWitness);
+
+    this.emitEvent('executionBatch', {
+      proposalHash,
+      txType: proposal.txType,
+      approverChain: verificationRes.signerChain,
+    });
+  }
+
+  /**
+   * Child reclaims MINA to parent, authorized by parent batch-sigs.
+   * 
+   * Note: Should be called on the child contract.
+   */
+  @method async reclaimToParent(
+    proposal: TransactionProposal,
+    sigs: SignatureInputs,
     childExecutionWitness: MerkleMapWitness,
-    delegate: PublicKey
+    amount: UInt64
   ) {
     this.getInitializedOwnersCommitment();
 
-    proposal.txType.assertEquals(
-      TxType.SET_DELEGATE,
-      'Not a delegate tx'
-    );
+    proposal.txType.assertEquals(TxType.RECLAIM_CHILD, 'Not a reclaim child tx');
 
-    const proposalHash = proposal.hash();
     const parentAddress = this.parent.getAndRequireEquals();
-    this.assertIsChild(parentAddress);
-    this.assertProposalTargetsThisChild(proposal);
+    this.assertCurrAccountIsChild(parentAddress);
+    this.assertValidRemoteProposal(proposal);
 
-    const parentGuard = new MinaGuard(parentAddress);
-    const parentOwnersCommitment = parentGuard.ownersCommitment.getAndRequireEquals();
-    parentOwnersCommitment.assertNotEquals(Field(0), 'Parent not initialized');
+    const proposalHash = this.verifyParentBatchSig(proposal, parentAddress, sigs);
 
-    const parentConfigNonce = parentGuard.configNonce.getAndRequireEquals();
-    const parentNetworkId = parentGuard.networkId.getAndRequireEquals();
-    this.assertProposalConfigNetworkAndGuardValues(
-      proposal,
-      parentConfigNonce,
-      parentNetworkId,
-      parentAddress,
-    );
+    this.assertChildExecutionWitnessValue(proposalHash, childExecutionWitness, Field(0));
 
-    this.assertProposalNotExpired(proposal);
-    this.assertNotExecuted(parentApprovalCount);
-    this.assertProposalExists(parentApprovalCount);
+    proposal.data.assertEquals(amount.value, 'Data does not match reclaim amount');
 
-    const { threshold: parentThreshold } = parentGuard.getGovernanceState();
-    this.assertThresholdSatisfied(parentApprovalCount, parentThreshold);
-
-    const parentApprovalRoot = parentGuard.approvalRoot.getAndRequireEquals();
-    this.assertMerkleWitnessValue(
-      parentApprovalRoot,
-      proposalHash,
-      parentApprovalWitness,
-      parentApprovalCount,
-      'Approval root mismatch',
-      'Approval key mismatch'
-    );
-
-    this.assertChildExecutionWitnessValue(
-      proposalHash,
-      childExecutionWitness,
-      Field(0)
-    );
-
-    const isUndelegate = proposal.data.equals(Field(0));
-    const delegateHash = ownerKey(delegate);
-    isUndelegate
-      .or(proposal.data.equals(delegateHash))
-      .assertTrue('Data does not match delegate');
-
-    const targetDelegate = Provable.if(isUndelegate, PublicKey, this.address, delegate);
-    this.account.delegate.set(targetDelegate);
+    this.send({ to: parentAddress, amount });
 
     this.markChildExecuted(childExecutionWitness);
 
-    this.emitEvent('execution', {
+    this.emitEvent('reclaimChild', {
       proposalHash,
-      txType: proposal.txType,
+      amount,
+    });
+  }
+
+  /**
+   * Destroys child: sends full balance to parent and freezes the account.
+   * 
+   * Note: Should be called on the child contract.
+   */
+  @method async destroy(
+    proposal: TransactionProposal,
+    sigs: SignatureInputs,
+    childExecutionWitness: MerkleMapWitness
+  ) {
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.DESTROY_CHILD, 'Not a destroy child tx');
+
+    const parentAddress = this.parent.getAndRequireEquals();
+    this.assertCurrAccountIsChild(parentAddress);
+    this.assertValidRemoteProposal(proposal);
+
+    const proposalHash = this.verifyParentBatchSig(proposal, parentAddress, sigs);
+
+    this.assertChildExecutionWitnessValue(proposalHash, childExecutionWitness, Field(0));
+
+    const balance = this.account.balance.getAndRequireEquals();
+    this.send({ to: parentAddress, amount: balance });
+
+    this.markChildExecuted(childExecutionWitness);
+
+    this.policyEnabled.set(Field(0));
+
+    this.emitEvent('destroyChild', {
+      proposalHash,
+      reclaimedAmount: balance,
     });
 
-    this.emitEvent('delegate', {
+    this.emitEvent('togglePolicy', {
       proposalHash,
-      delegate: targetDelegate,
+      enabled: Field(0),
+    });
+  }
+
+  /**
+   * Toggles independent policy on child, authorized by parent batch-sigs.
+   * 
+   * Note: Should be called on the child contract.
+   */
+  @method async togglePolicy(
+    proposal: TransactionProposal,
+    sigs: SignatureInputs,
+    childExecutionWitness: MerkleMapWitness,
+    enabled: Field
+  ) {
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.TOGGLE_POLICY, 'Not a toggle policy tx');
+
+    const parentAddress = this.parent.getAndRequireEquals();
+    this.assertCurrAccountIsChild(parentAddress);
+    this.assertValidRemoteProposal(proposal);
+
+    const proposalHash = this.verifyParentBatchSig(proposal, parentAddress, sigs);
+
+    this.assertChildExecutionWitnessValue(proposalHash, childExecutionWitness, Field(0));
+
+    proposal.data.assertEquals(enabled, 'Data does not match enabled flag');
+    enabled.equals(Field(0)).or(enabled.equals(Field(1))).assertTrue('Enabled must be 0 or 1');
+
+    this.policyEnabled.set(enabled);
+
+    this.markChildExecuted(childExecutionWitness);
+
+    this.emitEvent('togglePolicy', {
+      proposalHash,
+      enabled,
     });
   }
 }

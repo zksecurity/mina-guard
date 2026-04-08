@@ -1,5 +1,5 @@
 import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64, Bool } from 'o1js';
-import { EXECUTED_MARKER, ExecutionMode, MAX_RECEIVERS } from '../constants.js';
+import { EXECUTED_MARKER, Destination, MAX_RECEIVERS } from '../constants.js';
 import { TransactionProposal, Receiver } from '../MinaGuard.js';
 import { TxType } from '../constants.js';
 import {
@@ -375,7 +375,7 @@ describe('MinaGuard - Governance', () => {
         expiryBlock: Field(0),
         networkId: Field(1),
         guardAddress: ctx.zkAppAddress,
-        executionMode: ExecutionMode.LOCAL,
+        destination: Destination.LOCAL,
         childAccount: PublicKey.empty(),
       });
 
@@ -622,7 +622,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
         });
         await txn.prove();
         await txn.sign([ctx.deployerKey]).send();
-      }).toThrow('Field.assertEquals()');
+      }).toThrow('Guard address mismatch');
     });
 
     it('should reject with wrong networkId', async () => {
@@ -638,7 +638,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
         expiryBlock: Field(0),
         networkId: Field(99),
         guardAddress: ctx.zkAppAddress,
-        executionMode: ExecutionMode.LOCAL,
+        destination: Destination.LOCAL,
         childAccount: PublicKey.empty(),
       });
       const proposalHash = proposal.hash();

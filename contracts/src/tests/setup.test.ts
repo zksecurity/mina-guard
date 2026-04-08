@@ -1,9 +1,10 @@
-import { Field, Mina, AccountUpdate, UInt64, PublicKey } from 'o1js';
+import { Field, Mina, AccountUpdate, UInt64, PublicKey, PrivateKey, Poseidon } from 'o1js';
 import { EMPTY_MERKLE_MAP_ROOT } from '../constants.js';
-import { SetupOwnersInput } from '../MinaGuard.js';
+import { MinaGuard, SetupOwnersInput } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
+  deployAndSetupChildGuard,
   getOwnersCommitment,
   toFixedSetupOwners,
   type TestContext,
@@ -32,13 +33,28 @@ describe('MinaGuard - Setup', () => {
     expect(ctx.zkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
   });
 
-  it('should persist a non-empty parent when initialized as a child account', async () => {
-    const parentAddress = ctx.owners[0].pub;
+  it('should set up a child account via setupChild with parent approval', async () => {
+    await deployAndSetup(ctx, 2);
 
-    await deployAndSetup(ctx, 2, parentAddress);
+    const childKey = PrivateKey.random();
+    const childAddress = childKey.toPublicKey();
+    const childZkApp = new MinaGuard(childAddress);
 
-    expect(ctx.zkApp.parent.get()).toEqual(parentAddress);
-    expect(ctx.zkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
+    await deployAndSetupChildGuard(
+      ctx,
+      ctx.zkAppAddress,
+      childZkApp,
+      childKey,
+      childAddress,
+      ctx.owners.map((o) => o.pub),
+      2,
+      [0, 1],
+    );
+
+    expect(childZkApp.parent.get()).toEqual(ctx.zkAppAddress);
+    expect(childZkApp.ownersCommitment.get()).toEqual(getOwnersCommitment(ctx));
+    expect(childZkApp.threshold.get()).toEqual(Field(2));
+    expect(childZkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
   });
 
   it('should emit deploy and setup bootstrap events', async () => {
@@ -62,7 +78,6 @@ describe('MinaGuard - Setup', () => {
           Field(2),
           Field(3),
           Field(1),
-          PublicKey.empty(),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })
@@ -92,7 +107,6 @@ describe('MinaGuard - Setup', () => {
           Field(0),
           Field(3),
           Field(1),
-          PublicKey.empty(),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })
@@ -121,7 +135,6 @@ describe('MinaGuard - Setup', () => {
           Field(5),
           Field(3),
           Field(1),
-          PublicKey.empty(),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })

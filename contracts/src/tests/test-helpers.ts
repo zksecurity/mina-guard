@@ -5,6 +5,7 @@ import {
   PublicKey,
   AccountUpdate,
   Signature,
+  Poseidon,
   UInt64,
   Bool,
 } from 'o1js';
@@ -16,7 +17,7 @@ import {
 } from '../MinaGuard.js';
 import {
   TxType,
-  ExecutionMode,
+  Destination,
   PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
@@ -173,7 +174,6 @@ export function getOwnersCommitment(ctx: TestContext): Field {
 export async function deployAndSetup(
   ctx: TestContext,
   threshold = 2,
-  parent = PublicKey.empty()
 ): Promise<void> {
   const { zkApp, zkAppKey, zkAppAddress, deployerKey, deployerAccount, owners } = ctx;
 
@@ -186,7 +186,6 @@ export async function deployAndSetup(
     owners.map((o) => o.pub),
     ctx.networkId,
     threshold,
-    parent
   );
 }
 
@@ -199,7 +198,6 @@ export async function deployAndSetupGuard(
   owners: PublicKey[],
   networkId: Field,
   threshold = 2,
-  parent = PublicKey.empty()
 ): Promise<void> {
   const ownerPubs = [...owners];
 
@@ -226,12 +224,70 @@ export async function deployAndSetupGuard(
       Field(threshold),
       Field(ownerPubs.length),
       networkId,
-      parent,
       new SetupOwnersInput({ owners: setupOwners })
     );
   });
   await setupTxn.prove();
   await setupTxn.sign([deployerKey, zkAppKey]).send();
+}
+
+/** Deploys a child guard and sets it up with parent approval via batch signatures. */
+export async function deployAndSetupChildGuard(
+  ctx: TestContext,
+  parentAddress: PublicKey,
+  childZkApp: MinaGuard,
+  childKey: PrivateKey,
+  childAddress: PublicKey,
+  childOwners: PublicKey[],
+  childThreshold: number,
+  signerIndices: number[],
+): Promise<void> {
+  const { deployerAccount, deployerKey, networkId } = ctx;
+
+  const deployTxn = await Mina.transaction(deployerAccount, async () => {
+    AccountUpdate.fundNewAccount(deployerAccount);
+    await childZkApp.deploy();
+  });
+  await deployTxn.prove();
+  await deployTxn.sign([deployerKey, childKey]).send();
+
+  const fundTxn = await Mina.transaction(deployerAccount, async () => {
+    const update = AccountUpdate.createSigned(deployerAccount);
+    update.send({ to: childAddress, amount: UInt64.from(10_000_000_000) });
+  });
+  await fundTxn.prove();
+  await fundTxn.sign([deployerKey]).send();
+
+  const ownersCommitment = computeOwnerChain(childOwners);
+  const proposal = createCreateChildProposal(
+    childAddress,
+    ownersCommitment,
+    Field(childThreshold),
+    Field(childOwners.length),
+    Field(0),
+    Field(0),
+    parentAddress,
+    Field(0),
+    networkId,
+  );
+
+  const proposalHash = proposal.hash();
+  const sigs = makeSignatureInputs(ctx, proposalHash, signerIndices);
+  const setupOwners = toFixedSetupOwners(childOwners);
+
+  const setupTxn = await Mina.transaction(deployerAccount, async () => {
+    await childZkApp.setupChild(
+      ownersCommitment,
+      Field(childThreshold),
+      Field(childOwners.length),
+      networkId,
+      new SetupOwnersInput({ owners: setupOwners }),
+      proposal,
+      sigs,
+    );
+  });
+  await setupTxn.prove();
+  await setupTxn.sign([deployerKey, childKey]).send();
 }
 
 // -- Proposal Helpers --------------------------------------------------------
@@ -245,7 +301,7 @@ export function createTransferProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  executionMode = ExecutionMode.LOCAL
+  destination = Destination.LOCAL
 ): TransactionProposal {
   const padded = [...receivers];
   while (padded.length < MAX_RECEIVERS) {
@@ -261,7 +317,7 @@ export function createTransferProposal(
     expiryBlock,
     networkId,
     guardAddress,
-    executionMode,
+    destination,
     childAccount,
   });
 }
@@ -279,7 +335,7 @@ export function createAddOwnerProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  executionMode = ExecutionMode.LOCAL
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -291,7 +347,7 @@ export function createAddOwnerProposal(
     expiryBlock,
     networkId,
     guardAddress,
-    executionMode,
+    destination,
     childAccount,
   });
 }
@@ -305,7 +361,7 @@ export function createRemoveOwnerProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  executionMode = ExecutionMode.LOCAL
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -317,7 +373,7 @@ export function createRemoveOwnerProposal(
     expiryBlock,
     networkId,
     guardAddress,
-    executionMode,
+    destination,
     childAccount,
   });
 }
@@ -331,7 +387,7 @@ export function createThresholdProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  executionMode = ExecutionMode.LOCAL
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -343,7 +399,7 @@ export function createThresholdProposal(
     expiryBlock,
     networkId,
     guardAddress,
-    executionMode,
+    destination,
     childAccount,
   });
 }
@@ -357,7 +413,7 @@ export function createDelegateProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  executionMode = ExecutionMode.LOCAL
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -369,7 +425,7 @@ export function createDelegateProposal(
     expiryBlock,
     networkId,
     guardAddress,
-    executionMode,
+    destination,
     childAccount,
   });
 }
@@ -382,7 +438,7 @@ export function createUndelegateProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  executionMode = ExecutionMode.LOCAL
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -394,7 +450,132 @@ export function createUndelegateProposal(
     expiryBlock,
     networkId,
     guardAddress,
-    executionMode,
+    destination,
+    childAccount,
+  });
+}
+
+/** Builds a CREATE_CHILD proposal payload. data = Poseidon.hash(ownersCommitment, threshold, numOwners). */
+export function createCreateChildProposal(
+  childAccount: PublicKey,
+  ownersCommitment: Field,
+  threshold: Field,
+  numOwners: Field,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.CREATE_CHILD,
+    data: Poseidon.hash([ownersCommitment, threshold, numOwners]),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
+    childAccount,
+  });
+}
+
+export function createAllocateChildProposal(
+  receivers: Receiver[],
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  const padded = [...receivers];
+  while (padded.length < MAX_RECEIVERS) {
+    padded.push(Receiver.empty());
+  }
+  return new TransactionProposal({
+    receivers: padded,
+    tokenId: Field(0),
+    txType: TxType.ALLOCATE_CHILD,
+    data: Field(0),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
+  });
+}
+
+export function createReclaimChildProposal(
+  amount: UInt64,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.RECLAIM_CHILD,
+    data: amount.value,
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
+    childAccount,
+  });
+}
+
+export function createDestroyChildProposal(
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.DESTROY_CHILD,
+    data: Field(0),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
+    childAccount,
+  });
+}
+
+export function createTogglePolicyProposal(
+  enabled: Field,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.TOGGLE_POLICY,
+    data: enabled,
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
     childAccount,
   });
 }

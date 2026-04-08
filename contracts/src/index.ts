@@ -17,11 +17,16 @@ export {
   ThresholdChangeBatchEvent,
   DelegateEvent,
   DelegateBatchEvent,
+  CreateChildEvent,
+  AllocateChildEvent,
+  ReclaimChildEvent,
+  DestroyChildEvent,
+  TogglePolicyEvent,
 } from './MinaGuard.js';
 
 export {
   TxType,
-  ExecutionMode,
+  Destination as ExecutionMode,
   EXECUTED_MARKER,
   EMPTY_MERKLE_MAP_ROOT,
   PROPOSED_MARKER,

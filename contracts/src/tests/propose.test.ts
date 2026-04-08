@@ -165,7 +165,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key]).send();
-    }).toThrow('Field.assertEquals()');
+    }).toThrow('Guard address mismatch');
   });
 
   it('should increment counter across multiple proposals', async () => {
