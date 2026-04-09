@@ -1,0 +1,76 @@
+:80 {
+    # Backend health
+    handle /app/health {
+        uri strip_prefix /app
+        reverse_proxy backend:4000
+    }
+
+    # Backend API
+    handle /app/api/* {
+        uri strip_prefix /app
+        reverse_proxy backend:4000
+    }
+
+    # Lightnet GraphQL
+    handle /app/graphql {
+        uri strip_prefix /app
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        @options method OPTIONS
+        respond @options 204
+        reverse_proxy lightnet:8080 {
+            header_down -Access-Control-Allow-Origin
+            header_down -Access-Control-Allow-Methods
+            header_down -Access-Control-Allow-Headers
+        }
+    }
+
+    # Lightnet accounts manager
+    handle /app/accounts/* {
+        uri strip_prefix /app/accounts
+        reverse_proxy lightnet:8181
+    }
+
+    # Lightnet archive node
+    handle /app/archive {
+        uri strip_prefix /app
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        @options method OPTIONS
+        respond @options 204
+        reverse_proxy lightnet:8282 {
+            header_down -Access-Control-Allow-Origin
+            header_down -Access-Control-Allow-Methods
+            header_down -Access-Control-Allow-Headers
+        }
+    }
+
+    # Block explorer
+    handle /app/explorer/* {
+        reverse_proxy explorer:3000
+    }
+    handle /app/explorer {
+        reverse_proxy explorer:3000
+    }
+
+    # Static assets (content-hashed filenames, safe to cache long-term)
+    handle /app/_next/static/* {
+        reverse_proxy frontend:3000
+    }
+
+    # Frontend (catch-all)
+    handle /app/* {
+        reverse_proxy frontend:3000 {
+            header_down -Cache-Control
+        }
+        header Cache-Control "no-cache"
+    }
+    handle /app {
+        reverse_proxy frontend:3000 {
+            header_down -Cache-Control
+        }
+        header Cache-Control "no-cache"
+    }
+}

@@ -1,0 +1,35 @@
+name: Deploy main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Deploy
+        run: |
+          chmod +x deploy/deploy.sh
+          ./deploy/deploy.sh up
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for backend..."
+          for i in $(seq 1 36); do
+            if curl -sf "http://localhost:10000/app/health" > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            echo "Attempt $i/36: not ready yet..."
+            sleep 5
+          done
