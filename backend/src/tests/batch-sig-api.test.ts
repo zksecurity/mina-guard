@@ -41,6 +41,8 @@ const proposal = new TransactionProposal({
   expiryBlock: Field(0),
   networkId: Field(1),
   guardAddress,
+  destination: Field(0),
+  childAccount: PublicKey.empty(),
 });
 
 const proposalHash = proposal.hash().toString();
@@ -216,6 +218,8 @@ describe('POST /api/contracts/:address/proposals', () => {
       expiryBlock: Field(0),
       networkId: Field(1),
       guardAddress,
+      destination: Field(0),
+      childAccount: PublicKey.empty(),
     });
 
     const res = await post(`/api/contracts/${addr}/proposals`, {
@@ -248,6 +252,8 @@ describe('POST /api/contracts/:address/proposals', () => {
       expiryBlock: Field(0),
       networkId: Field(1),
       guardAddress,
+      destination: Field(0),
+      childAccount: PublicKey.empty(),
     });
 
     const res = await post(`/api/contracts/${addr}/proposals`, {
@@ -561,6 +567,8 @@ describe('cross-flow edge cases', () => {
       expiryBlock: Field(0),
       networkId: Field(1),
       guardAddress,
+      destination: Field(0),
+      childAccount: PublicKey.empty(),
     });
     const conflictHash = conflictProposal.hash().toString();
 
@@ -701,6 +709,8 @@ describe('executeTransferBatchSig with API payload', () => {
       expiryBlock: Field(0),
       networkId: Field(1),
       guardAddress: zkAppAddress,
+      destination: Field(0),
+      childAccount: PublicKey.empty(),
     });
     const chainProposalHash = chainProposal.hash().toString();
 

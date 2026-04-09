@@ -56,6 +56,8 @@ export function computeProposalHash(params: {
     expiryBlock: Field(params.expiryBlock),
     networkId: Field(params.networkId),
     guardAddress: PublicKey.fromBase58(params.guardAddress),
+    destination: Field(0),
+    childAccount: PublicKey.empty(),
   });
   return proposal.hash().toString();
 }
