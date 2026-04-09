@@ -4,6 +4,7 @@ import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
 import { useEffect, useState } from 'react';
 import { NewProposalInput, TxType } from '@/lib/types';
 import { MEMO_MAX_BYTES, memoByteLength, isValidMemoLength } from '@/lib/memo';
+import MemoWarningTooltip from '@/components/MemoWarningTooltip';
 
 interface ProposalFormProps {
   owners: string[];
@@ -248,7 +249,10 @@ export default function ProposalForm({
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="block text-sm text-safe-text">Memo (optional)</label>
+          <label className="flex items-center gap-1 text-sm text-safe-text">
+            Memo (optional)
+            <MemoWarningTooltip />
+          </label>
           <span className={`text-xs ${memoOverLimit ? 'text-red-400' : 'text-safe-text/60'}`}>
             {memoBytes} / {MEMO_MAX_BYTES} bytes
           </span>

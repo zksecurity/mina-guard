@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ApprovalProgress from '@/components/ApprovalProgress';
+import MemoWarningTooltip from '@/components/MemoWarningTooltip';
 import {
   TX_TYPE_LABELS,
   truncateAddress,
@@ -230,7 +231,7 @@ export default function TransactionDetailPage() {
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
             <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
-            <DetailRow label="Memo" value={proposal.memo ?? '—'} />
+            <DetailRow label="Memo" value={proposal.memo ?? '—'} labelAdornment={<MemoWarningTooltip />} />
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>
         </div>
@@ -307,11 +308,13 @@ function DetailRow({
   value,
   mono = false,
   copyable = false,
+  labelAdornment,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   copyable?: boolean;
+  labelAdornment?: ReactNode;
 }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -327,7 +330,10 @@ function DetailRow({
 
   return (
     <div className="flex justify-between items-center py-2 border-b border-safe-border/50 last:border-0">
-      <span className="text-sm text-safe-text shrink-0">{label}</span>
+      <span className="flex items-center gap-1 text-sm text-safe-text shrink-0">
+        {label}
+        {labelAdornment}
+      </span>
       {copyable ? (
         <div className="relative ml-12 min-w-0">
           <button
