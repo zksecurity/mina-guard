@@ -30,6 +30,8 @@ services:
       - POSTGRES_USER=minaguard
       - POSTGRES_PASSWORD=minaguard
       - POSTGRES_DB=minaguard
+    volumes:
+      - minaguard-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U minaguard"]
       interval: 5s
@@ -92,3 +94,6 @@ services:
       - backend
       - explorer
       - lightnet
+
+volumes:
+  minaguard-db-data:
