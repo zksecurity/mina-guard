@@ -18,6 +18,7 @@ export interface SerializedProposalRecord {
   expiryBlock: string | null;
   networkId: string | null;
   guardAddress: string | null;
+  memo: string | null;
   status: string;
   origin: string;
   approvalCount: number;
@@ -63,6 +64,7 @@ export function serializeProposalRecord(
     expiryBlock: proposal.expiryBlock,
     networkId: proposal.networkId,
     guardAddress: proposal.guardAddress,
+    memo: proposal.memo,
     status: proposal.status,
     origin: proposal.origin,
     approvalCount: proposal.approvalCount,

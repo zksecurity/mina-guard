@@ -55,6 +55,7 @@ model Proposal {
   expiryBlock     String?
   networkId       String?
   guardAddress    String?
+  memo            String?
   origin          String    @default("onchain")
   status          String    @default("pending")
   approvalCount   Int       @default(0)

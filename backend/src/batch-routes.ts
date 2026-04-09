@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { PublicKey } from 'o1js';
 import { z } from 'zod';
-import { MAX_RECEIVERS, TxType } from 'contracts';
+import { MAX_RECEIVERS, TxType, memoToField } from 'contracts';
 import { prisma } from './db.js';
 import { computeProposalHash, verifySignature, buildBatchPayload } from './batch-sig-service.js';
 import { serializeProposalRecord } from './proposal-record.js';
@@ -12,6 +12,7 @@ import {
   proposalParamsSchema,
   addressParamsMiddleware,
   proposalParamsMiddleware,
+  memoSchema,
   type AddressParams,
   type ProposalParams,
 } from './request-validation.js';
@@ -37,6 +38,8 @@ const createProposalSchema = z.object({
   tokenId: fieldString,
   txType: fieldString,
   data: fieldString,
+  memo: memoSchema.optional(),
+  memoHash: fieldString,
   uid: fieldString,
   configNonce: fieldString,
   expiryBlock: fieldString,
@@ -92,9 +95,23 @@ export function createBatchRouter(): Router {
 
     const {
       toAddress, receivers, tokenId, txType, data,
+      memo, memoHash,
       uid, configNonce, expiryBlock, networkId, guardAddress,
       proposalHash, proposer,
     } = parsed.data;
+
+    // Verify the submitted memoHash was derived from the submitted plaintext
+    // memo. Prevents a spoof where the client POSTs plaintext "pay alice"
+    // while the on-chain commitment binds to a hash of "pay bob".
+    const expectedMemoHash = memoToField(memo ?? '').toString();
+    if (memoHash !== expectedMemoHash) {
+      res.status(400).json({
+        error: 'memoHash does not match provided memo',
+        expected: expectedMemoHash,
+        received: memoHash,
+      });
+      return;
+    }
 
     const normalizedReceivers = normalizeProposalReceivers({
       txType,
@@ -136,7 +153,7 @@ export function createBatchRouter(): Router {
     try {
       computedHash = computeProposalHash({
         receivers: normalizedReceivers.receivers,
-        tokenId, txType, data,
+        tokenId, txType, data, memoHash,
         uid, configNonce, expiryBlock, networkId, guardAddress,
       });
     } catch (err) {
@@ -177,6 +194,7 @@ export function createBatchRouter(): Router {
         tokenId,
         txType,
         data,
+        memo: memo ?? null,
         uid,
         configNonce,
         expiryBlock,

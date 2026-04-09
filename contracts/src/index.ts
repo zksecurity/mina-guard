@@ -28,3 +28,5 @@ export { batchVerify, SignatureInputs, SignatureInput, SignatureOption } from '.
 export { ownerKey } from './utils.js';
 
 export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';
+
+export { memoToField } from './memo.js';

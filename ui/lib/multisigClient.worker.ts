@@ -24,6 +24,7 @@ import {
   Receiver,
   TransactionProposal,
   ownerKey,
+  memoToField,
   EXECUTED_MARKER,
   PROPOSED_MARKER,
   MAX_OWNERS,
@@ -373,7 +374,7 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'memo' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
@@ -383,6 +384,7 @@ function buildProposalStruct(
     tokenId: Field(proposal.tokenId ?? '0'),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
+    memoHash: memoToField(proposal.memo ?? ''),
     uid: Field(proposal.uid ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
@@ -665,12 +667,14 @@ const workerApi = {
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input);
     const uid = Field.random();
+    const memoHash = memoToField(params.input.memo ?? '');
 
     const proposal = new TransactionProposal({
       receivers: transferReceivers,
       tokenId: Field(0),
       txType,
       data,
+      memoHash,
       uid,
       configNonce: Field(params.configNonce),
       expiryBlock: Field(params.input.expiryBlock ?? 0),
@@ -700,6 +704,8 @@ const workerApi = {
       tokenId: '0',
       txType: txType.toString(),
       data: data.toString(),
+      memo: params.input.memo,
+      memoHash: memoHash.toString(),
       uid: uid.toString(),
       configNonce: params.configNonce.toString(),
       expiryBlock: (params.input.expiryBlock ?? 0).toString(),

@@ -32,6 +32,7 @@ export function computeProposalHash(params: {
   tokenId: string;
   txType: string;
   data: string;
+  memoHash: string;
   uid: string;
   configNonce: string;
   expiryBlock: string;
@@ -51,6 +52,7 @@ export function computeProposalHash(params: {
     tokenId: Field(params.tokenId),
     txType: Field(params.txType),
     data: Field(params.data),
+    memoHash: Field(params.memoHash),
     uid: Field(params.uid),
     configNonce: Field(params.configNonce),
     expiryBlock: Field(params.expiryBlock),

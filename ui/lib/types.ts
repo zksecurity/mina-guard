@@ -72,6 +72,7 @@ export interface Proposal {
   expiryBlock: string | null;
   networkId: string | null;
   guardAddress: string | null;
+  memo: string | null;
   status: ProposalStatus;
   origin: 'onchain' | 'offchain';
   approvalCount: number;
@@ -147,6 +148,7 @@ export interface NewProposalInput {
   delegate?: string;
   undelegate?: boolean;
   expiryBlock?: number;
+  memo?: string;
 }
 
 export const TX_TYPE_LABELS: Record<TxType, string> = {

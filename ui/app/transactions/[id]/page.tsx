@@ -230,6 +230,7 @@ export default function TransactionDetailPage() {
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
             <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
+            <DetailRow label="Memo" value={proposal.memo ?? '—'} />
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>
         </div>

@@ -3,6 +3,7 @@
 import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
 import { useEffect, useState } from 'react';
 import { NewProposalInput, TxType } from '@/lib/types';
+import { MEMO_MAX_BYTES, memoByteLength, isValidMemoLength } from '@/lib/memo';
 
 interface ProposalFormProps {
   owners: string[];
@@ -32,6 +33,9 @@ export default function ProposalForm({
   const [delegate, setDelegate] = useState('');
   const [undelegate, setUndelegate] = useState(false);
   const [expiryBlock, setExpiryBlock] = useState('0');
+  const [memo, setMemo] = useState('');
+  const memoBytes = memoByteLength(memo);
+  const memoOverLimit = !isValidMemoLength(memo);
 
   const [validationError, setValidationError] = useState<string | null>(null);
   const transferParse = parseTransferLines(transferLines);
@@ -76,6 +80,10 @@ export default function ProposalForm({
       setValidationError('The new threshold is the same as the current one.');
       return;
     }
+    if (memoOverLimit) {
+      setValidationError(`Memo exceeds ${MEMO_MAX_BYTES} UTF-8 bytes.`);
+      return;
+    }
 
     onSubmit({
       txType,
@@ -86,6 +94,7 @@ export default function ProposalForm({
       delegate: txType === 'setDelegate' && !undelegate ? delegate : undefined,
       undelegate: txType === 'setDelegate' ? undelegate : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
+      memo: memo.length > 0 ? memo : undefined,
     });
   };
 
@@ -236,6 +245,26 @@ export default function ProposalForm({
           )}
         </div>
       )}
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm text-safe-text">Memo (optional)</label>
+          <span className={`text-xs ${memoOverLimit ? 'text-red-400' : 'text-safe-text/60'}`}>
+            {memoBytes} / {MEMO_MAX_BYTES} bytes
+          </span>
+        </div>
+        <input
+          type="text"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+          placeholder="Short note committed to the proposal hash"
+          className={`w-full bg-safe-gray border rounded-lg px-4 py-3 text-sm placeholder:text-safe-border focus:outline-none transition-colors ${
+            memoOverLimit
+              ? 'border-red-400 focus:border-red-400'
+              : 'border-safe-border focus:border-safe-green'
+          }`}
+        />
+      </div>
 
       <FormInput
         label="Expiry Block (0 = no expiry)"

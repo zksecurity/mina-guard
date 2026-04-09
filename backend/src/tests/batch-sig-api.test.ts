@@ -8,7 +8,7 @@ import { MinaGuardIndexer } from '../indexer.js';
 import type { BackendConfig } from '../config.js';
 import {
   Receiver, TransactionProposal, TxType, MinaGuard, SetupOwnersInput, MAX_OWNERS, MAX_RECEIVERS,
-  computeOwnerChain, ApprovalStore, SignatureInputs, SignatureInput, SignatureOption,
+  computeOwnerChain, ApprovalStore, SignatureInputs, SignatureInput, SignatureOption, memoToField,
 } from 'contracts';
 
 let PORT: number;
@@ -36,6 +36,7 @@ const proposal = new TransactionProposal({
   tokenId: Field(0),
   txType: TxType.TRANSFER,
   data: Field(0),
+  memoHash: Field(0),
   uid: Field(42),
   configNonce: Field(0),
   expiryBlock: Field(0),
@@ -124,6 +125,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: '0',
       txType: '0',
       data: '0',
+      memoHash: '0',
       uid: '42',
       configNonce: '0',
       expiryBlock: '0',
@@ -145,6 +147,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: '0',
       txType: '0',
       data: '0',
+      memoHash: '0',
       uid: '42',
       configNonce: '0',
       expiryBlock: '0',
@@ -162,6 +165,7 @@ describe('POST /api/contracts/:address/proposals', () => {
     expect(body.receivers).toEqual([{ index: 0, address: owners[0].pub.toBase58(), amount: '1000000000' }]);
     expect(body.recipientCount).toBe(1);
     expect(body.totalAmount).toBe('1000000000');
+    expect(body.memo).toBeNull();
   });
 
   test('rejects duplicate proposal', async () => {
@@ -171,6 +175,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: '0',
       txType: '0',
       data: '0',
+      memoHash: '0',
       uid: '42',
       configNonce: '0',
       expiryBlock: '0',
@@ -190,6 +195,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: '0',
       txType: '0',
       data: '0',
+      memoHash: '0',
       uid: '42',
       configNonce: '0',
       expiryBlock: '0',
@@ -211,6 +217,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: Field(0),
       txType: TxType.ADD_OWNER,
       data: Field(123),
+      memoHash: Field(0),
       uid: Field(88),
       configNonce: Field(0),
       expiryBlock: Field(0),
@@ -222,6 +229,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: '0',
       txType: TxType.ADD_OWNER.toString(),
       data: addOwnerProposal.data.toString(),
+      memoHash: '0',
       uid: '88',
       configNonce: '0',
       expiryBlock: '0',
@@ -243,6 +251,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: Field(0),
       txType: TxType.SET_DELEGATE,
       data: Field(1),
+      memoHash: Field(0),
       uid: Field(89),
       configNonce: Field(0),
       expiryBlock: Field(0),
@@ -254,6 +263,7 @@ describe('POST /api/contracts/:address/proposals', () => {
       tokenId: '0',
       txType: TxType.SET_DELEGATE.toString(),
       data: '1',
+      memoHash: '0',
       uid: '89',
       configNonce: '0',
       expiryBlock: '0',
@@ -266,6 +276,188 @@ describe('POST /api/contracts/:address/proposals', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe('Proposal toAddress is required for this transaction type');
+  });
+
+  // --- memo field ---------------------------------------------------------
+
+  /** Builds a fresh transfer proposal bound to a given memoHash for memo tests. */
+  function buildMemoProposal(uid: number, memoHashField: ReturnType<typeof Field>) {
+    return new TransactionProposal({
+      receivers: [
+        new Receiver({ address: owners[0].pub, amount: UInt64.from(1_000_000_000) }),
+        ...Array.from({ length: MAX_RECEIVERS - 1 }, () => Receiver.empty()),
+      ],
+      tokenId: Field(0),
+      txType: TxType.TRANSFER,
+      data: Field(0),
+      memoHash: memoHashField,
+      uid: Field(uid),
+      configNonce: Field(0),
+      expiryBlock: Field(0),
+      networkId: Field(1),
+      guardAddress,
+    });
+  }
+
+  test('accepts a proposal with a valid plaintext memo', async () => {
+    const addr = guardAddress.toBase58();
+    const memo = 'rent payment';
+    const memoHash = memoToField(memo);
+    const p = buildMemoProposal(201, memoHash);
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
+      tokenId: '0',
+      txType: '0',
+      data: '0',
+      memo,
+      memoHash: memoHash.toString(),
+      uid: '201',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: p.hash().toString(),
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.memo).toBe('rent payment');
+  });
+
+  test('accepts an omitted memo and defaults memoHash to Field(0)', async () => {
+    const addr = guardAddress.toBase58();
+    const p = buildMemoProposal(202, Field(0));
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
+      tokenId: '0',
+      txType: '0',
+      data: '0',
+      memoHash: '0',
+      uid: '202',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: p.hash().toString(),
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.memo).toBeNull();
+  });
+
+  test('rejects a memo exceeding 32 ASCII bytes', async () => {
+    const addr = guardAddress.toBase58();
+    const longMemo = 'a'.repeat(33);
+    const memoHash = memoToField(longMemo);
+    const p = buildMemoProposal(203, memoHash);
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
+      tokenId: '0',
+      txType: '0',
+      data: '0',
+      memo: longMemo,
+      memoHash: memoHash.toString(),
+      uid: '203',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: p.hash().toString(),
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid request body');
+    expect(body.details.memo).toBeDefined();
+  });
+
+  test('rejects a memo exceeding 32 bytes via multi-byte characters', async () => {
+    const addr = guardAddress.toBase58();
+    // 11 rocket emojis = 44 UTF-8 bytes but only 11 code points.
+    const emojiMemo = '🚀'.repeat(11);
+    const memoHash = memoToField(emojiMemo);
+    const p = buildMemoProposal(204, memoHash);
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
+      tokenId: '0',
+      txType: '0',
+      data: '0',
+      memo: emojiMemo,
+      memoHash: memoHash.toString(),
+      uid: '204',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: p.hash().toString(),
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Invalid request body');
+    expect(body.details.memo).toBeDefined();
+  });
+
+  test('rejects memoHash that does not match the plaintext memo', async () => {
+    const addr = guardAddress.toBase58();
+    // Client posts plaintext 'alice' but a memoHash computed from 'bob'.
+    const spoofedMemoHash = memoToField('bob');
+    const p = buildMemoProposal(205, spoofedMemoHash);
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
+      tokenId: '0',
+      txType: '0',
+      data: '0',
+      memo: 'alice',
+      memoHash: spoofedMemoHash.toString(),
+      uid: '205',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: p.hash().toString(),
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('memoHash does not match provided memo');
+  });
+
+  test('still catches a tampered proposal hash even when memo is valid', async () => {
+    const addr = guardAddress.toBase58();
+    const memo = 'valid memo';
+    const memoHash = memoToField(memo);
+
+    const res = await post(`/api/contracts/${addr}/proposals`, {
+      receivers: [{ address: owners[0].pub.toBase58(), amount: '1000000000' }],
+      tokenId: '0',
+      txType: '0',
+      data: '0',
+      memo,
+      memoHash: memoHash.toString(),
+      uid: '206',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: addr,
+      proposalHash: '12345', // tampered
+      proposer: defaultProposer,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('Proposal hash mismatch');
   });
 });
 
@@ -477,7 +669,9 @@ describe('GET /api/contracts/:address/proposals/:proposalHash/batch-payload', ()
 
   test('returns 404 for unknown proposal', async () => {
     const addr = guardAddress.toBase58();
-    const res = await get(`/api/contracts/${addr}/proposals/nonexistent/batch-payload`);
+    // The URL param middleware requires a numeric Field string; use a
+    // valid-shaped hash that does not exist in the DB.
+    const res = await get(`/api/contracts/${addr}/proposals/999999999999/batch-payload`);
 
     expect(res.status).toBe(404);
   });
@@ -556,6 +750,7 @@ describe('cross-flow edge cases', () => {
       tokenId: Field(0),
       txType: TxType.TRANSFER,
       data: Field(0),
+      memoHash: Field(0),
       uid: Field(77),
       configNonce: Field(0),
       expiryBlock: Field(0),
@@ -581,6 +776,7 @@ describe('cross-flow edge cases', () => {
       tokenId: '0',
       txType: '0',
       data: '0',
+      memoHash: '0',
       uid: '77',
       configNonce: '0',
       expiryBlock: '0',
@@ -696,6 +892,7 @@ describe('executeTransferBatchSig with API payload', () => {
       tokenId: Field(0),
       txType: TxType.TRANSFER,
       data: Field(0),
+      memoHash: Field(0),
       uid: Field(100),
       configNonce: Field(0),
       expiryBlock: Field(0),
@@ -735,6 +932,7 @@ describe('executeTransferBatchSig with API payload', () => {
       tokenId: '0',
       txType: '0',
       data: '0',
+      memoHash: '0',
       uid: '100',
       configNonce: '0',
       expiryBlock: '0',
@@ -779,6 +977,12 @@ describe('executeTransferBatchSig with API payload', () => {
 
     const balanceAfter = Mina.getBalance(recipient);
     expect(balanceAfter.sub(balanceBefore)).toEqual(UInt64.from(500_000_000));
+
+    // Restore the shared seed for later describe blocks that still expect
+    // the original guardAddress contract + owners (this test cleared the DB
+    // at step 2 to seed a fresh zkApp-specific contract).
+    await clearDatabase();
+    await seedDatabase();
   });
 });
 

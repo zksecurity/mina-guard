@@ -145,6 +145,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     expiryBlock: asNullableString(input.expiryBlock),
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
+    memo: asNullableString(input.memo),
     status: asProposalStatus(input.status),
     origin: asString(input.origin) === 'onchain' ? 'onchain' : 'offchain',
     approvalCount: asNumber(input.approvalCount),
@@ -217,6 +218,8 @@ export async function postOffchainProposal(
     tokenId: string;
     txType: string;
     data: string;
+    memo?: string;
+    memoHash: string;
     uid: string;
     configNonce: string;
     expiryBlock: string;

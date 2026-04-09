@@ -23,6 +23,15 @@ export const proposalHashParamSchema = z.string().regex(
   'Must be a numeric string'
 );
 
+/** Mina transaction memo — max 32 UTF-8 bytes.
+ *  Byte-length semantics are shared with ui/lib/memo.ts; the constant is
+ *  intentionally duplicated to avoid cross-workspace imports. */
+export const MEMO_MAX_BYTES = 32;
+export const memoSchema = z.string().refine(
+  (value) => new TextEncoder().encode(value).length <= MEMO_MAX_BYTES,
+  { message: `Memo exceeds ${MEMO_MAX_BYTES} UTF-8 bytes` },
+);
+
 /** Zod query schema that preserves existing bounded integer parsing semantics. */
 export function clampedIntQuerySchema(
   fallback: number,
