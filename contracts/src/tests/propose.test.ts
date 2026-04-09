@@ -1,4 +1,4 @@
-import { Field, Mina, PrivateKey, Signature, UInt64 } from 'o1js';
+import { Field, Mina, Poseidon, PrivateKey, Signature, UInt64 } from 'o1js';
 import { Receiver, TransactionProposal } from '../MinaGuard.js';
 import { TxType } from '../constants.js';
 import {
@@ -166,6 +166,62 @@ describe('MinaGuard - Propose', () => {
       await txn.prove();
       await txn.sign([ctx.owners[0].key]).send();
     }).toThrow('Field.assertEquals()');
+  });
+
+  it('binds memoHash into the proposal hash', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const receivers = [
+      new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) }),
+    ];
+
+    // Two proposals identical in every field except memoHash.
+    const baseProposal = createTransferProposal(
+      receivers,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress
+    );
+    const memoHash = Poseidon.hash([Field(42)]);
+    const withMemo = createTransferProposal(
+      receivers,
+      Field(0),
+      Field(0),
+      ctx.zkAppAddress,
+      Field(0),
+      Field(1),
+      memoHash
+    );
+
+    // memoHash must participate in the proposal hash.
+    expect(baseProposal.hash().toString()).not.toEqual(
+      withMemo.hash().toString()
+    );
+
+    // A signature over the base hash must not authorize the memo'd proposal:
+    // the contract re-derives the hash from the struct (which now includes
+    // memoHash), so the signature check fails.
+    const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
+    const staleSig = Signature.create(ctx.owners[0].key, [baseProposal.hash()]);
+    const nullifierWitness = ctx.nullifierStore.getWitness(
+      withMemo.hash(),
+      ctx.owners[0].pub
+    );
+    const approvalWitness = ctx.approvalStore.getWitness(withMemo.hash());
+
+    await expect(async () => {
+      const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
+        await ctx.zkApp.propose(
+          withMemo,
+          ownerWitness,
+          ctx.owners[0].pub,
+          staleSig,
+          nullifierWitness,
+          approvalWitness
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.owners[0].key]).send();
+    }).toThrow('Invalid signature');
   });
 
   it('should increment counter across multiple proposals', async () => {

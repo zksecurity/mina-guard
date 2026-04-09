@@ -50,6 +50,7 @@ export class TransactionProposal extends Struct({
   tokenId: Field,
   txType: Field,
   data: Field,
+  memoHash: Field,
   uid: Field,
   configNonce: Field,
   expiryBlock: Field,
@@ -67,6 +68,7 @@ export class TransactionProposal extends Struct({
       this.tokenId,
       this.txType,
       this.data,
+      this.memoHash,
       this.uid,
       this.configNonce,
       this.expiryBlock,
@@ -113,6 +115,7 @@ export class ProposalEvent extends Struct({
   tokenId: Field,
   txType: Field,
   data: Field,
+  memoHash: Field,
   uid: Field,
   configNonce: Field,
   expiryBlock: Field,
@@ -138,11 +141,13 @@ export class ApprovalEvent extends Struct({
 export class ExecutionEvent extends Struct({
   proposalHash: Field,
   txType: Field,
+  memoHash: Field,
 }) { }
 
 export class ExecutionBatchEvent extends Struct({
   proposalHash: Field,
   txType: Field,
+  memoHash: Field,
   approverChain: Field,
 }) { }
 
@@ -437,6 +442,7 @@ export class MinaGuard extends SmartContract {
       tokenId: proposal.tokenId,
       txType: proposal.txType,
       data: proposal.data,
+      memoHash: proposal.memoHash,
       uid: proposal.uid,
       configNonce: proposal.configNonce,
       expiryBlock: proposal.expiryBlock,
@@ -540,6 +546,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      memoHash: proposal.memoHash,
     });
   }
 
@@ -581,7 +588,8 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('executionBatch', {
       proposalHash,
       txType: proposal.txType,
-      approverChain: verificationRes.signerChain
+      memoHash: proposal.memoHash,
+      approverChain: verificationRes.signerChain,
     });
 
   }
@@ -650,6 +658,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('executionBatch', {
       proposalHash,
       txType: proposal.txType,
+      memoHash: proposal.memoHash,
       approverChain: verificationRes.signerChain,
     });
 
@@ -718,6 +727,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('executionBatch', {
       proposalHash,
       txType: proposal.txType,
+      memoHash: proposal.memoHash,
       approverChain: verificationRes.signerChain,
     });
 
@@ -776,6 +786,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('executionBatch', {
       proposalHash,
       txType: proposal.txType,
+      memoHash: proposal.memoHash,
       approverChain: verificationRes.signerChain,
     });
 
@@ -845,6 +856,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      memoHash: proposal.memoHash,
     });
 
     this.emitEvent('ownerChange', {
@@ -904,6 +916,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      memoHash: proposal.memoHash,
     });
 
     this.emitEvent('thresholdChange', {
@@ -954,6 +967,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      memoHash: proposal.memoHash,
     });
 
     this.emitEvent('delegate', {

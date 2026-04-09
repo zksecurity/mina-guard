@@ -209,7 +209,8 @@ export function createTransferProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  memoHash = Field(0),
 ): TransactionProposal {
   const padded = [...receivers];
   while (padded.length < MAX_RECEIVERS) {
@@ -220,6 +221,7 @@ export function createTransferProposal(
     tokenId: Field(0),
     txType: TxType.TRANSFER,
     data: Field(0),
+    memoHash,
     uid,
     configNonce,
     expiryBlock,
@@ -239,13 +241,15 @@ export function createAddOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
     data: ownerKey(newOwner),
+    memoHash,
     uid,
     configNonce,
     expiryBlock,
@@ -261,13 +265,15 @@ export function createRemoveOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.REMOVE_OWNER,
     data: ownerKey(ownerToRemove),
+    memoHash,
     uid,
     configNonce,
     expiryBlock,
@@ -283,13 +289,15 @@ export function createThresholdProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.CHANGE_THRESHOLD,
     data: newThreshold,
+    memoHash,
     uid,
     configNonce,
     expiryBlock,
@@ -305,13 +313,15 @@ export function createDelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: ownerKey(delegate),
+    memoHash,
     uid,
     configNonce,
     expiryBlock,
@@ -326,13 +336,15 @@ export function createUndelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
+    memoHash,
     uid,
     configNonce,
     expiryBlock,

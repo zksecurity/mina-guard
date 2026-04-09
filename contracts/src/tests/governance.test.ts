@@ -362,6 +362,7 @@ describe('MinaGuard - Governance', () => {
         tokenId: Field(0),
         txType: TxType.TRANSFER,
         data: Field(0),
+        memoHash: Field(0),
         uid: Field(1),
         configNonce: Field(0), // old configNonce
         expiryBlock: Field(0),
@@ -623,6 +624,7 @@ describe('MinaGuard - Owner Change BatchSig', () => {
         tokenId: Field(0),
         txType: TxType.ADD_OWNER,
         data: ownerKey(newOwner),
+        memoHash: Field(0),
         uid: Field(0),
         configNonce: Field(0),
         expiryBlock: Field(0),
