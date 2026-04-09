@@ -32,7 +32,6 @@ jobs:
           PROOF_LEVEL: 'none'
           LOG_LEVEL: 'Info'
         ports:
-          - 3085:3085
           - 8080:8080
           - 8181:8181
           - 8282:8282
@@ -43,7 +42,7 @@ jobs:
       - name: Wait for Mina network readiness
         uses: o1-labs/wait-for-mina-network-action@v1
         with:
-          mina-graphql-port: 3085
+          mina-graphql-port: 8080
           max-attempts: 120
           polling-interval-ms: 10000
 
