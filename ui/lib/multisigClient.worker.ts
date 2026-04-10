@@ -53,7 +53,7 @@ import {
 } from './api';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
-type SendTxFn = (txJson: string) => Promise<string | null>;
+type SendTxFn = (txJson: string, memo?: string) => Promise<string | null>;
 
 /** Callback type for requesting a field signature from Auro or Ledger on the main thread.
  *  Auro returns a base58 signature string; Ledger returns {field, scalar} decimal strings. */
@@ -81,9 +81,16 @@ let compilePromise: Promise<void> | null = null;
 let testPrivateKey: InstanceType<typeof PrivateKey> | null = null;
 let skipProofs = false;
 
-/** Returns Mina.transaction sender arg — includes fee since we always set it explicitly. */
-function txSender(pub: InstanceType<typeof PublicKey>) {
-  return { sender: pub, fee: ZKAPP_TX_FEE };
+/** Returns Mina.transaction sender arg — includes fee since we always set it
+ *  explicitly. When a memo is supplied, it rides via FeePayerSpec.memo so that
+ *  o1js bakes it into zkappCommand.memo during tx.toJSON(). This propagates to
+ *  both Auro and Ledger paths without any wallet-specific code, because both
+ *  just forward the serialized txJson. Branches on undefined so we omit the
+ *  key entirely rather than passing memo: undefined. */
+function txSender(pub: InstanceType<typeof PublicKey>, memo?: string) {
+  return memo !== undefined
+    ? { sender: pub, fee: ZKAPP_TX_FEE, memo }
+    : { sender: pub, fee: ZKAPP_TX_FEE };
 }
 
 /**
@@ -449,7 +456,8 @@ async function submitTx(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
   sendFn: SendTxFn | null,
   signFeePayerFn?: SignFeePayerFn,
-  extraKeys: InstanceType<typeof PrivateKey>[] = []
+  extraKeys: InstanceType<typeof PrivateKey>[] = [],
+  memo?: string
 ): Promise<string | null> {
   // E2E test mode: sign and send directly
   if (testPrivateKey) {
@@ -464,9 +472,9 @@ async function submitTx(
   if (signFeePayerFn) {
     return broadcastWithLedgerSig(txJson, signFeePayerFn);
   }
-  // Auro path: send via Auro wallet
+  // Auro path: send via Auro wallet — pass memo so Auro sets feePayer.memo
   if (sendFn) {
-    return sendFn(txJson);
+    return sendFn(txJson, memo);
   }
   return null;
 }
@@ -867,7 +875,10 @@ const workerApi = {
 
     await fetchAccount({ publicKey: executor });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    // Propagate the proposer memo to the outer Mina tx memo so block explorers
+    // and the backend indexer can cross-check it against the proposer's
+    // committed plaintext (see backend applyExecutionEvent).
+    const tx = await Mina.transaction(txSender(executor, params.proposal.memo ?? undefined), async () => {
       if (txType === 'transfer') {
         await contract.executeTransferBatchSig(proposalStruct, approvalWitness, sigInputs);
         return;
@@ -913,8 +924,12 @@ const workerApi = {
     progressFn('Generating proof...');
     await tx.prove();
 
+    const txJson = serializeTx(tx);
+    const parsedTx = JSON.parse(txJson);
+
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const executeHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const proposalMemo = params.proposal.memo ?? undefined;
+    const executeHash = await submitTx(tx, sendFn, signFeePayerFn, [], proposalMemo);
     return `Transaction submitted: ${executeHash}`;
   },
 };

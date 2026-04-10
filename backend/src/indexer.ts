@@ -1,7 +1,7 @@
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
 import { PublicKey } from 'o1js';
-import { MAX_RECEIVERS } from 'contracts';
+import { MAX_RECEIVERS, memoToField, decodeTxMemo } from 'contracts';
 import {
   configureNetwork,
   discoverCandidateAddresses,
@@ -507,10 +507,37 @@ export class MinaGuardIndexer {
     });
   }
 
-  /** Marks proposals executed when execution events are observed. */
+  /** Marks proposals executed when execution events are observed. Hashes the
+   *  outer Mina tx memo (from archive transactionInfo.memo) so the serializer
+   *  can cross-check it against the proposer's plaintext memo. The inner
+   *  struct memoHash emitted in the event is ignored here — it's always equal
+   *  to memoToField(proposer memo) for the normal execute path, so comparing
+   *  against it would be tautological. The outer tx memo is the meaningful
+   *  signal: a CLI executor or misbehaving wallet can set a different memo
+   *  on the envelope, and this catches it.
+   *
+   *  A missing tx memo from the archive is treated as the empty string (not
+   *  as unknown). Mina's envelope always carries a memo field, so "archive
+   *  reports none" really means "tx had an empty memo" — and if the proposer
+   *  memo was non-empty, that's a genuine mismatch to flag rather than a
+   *  don't-know state. */
   private async applyExecutionEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
     const proposalHash = asString(chainEvent.event.proposalHash);
     if (!proposalHash) return;
+
+    // Archive returns the outer tx memo base58check-encoded. Decode to
+    // plaintext so memoToField hashes the same string the proposer typed.
+    let observedMemo = '';
+    if (chainEvent.txMemo) {
+      try {
+        observedMemo = decodeTxMemo(chainEvent.txMemo);
+      } catch (err) {
+        // If decoding fails, fall back to the raw value — memoToField will
+        // hash it as-is, producing a mismatch (which is the safe default).
+        observedMemo = chainEvent.txMemo;
+      }
+    }
+    const executionMemoHash = memoToField(observedMemo).toString();
 
     await prisma.proposal.updateMany({
       where: {
@@ -520,6 +547,7 @@ export class MinaGuardIndexer {
       data: {
         status: 'executed',
         executedAtBlock: chainEvent.blockHeight,
+        executionMemoHash,
       },
     });
   }

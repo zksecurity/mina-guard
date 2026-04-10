@@ -6,6 +6,7 @@ import { prisma } from '../db.js';
 import { createBatchRouter } from '../batch-routes.js';
 import { MinaGuardIndexer } from '../indexer.js';
 import type { BackendConfig } from '../config.js';
+import { serializeProposalRecord } from '../proposal-record.js';
 import {
   Receiver, TransactionProposal, TxType, MinaGuard, SetupOwnersInput, MAX_OWNERS, MAX_RECEIVERS,
   computeOwnerChain, ApprovalStore, SignatureInputs, SignatureInput, SignatureOption, memoToField,
@@ -1166,5 +1167,260 @@ describe('indexer transfer event batch dedup', () => {
     // Cleanup
     await prisma.proposalReceiver.deleteMany({ where: { proposalId: testProposal.id } });
     await prisma.proposal.delete({ where: { id: testProposal.id } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// serializeProposalRecord — memoExecutionMatch verdict
+// ---------------------------------------------------------------------------
+
+describe('serializeProposalRecord memoExecutionMatch', () => {
+  async function seedProposal(row: {
+    proposalHash: string;
+    memo: string | null;
+    executionMemoHash: string | null;
+    status: string;
+  }) {
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+    return prisma.proposal.create({
+      data: {
+        contractId: contract!.id,
+        proposalHash: row.proposalHash,
+        origin: 'offchain',
+        status: row.status,
+        memo: row.memo,
+        executionMemoHash: row.executionMemoHash,
+      },
+      include: { receivers: true },
+    });
+  }
+
+  test('returns null for a pending proposal with a memo', async () => {
+    const p = await seedProposal({
+      proposalHash: 'mem-verdict-pending',
+      memo: 'rent payment',
+      executionMemoHash: null,
+      status: 'pending',
+    });
+    try {
+      const body = serializeProposalRecord(p);
+      expect(body.memoExecutionMatch).toBeNull();
+    } finally {
+      await prisma.proposal.delete({ where: { id: p.id } });
+    }
+  });
+
+  test('returns true when neither proposer nor executor set a memo (empty-vs-empty match)', async () => {
+    // Both sides being empty is a valid "match" state — the serializer
+    // normalizes null proposer memo to '', same as the indexer normalizes
+    // null tx memo to ''. Under the UI state machine this renders as no
+    // icon at all (match + null proposer memo → undefined adornment).
+    const p = await seedProposal({
+      proposalHash: 'mem-verdict-empty-match',
+      memo: null,
+      executionMemoHash: memoToField('').toString(),
+      status: 'executed',
+    });
+    try {
+      const body = serializeProposalRecord(p);
+      expect(body.memoExecutionMatch).toBe(true);
+    } finally {
+      await prisma.proposal.delete({ where: { id: p.id } });
+    }
+  });
+
+  test('returns false when the executor set a memo but the proposer did not', async () => {
+    // Null proposer memo + non-empty executor memo = mismatch (red ✗).
+    // Catches the case where someone executes a proposal with an off-brand
+    // memo the proposer never agreed to.
+    const p = await seedProposal({
+      proposalHash: 'mem-verdict-null-proposer-memo-executor',
+      memo: null,
+      executionMemoHash: memoToField('surprise memo').toString(),
+      status: 'executed',
+    });
+    try {
+      const body = serializeProposalRecord(p);
+      expect(body.memoExecutionMatch).toBe(false);
+    } finally {
+      await prisma.proposal.delete({ where: { id: p.id } });
+    }
+  });
+
+  test('returns null for an executed memo-bearing proposal with no executionMemoHash (pre-feature)', async () => {
+    const p = await seedProposal({
+      proposalHash: 'mem-verdict-legacy',
+      memo: 'rent payment',
+      executionMemoHash: null,
+      status: 'executed',
+    });
+    try {
+      const body = serializeProposalRecord(p);
+      expect(body.memoExecutionMatch).toBeNull();
+    } finally {
+      await prisma.proposal.delete({ where: { id: p.id } });
+    }
+  });
+
+  test('returns "match" when the executor committed the same memoHash', async () => {
+    const memo = 'rent payment';
+    const p = await seedProposal({
+      proposalHash: 'mem-verdict-match',
+      memo,
+      executionMemoHash: memoToField(memo).toString(),
+      status: 'executed',
+    });
+    try {
+      const body = serializeProposalRecord(p);
+      expect(body.memoExecutionMatch).toBe(true);
+    } finally {
+      await prisma.proposal.delete({ where: { id: p.id } });
+    }
+  });
+
+  test('returns "mismatch" when the executor committed a different memoHash', async () => {
+    const p = await seedProposal({
+      proposalHash: 'mem-verdict-mismatch',
+      memo: 'alice',
+      executionMemoHash: memoToField('bob').toString(),
+      status: 'executed',
+    });
+    try {
+      const body = serializeProposalRecord(p);
+      expect(body.memoExecutionMatch).toBe(false);
+    } finally {
+      await prisma.proposal.delete({ where: { id: p.id } });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyExecutionEvent — executionMemoHash derived from outer tx memo
+// ---------------------------------------------------------------------------
+
+describe('applyExecutionEvent executionMemoHash sourcing', () => {
+  const dummyConfig: BackendConfig = {
+    port: 0,
+    databaseUrl: '',
+    minaEndpoint: 'http://localhost:1',
+    archiveEndpoint: 'http://localhost:1',
+    lightnetAccountManager: undefined,
+    minaFallbackEndpoint: null,
+    archiveFallbackEndpoint: null,
+    indexPollIntervalMs: 99999,
+    indexStartHeight: 0,
+    minaguardVkHash: null,
+  };
+
+  async function seedPendingProposal(proposalHash: string) {
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+    return prisma.proposal.create({
+      data: {
+        contractId: contract!.id,
+        proposalHash,
+        origin: 'offchain',
+        status: 'pending',
+      },
+    });
+  }
+
+  function makeExecutionChainEvent(
+    proposalHash: string,
+    txMemo: string | null
+  ): {
+    type: string;
+    event: Record<string, unknown>;
+    blockHeight: number;
+    txHash: string | null;
+    txMemo: string | null;
+  } {
+    return {
+      type: 'execution',
+      event: { proposalHash, txType: '0' },
+      blockHeight: 123,
+      txHash: null,
+      txMemo,
+    };
+  }
+
+  test('stores memoToField(txMemo) when the outer tx memo is present', async () => {
+    const indexer = new MinaGuardIndexer(dummyConfig);
+    const apply = (indexer as any).applyExecutionEvent.bind(indexer);
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+
+    const seeded = await seedPendingProposal('exec-memo-happy');
+    try {
+      await apply(contract!.id, makeExecutionChainEvent('exec-memo-happy', 'rent payment'));
+      const row = await prisma.proposal.findUnique({ where: { id: seeded.id } });
+      expect(row?.status).toBe('executed');
+      expect(row?.executionMemoHash).toBe(memoToField('rent payment').toString());
+    } finally {
+      await prisma.proposal.delete({ where: { id: seeded.id } });
+    }
+  });
+
+  test('normalizes an absent outer tx memo to the empty-string hash', async () => {
+    // Mina's envelope always has a memo field — if the archive reports null,
+    // it means the tx was sent with an empty memo, not "unknown". Treat it
+    // as empty so that a non-empty proposer memo is flagged as a mismatch
+    // downstream, rather than rendering as the indeterminate yellow warning.
+    const indexer = new MinaGuardIndexer(dummyConfig);
+    const apply = (indexer as any).applyExecutionEvent.bind(indexer);
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+
+    const seeded = await seedPendingProposal('exec-memo-absent');
+    try {
+      await apply(contract!.id, makeExecutionChainEvent('exec-memo-absent', null));
+      const row = await prisma.proposal.findUnique({ where: { id: seeded.id } });
+      expect(row?.status).toBe('executed');
+      // memoToField('') === Field(0), whose decimal string form is '0'.
+      expect(row?.executionMemoHash).toBe(memoToField('').toString());
+    } finally {
+      await prisma.proposal.delete({ where: { id: seeded.id } });
+    }
+  });
+
+  test('drives the downstream verdict to mismatch when proposer had a memo and executor did not', async () => {
+    // End-to-end check of the null-normalization decision: a proposal with a
+    // non-empty memo, executed with a null outer tx memo, should serialize as
+    // memoExecutionMatch === false (the red ✗ tooltip state), not null.
+    const indexer = new MinaGuardIndexer(dummyConfig);
+    const apply = (indexer as any).applyExecutionEvent.bind(indexer);
+    const contract = await prisma.contract.findUnique({
+      where: { address: guardAddress.toBase58() },
+    });
+
+    const seeded = await prisma.proposal.create({
+      data: {
+        contractId: contract!.id,
+        proposalHash: 'exec-memo-absent-with-proposer-memo',
+        origin: 'offchain',
+        status: 'pending',
+        memo: 'rent payment',
+      },
+      include: { receivers: true },
+    });
+    try {
+      await apply(
+        contract!.id,
+        makeExecutionChainEvent('exec-memo-absent-with-proposer-memo', null)
+      );
+      const row = await prisma.proposal.findUnique({
+        where: { id: seeded.id },
+        include: { receivers: true },
+      });
+      const body = serializeProposalRecord(row!);
+      expect(body.memoExecutionMatch).toBe(false);
+    } finally {
+      await prisma.proposal.delete({ where: { id: seeded.id } });
+    }
   });
 });

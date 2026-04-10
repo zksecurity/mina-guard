@@ -29,4 +29,4 @@ export { ownerKey } from './utils.js';
 
 export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';
 
-export { memoToField } from './memo.js';
+export { memoToField, decodeTxMemo } from './memo.js';

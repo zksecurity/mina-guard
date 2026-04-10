@@ -8,6 +8,10 @@ export interface ChainEvent {
   event: Record<string, unknown>;
   blockHeight: number;
   txHash: string | null;
+  /** Outer Mina transaction memo from the archive's transactionInfo.memo
+   *  field. Used by the indexer to cross-check executor-committed memos
+   *  against proposer plaintext. Null when the archive doesn't surface it. */
+  txMemo: string | null;
 }
 
 /** Configures o1js network endpoints once at process start. */
@@ -149,12 +153,16 @@ export async function fetchDecodedContractEvents(
   // TODO: restore toHeight once archive node supports upper-bound filtering
   const rawEvents = await contract.fetchEvents(UInt32.from(fromHeight));
 
-  return rawEvents.map((entry) => ({
-    type: entry.type,
-    event: toSerializableObject((entry.event as any).data),
-    blockHeight: Number(entry.blockHeight.toString()),
-    txHash: ((entry.event as any).transactionInfo?.transactionHash as string | undefined) ?? null,
-  }));
+  return rawEvents.map((entry) => {
+    const txInfo = (entry.event as any).transactionInfo;
+    return {
+      type: entry.type,
+      event: toSerializableObject((entry.event as any).data),
+      blockHeight: Number(entry.blockHeight.toString()),
+      txHash: (txInfo?.transactionHash as string | undefined) ?? null,
+      txMemo: (txInfo?.transactionMemo as string | undefined) ?? null,
+    };
+  });
 }
 
 /** Runs a GraphQL request with optional endpoint fallback. */

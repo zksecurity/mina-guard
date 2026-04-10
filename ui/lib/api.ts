@@ -146,6 +146,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
     memo: asNullableString(input.memo),
+    memoExecutionMatch: asMemoExecutionMatch(input.memoExecutionMatch),
     status: asProposalStatus(input.status),
     origin: asString(input.origin) === 'onchain' ? 'onchain' : 'offchain',
     approvalCount: asNumber(input.approvalCount),
@@ -203,6 +204,12 @@ function asProposalStatus(value: unknown): Proposal['status'] {
   const text = asString(value);
   if (text === 'executed' || text === 'expired') return text;
   return 'pending';
+}
+
+/** Narrows a memo-execution match verdict from an unknown backend value. */
+function asMemoExecutionMatch(value: unknown): Proposal['memoExecutionMatch'] {
+  if (value === true || value === false) return value;
+  return null;
 }
 
 // ---------------------------------------------------------------------------

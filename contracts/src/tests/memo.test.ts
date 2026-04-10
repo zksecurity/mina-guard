@@ -1,5 +1,5 @@
 import { Field } from 'o1js';
-import { memoToField } from '../memo.js';
+import { memoToField, decodeTxMemo } from '../memo.js';
 import { describe, expect, it } from 'bun:test';
 
 describe('memoToField', () => {
@@ -16,6 +16,25 @@ describe('memoToField', () => {
   it('is deterministic', () => {
     expect(memoToField('rent payment').toString()).toEqual(
       memoToField('rent payment').toString()
+    );
+  });
+});
+
+describe('decodeTxMemo', () => {
+  // Test vectors generated via o1js Memo.toBase58(Memo.fromString(...))
+  it('decodes a base58check-encoded memo to plaintext', () => {
+    expect(decodeTxMemo('E4YmEEfk9NFJZBjzsNatCdzLGVbYK6xWZa9oBgLkwNoLqQh34cjPv')).toBe('rent payment');
+  });
+
+  it('decodes the empty memo to an empty string', () => {
+    expect(decodeTxMemo('E4YM2vTHhWEg66xpj52JErHUBU4pZ1yageL4TVDDpTTSsv8mK6YaH')).toBe('');
+  });
+
+  it('round-trips: memoToField(decodeTxMemo(encoded)) equals memoToField(plaintext)', () => {
+    const plaintext = 'rent payment';
+    const encoded = 'E4YmEEfk9NFJZBjzsNatCdzLGVbYK6xWZa9oBgLkwNoLqQh34cjPv';
+    expect(memoToField(decodeTxMemo(encoded)).toString()).toEqual(
+      memoToField(plaintext).toString()
     );
   });
 });

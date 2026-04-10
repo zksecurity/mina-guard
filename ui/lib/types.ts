@@ -73,6 +73,7 @@ export interface Proposal {
   networkId: string | null;
   guardAddress: string | null;
   memo: string | null;
+  memoExecutionMatch: boolean | null;
   status: ProposalStatus;
   origin: 'onchain' | 'offchain';
   approvalCount: number;

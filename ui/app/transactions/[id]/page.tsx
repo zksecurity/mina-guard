@@ -182,6 +182,25 @@ export default function TransactionDetailPage() {
 
   const txLabel = proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
+  // Memo tooltip state machine, driven entirely by memoExecutionMatch:
+  //  - match   + no proposer memo → no icon (empty-vs-empty, nothing to say)
+  //  - match   + proposer memo    → green ✓
+  //  - mismatch                   → red ✗ (covers proposer-memo/no-exec-memo,
+  //                                 no-proposer-memo/exec-memo, and any
+  //                                 genuine divergence)
+  //  - null (indeterminate)       → yellow ⚠ (pending, or pre-feature row
+  //                                 whose execution wasn't observed with the
+  //                                 new txMemo plumbing)
+  const memoAdornment: ReactNode | undefined = (() => {
+    if (proposal.memoExecutionMatch === true) {
+      return proposal.memo ? <MemoWarningTooltip variant="match" /> : undefined;
+    }
+    if (proposal.memoExecutionMatch === false) {
+      return <MemoWarningTooltip variant="mismatch" />;
+    }
+    return <MemoWarningTooltip />;
+  })();
+
   return (
     <div>
       <Header
@@ -231,7 +250,7 @@ export default function TransactionDetailPage() {
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
             <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
-            <DetailRow label="Memo" value={proposal.memo ?? '—'} labelAdornment={<MemoWarningTooltip />} />
+            <DetailRow label="Memo" value={proposal.memo ?? '—'} labelAdornment={memoAdornment} />
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>
         </div>
