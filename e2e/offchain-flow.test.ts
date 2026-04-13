@@ -182,7 +182,9 @@ test('1. Deploy + setup MinaGuard contract', async () => {
   await deployBtn.click();
 
   log('Waiting for deploy + setup transaction...');
-  await waitForBanner(page, 'success');
+  // First deploy triggers cold MinaGuard.compile() in the worker; subsequent
+  // operations reuse the cached VK, so only this call needs the longer budget.
+  await waitForBanner(page, 'success', 20 * 60 * 1_000);
 
   await waitForIndexer('indexer discovers deployed contract with setup', async () => {
     const contract = await getContract(contractAddress);
