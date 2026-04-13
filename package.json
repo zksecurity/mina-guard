@@ -6,7 +6,8 @@
     "ui",
     "backend",
     "dev-helpers",
-    "e2e"
+    "e2e",
+    "desktop"
   ],
   "scripts": {
     "test": "bun run --filter contracts test",
