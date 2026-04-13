@@ -133,6 +133,9 @@ test.afterEach(async ({}, testInfo) => {
 // ---------------------------------------------------------------------------
 
 test('1. Deploy + setup MinaGuard contract', async () => {
+  // Cold MinaGuard.compile() runs inside the banner wait below; give this
+  // one test enough headroom to exceed the 20-min banner budget.
+  test.setTimeout(25 * 60 * 1_000);
   const page = sharedPage;
   log('=== Step 1: Deploy + setup MinaGuard contract ===');
   await gotoWithWallet('/deploy', accounts[0]);
