@@ -5,6 +5,7 @@ import createNextServer from 'next/dist/server/next.js';
 import { app, BrowserWindow } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { handleAuroRoute } from './auro/router.js';
+import { buildPickerScript } from './hid-picker.js';
 
 const PORT = 5050;
 const uiDir = join(import.meta.dirname, '..', '..', 'ui');
@@ -35,17 +36,32 @@ app.whenReady().then(async () => {
     },
   });
 
+  let selectedHidDevice: Electron.HIDDevice | null = null;
+
   win.webContents.session.on('select-hid-device', (event, details, callback) => {
     event.preventDefault();
-    if (details.deviceList.length > 0) {
-      callback(details.deviceList[0].deviceId);
-    } else {
-      callback('');
-    }
+    selectedHidDevice = null;
+    const script = buildPickerScript(details.deviceList);
+    win.webContents.executeJavaScript(script).then((deviceId: string) => {
+      if (deviceId) {
+        selectedHidDevice = details.deviceList.find(d => d.deviceId === deviceId) ?? null;
+      }
+      callback(deviceId || undefined);
+    }).catch(() => {
+      callback();
+    });
   });
 
   win.webContents.session.setPermissionCheckHandler(() => true);
-  win.webContents.session.setDevicePermissionHandler(() => true);
+  win.webContents.session.setDevicePermissionHandler((details) => {
+    if (details.deviceType === 'hid') {
+      if (!selectedHidDevice) return false;
+      const dev = details.device as { vendorId?: number; productId?: number };
+      return dev.vendorId === selectedHidDevice.vendorId
+        && dev.productId === selectedHidDevice.productId;
+    }
+    return true;
+  });
 
   win.loadURL(`http://127.0.0.1:${PORT}`);
 });
