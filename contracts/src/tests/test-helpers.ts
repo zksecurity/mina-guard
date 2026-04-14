@@ -17,9 +17,6 @@ import {
 import { TxType, PROPOSED_MARKER, MAX_OWNERS, MAX_RECEIVERS } from '../constants.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
-import { SignatureInputs, SignatureInput, SignatureOption } from '../batch-verify.js';
-
-import { ownerKey } from '../utils.js';
 
 // -- Types -------------------------------------------------------------------
 
@@ -34,46 +31,6 @@ export interface TestContext {
   approvalStore: ApprovalStore;
   nullifierStore: VoteNullifierStore;
   networkId: Field;
-}
-
-// -- Batch Signature Helper --------------------------------------------------
-
-export function makeSignatureInputs(
-  ctx: TestContext,
-  proposalHash: Field,
-  signerIndices: number[]
-): SignatureInputs {
-  const inputs: SignatureInput[] = [];
-  const dummySig = Signature.fromFields([Field(1), Field(1), Field(1)]);
-  for (let i = 0; i < ctx.owners.length; i++) {
-    const owner = ctx.owners[i];
-    const shouldSign = signerIndices.includes(i);
-    const sig = shouldSign
-      ? Signature.create(owner.key, [proposalHash])
-      : dummySig;
-    inputs.push(
-      new SignatureInput({
-        value: {
-          signature: new SignatureOption({ value: sig, isSome: Bool(shouldSign) }),
-          signer: owner.pub,
-        },
-        isSome: Bool(true),
-      })
-    );
-  }
-  const dummyPk = PublicKey.fromFields([Field(1), Field(1)]);
-  while (inputs.length < MAX_OWNERS) {
-    inputs.push(
-      new SignatureInput({
-        value: {
-          signature: new SignatureOption({ value: dummySig, isSome: Bool(false) }),
-          signer: dummyPk,
-        },
-        isSome: Bool(false),
-      })
-    );
-  }
-  return new SignatureInputs({ inputs });
 }
 
 // -- Owner Witness Helper ----------------------------------------------------
@@ -232,6 +189,12 @@ function emptyReceivers(): Receiver[] {
   return Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty());
 }
 
+function singleReceiverArray(address: PublicKey): Receiver[] {
+  const arr = emptyReceivers();
+  arr[0] = new Receiver({ address, amount: UInt64.from(0) });
+  return arr;
+}
+
 /** Builds an add-owner governance proposal payload. */
 export function createAddOwnerProposal(
   newOwner: PublicKey,
@@ -242,10 +205,10 @@ export function createAddOwnerProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    receivers: emptyReceivers(),
+    receivers: singleReceiverArray(newOwner),
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
-    data: ownerKey(newOwner),
+    data: Field(0),
     uid,
     configNonce,
     expiryBlock,
@@ -264,10 +227,10 @@ export function createRemoveOwnerProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    receivers: emptyReceivers(),
+    receivers: singleReceiverArray(ownerToRemove),
     tokenId: Field(0),
     txType: TxType.REMOVE_OWNER,
-    data: ownerKey(ownerToRemove),
+    data: Field(0),
     uid,
     configNonce,
     expiryBlock,
@@ -308,10 +271,10 @@ export function createDelegateProposal(
   networkId = Field(1)
 ): TransactionProposal {
   return new TransactionProposal({
-    receivers: emptyReceivers(),
+    receivers: singleReceiverArray(delegate),
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
-    data: ownerKey(delegate),
+    data: Field(0),
     uid,
     configNonce,
     expiryBlock,
@@ -320,7 +283,7 @@ export function createDelegateProposal(
   });
 }
 
-/** Builds an un-delegate proposal payload (data=0). */
+/** Builds an un-delegate proposal payload (empty receivers[0]). */
 export function createUndelegateProposal(
   uid: Field,
   configNonce: Field,
