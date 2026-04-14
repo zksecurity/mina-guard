@@ -13,6 +13,13 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
+      - name: Verify branch is main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Refusing to deploy from ${{ github.ref }}. This workflow only runs on main."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
