@@ -87,6 +87,7 @@ case "$COMMAND" in
         ;&
     up)
         echo "Deploying main branch on port ${PORT}..."
+        # TODO(devnet): replace force-recreate with zero-downtime strategy (e.g., blue/green via caddy route swap) — current approach briefly drops requests during container swap.
         docker compose -f deploy/docker-compose.yml -p minaguard up -d --build --force-recreate --remove-orphans
         add_caddy_route
 

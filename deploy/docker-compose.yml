@@ -96,4 +96,5 @@ services:
       - lightnet
 
 volumes:
+  # TODO(devnet): mark `external: true` when migrating off lightnet — db is wiped on every deploy because its state mirrors the lightnet chain.
   minaguard-db-data:
