@@ -131,3 +131,27 @@ Preview routes are managed via the Caddy admin API (`localhost:2019`) — no sud
 - **Bun workspaces**: `ui/deps/` must be copied into Dockerfiles because `mina-signer` is a `file:` dependency.
 - **Minification disabled**: SWC/terser mangle BigInt ops used by o1js.
 - **Server limits**: ~2GB RAM per preview stack, max 2–3 concurrent previews on the 30GB server. Run `docker image prune -f` periodically.
+
+
+# Lightnet (working image before update 2026/04/13)
+
+```bash
+# Pull previous working lightnet (non-MESA) docker image
+docker pull 'o1labs/mina-local-network@sha256:746190ff2f556f252b7f50215ae60d4a5e786c8adc16f27986e3e35ce6105949' 
+
+# Verify it was pulled
+docker inspect 'o1labs/mina-local-network@sha256:746190ff2f556f252b7f50215ae60d4a5e786c8adc16f27986e3e35ce6105949' --format '{{.Id}} {{.RepoTags}}'
+
+# Tag it as a distinct image
+docker tag 'o1labs/mina-local-network@sha256:746190ff2f556f252b7f50215ae60d4a5e786c8adc16f27986e3e35ce6105949' o1labs/mina-local-network:known-good
+
+# Add a second tag, the one zk will look for
+docker tag 'o1labs/mina-local-network@sha256:746190ff2f556f252b7f50215ae60d4a5e786c8adc16f27986e3e35ce6105949' o1labs/mina-local-network:compatible-latest-lightnet
+
+# Confirm no stale state
+zk lightnet stop --clean-up
+
+# Start lightnet WITHOUT pulling latest
+zk lightnet start --pull=false
+
+```

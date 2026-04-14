@@ -165,7 +165,7 @@ export class MinaGuardIndexer {
     fromHeight: number,
     toHeight: number
   ): Promise<void> {
-    const receiverState = new Map<string, { count: number; skip: boolean; checked: boolean }>();
+    const receiverState = new Map<string, { count: number }>();
     const events = await fetchDecodedContractEvents(address, fromHeight, toHeight);
 
     // Sort so 'proposal' events are processed before 'approval'/'execution' within
@@ -215,7 +215,7 @@ export class MinaGuardIndexer {
   private async applyEvent(
     contractId: number,
     chainEvent: ChainEvent,
-    receiverState: Map<string, { count: number; skip: boolean; checked: boolean }>
+    receiverState: Map<string, { count: number }>
   ): Promise<void> {
     switch (chainEvent.type) {
       case 'setup': {
@@ -327,23 +327,11 @@ export class MinaGuardIndexer {
    * Creates a proposal row from on-chain event data.
    * ProposalEvent includes all TransactionProposal fields so the indexer
    * can reconstruct full proposal details purely from on-chain events.
-   *
-   * If an offchain proposal already exists for this hash, skip the update
-   * to avoid overwriting data or origin managed by the batch-sig API.
    */
   private async applyProposalEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
     const event = chainEvent.event;
     const proposalHash = asString(event.proposalHash);
     if (!proposalHash) return;
-
-    const existing = await prisma.proposal.findUnique({
-      where: {
-        contractId_proposalHash: { contractId, proposalHash },
-      },
-      select: { origin: true },
-    });
-
-    if (existing?.origin === 'offchain') return;
 
     await prisma.proposal.upsert({
       where: {
@@ -391,16 +379,11 @@ export class MinaGuardIndexer {
    * Governance proposals (addOwner/removeOwner/setDelegate) carry the target
    * pubkey in slot 0 with amount=0 — only empty addresses indicate padding,
    * not zero amounts.
-   *
-   * Offchain proposals already persist their receiver list via the API, so
-   * matching receiver events are skipped. On-chain proposals instead resume
-   * from any receivers already written, which lets retries backfill the
-   * remaining rows after a partial crash.
    */
   private async applyReceiverEvent(
     contractId: number,
     event: Record<string, unknown>,
-    receiverState: Map<string, { count: number; skip: boolean; checked: boolean }>
+    receiverState: Map<string, { count: number }>
   ): Promise<void> {
     const proposalHash = asString(event.proposalHash);
     if (!proposalHash) return;
@@ -408,13 +391,12 @@ export class MinaGuardIndexer {
     const cacheKey = `${contractId}:${proposalHash}`;
     let state = receiverState.get(cacheKey);
     if (!state) {
-      state = { count: 0, skip: false, checked: false };
+      state = { count: 0 };
       receiverState.set(cacheKey, state);
     }
 
     state.count++;
     if (state.count > MAX_RECEIVERS) return;
-    if (state.skip) return;
 
     const address = asString(event.receiver);
     const amount = asString(event.amount);
@@ -427,20 +409,9 @@ export class MinaGuardIndexer {
           proposalHash,
         },
       },
-      select: { id: true, origin: true },
+      select: { id: true },
     });
     if (!proposal) return;
-
-    if (!state.checked) {
-      state.checked = true;
-      const existingCount = await prisma.proposalReceiver.count({
-        where: { proposalId: proposal.id },
-      });
-      if (proposal.origin === 'offchain' && existingCount > 0) {
-        state.skip = true;
-        return;
-      }
-    }
 
     const nextIndex = await prisma.proposalReceiver.count({
       where: { proposalId: proposal.id },
@@ -456,9 +427,8 @@ export class MinaGuardIndexer {
     });
 
     // Governance proposals carry the target pubkey in slot 0 with amount=0.
-    // Mirror onto Proposal.toAddress for API shape. Offchain rows already
-    // have it written by the POST route.
-    if (nextIndex === 0 && amount === '0' && proposal.origin !== 'offchain') {
+    // Mirror onto Proposal.toAddress for API shape.
+    if (nextIndex === 0 && amount === '0') {
       await prisma.proposal.update({
         where: { id: proposal.id },
         data: { toAddress: address },

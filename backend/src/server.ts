@@ -5,7 +5,6 @@ import { prisma } from './db.js';
 import { loadConfig } from './config.js';
 import { MinaGuardIndexer } from './indexer.js';
 import { createApiRouter } from './routes.js';
-import { createBatchRouter } from './batch-routes.js';
 
 /** Boots the Express API server and starts the polling chain indexer. */
 async function main(): Promise<void> {
@@ -18,7 +17,6 @@ async function main(): Promise<void> {
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
   app.use(createApiRouter(indexer, config));
-  app.use(createBatchRouter());
 
   const server = app.listen(config.port, () => {
     console.log(`[backend] listening on http://localhost:${config.port}`);
