@@ -1,0 +1,37 @@
+name: Reset main deployment
+
+on:
+  schedule:
+    - cron: '0 4 */3 * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Reset
+        run: |
+          chmod +x deploy/deploy.sh
+          ./deploy/deploy.sh reset
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for backend..."
+          for i in $(seq 1 36); do
+            if curl -sf "http://localhost:10000/app/health" > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/36: not ready yet..."
+            sleep 5
+          done
+          echo "Backend failed to become ready within timeout"
+          exit 1

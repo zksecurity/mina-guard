@@ -2,8 +2,9 @@
 # MinaGuard Main Branch Deployment
 #
 # Usage:
-#   ./deploy.sh up     — deploy main branch
-#   ./deploy.sh down   — teardown deployment
+#   ./deploy.sh up      — deploy main branch (force-recreates containers for fresh lightnet chain)
+#   ./deploy.sh reset   — wipe volumes and redeploy (used by the 3-day bloat-cleanup cron)
+#   ./deploy.sh down    — teardown deployment
 #
 # Expects to be run from the repo root directory.
 
@@ -79,9 +80,14 @@ remove_caddy_route() {
 }
 
 case "$COMMAND" in
+    reset)
+        echo "Wiping volumes for bloat cleanup..."
+        docker compose -f deploy/docker-compose.yml -p minaguard down -v --remove-orphans 2>/dev/null || true
+        remove_caddy_route 2>/dev/null || true
+        ;&
     up)
         echo "Deploying main branch on port ${PORT}..."
-        docker compose -f deploy/docker-compose.yml -p minaguard up -d --build --remove-orphans
+        docker compose -f deploy/docker-compose.yml -p minaguard up -d --build --force-recreate --remove-orphans
         add_caddy_route
 
         echo ""
@@ -102,7 +108,7 @@ case "$COMMAND" in
         ;;
 
     *)
-        echo "Usage: $0 {up|down}"
+        echo "Usage: $0 {up|reset|down}"
         exit 1
         ;;
 esac
