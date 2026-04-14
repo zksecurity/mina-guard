@@ -28,8 +28,10 @@ jobs:
           for i in $(seq 1 36); do
             if curl -sf "http://localhost:10000/app/health" > /dev/null 2>&1; then
               echo "Backend is ready!"
-              break
+              exit 0
             fi
             echo "Attempt $i/36: not ready yet..."
             sleep 5
           done
+          echo "Backend failed to become ready within timeout"
+          exit 1
