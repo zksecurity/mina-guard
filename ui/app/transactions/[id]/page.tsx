@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import Header from '@/components/Header';
 import ApprovalProgress from '@/components/ApprovalProgress';
@@ -11,12 +11,16 @@ import {
   formatMina,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
-import { submitOffchainSignature, executeBatchTx, assertLedgerReady } from '@/lib/multisigClient';
+import { approveProposalOnchain, executeProposalOnchain, assertLedgerReady } from '@/lib/multisigClient';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Set by the new-proposal page right after tx submission, to differentiate
+  // "indexer hasn't caught up yet" from "no such proposal".
+  const isPendingIndex = searchParams.get('pending') === '1';
   const {
     wallet,
     multisig,
@@ -70,21 +74,33 @@ export default function TransactionDetailPage() {
   }, [approvalAddresses, wallet.address]);
 
   const threshold = multisig?.threshold ?? 0;
-  const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved;
-  const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold;
+  const isConfigStale =
+    !!proposal &&
+    proposal.status === 'pending' &&
+    proposal.configNonce != null &&
+    multisig?.configNonce != null &&
+    proposal.configNonce !== String(multisig.configNonce);
+  const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved && !isConfigStale;
+  const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold && !isConfigStale;
 
-  /** Signs the proposal hash offchain and submits to the backend. */
+  /** Submits an on-chain approveProposal transaction. */
   const handleApprove = async () => {
     if (!proposal || !multisig || !wallet.address) return;
 
-    const captured = { contractAddress: multisig.address, signerAddress: wallet.address, proposalHash: proposal.proposalHash };
+    const captured = { contractAddress: multisig.address, approverAddress: wallet.address, proposal };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    try {
+      await assertLedgerReady(signer);
+    } catch (err) {
+      void startOperation('Approve proposal', async () => { throw err; });
+      return;
+    }
     let success = false;
-    await startOperation('Signing proposal...', async (onProgress) => {
-      const result = await submitOffchainSignature({
+    await startOperation('Submitting approval on-chain...', async (onProgress) => {
+      const result = await approveProposalOnchain({
         contractAddress: captured.contractAddress,
-        signerAddress: captured.signerAddress,
-        proposalHash: captured.proposalHash,
+        approverAddress: captured.approverAddress,
+        proposal: captured.proposal,
       }, onProgress, signer);
       if (result) success = true;
       return result;
@@ -92,7 +108,7 @@ export default function TransactionDetailPage() {
     if (success) router.push('/transactions');
   };
 
-  /** Fetches batch payload and submits execute*BatchSig transaction on-chain. */
+  /** Submits the appropriate single-sig execute* transaction on-chain. */
   const handleExecute = async () => {
     if (!proposal || !multisig || !wallet.address) return;
 
@@ -105,8 +121,8 @@ export default function TransactionDetailPage() {
       return;
     }
     let success = false;
-    await startOperation('Building batch execute transaction...', async (onProgress) => {
-      const result = await executeBatchTx({
+    await startOperation('Building execute transaction...', async (onProgress) => {
+      const result = await executeProposalOnchain({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
@@ -161,13 +177,19 @@ export default function TransactionDetailPage() {
           onNetworkChange={setWalletNetwork}
         />
         <div className="p-6 text-center py-20">
-          <p className="text-safe-text">Proposal not found</p>
-          <button
-            onClick={() => router.push('/transactions')}
-            className="mt-4 text-sm text-safe-green hover:underline"
-          >
-            Back to proposals
-          </button>
+          {isPendingIndex ? (
+            <p className="text-safe-text">Your proposal will appear here shortly…</p>
+          ) : (
+            <>
+              <p className="text-safe-text">Proposal not found</p>
+              <button
+                onClick={() => router.push('/transactions')}
+                className="mt-4 text-sm text-safe-green hover:underline"
+              >
+                Back to proposals
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -204,13 +226,24 @@ export default function TransactionDetailPage() {
         <div className={`rounded-xl border p-4 ${statusColors[proposal.status]}`}>
           <div className="flex items-center gap-2">
             <span className="font-semibold capitalize">{proposal.status}</span>
-            {proposal.status === 'pending' && threshold > proposal.approvalCount && (
+            {proposal.status === 'pending' && !isConfigStale && threshold > proposal.approvalCount && (
               <span className="text-sm opacity-75 ml-2">
                 Needs {threshold - proposal.approvalCount} more approvals
               </span>
             )}
           </div>
         </div>
+
+        {isConfigStale && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
+            <p className="font-semibold mb-1">Outdated config nonce</p>
+            <p className="opacity-90">
+              This proposal was created under config nonce {proposal.configNonce}, but the contract is now
+              at {multisig?.configNonce}. It can no longer be executed — governance changed since this
+              proposal was made. Create a new proposal to proceed.
+            </p>
+          </div>
+        )}
 
         <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
           <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Details</h3>
@@ -227,6 +260,20 @@ export default function TransactionDetailPage() {
             )}
             {proposal.txType === 'changeThreshold' && (
               <DetailRow label="New Threshold" value={proposal.data ?? '-'} />
+            )}
+            {proposal.txType === 'addOwner' && (
+              <DetailRow label="Owner to Add" value={proposal.toAddress ?? '-'} mono copyable />
+            )}
+            {proposal.txType === 'removeOwner' && (
+              <DetailRow label="Owner to Remove" value={proposal.toAddress ?? '-'} mono copyable />
+            )}
+            {proposal.txType === 'setDelegate' && (
+              <DetailRow
+                label="Delegate"
+                value={proposal.toAddress ?? '(undelegate)'}
+                mono={!!proposal.toAddress}
+                copyable={!!proposal.toAddress}
+              />
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
             <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
@@ -263,6 +310,7 @@ export default function TransactionDetailPage() {
             threshold={threshold}
             owners={owners.map((owner) => owner.address)}
             approvalAddresses={approvalAddresses}
+            status={proposal.status}
           />
         </div>
 

@@ -7,7 +7,7 @@ import Header from '@/components/Header';
 import ProposalForm from '@/components/ProposalForm';
 import { type NewProposalInput, type TxType, TX_TYPES } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
-import { createOffchainProposal } from '@/lib/multisigClient';
+import { createOnchainProposal } from '@/lib/multisigClient';
 import { fetchContract } from '@/lib/api';
 
 export default function NewTransactionPage() {
@@ -52,26 +52,22 @@ function NewTransactionPageInner() {
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
 
     let createdHash: string | null = null;
-    await startOperation('Creating offchain proposal...', async (onProgress) => {
+    await startOperation('Submitting proposal on-chain...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      const createdProposal = await createOffchainProposal({
+      const proposalHash = await createOnchainProposal({
         contractAddress,
         proposerAddress,
         input: data,
         configNonce,
         networkId,
       }, onProgress, signer);
-      createdHash = createdProposal?.proposalHash ?? null;
-      if (!createdProposal) return null;
+      createdHash = proposalHash;
+      if (!proposalHash) return null;
 
-      const warningText = createdProposal.warnings.length > 0
-        ? ` Warning: ${createdProposal.warnings.join(' ')}`
-        : '';
-
-      return `Proposal created: ${createdProposal.proposalHash}${warningText}`;
+      return `Proposal created: ${proposalHash}`;
     });
-    router.push(createdHash ? `/transactions/${createdHash}` : '/transactions');
+    router.push(createdHash ? `/transactions/${createdHash}?pending=1` : '/transactions');
   };
 
   return (

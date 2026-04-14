@@ -18,47 +18,6 @@ export interface ProposalReceiver {
   amount: string;
 }
 
-/** Transfer/gov proposal payload returned by the batch-payload API. */
-export interface BatchPayloadProposal {
-  proposalHash: string;
-  toAddress: string | null;
-  tokenId: string | null;
-  txType: string | null;
-  data: string | null;
-  uid: string | null;
-  configNonce: string | null;
-  expiryBlock: string | null;
-  networkId: string | null;
-  guardAddress: string | null;
-  receivers: ProposalReceiver[];
-  recipientCount: number;
-  totalAmount: string | null;
-}
-
-/** One owner/signature slot returned by the batch-payload API. */
-export interface BatchPayloadInput {
-  isSome: boolean;
-  signer: string | null;
-  hasSignature: boolean;
-  signatureR: string | null;
-  signatureS: string | null;
-}
-
-/** Response shape returned by the batch-payload API. */
-export interface BatchPayload {
-  ready: boolean;
-  threshold: number;
-  approvalCount: number;
-  proposal: BatchPayloadProposal;
-  inputs: BatchPayloadInput[];
-}
-
-/** Minimal success response needed after creating an offchain proposal. */
-export interface OffchainProposalSubmission {
-  proposalHash: string;
-  warnings: string[];
-}
-
 /** Proposal record returned by the backend indexer API. */
 export interface Proposal {
   proposalHash: string;
@@ -73,7 +32,6 @@ export interface Proposal {
   networkId: string | null;
   guardAddress: string | null;
   status: ProposalStatus;
-  origin: 'onchain' | 'offchain';
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;

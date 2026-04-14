@@ -4,7 +4,7 @@
 
 import * as Comlink from 'comlink';
 import type { WorkerApi } from './multisigClient.worker';
-import type { NewProposalInput, OffchainProposalSubmission, Proposal, WalletType } from '@/lib/types';
+import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
 import { signFields as ledgerSignFields, signFeePayer, checkLedgerReady } from '@/lib/ledgerWallet';
 
@@ -167,40 +167,51 @@ export async function deployAndSetupContract(params: {
   return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
-/** Creates an offchain proposal in the backend and submits the proposer's first signature. */
-export async function createOffchainProposal(params: {
+/** Creates an on-chain proposal via zkApp.propose(). Returns the proposalHash on success. */
+export async function createOnchainProposal(params: {
   contractAddress: string;
   proposerAddress: string;
   input: NewProposalInput;
   configNonce: number;
   networkId: string;
-}, onProgress?: OnProgress, signer?: SignerConfig): Promise<OffchainProposalSubmission | null> {
-  return getWorkerApi().createOffchainProposal(
-    params,
-    proxiedSignFields(signer),
-    proxiedProgress(onProgress),
-  );
-}
-
-/** Signs the proposal hash and submits the signature to the backend. */
-export async function submitOffchainSignature(params: {
-  contractAddress: string;
-  signerAddress: string;
-  proposalHash: string;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
-  return getWorkerApi().submitOffchainSignature(
+  await assertLedgerReady(signer);
+  return getWorkerApi().createOnchainProposal(
     params,
     proxiedSignFields(signer),
-    proxiedProgress(onProgress)
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer),
   );
 }
 
-/** Fetches batch payload, builds and sends an execute*BatchSig transaction. */
-export async function executeBatchTx(params: {
+/** Submits an on-chain approveProposal tx. Returns the tx hash string on success. */
+export async function approveProposalOnchain(params: {
+  contractAddress: string;
+  approverAddress: string;
+  proposal: Proposal;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  await assertLedgerReady(signer);
+  return getWorkerApi().approveProposalOnchain(
+    params,
+    proxiedSignFields(signer),
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer),
+  );
+}
+
+/** Submits the appropriate single-sig execute* transaction for the given proposal. */
+export async function executeProposalOnchain(params: {
   contractAddress: string;
   executorAddress: string;
   proposal: Proposal;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
-  return getWorkerApi().executeBatchTx(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
+  return getWorkerApi().executeProposalOnchain(
+    params,
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer),
+  );
 }

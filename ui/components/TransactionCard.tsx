@@ -69,6 +69,7 @@ export default function TransactionCard({
             threshold={threshold}
             owners={owners}
             compact
+            status={proposal.status}
           />
         </div>
       </div>

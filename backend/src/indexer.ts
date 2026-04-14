@@ -1,7 +1,6 @@
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
 import { PublicKey } from 'o1js';
-import { MAX_RECEIVERS } from 'contracts';
 import {
   configureNetwork,
   discoverCandidateAddresses,
@@ -165,13 +164,20 @@ export class MinaGuardIndexer {
     fromHeight: number,
     toHeight: number
   ): Promise<void> {
-    const receiverState = new Map<string, { count: number }>();
-    const events = await fetchDecodedContractEvents(address, fromHeight, toHeight);
+    const rawEvents = await fetchDecodedContractEvents(address, fromHeight, toHeight);
 
-    // Sort so 'proposal' events are processed before 'approval'/'execution' within
-    // the same batch. The contract's propose() emits both proposal and approval events
-    // in a single tx, but the archive may return them in arbitrary order. Processing
-    // proposal first ensures the Proposal row exists when the approval is applied.
+    // o1js fetchEvents returns events within a single tx in *reverse* emission
+    // order (archive GraphQL returns them newest-first per tx). Reverse per-tx
+    // groups so receiver events land in contract-emission slot order —
+    // otherwise multi-receiver transfer proposals have receivers stored in
+    // reversed idx, which breaks the proposal-hash recomputation on the UI
+    // side and causes "Proposal not found" errors on approve.
+    const events = reverseEventsWithinEachTx(rawEvents);
+
+    // Stable sort so 'proposal' events are processed before 'approval' /
+    // 'receiver' / 'execution' within the same batch. The per-tx reversal
+    // above already aligned receiver events with their emission order; the
+    // stable sort preserves that ordering since all receivers share a type.
     const eventOrder: Record<string, number> = {
       deployed: 0,
       setup: 1,
@@ -202,7 +208,7 @@ export class MinaGuardIndexer {
         },
       });
 
-      await this.applyEvent(contractId, chainEvent, receiverState);
+      await this.applyEvent(contractId, chainEvent);
     }
 
     await prisma.contract.update({
@@ -215,7 +221,6 @@ export class MinaGuardIndexer {
   private async applyEvent(
     contractId: number,
     chainEvent: ChainEvent,
-    receiverState: Map<string, { count: number }>
   ): Promise<void> {
     switch (chainEvent.type) {
       case 'setup': {
@@ -239,7 +244,7 @@ export class MinaGuardIndexer {
         return;
       }
       case 'receiver': {
-        await this.applyReceiverEvent(contractId, chainEvent.event, receiverState);
+        await this.applyReceiverEvent(contractId, chainEvent.event);
         return;
       }
       case 'ownerChange': {
@@ -369,12 +374,11 @@ export class MinaGuardIndexer {
   }
 
   /**
-   * Persists receiver rows from propose/execution receiver events.
+   * Persists receiver rows from propose-time receiver events.
    *
-   * The contract emits exactly MAX_RECEIVERS receiver events per emit point
-   * (padded with empties). By counting all events per proposal we detect
-   * batch boundaries: count 1–MAX_RECEIVERS is the first (accepted) batch,
-   * anything beyond is a re-emit (execution after propose) and is skipped.
+   * The contract emits exactly MAX_RECEIVERS receiver events at propose-time
+   * (padded with empties). Empty-address slots are skipped; non-empty slots
+   * become ProposalReceiver rows.
    *
    * Governance proposals (addOwner/removeOwner/setDelegate) carry the target
    * pubkey in slot 0 with amount=0 — only empty addresses indicate padding,
@@ -383,20 +387,9 @@ export class MinaGuardIndexer {
   private async applyReceiverEvent(
     contractId: number,
     event: Record<string, unknown>,
-    receiverState: Map<string, { count: number }>
   ): Promise<void> {
     const proposalHash = asString(event.proposalHash);
     if (!proposalHash) return;
-
-    const cacheKey = `${contractId}:${proposalHash}`;
-    let state = receiverState.get(cacheKey);
-    if (!state) {
-      state = { count: 0 };
-      receiverState.set(cacheKey, state);
-    }
-
-    state.count++;
-    if (state.count > MAX_RECEIVERS) return;
 
     const address = asString(event.receiver);
     const amount = asString(event.amount);
@@ -624,6 +617,28 @@ export class MinaGuardIndexer {
       JSON.stringify(chainEvent.event),
     ].join('::');
   }
+}
+
+/**
+ * Reverses per-tx event groups to restore contract emission order.
+ * o1js fetchEvents returns events within a single tx in newest-first order
+ * (reverse of the contract's `this.emitEvent` sequence). Cross-tx ordering
+ * (block height, tx index) is preserved; only within-tx groups are reversed.
+ */
+function reverseEventsWithinEachTx(events: ChainEvent[]): ChainEvent[] {
+  const groups = new Map<string, ChainEvent[]>();
+  const keyOrder: string[] = [];
+  for (const e of events) {
+    // Events without a txHash are rare (none in practice); keep them isolated
+    // under a unique key so they pass through unreversed.
+    const key = e.txHash ?? `__no_tx_${keyOrder.length}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      keyOrder.push(key);
+    }
+    groups.get(key)!.push(e);
+  }
+  return keyOrder.flatMap((k) => [...groups.get(k)!].reverse());
 }
 
 /** Converts unknown values into nullable string form for DB persistence. */

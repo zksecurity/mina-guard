@@ -305,14 +305,15 @@ export class MinaGuard extends SmartContract {
     }
   }
 
-  /** Sends MINA to each receiver slot and emits transfer events. */
-  private executeTransfers(proposal: TransactionProposal, proposalHash: Field): void {
+  /** Sends MINA to each receiver slot. Receiver events are emitted only at
+   *  propose-time; execute-time value movement is captured by Mina's native
+   *  account-update log plus the ExecutionEvent. */
+  private executeTransfers(proposal: TransactionProposal): void {
     for (let i = 0; i < MAX_RECEIVERS; i++) {
       const r = proposal.receivers[i];
       const isEmpty = r.address.equals(PublicKey.empty());
       const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
       this.send({ to: r.address, amount: effectiveAmount });
-      this.emitEvent('receiver', { proposalHash, receiver: r.address, amount: effectiveAmount });
     }
   }
 
@@ -544,7 +545,7 @@ export class MinaGuard extends SmartContract {
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
-    this.executeTransfers(proposal, proposalHash);
+    this.executeTransfers(proposal);
 
     this.markExecuted(approvalWitness);
 

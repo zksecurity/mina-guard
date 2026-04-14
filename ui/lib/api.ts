@@ -1,7 +1,4 @@
 import {
-  type BatchPayload,
-  type BatchPayloadProposal,
-  type OffchainProposalSubmission,
   type ApprovalRecord,
   type ContractSummary,
   type IndexerStatus,
@@ -146,7 +143,6 @@ function toProposal(input: Record<string, unknown>): Proposal {
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
     status: asProposalStatus(input.status),
-    origin: asString(input.origin) === 'onchain' ? 'onchain' : 'offchain',
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
@@ -202,135 +198,6 @@ function asProposalStatus(value: unknown): Proposal['status'] {
   const text = asString(value);
   if (text === 'executed' || text === 'expired') return text;
   return 'pending';
-}
-
-// ---------------------------------------------------------------------------
-// Batch-sig offchain API helpers
-// ---------------------------------------------------------------------------
-
-/** Creates an offchain proposal in the backend for signature aggregation. */
-export async function postOffchainProposal(
-  contractAddress: string,
-  data: {
-    receivers?: Array<{ address: string; amount: string }>;
-    toAddress?: string;
-    tokenId: string;
-    txType: string;
-    data: string;
-    uid: string;
-    configNonce: string;
-    expiryBlock: string;
-    networkId: string;
-    guardAddress: string;
-    proposalHash: string;
-    proposer?: string;
-  }
-): Promise<OffchainProposalSubmission | null> {
-  try {
-    const res = await fetch(
-      `${API_BASE}/api/contracts/${contractAddress}/proposals`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      }
-    );
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({} as Record<string, unknown>));
-      throw new Error((err as Record<string, unknown>).error as string ?? `HTTP ${res.status}`);
-    }
-    const body = await res.json() as Record<string, unknown>;
-    return {
-      proposalHash: asString(body.proposalHash) ?? '',
-      warnings: Array.isArray(body.warnings)
-        ? body.warnings.map((warning) => asString(warning) ?? '').filter(Boolean)
-        : [],
-    };
-  } catch (err) {
-    console.error('[api] postOffchainProposal failed:', err);
-    throw err;
-  }
-}
-
-/** Submits an owner signature for an offchain proposal. */
-export async function postSignature(
-  contractAddress: string,
-  proposalHash: string,
-  data: { signer: string; signatureR: string; signatureS: string }
-): Promise<{ approvalCount: number; threshold: number; ready: boolean } | null> {
-  try {
-    const res = await fetch(
-      `${API_BASE}/api/contracts/${contractAddress}/proposals/${proposalHash}/signatures`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      }
-    );
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({} as Record<string, unknown>));
-      throw new Error((err as Record<string, unknown>).error as string ?? `HTTP ${res.status}`);
-    }
-    return (await res.json()) as { approvalCount: number; threshold: number; ready: boolean };
-  } catch (err) {
-    console.error('[api] postSignature failed:', err);
-    throw err;
-  }
-}
-
-/** Fetches the assembled batch payload for client-side execution. */
-export async function fetchBatchPayload(
-  contractAddress: string,
-  proposalHash: string
-): Promise<BatchPayload | null> {
-  const data = await getJson<Record<string, unknown>>(
-    `/api/contracts/${contractAddress}/proposals/${proposalHash}/batch-payload`
-  );
-  if (!data) return null;
-
-  const proposalRecord =
-    typeof data.proposal === 'object' && data.proposal !== null
-      ? data.proposal as Record<string, unknown>
-      : {};
-  const rawInputs = Array.isArray(data.inputs) ? data.inputs : [];
-
-  return {
-    ready: asBoolean(data.ready),
-    threshold: asNumber(data.threshold),
-    approvalCount: asNumber(data.approvalCount),
-    proposal: toBatchPayloadProposal(proposalRecord),
-    inputs: rawInputs.map((input) => {
-      const record =
-        typeof input === 'object' && input !== null
-          ? input as Record<string, unknown>
-          : {};
-      return {
-        isSome: asBoolean(record.isSome),
-        signer: asNullableString(record.signer),
-        hasSignature: asBoolean(record.hasSignature),
-        signatureR: asNullableString(record.signatureR),
-        signatureS: asNullableString(record.signatureS),
-      };
-    }),
-  };
-}
-
-function toBatchPayloadProposal(input: Record<string, unknown>): BatchPayloadProposal {
-  return {
-    proposalHash: asString(input.proposalHash) ?? '',
-    toAddress: asNullableString(input.toAddress),
-    tokenId: asNullableString(input.tokenId),
-    txType: asNullableString(input.txType),
-    data: asNullableString(input.data),
-    uid: asNullableString(input.uid),
-    configNonce: asNullableString(input.configNonce),
-    expiryBlock: asNullableString(input.expiryBlock),
-    networkId: asNullableString(input.networkId),
-    guardAddress: asNullableString(input.guardAddress),
-    receivers: asReceivers(input.receivers),
-    recipientCount: asNumber(input.recipientCount),
-    totalAmount: asNullableString(input.totalAmount),
-  };
 }
 
 function asReceivers(value: unknown): ProposalReceiver[] {
