@@ -121,7 +121,7 @@ export class ProposalEvent extends Struct({
 }) { }
 
 /** Emitted once per receiver slot during propose and execution (fixed-size, padded with empties). */
-export class TransferEvent extends Struct({
+export class ReceiverEvent extends Struct({
   proposalHash: Field,
   receiver: PublicKey,
   amount: UInt64,
@@ -210,7 +210,7 @@ export class MinaGuard extends SmartContract {
     setup: SetupEvent,
     setupOwner: SetupOwnerEvent,
     proposal: ProposalEvent,
-    transfer: TransferEvent,
+    receiver: ReceiverEvent,
     approval: ApprovalEvent,
     execution: ExecutionEvent,
     executionBatch: ExecutionBatchEvent,
@@ -300,6 +300,16 @@ export class MinaGuard extends SmartContract {
     );
   }
 
+  /** Returns true iff the proposal carries at most one receiver (slots 1..N-1 empty). */
+  private atMostOneReceiver(proposal: TransactionProposal): Bool {
+    let ok = Bool(true);
+    for (let i = 1; i < MAX_RECEIVERS; i++) {
+      const slotEmpty = proposal.receivers[i].address.equals(PublicKey.empty());
+      ok = ok.and(slotEmpty);
+    }
+    return ok;
+  }
+
   /** Verifies approval witness root/key/value at proposalHash. */
   private assertApprovalWitnessValue(
     proposalHash: Field,
@@ -319,13 +329,14 @@ export class MinaGuard extends SmartContract {
     this.approvalRoot.set(newApprovalRoot);
   }
 
-  /** Emits a transfer event per receiver slot (padded with empties). */
-  private emitTransferEvents(proposal: TransactionProposal, proposalHash: Field): void {
+  /** Emits a receivers event per receiver slot (padded with empties).
+   */
+  private emitReceiversEvent(proposal: TransactionProposal, proposalHash: Field): void {
     for (let i = 0; i < MAX_RECEIVERS; i++) {
       const r = proposal.receivers[i];
       const isEmpty = r.address.equals(PublicKey.empty());
       const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
-      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
+      this.emitEvent('receiver', { proposalHash, receiver: r.address, amount: effectiveAmount });
     }
   }
 
@@ -336,7 +347,7 @@ export class MinaGuard extends SmartContract {
       const isEmpty = r.address.equals(PublicKey.empty());
       const effectiveAmount = Provable.if(isEmpty, UInt64, UInt64.from(0), r.amount);
       this.send({ to: r.address, amount: effectiveAmount });
-      this.emitEvent('transfer', { proposalHash, receiver: r.address, amount: effectiveAmount });
+      this.emitEvent('receiver', { proposalHash, receiver: r.address, amount: effectiveAmount });
     }
   }
 
@@ -405,6 +416,41 @@ export class MinaGuard extends SmartContract {
 
     this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
 
+    // prevent invalid proposals from being submitted in the first place
+    const isTransfer = proposal.txType.equals(TxType.TRANSFER);
+    const isChangeThreshold = proposal.txType.equals(TxType.CHANGE_THRESHOLD);
+    const isAddOwner = proposal.txType.equals(TxType.ADD_OWNER);
+    const isRemoveOwner = proposal.txType.equals(TxType.REMOVE_OWNER);
+    const isSetDelegate = proposal.txType.equals(TxType.SET_DELEGATE);
+
+    isTransfer.or(isChangeThreshold).or(isAddOwner).or(isRemoveOwner).or(isSetDelegate)
+      .assertTrue('Unknown txType');
+
+    /*
+    * Receivers are used:
+    * - For recipients of transfers (MAX_RECEIVERS allowed, meaning batch transfer)
+    * - For the owner to-be-added/to-be-removed (only index 0 is allowed to be non-empty)
+    * - For delegate, (1..=N-1) must be empty, index 0 is either delegate addr or empty for undelegate
+    * - For threshold change, all must be empty
+    */
+
+    const slot0Empty = proposal.receivers[0].address.equals(PublicKey.empty());
+
+    // Rule 1: ADD_OWNER / REMOVE_OWNER require non-empty slot 0                                                        
+    const needsPubKey = isAddOwner.or(isRemoveOwner);
+    needsPubKey.and(slot0Empty).assertFalse('addOwner/removeOwner requires target pubkey in receivers[0]');
+
+    // Rule 2: CHANGE_THRESHOLD requires empty slot 0
+    isChangeThreshold.and(slot0Empty.not()).assertFalse('changeThreshold must have empty receivers[0]');
+
+    // Rule 3: Non-transfer proposals must have at most one receiver                                                    
+    isTransfer.or(this.atMostOneReceiver(proposal))
+      .assertTrue('Non-transfer proposal has extra receivers');
+
+    // Rule 4: Only CHANGE_THRESHOLD uses data, others must zero it                                         
+    isChangeThreshold.or(proposal.data.equals(Field(0)))
+      .assertTrue('data must be zero for non-threshold proposals');
+
     const proposalHash = proposal.hash();
 
     // --- approval logic ---
@@ -444,7 +490,7 @@ export class MinaGuard extends SmartContract {
       guardAddress: proposal.guardAddress,
     });
 
-    this.emitTransferEvents(proposal, proposalHash);
+    this.emitReceiversEvent(proposal, proposalHash);
 
     this.emitEvent('approval', {
       proposalHash,
@@ -791,7 +837,6 @@ export class MinaGuard extends SmartContract {
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
     approvalCount: Field,
-    ownerPubKey: PublicKey,
     ownerWitness: OwnerWitness,
     insertAfter: PublicKeyOption,
   ) {
@@ -813,10 +858,10 @@ export class MinaGuard extends SmartContract {
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
-    const ownerHash = ownerKey(ownerPubKey);
-    proposal.data.assertEquals(ownerHash, 'Data does not match owner');
+    const ownerPubKey = proposal.receivers[0].address;
 
     const numOwners = this.numOwners.getAndRequireEquals();
+
 
     // both functions check if owners exists or does not exist in the list (remove/add)
     const [afterAddComm, addIsValid] = addOwnerToCommitment(ownersCommitment, ownerPubKey,
@@ -919,7 +964,6 @@ export class MinaGuard extends SmartContract {
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
     approvalCount: Field,
-    delegate: PublicKey
   ) {
     this.getInitializedOwnersCommitment();
 
@@ -940,13 +984,9 @@ export class MinaGuard extends SmartContract {
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
-    const isUndelegate = proposal.data.equals(Field(0));
-    const delegateHash = ownerKey(delegate);
-    isUndelegate
-      .or(proposal.data.equals(delegateHash))
-      .assertTrue('Data does not match delegate');
+    const isUndelegate = proposal.receivers[0].address.equals(PublicKey.empty());
 
-    const targetDelegate = Provable.if(isUndelegate, PublicKey, this.address, delegate);
+    const targetDelegate = Provable.if(isUndelegate, PublicKey, this.address, proposal.receivers[0].address);
     this.account.delegate.set(targetDelegate);
 
     this.markExecuted(approvalWitness);
