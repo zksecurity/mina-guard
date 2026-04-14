@@ -47,6 +47,10 @@ jobs:
         run: bun run --filter contracts build
       - name: Build UI
         run: bun run --filter ui build
+      - name: Generate Prisma client
+        run: cd backend && bunx prisma generate
+      - name: Build backend
+        run: bun run --filter backend build
       - name: Run contract tests
         run: bun run test
         env:

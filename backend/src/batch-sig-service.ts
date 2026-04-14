@@ -129,7 +129,7 @@ export async function buildBatchPayload(
     },
   });
 
-  const sigByAddress = new Map(
+  const sigByAddress = new Map<string, { r: string; s: string }>(
     approvals.map((a) => [a.approver, { r: a.signatureR!, s: a.signatureS! }])
   );
 
@@ -164,7 +164,7 @@ export async function buildBatchPayload(
   }
 
   const threshold = contract.threshold ?? 1;
-  const receivers = proposal.receivers.map((receiver) => ({
+  const receivers = proposal.receivers.map((receiver: { idx: number; address: string; amount: string }) => ({
     index: receiver.idx,
     address: receiver.address,
     amount: receiver.amount,
@@ -188,7 +188,7 @@ export async function buildBatchPayload(
       receivers,
       recipientCount: proposal.txType === TxType.TRANSFER.toString() ? receivers.length : 0,
       totalAmount: proposal.txType === TxType.TRANSFER.toString()
-        ? receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n).toString()
+        ? receivers.reduce((sum: bigint, receiver: { amount: string }) => sum + BigInt(receiver.amount), 0n).toString()
         : null,
     },
     inputs,

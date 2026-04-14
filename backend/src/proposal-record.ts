@@ -40,15 +40,15 @@ export function serializeProposalRecord(
 ): SerializedProposalRecord {
   const receivers = proposal.receivers
     .slice()
-    .sort((a, b) => a.idx - b.idx)
-    .map((receiver) => ({
+    .sort((a: ProposalReceiver, b: ProposalReceiver) => a.idx - b.idx)
+    .map((receiver: ProposalReceiver) => ({
       index: receiver.idx,
       address: receiver.address,
       amount: receiver.amount,
     }));
 
   const totalAmount = receivers.length > 0
-    ? receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n).toString()
+    ? receivers.reduce((sum: bigint, receiver: ProposalReceiverRecord) => sum + BigInt(receiver.amount), 0n).toString()
     : null;
 
   return {
