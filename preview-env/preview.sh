@@ -127,6 +127,15 @@ remove_caddy_route() {
     fi
 }
 
+build_services_sequentially() {
+    local -a compose_args=("$@")
+
+    for service in backend frontend explorer; do
+        echo "Building ${service}..."
+        docker compose "${compose_args[@]}" build "$service"
+    done
+}
+
 case "$COMMAND" in
     up)
         if [ -z "$PR_NUMBER" ]; then
@@ -146,10 +155,14 @@ case "$COMMAND" in
 
         echo "Deploying PR #${PR_NUMBER} preview on port ${PREVIEW_PORT}..."
 
-        PR_NUMBER=$PR_NUMBER PREVIEW_PORT=$PREVIEW_PORT \
+        export PR_NUMBER PREVIEW_PORT
+        build_services_sequentially \
+            -f preview-env/docker-compose.preview.yml \
+            -p "pr-${PR_NUMBER}"
+
         docker compose -f preview-env/docker-compose.preview.yml \
             -p "pr-${PR_NUMBER}" \
-            up -d --build
+            up -d --no-build
 
         # Add route to main Caddy for HTTPS
         add_caddy_route "$PR_NUMBER" "$PREVIEW_PORT"
