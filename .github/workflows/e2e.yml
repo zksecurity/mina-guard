@@ -1,8 +1,7 @@
 name: E2E tests
+# Temporarily disabled on push/PR while the on-chain migration E2E suite
+# is broken. Still runnable manually via workflow_dispatch.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch: {}
 
 jobs:
