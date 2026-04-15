@@ -13,6 +13,12 @@ For **lightnet** mode you also need the `zkapp-cli` (`zk`) installed globally:
 npm install -g zkapp-cli
 ```
 
+Pin the lightnet Docker image to a known-good digest (one-time per machine, because upstream periodically publishes broken content to the floating tag):
+
+```bash
+./dev-helpers/pin-lightnet.sh
+```
+
 ## Quick start (lightnet)
 
 Lightnet is the default mode. The test harness automatically builds the contracts/frontend, starts a local Mina network, backend, and frontend, then tears everything down when done.

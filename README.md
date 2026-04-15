@@ -102,9 +102,9 @@ PR_NUMBER=1 PREVIEW_PORT=10001 docker compose \
   -p local up -d --build
 ```
 
-Access at `http://localhost:10001/preview/1/`. In Auro Wallet, set the network URL to `http://localhost:10001/preview/1/graphql`.
+Access at `https://localhost:10001/preview/1/`. In Auro Wallet, set the network URL to `https://localhost:10001/preview/1/graphql`.
 
-Note: o1js compilation won't work over plain HTTP (requires COOP/COEP headers over HTTPS). To bypass this, launch Chrome with `--enable-features=SharedArrayBuffer`.
+Caddy serves this over HTTPS with a self-signed cert (`tls internal`) and sets the COOP/COEP headers o1js needs — accept the cert warning on first visit. The CA persists in the `caddy-local-data` volume so the cert stays stable across restarts.
 
 ```bash
 # Logs
