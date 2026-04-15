@@ -402,7 +402,7 @@ export class MinaGuardIndexer {
           proposalHash,
         },
       },
-      select: { id: true },
+      select: { id: true, txType: true },
     });
     if (!proposal) return;
 
@@ -419,9 +419,13 @@ export class MinaGuardIndexer {
       },
     });
 
-    // Governance proposals carry the target pubkey in slot 0 with amount=0.
-    // Mirror onto Proposal.toAddress for API shape.
-    if (nextIndex === 0 && amount === '0') {
+    // Governance proposals (addOwner=1, removeOwner=2, setDelegate=4) carry
+    // the target pubkey in slot 0. Mirror onto Proposal.toAddress for API
+    // shape. Skip for transfers (txType=0) where slot 0 is a real recipient,
+    // and for changeThreshold (txType=3) which carries no pubkey.
+    const isGovernanceWithTarget =
+      proposal.txType === '1' || proposal.txType === '2' || proposal.txType === '4';
+    if (nextIndex === 0 && isGovernanceWithTarget) {
       await prisma.proposal.update({
         where: { id: proposal.id },
         data: { toAddress: address },
