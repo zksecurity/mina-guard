@@ -13,7 +13,6 @@
     "test:proofs": "bun run --filter contracts test:proofs",
     "test:e2e": "bun run --filter e2e test",
     "test:e2e:verbose": "node e2e/node_modules/@playwright/test/cli.js test --config e2e/playwright.config.ts",
-    "test:e2e:offchain": "node e2e/node_modules/@playwright/test/cli.js test --config e2e/playwright.config.ts offchain-flow.test.ts",
     "build": "bun run --filter contracts build && bun run --filter ui build",
     "build:backend": "bun run --filter backend build",
     "typecheck": "bun run --filter contracts typecheck && bun run --filter backend build"

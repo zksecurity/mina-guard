@@ -1,7 +1,8 @@
 name: E2E tests
-# Temporarily disabled on push/PR while the on-chain migration E2E suite
-# is broken. Still runnable manually via workflow_dispatch.
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch: {}
 
 jobs:
@@ -30,6 +31,9 @@ jobs:
           NETWORK_TYPE: 'single-node'
           PROOF_LEVEL: 'none'
           LOG_LEVEL: 'Info'
+          # 3s slot time matches preview-env/docker-compose.e2e.yml and lines
+          # up with settlementWaitMs/expiryBlockOffset in network-config.ts.
+          SLOT_TIME: '3000'
         ports:
           - 3085:3085
           - 8080:8080
