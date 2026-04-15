@@ -5,8 +5,18 @@ services:
     build:
       args:
         - NEXT_PUBLIC_BASE_PATH=/preview/${PR_NUMBER:-1}
-        - NEXT_PUBLIC_API_BASE_URL=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}
-        - NEXT_PUBLIC_MINA_ENDPOINT=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/graphql
-        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/archive
+        - NEXT_PUBLIC_API_BASE_URL=https://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}
+        - NEXT_PUBLIC_MINA_ENDPOINT=https://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/graphql
+        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/archive
         - NEXT_PUBLIC_MINA_NETWORK=testnet
-        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=http://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/explorer
+        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://localhost:${PREVIEW_PORT:-10001}/preview/${PR_NUMBER:-1}/explorer
+
+  caddy:
+    ports: !override
+      - "${PREVIEW_PORT:-10001}:443"
+    volumes: !override
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy-local-data:/data
+
+volumes:
+  caddy-local-data:

@@ -1,16 +1,14 @@
-# PR Preview Environment for MinaGuard
+# Main branch deployment
 #
 # Usage (run from repo root):
-#   PR_NUMBER=1 PREVIEW_PORT=10001 docker compose -f preview-env/docker-compose.preview.yml -p pr-1 up -d --build
-#   docker compose -p pr-1 down -v
+#   docker compose -f deploy/docker-compose.yml -p minaguard up -d --build
+#   docker compose -p minaguard down -v
 #
-# Access: https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/
+# Access: https://mina-nodes.duckdns.org/app/
 
 services:
   lightnet:
-    # Pinned to a known-good digest — upstream keeps clobbering the
-    # `compatible-latest-lightnet` floating tag. Revert once fixed.
-    image: o1labs/mina-local-network@sha256:746190ff2f556f252b7f50215ae60d4a5e786c8adc16f27986e3e35ce6105949
+    image: o1labs/mina-local-network:compatible-latest-lightnet
     restart: unless-stopped
     environment:
       - SLOT_TIME=10000
@@ -32,6 +30,8 @@ services:
       - POSTGRES_USER=minaguard
       - POSTGRES_PASSWORD=minaguard
       - POSTGRES_DB=minaguard
+    volumes:
+      - minaguard-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U minaguard"]
       interval: 5s
@@ -60,22 +60,22 @@ services:
       context: ..
       dockerfile: preview-env/Dockerfile.frontend
       args:
-        - NEXT_PUBLIC_BASE_PATH=/preview/${PR_NUMBER:-1}
-        - NEXT_PUBLIC_API_BASE_URL=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}
-        - NEXT_PUBLIC_MINA_ENDPOINT=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/graphql
-        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/archive
+        - NEXT_PUBLIC_BASE_PATH=/app
+        - NEXT_PUBLIC_API_BASE_URL=https://mina-nodes.duckdns.org/app
+        - NEXT_PUBLIC_MINA_ENDPOINT=https://mina-nodes.duckdns.org/app/graphql
+        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-nodes.duckdns.org/app/archive
         - NEXT_PUBLIC_MINA_NETWORK=testnet
-        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/explorer
+        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-nodes.duckdns.org/app/explorer
     restart: unless-stopped
     depends_on:
       - backend
 
   explorer:
     build:
-      context: .
+      context: ../preview-env
       dockerfile: Dockerfile.explorer
       args:
-        - NEXT_PUBLIC_BASE_PATH=/preview/${PR_NUMBER:-1}/explorer
+        - NEXT_PUBLIC_BASE_PATH=/app/explorer
         - TESTNET_GRAPHQL_URL=http://lightnet:8080/graphql
     restart: unless-stopped
     depends_on:
@@ -85,14 +85,16 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
-    environment:
-      - PR_NUMBER=${PR_NUMBER:-1}
     ports:
-      - "${PREVIEW_PORT:-10001}:80"
+      - "10000:80"
     volumes:
-      - ./Caddyfile.preview:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
       - frontend
       - backend
       - explorer
       - lightnet
+
+volumes:
+  # TODO(devnet): mark `external: true` when migrating off lightnet — db is wiped on every deploy because its state mirrors the lightnet chain.
+  minaguard-db-data:

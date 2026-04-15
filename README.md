@@ -96,15 +96,14 @@ Each stack includes: lightnet, PostgreSQL, backend, frontend, block explorer, an
 You can run the full stack locally without the server's Caddy:
 
 ```bash
-PR_NUMBER=1 PREVIEW_PORT=10001 docker compose \
-  -f preview-env/docker-compose.preview.yml \
-  -f preview-env/docker-compose.local.yml \
-  -p local up -d --build
+./preview-env/local-preview.sh up 1
 ```
 
-Access at `http://localhost:10001/preview/1/`. In Auro Wallet, set the network URL to `http://localhost:10001/preview/1/graphql`.
+Access at `https://localhost:10001/preview/1/`. In Auro Wallet, set the network URL to `https://localhost:10001/preview/1/graphql`.
 
-Note: o1js compilation won't work over plain HTTP (requires COOP/COEP headers over HTTPS). To bypass this, launch Chrome with `--enable-features=SharedArrayBuffer`.
+Caddy serves this over HTTPS with a self-signed cert (`tls internal`) and sets the COOP/COEP headers o1js needs — accept the cert warning on first visit. The CA persists in the `caddy-local-data` volume so the cert stays stable across restarts.
+
+The helper builds `backend`, `frontend`, and `explorer` sequentially before starting the stack. This avoids the RAM spike from `docker compose up -d --build`, which can try to build all three images at once.
 
 ```bash
 # Logs
@@ -114,7 +113,7 @@ docker compose -p local logs -f backend    # backend/indexer
 docker compose -p local logs -f lightnet   # mina node + archive
 
 # Tear down
-docker compose -p local down -v
+./preview-env/local-preview.sh down 1
 ```
 
 ### Architecture

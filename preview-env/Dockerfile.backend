@@ -3,6 +3,7 @@ WORKDIR /app
 
 # Copy root workspace config + all workspace package.jsons
 COPY package.json ./
+COPY bun.lock ./
 COPY contracts/package.json contracts/
 COPY backend/package.json backend/
 COPY ui/package.json ui/
@@ -11,7 +12,7 @@ COPY dev-helpers/package.json dev-helpers/
 COPY e2e/package.json e2e/
 
 # Install dependencies
-RUN bun install
+RUN bun install --frozen-lockfile
 
 # Copy source
 COPY contracts/ contracts/
