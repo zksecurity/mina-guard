@@ -645,7 +645,6 @@ export class MinaGuard extends SmartContract {
     ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
-    networkId: Field,
     initialOwners: SetupOwnersInput,
     proposal: TransactionProposal,
     parentApprovalWitness: MerkleMapWitness,
@@ -663,7 +662,10 @@ export class MinaGuard extends SmartContract {
     proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
 
     // this.parent isn't persisted yet, so call the shared helper directly
-    // with the proposal's guardAddress as the authority.
+    // with the proposal's guardAddress as the authority. The helper pins the
+    // parent's networkId as a precondition, so proposal.networkId is the
+    // parent-approved value — use it as the child's networkId instead of an
+    // attacker-supplied method argument.
     const proposalHash = this.assertParentApprovalState(
       proposal,
       parentAddress,
@@ -675,7 +677,7 @@ export class MinaGuard extends SmartContract {
       ownersCommitment,
       threshold,
       numOwners,
-      networkId,
+      proposal.networkId,
       parentAddress,
       initialOwners,
     );

@@ -635,7 +635,6 @@ export async function deployAndSetupChildGuard(
       ownersCommitment,
       thresholdField,
       numOwnersField,
-      networkId,
       new SetupOwnersInput({ owners: setupOwners }),
       proposal,
       parentApprovalWitness,

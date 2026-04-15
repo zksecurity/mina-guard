@@ -128,7 +128,6 @@ describe('MinaGuard - Child Lifecycle', () => {
             ownersCommitment,
             Field(2),
             Field(3),
-            parentCtx.networkId,
             new SetupOwnersInput({ owners: setupOwners }),
             proposal,
             parentApprovalWitness,
@@ -157,7 +156,6 @@ describe('MinaGuard - Child Lifecycle', () => {
             ownersCommitment,
             Field(2),
             Field(3),
-            parentCtx.networkId,
             new SetupOwnersInput({ owners: setupOwners }),
             createCreateChildProposal(
               childAddress,
@@ -211,7 +209,6 @@ describe('MinaGuard - Child Lifecycle', () => {
             ownersCommitment,
             Field(2),
             Field(3),
-            parentCtx.networkId,
             new SetupOwnersInput({ owners: setupOwners }),
             badProposal,
             parentApprovalWitness,
