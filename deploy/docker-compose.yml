@@ -8,7 +8,10 @@
 
 services:
   lightnet:
-    image: o1labs/mina-local-network:compatible-latest-lightnet
+    # Mesa (develop-3.0) binary — required because MinaGuard now uses 11
+    # on-chain state slots, which exceeds the 8-slot cap of the older
+    # compatible-latest protocol.
+    image: o1labs/mina-local-network:mesa-latest-lightnet
     restart: unless-stopped
     environment:
       - SLOT_TIME=10000
