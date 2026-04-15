@@ -1,6 +1,6 @@
 import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64 } from 'o1js';
 import { Receiver, TransactionProposal } from '../MinaGuard.js';
-import { MAX_RECEIVERS, TxType } from '../constants.js';
+import { MAX_RECEIVERS, TxType, Destination } from '../constants.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -167,7 +167,7 @@ describe('MinaGuard - Propose', () => {
       });
       await txn.prove();
       await txn.sign([ctx.owners[0].key]).send();
-    }).toThrow('Field.assertEquals()');
+    }).toThrow('Guard address mismatch');
   });
 
   it('should increment counter across multiple proposals', async () => {
@@ -214,6 +214,8 @@ describe('MinaGuard - Propose shape rules', () => {
     expiryBlock: Field;
     networkId: Field;
     guardAddress: PublicKey;
+    destination: Field;
+    childAccount: PublicKey;
   }>): TransactionProposal {
     return new TransactionProposal({
       receivers: overrides.receivers ?? emptyReceivers(),
@@ -225,6 +227,8 @@ describe('MinaGuard - Propose shape rules', () => {
       expiryBlock: overrides.expiryBlock ?? Field(0),
       networkId: overrides.networkId ?? Field(1),
       guardAddress: overrides.guardAddress ?? ctx.zkAppAddress,
+      destination: overrides.destination ?? Destination.LOCAL,
+      childAccount: overrides.childAccount ?? PublicKey.empty(),
     });
   }
 
@@ -346,7 +350,7 @@ describe('MinaGuard - Propose shape rules', () => {
     });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('data must be zero for non-threshold proposals');
+    }).toThrow('data must be zero for this txType');
   });
 
   it('should reject REMOVE_OWNER with non-zero data', async () => {
@@ -368,7 +372,7 @@ describe('MinaGuard - Propose shape rules', () => {
     const proposal = buildProposal({ txType: TxType.TRANSFER, receivers, data: Field(42) });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('data must be zero for non-threshold proposals');
+    }).toThrow('data must be zero for this txType');
   });
 
   it('should reject SET_DELEGATE with non-zero data', async () => {
@@ -380,7 +384,7 @@ describe('MinaGuard - Propose shape rules', () => {
     });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('data must be zero for non-threshold proposals');
+    }).toThrow('data must be zero for this txType');
   });
 
   // -- Positive cases --------------------------------------------------------

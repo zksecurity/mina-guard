@@ -17,7 +17,15 @@ import {
 } from 'o1js';
 
 
-import { MAX_OWNERS, MAX_RECEIVERS, PROPOSED_MARKER, EXECUTED_MARKER, EMPTY_MERKLE_MAP_ROOT, TxType } from './constants';
+import {
+  MAX_OWNERS,
+  MAX_RECEIVERS,
+  PROPOSED_MARKER,
+  EXECUTED_MARKER,
+  EMPTY_MERKLE_MAP_ROOT,
+  TxType,
+  Destination,
+} from './constants';
 
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption } from './list-commitment';
 
@@ -42,6 +50,11 @@ const ReceiversArray = Provable.Array(Receiver, MAX_RECEIVERS);
  * Transfers support up to MAX_RECEIVERS recipients per proposal.
  * Unused receiver slots must use Receiver.empty().
  * Non-transfer proposals (governance, delegation) use all-empty receiver slots.
+ *
+ * `destination` selects LOCAL (executes on the guard that stores the proposal)
+ * vs REMOTE (proposed/approved on a parent guard, executed on a specific child).
+ * `childAccount` is the target child for REMOTE proposals and must be empty
+ * for LOCAL proposals.
  */
 export class TransactionProposal extends Struct({
   receivers: ReceiversArray,
@@ -53,6 +66,8 @@ export class TransactionProposal extends Struct({
   expiryBlock: Field,
   networkId: Field,
   guardAddress: PublicKey,
+  destination: Field,
+  childAccount: PublicKey,
 }) {
   /** Returns the unique proposal hash used as map key and signature message. */
   hash(): Field {
@@ -70,6 +85,8 @@ export class TransactionProposal extends Struct({
       this.expiryBlock,
       this.networkId,
       ...this.guardAddress.toFields(),
+      this.destination,
+      ...this.childAccount.toFields(),
     ]);
   }
 }
@@ -92,6 +109,7 @@ export class SetupEvent extends Struct({
   threshold: Field,
   numOwners: Field,
   networkId: Field,
+  parent: PublicKey,
 }) { }
 
 /** Emitted for each setup owner slot (fixed-size array). */
@@ -102,7 +120,7 @@ export class SetupOwnerEvent extends Struct({
 
 /**
  * Emitted when a new proposal is created and indexed by proposalHash.
- * Receiver/amount data is emitted via TransferEvent (one per MAX_RECEIVERS
+ * Receiver/amount data is emitted via ReceiverEvent (one per MAX_RECEIVERS
  * slot, padded with empties) since Mina limits events to 16 field elements.
  */
 export class ProposalEvent extends Struct({
@@ -116,9 +134,11 @@ export class ProposalEvent extends Struct({
   expiryBlock: Field,
   networkId: Field,
   guardAddress: PublicKey,
+  destination: Field,
+  childAccount: PublicKey,
 }) { }
 
-/** Emitted once per receiver slot during propose and execution (fixed-size, padded with empties). */
+/** Emitted once per receiver slot during propose (fixed-size, padded with empties). */
 export class ReceiverEvent extends Struct({
   proposalHash: Field,
   receiver: PublicKey,
@@ -140,8 +160,6 @@ export class ExecutionEvent extends Struct({
 
 export class OwnerChangeEvent extends Struct({
   proposalHash: Field,
-  owner: PublicKey,
-  added: Field,
   newNumOwners: Field,
   configNonce: Field,
 }) { }
@@ -149,13 +167,35 @@ export class OwnerChangeEvent extends Struct({
 export class ThresholdChangeEvent extends Struct({
   proposalHash: Field,
   oldThreshold: Field,
-  newThreshold: Field,
   configNonce: Field,
 }) { }
 
 export class DelegateEvent extends Struct({
   proposalHash: Field,
-  delegate: PublicKey,
+}) { }
+
+/** Emitted when a child guard successfully runs executeSetupChild. */
+export class CreateChildEvent extends Struct({
+  proposalHash: Field,
+  parentAddress: PublicKey,
+}) { }
+
+/**
+ * Emitted whenever a child guard sends MINA back to its parent — used by
+ * both executeReclaimToParent (partial) and executeDestroy (full balance).
+ * The discriminator between the two flows is in the sibling ExecutionEvent's
+ * txType (RECLAIM_CHILD vs DESTROY_CHILD).
+ */
+export class ReclaimChildEvent extends Struct({
+  proposalHash: Field,
+  parentAddress: PublicKey,
+  amount: UInt64,
+}) { }
+
+/** Emitted on toggle of a child's independent multisig policy. */
+export class EnableChildMultiSigEvent extends Struct({
+  proposalHash: Field,
+  parentAddress: PublicKey,
 }) { }
 
 // -- Contract ----------------------------------------------------------------
@@ -163,6 +203,12 @@ export class DelegateEvent extends Struct({
 /**
  * MinaGuard multisig contract.
  * Stores compact roots and counters on-chain while using witnesses for membership and approvals.
+ *
+ * A guard can operate either as a root (parent = PublicKey.empty()) or as a
+ * child linked to a parent. Child guards authorize lifecycle operations
+ * (reclaim, destroy, enable/disable policy) by reading the parent's on-chain
+ * approval state as AccountUpdate preconditions and verifying a Merkle
+ * witness proving the parent accumulated enough approvals.
  */
 export class MinaGuard extends SmartContract {
   @state(Field) ownersCommitment = State<Field>();
@@ -173,6 +219,9 @@ export class MinaGuard extends SmartContract {
   @state(Field) approvalRoot = State<Field>();
   @state(Field) configNonce = State<Field>();
   @state(Field) networkId = State<Field>();
+  @state(PublicKey) parent = State<PublicKey>();
+  @state(Field) childExecutionRoot = State<Field>();
+  @state(Field) childMultiSigEnabled = State<Field>();
 
   events = {
     deployed: DeployEvent,
@@ -185,6 +234,9 @@ export class MinaGuard extends SmartContract {
     ownerChange: OwnerChangeEvent,
     thresholdChange: ThresholdChangeEvent,
     delegate: DelegateEvent,
+    createChild: CreateChildEvent,
+    reclaimChild: ReclaimChildEvent,
+    enableChildMultiSig: EnableChildMultiSigEvent,
   };
 
   /** Configures account permissions and emits a deploy discovery event. */
@@ -196,13 +248,21 @@ export class MinaGuard extends SmartContract {
       send: Permissions.proof(),
       receive: Permissions.none(),
       setDelegate: Permissions.proof(),
-      setPermissions: Permissions.proof(),
+      setPermissions: Permissions.impossible(),
+      setVerificationKey: Permissions.VerificationKey.impossibleDuringCurrentVersion(),
+      setZkappUri: Permissions.impossible(),
+      setTokenSymbol: Permissions.impossible(),
+      incrementNonce: Permissions.impossible(),
+      setVotingFor: Permissions.impossible(),
+      setTiming: Permissions.impossible(),
     });
 
     this.emitEvent('deployed', {
       guardAddress: this.address,
     });
   }
+
+  // -- Shared validation helpers ---------------------------------------------
 
   private getInitializedOwnersCommitment(): Field {
     const ownersCommitment = this.ownersCommitment.getAndRequireEquals();
@@ -219,17 +279,117 @@ export class MinaGuard extends SmartContract {
     assertOwnerMembership(ownersCommitment, owner, ownerWitness);
   }
 
-  /** Validates proposal binding to current config nonce, network and contract address. */
+  /** Generic Merkle-map witness check. */
+  private assertMerkleWitnessValue(
+    expectedRoot: Field,
+    expectedKey: Field,
+    witness: MerkleMapWitness,
+    expectedValue: Field,
+    rootErrorMessage: string,
+    keyErrorMessage: string
+  ): void {
+    const [computedRoot, computedKey] = witness.computeRootAndKey(expectedValue);
+    computedRoot.assertEquals(expectedRoot, rootErrorMessage);
+    computedKey.assertEquals(expectedKey, keyErrorMessage);
+  }
+
+  private getGovernanceState(): { threshold: Field; numOwners: Field } {
+    const threshold = this.threshold.getAndRequireEquals();
+    const numOwners = this.numOwners.getAndRequireEquals();
+    return { threshold, numOwners };
+  }
+
+  private setGovernanceState(threshold: Field, numOwners: Field): void {
+    this.threshold.set(threshold);
+    this.numOwners.set(numOwners);
+  }
+
+  /**
+   * Root guards (parent == empty) always pass. Child guards must have
+   * childMultiSigEnabled == 1 to run multisig ops (propose / approve /
+   * execute*). Lifecycle methods (executeReclaimToParent / executeDestroy /
+   * executeEnableChildMultiSig) are intentionally exempt so a frozen child
+   * can still be controlled by its parent.
+   */
+  private assertChildMultiSigEnabledIfChild(): void {
+    const parent = this.parent.getAndRequireEquals();
+    const isChild = parent.equals(PublicKey.empty()).not();
+    const enabled = this.childMultiSigEnabled.getAndRequireEquals();
+    isChild.not().or(enabled.equals(Field(1))).assertTrue('Child multi-sig disabled');
+  }
+
+  private assertLocalProposal(proposal: TransactionProposal): void {
+    proposal.destination.assertEquals(
+      Destination.LOCAL,
+      'Not a local destination proposal'
+    );
+  }
+
+  private assertValidRemoteProposal(proposal: TransactionProposal): void {
+    proposal.destination.assertEquals(
+      Destination.REMOTE,
+      'Not a remote destination proposal'
+    );
+    proposal.childAccount
+      .equals(this.address)
+      .assertTrue('Proposal not for this child');
+  }
+
+  private assertCurrAccountIsChild(parent: PublicKey): void {
+    parent.equals(PublicKey.empty()).assertFalse('Not a child account');
+  }
+
+  /** Low-level config/network/guard check against explicit values. */
+  private assertValidProposalConfigNetworkAndGuard(
+    proposal: TransactionProposal,
+    configNonce: Field,
+    networkId: Field,
+    guardAddress: PublicKey,
+  ): void {
+    proposal.configNonce.assertEquals(configNonce, 'Config nonce mismatch - governance changed since proposal');
+    proposal.networkId.assertEquals(networkId, 'Network ID mismatch');
+    proposal.guardAddress.equals(guardAddress).assertTrue('Guard address mismatch');
+  }
+
+  /** Validates proposal binding to this contract's current state. */
   private assertProposalConfigNetworkAndGuard(
     proposal: TransactionProposal,
-    configNonceMessage: string
   ): void {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    proposal.configNonce.assertEquals(currentConfigNonce, configNonceMessage);
-
     const currentNetworkId = this.networkId.getAndRequireEquals();
-    proposal.networkId.assertEquals(currentNetworkId, 'Network ID mismatch');
-    proposal.guardAddress.assertEquals(this.address);
+    this.assertValidProposalConfigNetworkAndGuard(
+      proposal,
+      currentConfigNonce,
+      currentNetworkId,
+      this.address,
+    );
+  }
+
+  /**
+   * Checks:
+   * 1. destination is LOCAL or REMOTE.
+   * 2. LOCAL proposals must not target a child account.
+   * 3. REMOTE proposals must target a non-empty child account.
+   * 4. REMOTE proposals can only be proposed/approved on a root (parent == empty).
+   */
+  private assertProposalDestinationAndChildAccount(proposal: TransactionProposal): void {
+    const isDestinationLocal = proposal.destination.equals(Destination.LOCAL);
+    const isDestinationRemote = proposal.destination.equals(Destination.REMOTE);
+    isDestinationLocal.or(isDestinationRemote).assertTrue('Invalid destination value');
+
+    const childAccountEmpty = proposal.childAccount.equals(PublicKey.empty());
+    isDestinationRemote
+      .or(childAccountEmpty)
+      .assertTrue('Local destination proposals cannot target child accounts');
+
+    isDestinationLocal
+      .or(childAccountEmpty.not())
+      .assertTrue('Remote destination proposals must target a specific child account');
+
+    const isRoot = this.parent.getAndRequireEquals().equals(PublicKey.empty());
+    isDestinationLocal
+      .or(isRoot)
+      .assertTrue('Remote destination proposals must be proposed on a root guard');
   }
 
   /** Asserts optional expiry block has not passed. */
@@ -282,10 +442,14 @@ export class MinaGuard extends SmartContract {
     expectedValue: Field
   ): void {
     const approvalRoot = this.approvalRoot.getAndRequireEquals();
-    const [computedApprovalRoot, computedApprovalKey] =
-      approvalWitness.computeRootAndKey(expectedValue);
-    computedApprovalRoot.assertEquals(approvalRoot, 'Approval root mismatch');
-    computedApprovalKey.assertEquals(proposalHash, 'Approval key mismatch');
+    this.assertMerkleWitnessValue(
+      approvalRoot,
+      proposalHash,
+      approvalWitness,
+      expectedValue,
+      'Approval root mismatch',
+      'Approval key mismatch'
+    );
   }
 
   /** Marks a proposal as executed in approval root using sentinel value. */
@@ -294,8 +458,86 @@ export class MinaGuard extends SmartContract {
     this.approvalRoot.set(newApprovalRoot);
   }
 
-  /** Emits a receivers event per receiver slot (padded with empties).
-   */
+  /** Verifies the child's execution witness proves a proposal hasn't been
+   *  applied to this child yet (or has been, for replay checks). */
+  private assertChildExecutionWitnessValue(
+    proposalHash: Field,
+    childExecutionWitness: MerkleMapWitness,
+    expectedValue: Field,
+  ): void {
+    const root = this.childExecutionRoot.getAndRequireEquals();
+    this.assertMerkleWitnessValue(
+      root,
+      proposalHash,
+      childExecutionWitness,
+      expectedValue,
+      'Child execution root mismatch',
+      'Child execution key mismatch',
+    );
+  }
+
+  /** Writes EXECUTED_MARKER to the childExecutionRoot at proposalHash. */
+  private markChildExecuted(childExecutionWitness: MerkleMapWitness): void {
+    const [newRoot] = childExecutionWitness.computeRootAndKey(EXECUTED_MARKER);
+    this.childExecutionRoot.set(newRoot);
+  }
+
+  private assertParentApprovalState(
+    proposal: TransactionProposal,
+    parentAddress: PublicKey,
+    parentApprovalWitness: MerkleMapWitness,
+    parentApprovalCount: Field,
+  ): Field {
+    const parentGuard = new MinaGuard(parentAddress);
+    const parentOwnersCommitment = parentGuard.ownersCommitment.getAndRequireEquals();
+    parentOwnersCommitment.assertNotEquals(Field(0), 'Parent not initialized');
+
+    const parentConfigNonce = parentGuard.configNonce.getAndRequireEquals();
+    const parentNetworkId = parentGuard.networkId.getAndRequireEquals();
+    const parentApprovalRoot = parentGuard.approvalRoot.getAndRequireEquals();
+    const parentThreshold = parentGuard.threshold.getAndRequireEquals();
+
+    this.assertValidProposalConfigNetworkAndGuard(
+      proposal,
+      parentConfigNonce,
+      parentNetworkId,
+      parentAddress,
+    );
+    this.assertProposalNotExpired(proposal);
+
+    const proposalHash = proposal.hash();
+    this.assertMerkleWitnessValue(
+      parentApprovalRoot,
+      proposalHash,
+      parentApprovalWitness,
+      parentApprovalCount,
+      'Parent approval root mismatch',
+      'Parent approval key mismatch',
+    );
+
+    this.assertNotExecuted(parentApprovalCount);
+    this.assertProposalExists(parentApprovalCount);
+    this.assertThresholdSatisfied(parentApprovalCount, parentThreshold);
+
+    return proposalHash;
+  }
+
+  private verifyParentApproval(
+    proposal: TransactionProposal,
+    parentApprovalWitness: MerkleMapWitness,
+    parentApprovalCount: Field,
+  ): Field {
+    const parentAddress = this.parent.getAndRequireEquals();
+    this.assertCurrAccountIsChild(parentAddress);
+    return this.assertParentApprovalState(
+      proposal,
+      parentAddress,
+      parentApprovalWitness,
+      parentApprovalCount,
+    );
+  }
+
+  /** Emits a receiver event per receiver slot (padded with empties). */
   private emitReceiversEvent(proposal: TransactionProposal, proposalHash: Field): void {
     for (let i = 0; i < MAX_RECEIVERS; i++) {
       const r = proposal.receivers[i];
@@ -305,9 +547,7 @@ export class MinaGuard extends SmartContract {
     }
   }
 
-  /** Sends MINA to each receiver slot. Receiver events are emitted only at
-   *  propose-time; execute-time value movement is captured by Mina's native
-   *  account-update log plus the ExecutionEvent. */
+  /** Sends MINA to each receiver slot. */
   private executeTransfers(proposal: TransactionProposal): void {
     for (let i = 0; i < MAX_RECEIVERS; i++) {
       const r = proposal.receivers[i];
@@ -317,24 +557,19 @@ export class MinaGuard extends SmartContract {
     }
   }
 
-
-  /** Method to initialize the contract. Cannot call twice.
-   *
-   * IMPORTANT: Assuming an untrusted deployer, a client must compute the expected commitment
-   * themselves and cross-check with the one on chain. numOwners as well, for sync.
-   *
-   * Emits fixed-size owner bootstrap events for indexers.
-   */
-  @method async setup(
+  /** Shared initialization: validates config, sets all state, emits setup + owner events. */
+  private initializeState(
     ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
     networkId: Field,
-    initialOwners: SetupOwnersInput
-  ) {
+    parent: PublicKey,
+    initialOwners: SetupOwnersInput,
+  ): void {
     // Use requireEquals instead of getAndRequireEquals so deploy+setup can
     // be combined in a single transaction (no account cache read needed).
     this.ownersCommitment.requireEquals(Field(0));
+    ownersCommitment.assertNotEquals(Field(0), 'Owners commitment must not be zero');
 
     threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
     numOwners.assertGreaterThanOrEqual(
@@ -344,13 +579,15 @@ export class MinaGuard extends SmartContract {
     numOwners.assertLessThanOrEqual(Field(MAX_OWNERS), 'Too many owners');
 
     this.ownersCommitment.set(ownersCommitment);
-    this.threshold.set(threshold);
-    this.numOwners.set(numOwners);
+    this.setGovernanceState(threshold, numOwners);
     this.approvalRoot.set(EMPTY_MERKLE_MAP_ROOT);
     this.voteNullifierRoot.set(EMPTY_MERKLE_MAP_ROOT);
     this.networkId.set(networkId);
+    this.parent.set(parent);
+    this.childExecutionRoot.set(EMPTY_MERKLE_MAP_ROOT);
+    this.childMultiSigEnabled.set(Field(1));
 
-    this.emitEvent('setup', { ownersCommitment, threshold, numOwners, networkId });
+    this.emitEvent('setup', { ownersCommitment, threshold, numOwners, networkId, parent });
 
     for (let i = 0; i < MAX_OWNERS; i++) {
       const index = Field(i);
@@ -360,6 +597,98 @@ export class MinaGuard extends SmartContract {
         index,
       });
     }
+  }
+
+  // -- Methods ---------------------------------------------------------------
+
+  /**
+   * Initializes a root guard (no parent). Cannot call twice.
+   *
+   * IMPORTANT: Assuming an untrusted deployer, a client must compute the expected commitment
+   * themselves and cross-check with the one on chain. numOwners as well, for sync.
+   */
+  @method async setup(
+    ownersCommitment: Field,
+    threshold: Field,
+    numOwners: Field,
+    networkId: Field,
+    initialOwners: SetupOwnersInput
+  ) {
+    this.initializeState(
+      ownersCommitment,
+      threshold,
+      numOwners,
+      networkId,
+      PublicKey.empty(),
+      initialOwners,
+    );
+  }
+
+  /**
+   * Initializes a child guard linked to a parent.
+   *
+   * The parent must have a CREATE_CHILD proposal approved to threshold.
+   * Reads the parent's on-chain state as AccountUpdate preconditions and
+   * verifies the approval witness. Idempotency is guarded by the
+   * `ownersCommitment == 0` check inside `initializeState`.
+   *
+   * ⚠️ DEPLOY-TIME RACE — callers MUST batch this call into the same Mina
+   * transaction as the child's `deploy()`. After `deploy()` lands on-chain,
+   * the child sits with `ownersCommitment == 0` and anyone in the mempool
+   * can call `executeSetupChild` with a proposal bound to an attacker-
+   * controlled "parent" address, permanently binding the child to a hostile
+   * parent. Keeping deploy + executeSetupChild in a single tx eliminates
+   * that mempool window. See `deployAndSetupChildGuard` in
+   * `tests/test-helpers.ts` for the safe pattern.
+   */
+  @method async executeSetupChild(
+    ownersCommitment: Field,
+    threshold: Field,
+    numOwners: Field,
+    networkId: Field,
+    initialOwners: SetupOwnersInput,
+    proposal: TransactionProposal,
+    parentApprovalWitness: MerkleMapWitness,
+    parentApprovalCount: Field,
+  ) {
+    const parentAddress = proposal.guardAddress;
+    parentAddress.equals(PublicKey.empty()).assertFalse('Parent address required');
+
+    // Bind proposal to the CREATE_CHILD txType + this child's address + this child's config.
+    proposal.txType.assertEquals(TxType.CREATE_CHILD, 'Not a create child tx');
+    proposal.destination.assertEquals(Destination.REMOTE, 'Not a remote execution proposal');
+    proposal.childAccount.equals(this.address).assertTrue('Proposal not for this child');
+
+    const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
+
+    // this.parent isn't persisted yet, so call the shared helper directly
+    // with the proposal's guardAddress as the authority.
+    const proposalHash = this.assertParentApprovalState(
+      proposal,
+      parentAddress,
+      parentApprovalWitness,
+      parentApprovalCount,
+    );
+
+    this.initializeState(
+      ownersCommitment,
+      threshold,
+      numOwners,
+      networkId,
+      parentAddress,
+      initialOwners,
+    );
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+
+    this.emitEvent('createChild', {
+      proposalHash,
+      parentAddress,
+    });
   }
 
   /**
@@ -374,22 +703,38 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness
   ) {
     // --- propose logic ---
+    this.assertChildMultiSigEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
     this.assertOwnerMembership(proposer, ownerWitness, ownersCommitment);
 
     const currentCounter = this.proposalCounter.getAndRequireEquals();
     this.proposalCounter.set(currentCounter.add(1));
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
+    this.assertProposalDestinationAndChildAccount(proposal);
 
-    // prevent invalid proposals from being submitted in the first place
+    // Only known txTypes are acceptable.
     const isTransfer = proposal.txType.equals(TxType.TRANSFER);
     const isChangeThreshold = proposal.txType.equals(TxType.CHANGE_THRESHOLD);
     const isAddOwner = proposal.txType.equals(TxType.ADD_OWNER);
     const isRemoveOwner = proposal.txType.equals(TxType.REMOVE_OWNER);
     const isSetDelegate = proposal.txType.equals(TxType.SET_DELEGATE);
+    const isCreateChild = proposal.txType.equals(TxType.CREATE_CHILD);
+    const isAllocateChild = proposal.txType.equals(TxType.ALLOCATE_CHILD);
+    const isReclaimChild = proposal.txType.equals(TxType.RECLAIM_CHILD);
+    const isDestroyChild = proposal.txType.equals(TxType.DESTROY_CHILD);
+    const isEnableChildMultiSig = proposal.txType.equals(TxType.ENABLE_CHILD_MULTI_SIG);
 
-    isTransfer.or(isChangeThreshold).or(isAddOwner).or(isRemoveOwner).or(isSetDelegate)
+    isTransfer
+      .or(isChangeThreshold)
+      .or(isAddOwner)
+      .or(isRemoveOwner)
+      .or(isSetDelegate)
+      .or(isCreateChild)
+      .or(isAllocateChild)
+      .or(isReclaimChild)
+      .or(isDestroyChild)
+      .or(isEnableChildMultiSig)
       .assertTrue('Unknown txType');
 
     /*
@@ -402,20 +747,28 @@ export class MinaGuard extends SmartContract {
 
     const slot0Empty = proposal.receivers[0].address.equals(PublicKey.empty());
 
-    // Rule 1: ADD_OWNER / REMOVE_OWNER require non-empty slot 0                                                        
+    // Rule 1: ADD_OWNER / REMOVE_OWNER require non-empty slot 0
     const needsPubKey = isAddOwner.or(isRemoveOwner);
     needsPubKey.and(slot0Empty).assertFalse('addOwner/removeOwner requires target pubkey in receivers[0]');
 
     // Rule 2: CHANGE_THRESHOLD requires empty slot 0
     isChangeThreshold.and(slot0Empty.not()).assertFalse('changeThreshold must have empty receivers[0]');
 
-    // Rule 3: Non-transfer proposals must have at most one receiver                                                    
-    isTransfer.or(this.atMostOneReceiver(proposal))
+    // Rule 3: Only transfer-like txTypes (TRANSFER, ALLOCATE_CHILD) may use
+    // multiple receiver slots. Everything else is limited to at most one.
+    const isTransferLike = isTransfer.or(isAllocateChild);
+    isTransferLike.or(this.atMostOneReceiver(proposal))
       .assertTrue('Non-transfer proposal has extra receivers');
 
-    // Rule 4: Only CHANGE_THRESHOLD uses data, others must zero it                                         
-    isChangeThreshold.or(proposal.data.equals(Field(0)))
-      .assertTrue('data must be zero for non-threshold proposals');
+    // Rule 4: `data` must be 0 except for txTypes that use it:
+    //   CHANGE_THRESHOLD (new threshold), CREATE_CHILD (child config hash),
+    //   RECLAIM_CHILD (amount), ENABLE_CHILD_MULTI_SIG (flag).
+    const allowsData = isChangeThreshold
+      .or(isCreateChild)
+      .or(isReclaimChild)
+      .or(isEnableChildMultiSig);
+    allowsData.or(proposal.data.equals(Field(0)))
+      .assertTrue('data must be zero for this txType');
 
     const proposalHash = proposal.hash();
 
@@ -454,6 +807,8 @@ export class MinaGuard extends SmartContract {
       expiryBlock: proposal.expiryBlock,
       networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
+      destination: proposal.destination,
+      childAccount: proposal.childAccount,
     });
 
     this.emitReceiversEvent(proposal, proposalHash);
@@ -475,9 +830,11 @@ export class MinaGuard extends SmartContract {
     currentApprovalCount: Field,
     voteNullifierWitness: MerkleMapWitness
   ) {
+    this.assertChildMultiSigEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
     this.assertOwnerMembership(approver, ownerWitness, ownersCommitment);
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
+    this.assertProposalDestinationAndChildAccount(proposal);
 
     const proposalHash = proposal.hash();
     signature.verify(approver, [proposalHash]).assertTrue('Invalid signature');
@@ -525,22 +882,53 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness,
     approvalCount: Field
   ) {
+    this.assertChildMultiSigEnabledIfChild();
     this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(TxType.TRANSFER, 'Not a transfer tx');
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(
-      proposal,
-      'Config nonce mismatch - governance changed since proposal'
-    );
-
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
     this.assertProposalExists(approvalCount);
 
-    const threshold = this.threshold.getAndRequireEquals();
+    const { threshold } = this.getGovernanceState();
+    this.assertThresholdSatisfied(approvalCount, threshold);
+
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
+
+    this.executeTransfers(proposal);
+
+    this.markExecuted(approvalWitness);
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+  }
+
+  @method async executeAllocateToChildren(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    approvalCount: Field,
+  ) {
+    this.assertChildMultiSigEnabledIfChild();
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.ALLOCATE_CHILD, 'Not an allocate child tx');
+    this.assertLocalProposal(proposal);
+
+    const proposalHash = proposal.hash();
+
+    this.assertProposalConfigNetworkAndGuard(proposal);
+    this.assertProposalNotExpired(proposal);
+    this.assertNotExecuted(approvalCount);
+    this.assertProposalExists(approvalCount);
+
+    const { threshold } = this.getGovernanceState();
     this.assertThresholdSatisfied(approvalCount, threshold);
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
@@ -563,28 +951,27 @@ export class MinaGuard extends SmartContract {
     ownerWitness: OwnerWitness,
     insertAfter: PublicKeyOption,
   ) {
+    this.assertChildMultiSigEnabledIfChild();
     const ownersCommitment = this.getInitializedOwnersCommitment();
 
     const isAdd = proposal.txType.equals(TxType.ADD_OWNER);
     const isRemove = proposal.txType.equals(TxType.REMOVE_OWNER);
     isAdd.or(isRemove).assertTrue('Not an owner change tx');
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
     this.assertProposalExists(approvalCount);
 
-    const threshold = this.threshold.getAndRequireEquals();
+    const { threshold, numOwners } = this.getGovernanceState();
     this.assertThresholdSatisfied(approvalCount, threshold);
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
 
     const ownerPubKey = proposal.receivers[0].address;
-
-    const numOwners = this.numOwners.getAndRequireEquals();
-
 
     // both functions check if owners exists or does not exist in the list (remove/add)
     const [afterAddComm, addIsValid] = addOwnerToCommitment(ownersCommitment, ownerPubKey,
@@ -603,7 +990,7 @@ export class MinaGuard extends SmartContract {
     Provable.if(isRemove, remIsValid, addIsValid).assertTrue('Owner change not valid');
     // select corresponding new commitment to update state
     this.ownersCommitment.set(Provable.if(isRemove, afterRemoveComm, afterAddComm));
-    this.numOwners.set(newNumOwners);
+    this.setGovernanceState(threshold, newNumOwners);
 
     this.markExecuted(approvalWitness);
 
@@ -617,8 +1004,6 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('ownerChange', {
       proposalHash,
-      owner: ownerPubKey,
-      added: isAdd.toField(),
       newNumOwners,
       configNonce: currentConfigNonce.add(1),
     });
@@ -631,21 +1016,23 @@ export class MinaGuard extends SmartContract {
     approvalCount: Field,
     newThreshold: Field
   ) {
+    this.assertChildMultiSigEnabledIfChild();
     this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(
       TxType.CHANGE_THRESHOLD,
       'Not a threshold change tx'
     );
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
     this.assertProposalExists(approvalCount);
 
-    const currentThreshold = this.threshold.getAndRequireEquals();
+    const { threshold: currentThreshold, numOwners } = this.getGovernanceState();
     this.assertThresholdSatisfied(approvalCount, currentThreshold);
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
@@ -656,13 +1043,12 @@ export class MinaGuard extends SmartContract {
     );
 
     newThreshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
-    const numOwners = this.numOwners.getAndRequireEquals();
     numOwners.assertGreaterThanOrEqual(
       newThreshold,
       'Threshold cannot exceed owner count'
     );
 
-    this.threshold.set(newThreshold);
+    this.setGovernanceState(newThreshold, numOwners);
 
     this.markExecuted(approvalWitness);
 
@@ -677,7 +1063,6 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('thresholdChange', {
       proposalHash,
       oldThreshold: currentThreshold,
-      newThreshold,
       configNonce: currentConfigNonce.add(1),
     });
   }
@@ -688,21 +1073,23 @@ export class MinaGuard extends SmartContract {
     approvalWitness: MerkleMapWitness,
     approvalCount: Field,
   ) {
+    this.assertChildMultiSigEnabledIfChild();
     this.getInitializedOwnersCommitment();
 
     proposal.txType.assertEquals(
       TxType.SET_DELEGATE,
       'Not a delegate tx'
     );
+    this.assertLocalProposal(proposal);
 
     const proposalHash = proposal.hash();
 
-    this.assertProposalConfigNetworkAndGuard(proposal, 'Config nonce mismatch');
+    this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalNotExpired(proposal);
     this.assertNotExecuted(approvalCount);
     this.assertProposalExists(approvalCount);
 
-    const threshold = this.threshold.getAndRequireEquals();
+    const { threshold } = this.getGovernanceState();
     this.assertThresholdSatisfied(approvalCount, threshold);
 
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
@@ -721,7 +1108,162 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('delegate', {
       proposalHash,
-      delegate: targetDelegate,
+    });
+  }
+
+  // -- Child Lifecycle Methods (REMOTE proposals, run on the child) ---------
+
+  /**
+   * Child reclaims a specified amount of MINA to its parent.
+   *
+   * The RECLAIM_CHILD proposal is proposed and approved on the parent.
+   * The child reads the parent's approval state as preconditions and
+   * verifies the approval witness, then sends the funds.
+   */
+  @method async executeReclaimToParent(
+    proposal: TransactionProposal,
+    parentApprovalWitness: MerkleMapWitness,
+    parentApprovalCount: Field,
+    childExecutionWitness: MerkleMapWitness,
+    amount: UInt64,
+  ) {
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.RECLAIM_CHILD, 'Not a reclaim child tx');
+    this.assertValidRemoteProposal(proposal);
+
+    const proposalHash = this.verifyParentApproval(
+      proposal,
+      parentApprovalWitness,
+      parentApprovalCount,
+    );
+
+    this.assertChildExecutionWitnessValue(
+      proposalHash,
+      childExecutionWitness,
+      Field(0),
+    );
+
+    proposal.data.assertEquals(amount.value, 'Data does not match reclaim amount');
+
+    const parentAddress = this.parent.getAndRequireEquals();
+    this.send({ to: parentAddress, amount });
+
+    this.markChildExecuted(childExecutionWitness);
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+
+    this.emitEvent('reclaimChild', {
+      proposalHash,
+      parentAddress,
+      amount,
+    });
+  }
+
+  /**
+   * Destroys the child: sends full balance to parent and disables the
+   * child's multisig policy. After destruction the child is inert —
+   * propose/approve/execute are all blocked by
+   * assertChildMultiSigEnabledIfChild, but parent-authorized lifecycle
+   * methods remain callable.
+   */
+  @method async executeDestroy(
+    proposal: TransactionProposal,
+    parentApprovalWitness: MerkleMapWitness,
+    parentApprovalCount: Field,
+    childExecutionWitness: MerkleMapWitness,
+  ) {
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.DESTROY_CHILD, 'Not a destroy child tx');
+    this.assertValidRemoteProposal(proposal);
+
+    const proposalHash = this.verifyParentApproval(
+      proposal,
+      parentApprovalWitness,
+      parentApprovalCount,
+    );
+
+    this.assertChildExecutionWitnessValue(
+      proposalHash,
+      childExecutionWitness,
+      Field(0),
+    );
+
+    const balance = this.account.balance.getAndRequireEquals();
+    const parentAddress = this.parent.getAndRequireEquals();
+    this.send({ to: parentAddress, amount: balance });
+
+    this.markChildExecuted(childExecutionWitness);
+
+    this.childMultiSigEnabled.set(Field(0));
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+
+    this.emitEvent('reclaimChild', {
+      proposalHash,
+      parentAddress,
+      amount: balance,
+    });
+
+    this.emitEvent('enableChildMultiSig', {
+      proposalHash,
+      parentAddress,
+    });
+  }
+
+  /**
+   * Toggles the child's independent multisig policy on/off. `enabled == 0`
+   * blocks all child-local multisig ops; `enabled == 1` re-enables them.
+   */
+  @method async executeEnableChildMultiSig(
+    proposal: TransactionProposal,
+    parentApprovalWitness: MerkleMapWitness,
+    parentApprovalCount: Field,
+    childExecutionWitness: MerkleMapWitness,
+    enabled: Field,
+  ) {
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.ENABLE_CHILD_MULTI_SIG, 'Not an enable-child-multi-sig tx');
+    this.assertValidRemoteProposal(proposal);
+
+    const proposalHash = this.verifyParentApproval(
+      proposal,
+      parentApprovalWitness,
+      parentApprovalCount,
+    );
+
+    this.assertChildExecutionWitnessValue(
+      proposalHash,
+      childExecutionWitness,
+      Field(0),
+    );
+
+    proposal.data.assertEquals(enabled, 'Data does not match enabled flag');
+    enabled.equals(Field(0)).or(enabled.equals(Field(1)))
+      .assertTrue('Enabled must be 0 or 1');
+
+    this.childMultiSigEnabled.set(enabled);
+
+    this.markChildExecuted(childExecutionWitness);
+
+    const parentAddress = this.parent.getAndRequireEquals();
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+
+    this.emitEvent('enableChildMultiSig', {
+      proposalHash,
+      parentAddress,
     });
   }
 }

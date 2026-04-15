@@ -1,5 +1,5 @@
-import { Field, Mina, PrivateKey, Signature, UInt64 } from 'o1js';
-import { EXECUTED_MARKER, MAX_RECEIVERS, TxType } from '../constants.js';
+import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64 } from 'o1js';
+import { EXECUTED_MARKER, MAX_RECEIVERS, TxType, Destination } from '../constants.js';
 import { TransactionProposal, Receiver } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
@@ -360,6 +360,8 @@ describe('MinaGuard - Governance', () => {
         expiryBlock: Field(0),
         networkId: Field(1),
         guardAddress: ctx.zkAppAddress,
+        destination: Destination.LOCAL,
+        childAccount: PublicKey.empty(),
       });
 
       await expect(async () => {

@@ -5,8 +5,10 @@ import {
   PublicKey,
   AccountUpdate,
   Signature,
+  Poseidon,
   UInt64,
   Bool,
+  MerkleMapWitness,
 } from 'o1js';
 import {
   MinaGuard,
@@ -14,7 +16,13 @@ import {
   SetupOwnersInput,
   TransactionProposal,
 } from '../MinaGuard.js';
-import { TxType, PROPOSED_MARKER, MAX_OWNERS, MAX_RECEIVERS } from '../constants.js';
+import {
+  TxType,
+  Destination,
+  PROPOSED_MARKER,
+  MAX_OWNERS,
+  MAX_RECEIVERS,
+} from '../constants.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
 
@@ -166,7 +174,9 @@ export function createTransferProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  destination = Destination.LOCAL
 ): TransactionProposal {
   const padded = [...receivers];
   while (padded.length < MAX_RECEIVERS) {
@@ -182,6 +192,8 @@ export function createTransferProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    destination,
+    childAccount,
   });
 }
 
@@ -202,7 +214,9 @@ export function createAddOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(newOwner),
@@ -214,6 +228,8 @@ export function createAddOwnerProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    destination,
+    childAccount,
   });
 }
 
@@ -224,7 +240,9 @@ export function createRemoveOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(ownerToRemove),
@@ -236,6 +254,8 @@ export function createRemoveOwnerProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    destination,
+    childAccount,
   });
 }
 
@@ -246,7 +266,9 @@ export function createThresholdProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -258,6 +280,8 @@ export function createThresholdProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    destination,
+    childAccount,
   });
 }
 
@@ -268,7 +292,9 @@ export function createDelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(delegate),
@@ -280,6 +306,8 @@ export function createDelegateProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    destination,
+    childAccount,
   });
 }
 
@@ -289,7 +317,9 @@ export function createUndelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
-  networkId = Field(1)
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+  destination = Destination.LOCAL
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -301,6 +331,149 @@ export function createUndelegateProposal(
     expiryBlock,
     networkId,
     guardAddress,
+    destination,
+    childAccount,
+  });
+}
+
+// -- Child Proposal Helpers --------------------------------------------------
+
+/**
+ * Builds a CREATE_CHILD proposal. `data` is the Poseidon commitment of the
+ * child's intended config so the child's executeSetupChild can bind to it.
+ * REMOTE destination, targets the given child address.
+ */
+export function createCreateChildProposal(
+  childAccount: PublicKey,
+  ownersCommitment: Field,
+  threshold: Field,
+  numOwners: Field,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.CREATE_CHILD,
+    data: Poseidon.hash([ownersCommitment, threshold, numOwners]),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
+    childAccount,
+  });
+}
+
+/**
+ * Builds an ALLOCATE_CHILD proposal — LOCAL on the parent, uses receivers as
+ * (childAddress, amount) pairs.
+ */
+export function createAllocateChildProposal(
+  receivers: Receiver[],
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  const padded = [...receivers];
+  while (padded.length < MAX_RECEIVERS) {
+    padded.push(Receiver.empty());
+  }
+  return new TransactionProposal({
+    receivers: padded,
+    tokenId: Field(0),
+    txType: TxType.ALLOCATE_CHILD,
+    data: Field(0),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
+  });
+}
+
+/**
+ * Builds a RECLAIM_CHILD proposal — REMOTE, proposed on the parent, targets
+ * a specific child. `data` encodes the reclaim amount.
+ */
+export function createReclaimChildProposal(
+  amount: UInt64,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.RECLAIM_CHILD,
+    data: amount.value,
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
+    childAccount,
+  });
+}
+
+/** Builds a DESTROY_CHILD proposal — REMOTE, proposed on the parent. */
+export function createDestroyChildProposal(
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.DESTROY_CHILD,
+    data: Field(0),
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
+    childAccount,
+  });
+}
+
+/** Builds an ENABLE_CHILD_MULTI_SIG proposal — REMOTE, data encodes the flag. */
+export function createEnableChildMultiSigProposal(
+  enabled: Field,
+  uid: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+  childAccount = PublicKey.empty(),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.ENABLE_CHILD_MULTI_SIG,
+    data: enabled,
+    uid,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.REMOTE,
+    childAccount,
   });
 }
 
@@ -373,6 +546,106 @@ export async function approveTransaction(
   nullifierStore.nullify(proposalHash, approver.pub);
   const newCount = Field(Number(currentCount.toString()) + 1);
   approvalStore.setCount(proposalHash, newCount);
+}
+
+/**
+ * Runs propose + approve on the parent guard so a REMOTE proposal reaches
+ * threshold. Returns the parent approvalRoot witness and the accumulated
+ * approval count — exactly what a child's lifecycle method needs to pass to
+ * verifyParentApproval. Caller is responsible for ensuring `signerIndices`
+ * contains exactly `threshold` distinct owners starting with the proposer.
+ */
+export async function proposeAndApproveOnParent(
+  parentCtx: TestContext,
+  proposal: TransactionProposal,
+  signerIndices: number[],
+): Promise<{
+  proposalHash: Field;
+  parentApprovalCount: Field;
+  parentApprovalWitness: MerkleMapWitness;
+}> {
+  if (signerIndices.length === 0) {
+    throw new Error('proposeAndApproveOnParent: need at least one signer');
+  }
+  const [proposerIndex, ...approverIndices] = signerIndices;
+
+  const proposalHash = await proposeTransaction(parentCtx, proposal, proposerIndex);
+  for (const idx of approverIndices) {
+    await approveTransaction(parentCtx, proposal, idx);
+  }
+
+  const parentApprovalCount = parentCtx.approvalStore.getCount(proposalHash);
+  const parentApprovalWitness = parentCtx.approvalStore.getWitness(proposalHash);
+
+  return { proposalHash, parentApprovalCount, parentApprovalWitness };
+}
+
+/**
+ * Deploys, funds, and runs `executeSetupChild` on a new child guard — all
+ * in a SINGLE Mina transaction. The CREATE_CHILD proposal must already have
+ * reached threshold on the parent via `proposeAndApproveOnParent`.
+ *
+ * The single-transaction pattern is load-bearing: between a standalone
+ * deploy and a standalone executeSetupChild, the child sits on-chain with
+ * `ownersCommitment == 0`, and anyone watching the mempool could call
+ * `executeSetupChild` with a proposal bound to an attacker-controlled
+ * "parent" and permanently bind the child to a hostile parent. Batching
+ * them in one tx eliminates that window.
+ */
+export async function deployAndSetupChildGuard(
+  parentCtx: TestContext,
+  parentAddress: PublicKey,
+  childZkApp: MinaGuard,
+  childKey: PrivateKey,
+  childAddress: PublicKey,
+  childOwners: PublicKey[],
+  childThreshold: number,
+  signerIndices: number[],
+  uid = Field(0),
+): Promise<{ proposalHash: Field }> {
+  const { deployerAccount, deployerKey, networkId } = parentCtx;
+
+  const ownersCommitment = computeOwnerChain(childOwners);
+  const thresholdField = Field(childThreshold);
+  const numOwnersField = Field(childOwners.length);
+
+  const proposal = createCreateChildProposal(
+    childAddress,
+    ownersCommitment,
+    thresholdField,
+    numOwnersField,
+    uid,
+    Field(0), // parent's configNonce at time of propose
+    parentAddress,
+    Field(0),
+    networkId,
+  );
+
+  const { proposalHash, parentApprovalCount, parentApprovalWitness } =
+    await proposeAndApproveOnParent(parentCtx, proposal, signerIndices);
+
+  const setupOwners = toFixedSetupOwners(childOwners);
+
+  const atomicTxn = await Mina.transaction(deployerAccount, async () => {
+    AccountUpdate.fundNewAccount(deployerAccount);
+    await childZkApp.deploy();
+    const funder = AccountUpdate.createSigned(deployerAccount);
+    funder.send({ to: childAddress, amount: UInt64.from(10_000_000_000) });
+    await childZkApp.executeSetupChild(
+      ownersCommitment,
+      thresholdField,
+      numOwnersField,
+      networkId,
+      new SetupOwnersInput({ owners: setupOwners }),
+      proposal,
+      parentApprovalWitness,
+      parentApprovalCount,
+    );
+  });
+  await atomicTxn.prove();
+  await atomicTxn.sign([deployerKey, childKey]).send();
+
+  return { proposalHash };
 }
 
 /** Reads an account balance from the active Mina instance. */

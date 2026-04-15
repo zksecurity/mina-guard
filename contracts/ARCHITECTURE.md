@@ -1,22 +1,23 @@
 # MinaGuard Architecture
 
-MinaGuard is a multisig vault zkApp for Mina, built with o1js. It manages shared funds via a quorum of owner signatures verified inside zero-knowledge circuits. The contract supports two execution flows: a **multi-step on-chain flow** (propose → approve → execute) and a **batch signature flow** where all signatures are collected off-chain and verified in a single transaction.
+MinaGuard is a hierarchical multisig vault zkApp for Mina, built with o1js. It manages shared funds via a quorum of owner signatures verified inside zero-knowledge circuits, and supports a parent/child guard hierarchy where a parent can deploy, fund, reclaim from, and destroy child guards.
+
+All execution uses a **multi-step on-chain flow** (propose → approve → execute). A proposal is either **LOCAL** (executes on the same guard that stored it) or **REMOTE** (proposed/approved on a parent, executed on a specific child). Cross-contract authorization is done by having the child read the parent's on-chain state as AccountUpdate preconditions and verify an approval Merkle witness.
 
 ## File Layout
 
 | File | Purpose |
 | ---- | ------- |
 | `MinaGuard.ts` | Contract class, types (structs), events |
-| `constants.ts` | `MAX_OWNERS`, markers, `TxType` enum, chain hash prefixes |
+| `constants.ts` | `MAX_OWNERS`, `MAX_RECEIVERS`, markers, `TxType` + `Destination` enums |
 | `storage.ts` | Off-chain stores: `OwnerStore`, `ApprovalStore`, `VoteNullifierStore` |
 | `list-commitment.ts` | Owner chain hash circuits: membership proof, add, remove |
-| `batch-verify.ts` | Batch signature verification circuit |
 | `utils.ts` | `ownerKey()` helper (`Poseidon.hash(owner.toFields())`) |
 | `index.ts` | Public exports |
 
-## On-Chain State (8 Fields)
+## On-Chain State (11 Fields)
 
-Mina limits zkApps to 8 state fields. MinaGuard uses all 8:
+MinaGuard uses 11 state slots (requires the Mesa 32-slot branch of o1js):
 
 | Slot | Field | Purpose |
 | ---- | ----- | ------- |
@@ -28,6 +29,9 @@ Mina limits zkApps to 8 state fields. MinaGuard uses all 8:
 | 5 | `approvalRoot` | MerkleMap root of approval counts (`proposalHash → count`) |
 | 6 | `configNonce` | Incremented on governance changes; invalidates stale proposals |
 | 7 | `networkId` | Network identifier; prevents cross-network replay |
+| 8 | `parent` | Parent guard address (`PublicKey.empty()` for a root guard) |
+| 9 | `childExecutionRoot` | MerkleMap root marking REMOTE proposals executed on this child |
+| 10 | `childMultiSigEnabled` | `Field(1)` if this child accepts its own propose/approve/execute ops, `Field(0)` otherwise |
 
 ## Owner Storage Model
 
@@ -99,27 +103,50 @@ class TransactionProposal extends Struct({
   configNonce:  Field,       // Must match on-chain configNonce
   expiryBlock:  Field,       // Block height deadline (0 = no expiry)
   networkId:    Field,       // Must match on-chain networkId
-  guardAddress: PublicKey,   // Must match contract address
+  guardAddress: PublicKey,   // Must match the guard the proposal lives on
+  destination:  Field,       // LOCAL or REMOTE (see below)
+  childAccount: PublicKey,   // Target child for REMOTE; empty for LOCAL
 })
 ```
 
-Unused receiver slots use `Receiver.empty()` (`PublicKey.empty()` + `UInt64(0)`). Non-transfer proposals (governance actions) use all-empty receiver slots.
+Unused receiver slots use `Receiver.empty()` (`PublicKey.empty()` + `UInt64(0)`). Non-transfer proposals (governance, child-lifecycle) use all-empty receiver slots unless otherwise noted.
 
-`hash()` returns `Poseidon(all fields)`. This hash is the universal key for approval counts, vote nullifiers, and signatures.
+`hash()` returns `Poseidon(all fields)`. This hash is the universal key for approval counts, vote nullifiers, and signatures. Because `guardAddress`, `destination`, and `childAccount` are all inside the hash, a proposal is cryptographically bound to a specific (parent, child) pair — cross-child reuse produces a different hash.
 
 ### Why hash-keyed instead of nonce-keyed
 
 A sequential nonce would allow **proposal substitution**: an attacker could craft a different proposal with the same nonce and collect approvals for an unintended transaction. Keying by content hash ensures approvals are cryptographically bound to the exact proposal fields.
 
+### LOCAL vs REMOTE proposals
+
+| `destination` | Flow | Example txTypes |
+| ------------- | ---- | --------------- |
+| `LOCAL` | Proposed, approved, and executed on the same guard | `TRANSFER`, `ADD_OWNER`, `REMOVE_OWNER`, `CHANGE_THRESHOLD`, `SET_DELEGATE`, `ALLOCATE_CHILD` |
+| `REMOTE` | Proposed and approved on the **parent**, executed on the **child** named in `childAccount` | `CREATE_CHILD`, `RECLAIM_CHILD`, `DESTROY_CHILD`, `ENABLE_CHILD_MULTI_SIG` |
+
+REMOTE proposals are never marked executed on the parent's `approvalRoot` — the parent never runs an execute method for them. Replay protection lives on the child in `childExecutionRoot`.
+
 ### TxType enum and `data` field usage
 
-| TxType | Value | `data` contains |
-| ------ | ----- | --------------- |
-| `TRANSFER` | 0 | `Field(0)` (receiver data is in the `receivers`/`amounts` arrays instead) |
-| `ADD_OWNER` | 1 | `ownerKey(newOwner)` — Poseidon hash of the owner to add |
-| `REMOVE_OWNER` | 2 | `ownerKey(owner)` — Poseidon hash of the owner to remove |
-| `CHANGE_THRESHOLD` | 3 | New threshold value as a Field |
-| `SET_DELEGATE` | 4 | `ownerKey(delegate)` for delegation, `Field(0)` for un-delegation |
+| TxType | Value | `destination` | `data` contains | `receivers[0]` contains |
+| ------ | ----- | ------------- | --------------- | ----------------------- |
+| `TRANSFER` | 0 | `LOCAL` | `Field(0)` | Any recipient (multi-slot allowed) |
+| `ADD_OWNER` | 1 | `LOCAL` | `Field(0)` | The owner pubkey to add |
+| `REMOVE_OWNER` | 2 | `LOCAL` | `Field(0)` | The owner pubkey to remove |
+| `CHANGE_THRESHOLD` | 3 | `LOCAL` | New threshold value | Empty |
+| `SET_DELEGATE` | 4 | `LOCAL` | `Field(0)` | Delegate pubkey (empty = undelegate to self) |
+| `CREATE_CHILD` | 5 | `REMOTE` | `Poseidon([ownersCommitment, threshold, numOwners])` of the child's initial config | Empty |
+| `ALLOCATE_CHILD` | 6 | `LOCAL` | `Field(0)` | Any child recipient (multi-slot allowed) |
+| `RECLAIM_CHILD` | 7 | `REMOTE` | Amount to reclaim | Empty |
+| `DESTROY_CHILD` | 8 | `REMOTE` | `Field(0)` | Empty |
+| `ENABLE_CHILD_MULTI_SIG` | 9 | `REMOTE` | `0` or `1` | Empty |
+
+Propose-time rules enforced in `propose()`:
+- `receivers[0]` must be non-empty for `ADD_OWNER`/`REMOVE_OWNER`.
+- `receivers[0]` must be empty for `CHANGE_THRESHOLD`.
+- Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
+- `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, or `ENABLE_CHILD_MULTI_SIG`.
+- `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
 
 ## Constants
 
@@ -127,13 +154,12 @@ Defined in `constants.ts`:
 
 | Constant | Value | Purpose |
 | -------- | ----- | ------- |
-| `MAX_RECEIVERS` | `5` | Fixed-size bound for receiver/amount arrays in proposals |
-| `MAX_OWNERS` | `20` | Fixed-size bound for owner witnesses and signature batches |
+| `MAX_RECEIVERS` | `9` | Fixed-size bound for receiver arrays in proposals. Hard cap from Mina's transaction cost budget — 10 receivers fails proving with "transaction is too expensive" |
+| `MAX_OWNERS` | `20` | Fixed-size bound for owner witnesses |
 | `INITIAL_OWNER_CHAIN` | `Poseidon.hashWithPrefix('owner-chain', [])` | Chain hash seed for owners |
-| `INITIAL_SIGNER_CHAIN` | `Poseidon.hashWithPrefix('signer-chain', [])` | Chain hash seed for batch signer audit trail |
 | `PROPOSED_MARKER` | `Field(1)` | Base value written to approval map on propose |
-| `EXECUTED_MARKER` | `Field(0).sub(1)` | Max field value; marks executed proposals |
-| `EMPTY_MERKLE_MAP_ROOT` | `new MerkleMap().getRoot()` | Initializes `approvalRoot` and `voteNullifierRoot` |
+| `EXECUTED_MARKER` | `Field(0).sub(1)` | Max field value; marks executed LOCAL proposals |
+| `EMPTY_MERKLE_MAP_ROOT` | `new MerkleMap().getRoot()` | Initializes `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` |
 
 ## On-Chain Multi-Step Flow
 
@@ -143,12 +169,12 @@ Defined in `constants.ts`:
 
 ### Setup
 
-`setup(ownersCommitment, threshold, numOwners, networkId, initialOwners)` — one-time initialization.
+`setup(ownersCommitment, threshold, numOwners, networkId, initialOwners)` — one-time root-guard initialization.
 
 - Guard: `ownersCommitment == Field(0)` (not yet initialized)
 - Validates: `threshold > 0`, `numOwners >= threshold`, `numOwners <= MAX_OWNERS`
-- Initializes all 8 state fields; `approvalRoot` and `voteNullifierRoot` set to `EMPTY_MERKLE_MAP_ROOT`
-- Emits `SetupEvent` + one `SetupOwnerEvent` per `MAX_OWNERS` slot (fixed-size for deterministic indexing)
+- Initializes all state fields; `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` set to `EMPTY_MERKLE_MAP_ROOT`; `parent = PublicKey.empty()`; `childMultiSigEnabled = Field(1)`
+- Emits `SetupEvent` + one `SetupOwnerEvent` per `MAX_OWNERS` slot
 - Trust model: clients should independently compute the expected commitment and verify it matches
 
 ### Propose (with auto-approve)
@@ -157,107 +183,114 @@ Defined in `constants.ts`:
 
 There is only one propose method and it **always auto-approves** as the proposer's first vote:
 
-1. Verify proposer is an owner (chain hash witness)
-2. Assert `configNonce`, `networkId`, `guardAddress` match on-chain values
-3. Increment `proposalCounter`
-4. Verify proposer's signature over `[proposalHash]`
-5. Check and set vote nullifier (prevents re-proposal)
-6. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1` (= `Field(2)`, the marker plus the proposer's approval)
-7. Emit `ProposalEvent` (includes all proposal fields for indexer reconstruction) and `ApprovalEvent`
+1. Assert `childMultiSigEnabled == 1` if this is a child guard
+2. Verify proposer is an owner (chain hash witness)
+3. Assert `configNonce`, `networkId`, `guardAddress` match on-chain values
+4. Assert `destination` and `childAccount` are consistent
+5. Enforce per-txType propose rules (see TxType table)
+6. Increment `proposalCounter`
+7. Verify proposer's signature over `[proposalHash]`
+8. Check and set vote nullifier (prevents re-proposal)
+9. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`
+10. Emit `ProposalEvent`, `MAX_RECEIVERS` `ReceiverEvent`s, and `ApprovalEvent`
 
 ### Approve
 
 `approveProposal(proposal, signature, approver, ownerWitness, approvalWitness, currentApprovalCount, voteNullifierWitness)`
 
-1. Verify approver is an owner
-2. Assert `configNonce`, `networkId`, `guardAddress` match
-3. Verify signature over `[proposalHash]`
-4. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed (`count != EXECUTED_MARKER`)
-5. Check and set vote nullifier (prevents double-vote)
-6. Increment approval count in the approval map
-7. Emit `ApprovalEvent`
+1. Assert `childMultiSigEnabled == 1` if this is a child guard
+2. Verify approver is an owner
+3. Assert `configNonce`, `networkId`, `guardAddress` match
+4. Verify signature over `[proposalHash]`
+5. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed
+6. Check and set vote nullifier
+7. Increment approval count in the approval map
+8. Emit `ApprovalEvent`
 
-### Execute (4 methods)
+### Execute — LOCAL methods
 
-All execute methods share these common checks:
+All LOCAL execute methods share these checks:
 
-- Wallet is initialized (`ownersCommitment != 0`)
-- `txType` matches the method
-- `configNonce`, `networkId`, `guardAddress` match on-chain values
+- Wallet initialized (`ownersCommitment != 0`)
+- `childMultiSigEnabled == 1` if this is a child guard
+- `txType` matches the method, `destination == LOCAL`
+- `configNonce`, `networkId`, `guardAddress` match on-chain
 - Proposal not expired (if `expiryBlock != 0`, asserts `blockchainLength <= expiryBlock`)
-- Not already executed (`approvalCount != EXECUTED_MARKER`)
-- Proposal exists (`approvalCount >= PROPOSED_MARKER`)
-- Threshold satisfied: `approvalCount - PROPOSED_MARKER >= threshold`
+- Not executed, exists, and threshold satisfied
 - Approval witness verified against `approvalRoot`
 
-After execution, the approval count is overwritten with `EXECUTED_MARKER`, permanently preventing re-execution or further approvals. Execution is **permissionless** — anyone can trigger it once the threshold is met.
+After execution the approval count is overwritten with `EXECUTED_MARKER`, permanently preventing re-execution or further approvals. Execution is **permissionless** — anyone can trigger it once the threshold is met.
 
-**`executeTransfer`** — Loops through all `MAX_RECEIVERS` slots, sending to each non-empty receiver. Empty slots (`PublicKey.empty()`) get their amount zeroed via `Provable.if` (a send of 0 is a no-op). Emits `ExecutionEvent`.
+- **`executeTransfer`** — Loops through all receiver slots, sending to each non-empty one. Empty slots get their amount zeroed via `Provable.if`. Emits `ExecutionEvent`.
+- **`executeAllocateToChildren`** — Same structure as `executeTransfer` but asserts `txType == ALLOCATE_CHILD`. Typically sends MINA from a parent to its children. Emits `ExecutionEvent { txType: ALLOCATE_CHILD }`. The indexer distinguishes allocations from generic transfers by txType.
+- **`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. The owner pubkey is read from `receivers[0]`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits and selects the correct result based on `txType`. Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
+- **`executeThresholdChange`** — Validates `proposal.data == newThreshold`, `newThreshold > 0`, `numOwners >= newThreshold`. Updates `threshold`. Increments `configNonce`. Emits `ExecutionEvent` + `ThresholdChangeEvent`.
+- **`executeDelegate`** — Reads the target delegate from `receivers[0]` (empty slot = undelegate to self). Sets `account.delegate`. Does **not** increment `configNonce`. Emits `ExecutionEvent` + `DelegateEvent`.
 
-**`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. Verifies `proposal.data == ownerKey(ownerPubKey)`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits, then selects the correct result based on `txType`. Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
+## Subaccounts / Child Lifecycle
 
-**`executeThresholdChange`** — Validates `proposal.data == newThreshold`, `newThreshold > 0`, `numOwners >= newThreshold`. Updates `threshold`. Increments `configNonce`. Emits `ExecutionEvent` + `ThresholdChangeEvent`.
+![Parent/child guard hierarchy](./subaccounts-design.png)
 
-**`executeDelegate`** — Validates `proposal.data` is `Field(0)` (un-delegate to self) or `ownerKey(delegate)`. Sets `account.delegate` accordingly. Does **not** increment `configNonce`. Emits `ExecutionEvent` + `DelegateEvent`.
+A child guard is a separate MinaGuard contract instance whose `parent` state field points to another MinaGuard. Child-lifecycle operations (`CREATE_CHILD`, `RECLAIM_CHILD`, `DESTROY_CHILD`, `ENABLE_CHILD_MULTI_SIG`) are REMOTE proposals: proposed and approved on the parent, executed on the child.
 
-## Batch Signature Flow
+### Cross-contract precondition model
 
-The batch flow bypasses the multi-step propose/approve/execute cycle. Signatures from a quorum of owners are collected **off-chain** and verified in a single transaction.
+When the child runs a REMOTE execute method, it reads the parent's on-chain state via:
 
-Four batch methods: `executeTransferBatchSig`, `executeOwnerChangeBatchSig`, `executeThresholdChangeBatchSig`, `executeDelegateBatchSig`. `executeTransferBatchSig` loops through all `MAX_RECEIVERS` slots, sending to each non-empty receiver (empty slots get their amount zeroed via `Provable.if`, so a send of 0 is a no-op), mirroring `executeTransfer`.
+```typescript
+const parentGuard = new MinaGuard(parentAddress);
+const parentOwnersCommitment = parentGuard.ownersCommitment.getAndRequireEquals();
+const parentConfigNonce      = parentGuard.configNonce.getAndRequireEquals();
+const parentNetworkId        = parentGuard.networkId.getAndRequireEquals();
+const parentApprovalRoot     = parentGuard.approvalRoot.getAndRequireEquals();
+const parentThreshold        = parentGuard.threshold.getAndRequireEquals();
+```
 
-### Batch Verification Circuit
+Each `getAndRequireEquals()` call pins the parent's state as an AccountUpdate precondition. If any parent field changes between approval and execution (e.g. an `executeOwnerChange` bumps `configNonce`), the precondition fails and the child transaction aborts atomically. The child then verifies a Merkle witness proving the REMOTE proposal reached threshold on `parentApprovalRoot`.
 
-`batchVerify()` in `batch-verify.ts` takes a `SignatureInputs` struct — a fixed-size array of `MAX_OWNERS` optional `(Option(Signature), PublicKey)` pairs. Three cases per slot:
+### Child execution replay guard
 
-| Slot state | Meaning |
-| ---------- | ------- |
-| `None` (outer) | Empty owner slot (padding) |
-| `Some` with `signature: None` | Owner exists but did not sign |
-| `Some` with `signature: Some(sig)` | Owner exists and provided signature |
+REMOTE proposals never touch the parent's `approvalRoot` — the parent never runs an execute method for them, so `markExecuted` is not called. Instead, each child maintains its own `childExecutionRoot` MerkleMap. When a child runs a REMOTE execute method, it asserts the proposal's slot in `childExecutionRoot` is `Field(0)` and then writes `EXECUTED_MARKER` via `markChildExecuted`. This is the sole replay guard for REMOTE flows.
 
-The circuit iterates all slots and computes:
+Cross-child safety: because `proposalHash` includes `childAccount`, a REMOTE proposal for child A produces a different hash than one for child B even with otherwise identical fields. A proposal approved on the parent and targeted at child A cannot execute on child B — each child asserts `proposal.childAccount == this.address`.
 
-- **`ownerChain`** — Hashes all `isSome` public keys into a chain hash. The caller asserts this equals `ownersCommitment`, proving the witness represents the real owner list.
-- **`signerChain`** — Hashes only public keys with valid signatures. Emitted in events as an auditable trail of who signed.
-- **`approvalCount`** — Number of valid signatures verified.
+### Child lifecycle methods
 
-Returns `{ approvalCount, signerChain, ownerChain }`.
+All four child-lifecycle `@method`s run on the child, take parent-approval inputs `(parentApprovalWitness, parentApprovalCount)`, and emit `ExecutionEvent` alongside their specific event.
 
-### Differences from On-Chain Flow
-
-- **No pre-registration**: The approval slot must be `Field(0)` (never proposed), not `>= PROPOSED_MARKER`. The proposal is registered and executed atomically.
-- **Direct threshold check**: `approvalCount >= threshold` (no `PROPOSED_MARKER` offset).
-- **Counter incremented**: `proposalCounter` advances, ensuring unique UIDs across both flows.
-- **Batch-specific events**: Each method emits its own batch event type (e.g., `ExecutionBatchEvent`) that includes `approverChain` for on-chain audit. The standard flow events (`ExecutionEvent`, etc.) are not emitted.
+- **`executeSetupChild(ownersCommitment, threshold, numOwners, networkId, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Must be batched into the **same Mina transaction** as the child's `deploy()`. Between deploy and setup, the child sits with `ownersCommitment == 0`, and any account in the mempool could call `executeSetupChild` with a proposal bound to an attacker-controlled "parent", permanently binding the child to a hostile parent. Asserts `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, and `proposal.data == Poseidon([ownersCommitment, threshold, numOwners])`. Verifies the parent approval state inline (since `this.parent` isn't persisted yet, the parent address comes from `proposal.guardAddress`). Initializes all state, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
+- **`executeReclaimToParent(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, amount)`** — Sends `amount` MINA back to `this.parent`. Asserts `proposal.data == amount.value`. Marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `ReclaimChildEvent { proposalHash, parentAddress, amount }`. Does **not** check `childMultiSigEnabled` — this is a deliberate recovery path that works even on a destroyed child.
+- **`executeDestroy(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness)`** — Sends the full child balance to the parent, sets `childMultiSigEnabled = 0`, and marks the proposal in `childExecutionRoot`. After destruction the child is inert: its own propose/approve/LOCAL execute methods are blocked by `assertChildMultiSigEnabledIfChild`, but parent-authorized REMOTE methods remain callable. Reuses `ReclaimChildEvent` (same "MINA flowed child → parent" semantics — `ExecutionEvent.txType == DESTROY_CHILD` disambiguates from a partial reclaim).
+- **`executeEnableChildMultiSig(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, enabled)`** — Asserts `proposal.data == enabled` and `enabled ∈ {0, 1}`. Sets `childMultiSigEnabled` and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `EnableChildMultiSigEvent`.
 
 ## Events
 
-### Standard Flow Events
+All event structs are defined in `MinaGuard.ts` and registered on `this.events`. Fields are slimmed: per-execution events carry only what is **not** already derivable from propose-time `ProposalEvent`/`ReceiverEvent`s for the same `proposalHash`.
 
 | Event | Fields | Emitted By |
 | ----- | ------ | ---------- |
 | `DeployEvent` | `guardAddress` | `deploy` |
-| `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId` | `setup` |
-| `SetupOwnerEvent` | `owner, index` | `setup` (one per `MAX_OWNERS` slot) |
-| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, uid, configNonce, expiryBlock, networkId, guardAddress` | `propose` (receiver data emitted via separate `ProposalReceiverEvent`s) |
-| `ProposalReceiverEvent` | `proposalHash, receiver, amount, index` | `propose` (one per `MAX_RECEIVERS` slot) |
+| `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId, parent` | `setup`, `executeSetupChild` |
+| `SetupOwnerEvent` | `owner, index` | `setup`, `executeSetupChild` (one per `MAX_OWNERS` slot) |
+| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, uid, configNonce, expiryBlock, networkId, guardAddress, destination, childAccount` | `propose` |
+| `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
 | `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
-| `ExecutionEvent` | `proposalHash, txType` | `executeTransfer`, `executeOwnerChange`, `executeThresholdChange`, `executeDelegate` (receivers committed via `proposalHash`) |
-| `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners` | `executeOwnerChange` |
-| `ThresholdChangeEvent` | `proposalHash, oldThreshold, newThreshold` | `executeThresholdChange` |
-| `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` |
+| `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |
+| `OwnerChangeEvent` | `proposalHash, newNumOwners, configNonce` | `executeOwnerChange` (the added/removed owner key is in `ReceiverEvent` slot 0; `added` is in `ProposalEvent.txType`) |
+| `ThresholdChangeEvent` | `proposalHash, oldThreshold, configNonce` | `executeThresholdChange` (the new threshold is in `ProposalEvent.data`) |
+| `DelegateEvent` | `proposalHash` | `executeDelegate` (the delegate is in `ReceiverEvent` slot 0; empty means undelegate to self) |
+| `CreateChildEvent` | `proposalHash, parentAddress` | `executeSetupChild` (config fields duplicated in the sibling `SetupEvent`) |
+| `ReclaimChildEvent` | `proposalHash, parentAddress, amount` | `executeReclaimToParent`, `executeDestroy` |
+| `EnableChildMultiSigEvent` | `proposalHash, parentAddress` | `executeEnableChildMultiSig`, `executeDestroy` (the `enabled` value is in `ProposalEvent.data`; for a destroy, `ProposalEvent.txType == DESTROY_CHILD` implies `enabled = 0`) |
 
-### Batch Flow Events
+### Indexer reconstruction
 
-| Event | Fields | Emitted By |
-| ----- | ------ | ---------- |
-| `ExecutionBatchEvent` | `proposalHash, txType, approverChain` | `executeTransferBatchSig` |
-| `OwnerChangeBatchEvent` | `proposalHash, owner, added, newNumOwners, approverChain` | `executeOwnerChangeBatchSig` |
-| `ThresholdChangeBatchEvent` | `proposalHash, oldThreshold, newThreshold, approverChain` | `executeThresholdChangeBatchSig` |
-| `DelegateBatchEvent` | `proposalHash, delegate, approverChain` | `executeDelegateBatchSig` |
+Every contract state field is reconstructable from events alone — no on-chain state reads required.
 
-`ProposalEvent` includes all scalar proposal fields so an indexer can reconstruct proposal details purely from on-chain events. Receiver arrays are emitted as per-slot `ProposalReceiverEvent`s rather than inline arrays because Mina limits events to 16 field elements.
+- **LOCAL proposal lifecycle:** `ProposalEvent` → `ApprovalEvent`(s) → `ExecutionEvent` (with the corresponding governance sibling event) on the same guard.
+- **REMOTE proposal lifecycle:** `ProposalEvent` on the parent → `ApprovalEvent`(s) on the parent → `ExecutionEvent` on the **child**. The single `applyExecutionEvent` handler marks the parent's `Proposal` row executed by looking up the global `proposalHash` (which includes `guardAddress` + `networkId` + `childAccount` and is unique). Child-lifecycle sibling events drive state-specific mutations (flip `childMultiSigEnabled`, etc.).
+- **`Contract.parent`** populated from `SetupEvent.parent` (empty for root, real parent for child).
+- **`Contract.childMultiSigEnabled`** initialized `true` at `SetupEvent`. On `EnableChildMultiSigEvent` the indexer resolves the new value by looking up the parent `Proposal`: `txType == DESTROY_CHILD` → `false`, otherwise `data == 1`.
 
 ## Security Properties
 
@@ -266,20 +299,25 @@ Returns `{ approvalCount, signerChain, ownerChain }`.
 | Only owners can propose | Chain hash witness verified against `ownersCommitment` |
 | Only owners can approve | Chain hash witness + signature over `proposalHash` |
 | No double-voting | Vote nullifier map keyed by `hash(proposalHash, approver)` |
-| Proposal existence verified | `PROPOSED_MARKER` in approval map (on-chain flow) |
-| No re-execution | `EXECUTED_MARKER` replaces count after execution (both flows) |
+| Proposal existence verified | `PROPOSED_MARKER` in approval map |
+| No LOCAL re-execution | `EXECUTED_MARKER` replaces count after execution |
+| No REMOTE re-execution | `EXECUTED_MARKER` written to child's `childExecutionRoot` |
 | Stale proposals rejected | `configNonce` in proposal must match on-chain value |
 | Time-bounded proposals | Optional `expiryBlock` checked against `blockchainLength` |
 | No proposal substitution | Approvals keyed by content hash, not sequential ID |
 | Cross-network replay prevented | `networkId` in proposal must match on-chain |
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |
+| Cross-child replay prevented | `childAccount` is inside `proposalHash`; children assert `proposal.childAccount == this.address` |
+| Parent state drift invalidates REMOTE approvals | Child reads `configNonce`/`ownersCommitment`/`approvalRoot`/`threshold` as AccountUpdate preconditions; any parent change aborts the child tx |
+| Deploy-time race closed | `deploy` + `executeSetupChild` batched in one Mina transaction |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
+| Reclaim and destroy are recovery paths | Child-lifecycle methods bypass `childMultiSigEnabled`; the parent can always retrieve funds |
 | Anyone can execute | Execution is permissionless once threshold is met |
 | MINA receivable | `receive: Permissions.none()` allows deposits without proof |
 | State changes proof-only | `editState: Permissions.proof()` — no signature fallback |
-| Permission downgrade prevented | `setPermissions: Permissions.proof()` |
-| Bounded circuit size | `MAX_OWNERS = 20` caps witness and batch arrays |
-| Batch signer verification | `ownerChain` from `batchVerify` must equal `ownersCommitment` |
+| Permission downgrade prevented | `setPermissions: Permissions.impossible()` |
+| Verification key immutable | `setVerificationKey: impossibleDuringCurrentVersion` |
+| Bounded circuit size | `MAX_OWNERS = 20`, `MAX_RECEIVERS = 9` |
 
 ## Permissions
 
@@ -291,6 +329,12 @@ Set in `deploy()`:
 | `send` | `proof()` | Outgoing transfers only via proven contract methods |
 | `receive` | `none()` | Anyone can deposit MINA without a proof |
 | `setDelegate` | `proof()` | Delegation only via proven contract methods |
-| `setPermissions` | `proof()` | Prevents permission downgrade attacks |
+| `setPermissions` | `impossible()` | Prevents permission downgrade attacks |
+| `setVerificationKey` | `impossibleDuringCurrentVersion()` | Pins the verification key for the lifetime of the current version |
+| `setZkappUri` | `impossible()` | Metadata cannot be rewritten |
+| `setTokenSymbol` | `impossible()` | Token symbol cannot be rewritten |
+| `incrementNonce` | `impossible()` | Proof-authorized AUs don't set a nonce precondition |
+| `setVotingFor` | `impossible()` | Not used |
+| `setTiming` | `impossible()` | Not used |
 
 All other permissions use `Permissions.default()`.

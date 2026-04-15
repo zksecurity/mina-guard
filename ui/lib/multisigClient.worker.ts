@@ -32,6 +32,7 @@ import {
   VoteNullifierStore,
   ApprovalStore,
   PublicKeyOption,
+  Destination,
 } from 'contracts';
 
 import {
@@ -393,6 +394,8 @@ function buildProposalStruct(
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
   });
 }
 
@@ -681,6 +684,8 @@ const workerApi = {
       expiryBlock: Field(params.input.expiryBlock ?? 0),
       networkId: Field(params.networkId),
       guardAddress: PublicKey.fromBase58(params.contractAddress),
+      destination: Destination.LOCAL,
+      childAccount: PublicKey.empty(),
     });
 
     const proposalHash = proposal.hash();

@@ -19,4 +19,14 @@ export const TxType = {
   REMOVE_OWNER: Field(2),
   CHANGE_THRESHOLD: Field(3),
   SET_DELEGATE: Field(4),
+  CREATE_CHILD: Field(5),
+  ALLOCATE_CHILD: Field(6),
+  RECLAIM_CHILD: Field(7),
+  DESTROY_CHILD: Field(8),
+  ENABLE_CHILD_MULTI_SIG: Field(9),
+};
+
+export const Destination = {
+  LOCAL: Field(0),
+  REMOTE: Field(1),
 };

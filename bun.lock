@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "mina-guard",
+      "dependencies": {
+        "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
+      },
       "devDependencies": {
         "@types/node": "^25.5.0",
         "e2e": "workspace:*",
@@ -18,7 +21,7 @@
         "contracts": "workspace:*",
         "cors": "^2.8.5",
         "express": "^4.21.2",
-        "o1js": "2.13.0",
+        "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
         "zod": "^3.25",
       },
       "devDependencies": {
@@ -46,7 +49,7 @@
         "typescript": "^5.4.5",
       },
       "peerDependencies": {
-        "o1js": "2.13.0",
+        "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
       },
     },
     "dev-helpers": {
@@ -55,7 +58,7 @@
       "dependencies": {
         "commander": "^13.1.0",
         "contracts": "workspace:*",
-        "o1js": "2.13.0",
+        "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
       },
       "devDependencies": {
         "@types/node": "^25.3.3",
@@ -65,7 +68,7 @@
       "name": "e2e",
       "dependencies": {
         "contracts": "workspace:*",
-        "o1js": "2.13.0",
+        "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
       },
       "devDependencies": {
         "@playwright/test": "^1.50.0",
@@ -86,7 +89,7 @@
         "js-sha256": "^0.9.0",
         "mina-signer": "file:deps/o1js/src/mina-signer",
         "next": "^14.2.0",
-        "o1js": "2.13.0",
+        "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
         "react": "^18.3.0",
         "react-dom": "^18.3.0",
       },
@@ -1190,7 +1193,7 @@
 
     "npm-run-path": ["npm-run-path@4.0.1", "", { "dependencies": { "path-key": "^3.0.0" } }, "sha512-S48WzZW777zhNIrn7gxOlISNAqi9ZC/uQFnRdbeIHhZhCA6UqpkOT8T1G7BvfdgP4Er8gF4sUbaS0i7QvIfCWw=="],
 
-    "o1js": ["o1js@2.13.0", "", { "dependencies": { "blakejs": "1.2.1", "cachedir": "^2.4.0", "js-sha256": "^0.9.0", "libsodium-wrappers-sumo": "^0.7.15", "reflect-metadata": "^0.1.13", "stacktrace-js": "^2.0.2", "tslib": "^2.3.0" }, "bin": { "snarky-run": "src/build/run.js" } }, "sha512-kRmOfILkZkpfiTfVEqhfGJkQq8csUYzkFnSgSnH/DIEY3uFgNfXpcZQXIvk0ZEIuDyL98sH3hwxR/DCJnUFndA=="],
+    "o1js": ["o1js@https://pkg.pr.new/o1-labs/o1js@2701", { "dependencies": { "blakejs": "1.2.1", "cachedir": "^2.4.0", "js-sha256": "^0.9.0", "libsodium-wrappers-sumo": "^0.7.15", "reflect-metadata": "^0.1.13", "stacktrace-js": "^2.0.2", "tslib": "^2.3.0" }, "bin": { "snarky-run": "src/build/run.js" } }],
 
     "object-assign": ["object-assign@4.1.1", "", {}, "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg=="],
 
