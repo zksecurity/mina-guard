@@ -24,3 +24,20 @@ export function clearUiStorage(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(getKey('selected-contract'));
 }
+
+/** Saves a user-assigned display name for a contract address. */
+export function saveAccountName(address: string, name: string): void {
+  if (typeof window === 'undefined') return;
+  const trimmed = name.trim();
+  if (trimmed) {
+    localStorage.setItem(getKey(`name:${address}`), trimmed);
+  } else {
+    localStorage.removeItem(getKey(`name:${address}`));
+  }
+}
+
+/** Returns the user-assigned display name for a contract address, if any. */
+export function getAccountName(address: string): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(getKey(`name:${address}`));
+}

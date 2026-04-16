@@ -135,7 +135,10 @@ test.afterEach(async ({}, testInfo) => {
 
 test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   log('=== Step 1: Deploy MinaGuard contract ===');
-  await gotoWithWallet('/deploy', accounts[0]);
+  // New UI: "+ Create account" on `/` routes to the 2-step wizard at
+  // `/accounts/new`. Step 1 is name + network (Testnet is the only
+  // enabled option), step 2 is owners + threshold + keypair + deploy.
+  await gotoWithWallet('/accounts/new', accounts[0]);
 
   // Wait for the wallet to connect — the header should show the address
   await page.waitForFunction(
@@ -145,7 +148,11 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   );
   log('Wallet connected');
 
-  // Wait for keypair generation
+  // Step 1 → Step 2 (skip the optional name, default network=Testnet)
+  log('Advancing wizard to step 2...');
+  await page.getByRole('button', { name: /^next$/i }).click();
+
+  // Wait for keypair generation (only starts once step 2 mounts)
   log('Waiting for keypair generation...');
   await page.waitForFunction(
     () => !document.body.textContent?.includes('Generating keypair'),
@@ -153,9 +160,8 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   );
 
   // Capture the generated contract address — find the <p> immediately after
-  // the "Contract Address" label. Using getByText with exact match avoids the
-  // ancestor-inclusion behaviour that would otherwise collide with the
-  // Owner 1 input's `font-mono` class.
+  // the "Contract Address" label. Using getByText with exact match avoids
+  // collisions with the Owner 1 input's `font-mono` class.
   const addressEl = page
     .getByText('Contract Address', { exact: true })
     .locator('xpath=following-sibling::p[1]');
@@ -164,14 +170,13 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   expect(contractAddress).toMatch(/^B62/);
   log(`Contract address: ${contractAddress}`);
 
-  // Threshold input has no default — the form rejects submission with
-  // "Please choose a threshold." until we set one. Only 1 owner here, so 1/1.
+  // Threshold defaults to blank — fill 1 (single owner = 1/1).
   log('Filling threshold...');
-  await page.getByRole('spinbutton', { name: /threshold/i }).fill('1');
+  await page.locator('input[type="number"]').first().fill('1');
 
   // Click deploy
-  log('Clicking Deploy...');
-  const deployBtn = page.getByRole('button', { name: /deploy minaguard/i });
+  log('Clicking Deploy account...');
+  const deployBtn = page.getByRole('button', { name: /deploy account/i });
   await deployBtn.click();
 
   // Wait for the operation to complete (success banner or redirect)
@@ -857,7 +862,8 @@ test('16. Execute remove owner', async () => { const page = sharedPage;
 
 test('17. Verify state after owner removal', async () => { const page = sharedPage;
   log('=== Step 17: Verify state after owner removal ===');
-  await gotoWithWallet('/', accounts[0]);
+  // Dashboard moved from `/` to `/accounts/<address>` in the UI restructure.
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
   // Dashboard delegate card should show "None"
@@ -953,7 +959,7 @@ test('19. Execute set delegate', async () => { const page = sharedPage;
 
 test('20. Verify delegate card shows delegate', async () => { const page = sharedPage;
   log('=== Step 20: Verify delegate card ===');
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
   // The delegate card should show the account3 address (truncated)
@@ -1149,7 +1155,7 @@ test('25. Verify final state', async () => { const page = sharedPage;
   log('=== Step 25: Verify final state ===');
 
   // Dashboard — delegate card should show contract self (undelegated)
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
   await expect(page.locator('text=Block Producer Delegate')).toBeVisible({ timeout: 10_000 });
   log('Delegate card visible on dashboard');

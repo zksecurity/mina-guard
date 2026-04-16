@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useAppContext } from '@/lib/app-context';
-import Header from '@/components/Header';
 import TransactionList from '@/components/TransactionList';
 import Link from 'next/link';
 
@@ -15,15 +14,6 @@ export default function TransactionsPage() {
     multisig,
     owners,
     proposals,
-    indexerStatus,
-    connect,
-    connectAuro,
-    connectLedger,
-    disconnect,
-    isLoading,
-    auroInstalled,
-    ledgerSupported,
-    setWalletNetwork,
   } = useAppContext();
   const [activeTab, setActiveTab] = useState<Tab>('all');
 
@@ -41,22 +31,6 @@ export default function TransactionsPage() {
 
   return (
     <div>
-      <Header
-        title="Proposals"
-        subtitle="Indexed MinaGuard proposals"
-        walletAddress={wallet.address}
-        connected={wallet.connected}
-        isLoading={isLoading}
-        auroInstalled={auroInstalled}
-        ledgerSupported={ledgerSupported}
-        walletType={wallet.type}
-        onConnect={connect}
-        onConnectAuro={connectAuro}
-        onConnectLedger={connectLedger}
-        onDisconnect={disconnect}
-        network={wallet.network}
-        onNetworkChange={setWalletNetwork}
-      />
 
       <div className="p-6">
         {!wallet.connected || !multisig ? (

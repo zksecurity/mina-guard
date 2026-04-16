@@ -83,7 +83,10 @@ export function useMultisig(walletAddress: string | null) {
     const ownedContracts = contractRows.filter(
       (c) => ownerMap.get(c.address)?.includes(walletAddress)
     );
-    const stillValid = currentAddress && ownedContracts.some((c) => c.address === currentAddress);
+    // Keep any existing selection that still maps to a known contract — the
+    // user may be viewing a subaccount or read-only contract they don't own.
+    // Only auto-pick the first owned contract when nothing is selected.
+    const stillValid = currentAddress && contractRows.some((c) => c.address === currentAddress);
     return stillValid ? currentAddress : ownedContracts[0]?.address ?? null;
   }, [walletAddress]);
 

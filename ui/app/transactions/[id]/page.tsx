@@ -3,11 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
-import Header from '@/components/Header';
 import ApprovalProgress from '@/components/ApprovalProgress';
 import {
   TX_TYPE_LABELS,
-  truncateAddress,
   formatMina,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
@@ -27,14 +25,6 @@ export default function TransactionDetailPage() {
     owners,
     proposals,
     proposalsAddress,
-    connect,
-    connectAuro,
-    connectLedger,
-    disconnect,
-    isLoading,
-    auroInstalled,
-    ledgerSupported,
-    setWalletNetwork,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -136,21 +126,6 @@ export default function TransactionDetailPage() {
   if (!wallet.connected || !multisig) {
     return (
       <div>
-        <Header
-          title="Proposal Detail"
-          walletAddress={wallet.address}
-          connected={wallet.connected}
-          isLoading={isLoading}
-          auroInstalled={auroInstalled}
-          ledgerSupported={ledgerSupported}
-          walletType={wallet.type}
-          onConnect={connect}
-          onConnectAuro={connectAuro}
-          onConnectLedger={connectLedger}
-          onDisconnect={disconnect}
-          network={wallet.network}
-          onNetworkChange={setWalletNetwork}
-        />
         <div className="p-6 text-center py-20">
           <p className="text-safe-text">Connect wallet to view proposal details</p>
         </div>
@@ -161,21 +136,6 @@ export default function TransactionDetailPage() {
   if (!proposal) {
     return (
       <div>
-        <Header
-          title="Proposal Detail"
-          walletAddress={wallet.address}
-          connected={wallet.connected}
-          isLoading={isLoading}
-          auroInstalled={auroInstalled}
-          ledgerSupported={ledgerSupported}
-          walletType={wallet.type}
-          onConnect={connect}
-          onConnectAuro={connectAuro}
-          onConnectLedger={connectLedger}
-          onDisconnect={disconnect}
-          network={wallet.network}
-          onNetworkChange={setWalletNetwork}
-        />
         <div className="p-6 text-center py-20">
           {isPendingIndex ? (
             <p className="text-safe-text">Your proposal will appear here shortly…</p>
@@ -205,23 +165,6 @@ export default function TransactionDetailPage() {
 
   return (
     <div>
-      <Header
-        title={`Proposal ${truncateAddress(proposal.proposalHash, 8)}`}
-        subtitle={txLabel}
-        walletAddress={wallet.address}
-        connected={wallet.connected}
-        isLoading={isLoading}
-        auroInstalled={auroInstalled}
-        ledgerSupported={ledgerSupported}
-        walletType={wallet.type}
-        onConnect={connect}
-        onConnectAuro={connectAuro}
-        onConnectLedger={connectLedger}
-        onDisconnect={disconnect}
-        network={wallet.network}
-        onNetworkChange={setWalletNetwork}
-      />
-
       <div className="p-6 max-w-3xl space-y-6">
         <div className={`rounded-xl border p-4 ${statusColors[proposal.status]}`}>
           <div className="flex items-center gap-2">

@@ -23,10 +23,10 @@ services:
       retries: 10
 
   lightnet:
-    # Pinned to a known-good digest — upstream keeps clobbering the
-    # `compatible-latest-lightnet` floating tag. Kept in sync with
-    # docker-compose.preview.yml.
-    image: o1labs/mina-local-network@sha256:746190ff2f556f252b7f50215ae60d4a5e786c8adc16f27986e3e35ce6105949
+    # Mesa (develop-3.0) binary — required because MinaGuard now uses 11
+    # on-chain state slots, exceeding the 8-slot cap of the older
+    # compatible-latest protocol. Kept in sync with docker-compose.preview.yml.
+    image: o1labs/mina-local-network:mesa-latest-lightnet
     environment:
       # 3s slot time — 3× faster block inclusion vs the default 10s,
       # which is the single biggest wall-clock lever on lightnet.

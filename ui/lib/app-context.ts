@@ -20,6 +20,8 @@ export interface AppContextType {
   wallet: WalletState;
   multisig: ContractSummary | null;
   contracts: ContractSummary[];
+  /** Active owner addresses per contract, keyed by contract address. */
+  allContractOwners: Map<string, string[]>;
   owners: OwnerRecord[];
   proposals: Proposal[];
   /** The contract address that `proposals` were fetched for (null while loading). */
@@ -59,6 +61,7 @@ export const AppContext = createContext<AppContextType>({
   wallet: { connected: false, address: null, network: null, type: null },
   multisig: null,
   contracts: [],
+  allContractOwners: new Map(),
   owners: [],
   proposals: [],
   proposalsAddress: null,

@@ -1,12 +1,11 @@
 'use client';
 
+import Link from 'next/link';
 import WalletConnect from './WalletConnect';
 import TestnetFundButton from './TestnetFundButton';
 import type { WalletType } from '@/lib/types';
 
 interface HeaderProps {
-  title: string;
-  subtitle?: string;
   walletAddress: string | null;
   connected: boolean;
   isLoading: boolean;
@@ -22,8 +21,6 @@ interface HeaderProps {
 }
 
 export default function Header({
-  title,
-  subtitle,
   walletAddress,
   connected,
   isLoading,
@@ -39,12 +36,16 @@ export default function Header({
 }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-6 py-4 border-b border-safe-border">
-      <div>
-        <h2 className="text-xl font-semibold">{title}</h2>
-        {subtitle && (
-          <p className="text-sm text-safe-text mt-0.5">{subtitle}</p>
-        )}
-      </div>
+      <Link
+        href="/"
+        className="flex items-center gap-2 hover:opacity-80 transition-opacity shrink-0"
+        title="Back to accounts"
+      >
+        <div className="w-8 h-8 bg-safe-green rounded-full flex items-center justify-center">
+          <span className="text-safe-dark font-bold text-sm">M</span>
+        </div>
+        <span className="text-sm font-semibold hidden sm:inline">MinaGuard</span>
+      </Link>
       <div className="flex items-center gap-3">
         {network && network !== 'mainnet' && connected && walletAddress && (
           <TestnetFundButton

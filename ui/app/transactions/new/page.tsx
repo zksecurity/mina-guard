@@ -3,7 +3,6 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
-import Header from '@/components/Header';
 import ProposalForm from '@/components/ProposalForm';
 import { type NewProposalInput, type TxType, TX_TYPES } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
@@ -26,16 +25,8 @@ function NewTransactionPageInner() {
     multisig,
     owners,
     proposals,
-    connect,
-    connectAuro,
-    connectLedger,
-    disconnect,
-    isLoading,
-    auroInstalled,
-    ledgerSupported,
-    setWalletNetwork,
-    startOperation,
     isOperating,
+    startOperation,
   } = useAppContext();
 
   const rawType = searchParams.get('type');
@@ -72,23 +63,6 @@ function NewTransactionPageInner() {
 
   return (
     <div>
-      <Header
-        title="New Proposal"
-        subtitle="Create and submit a MinaGuard proposal"
-        walletAddress={wallet.address}
-        connected={wallet.connected}
-        isLoading={isLoading}
-        auroInstalled={auroInstalled}
-        ledgerSupported={ledgerSupported}
-        walletType={wallet.type}
-        onConnect={connect}
-        onConnectAuro={connectAuro}
-        onConnectLedger={connectLedger}
-        onDisconnect={disconnect}
-        network={wallet.network}
-        onNetworkChange={setWalletNetwork}
-      />
-
       <div className="p-6 max-w-2xl">
         <button
           type="button"

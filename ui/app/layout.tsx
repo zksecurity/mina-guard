@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import './globals.css';
 import Sidebar from '@/components/Sidebar';
+import Header from '@/components/Header';
 import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
@@ -39,8 +40,8 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const {
     state: multisig,
     contracts,
-    owners,
     allContractOwners,
+    owners,
     indexerStatus,
     refreshState: refreshMultisig,
     selectContract,
@@ -130,6 +131,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         wallet,
         multisig,
         contracts,
+        allContractOwners,
         owners,
         proposals,
         proposalsAddress,
@@ -155,21 +157,33 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         setWalletNetwork,
       }}
     >
-      <div className="flex min-h-screen">
-        <Sidebar
-          multisigAddress={multisig?.address ?? null}
-          contracts={contracts}
-          pendingTxCount={pendingCount}
-          indexerStatus={indexerStatus}
-          onSelectContract={(address) => {
-            void selectContract(address);
-          }}
+      <div className="flex flex-col min-h-screen">
+        <Header
           walletAddress={wallet.address}
-          allContractOwners={allContractOwners}
+          connected={wallet.connected}
+          isLoading={walletLoading}
+          auroInstalled={auroInstalled}
+          ledgerSupported={ledgerSupported}
+          walletType={wallet.type}
+          network={wallet.network}
+          onConnect={connect}
+          onConnectAuro={connectAuro}
+          onConnectLedger={connectLedger}
+          onDisconnect={async () => { await disconnect(); clearBanner(); }}
+          onNetworkChange={setWalletNetwork}
         />
-        <main className="flex-1 min-h-screen">
-          {children}
-        </main>
+        <div className="flex flex-1 min-h-0">
+          {pathname !== '/' && pathname !== '/accounts/new' && (
+            <Sidebar
+              multisigAddress={multisig?.address ?? null}
+              pendingTxCount={pendingCount}
+              indexerStatus={indexerStatus}
+            />
+          )}
+          <main className="flex-1 min-w-0">
+            {children}
+          </main>
+        </div>
 
         {/* Fixed toast notifications – bottom-right corner */}
         {(isOperating || operationBanner) && (

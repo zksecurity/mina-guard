@@ -2,48 +2,18 @@
 
 import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
-import Header from '@/components/Header';
 import OwnerList from '@/components/OwnerList';
 import ThresholdBadge from '@/components/ThresholdBadge';
 
 /** Settings page for owner set and threshold governance proposal shortcuts. */
 export default function SettingsPage() {
   const router = useRouter();
-  const {
-    wallet,
-    multisig,
-    owners,
-    connect,
-    connectAuro,
-    connectLedger,
-    disconnect,
-    isLoading,
-    auroInstalled,
-    ledgerSupported,
-    setWalletNetwork,
-  } = useAppContext();
+  const { wallet, multisig, owners } = useAppContext();
 
   const activeOwners = owners.map((owner) => owner.address);
 
   return (
     <div>
-      <Header
-        title="Settings"
-        subtitle="Manage owners, threshold, and contract metadata"
-        walletAddress={wallet.address}
-        connected={wallet.connected}
-        isLoading={isLoading}
-        auroInstalled={auroInstalled}
-        ledgerSupported={ledgerSupported}
-        walletType={wallet.type}
-        onConnect={connect}
-        onConnectAuro={connectAuro}
-        onConnectLedger={connectLedger}
-        onDisconnect={disconnect}
-        network={wallet.network}
-        onNetworkChange={setWalletNetwork}
-      />
-
       <div className="p-6 max-w-2xl space-y-6">
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
