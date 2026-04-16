@@ -223,6 +223,45 @@ describe('MinaGuard - Child Lifecycle', () => {
         await txn.sign([parentCtx.deployerKey, childKey]).send();
       }).toThrow('Child config mismatch');
     });
+
+    it('rejects grandchild creation (hierarchy capped at two levels)', async () => {
+      // Set up a real child under the root first, then try to have it spawn
+      // a grandchild. The child's propose() must reject CREATE_CHILD because
+      // only root guards can raise REMOTE proposals.
+      await setupChildWithParentOwners();
+
+      const childCtx: TestContext = {
+        zkApp: childZkApp,
+        zkAppKey: childKey,
+        zkAppAddress: childAddress,
+        deployerKey: parentCtx.deployerKey,
+        deployerAccount: parentCtx.deployerAccount,
+        owners: parentCtx.owners,
+        approvalStore: new ApprovalStore(),
+        nullifierStore: new VoteNullifierStore(),
+        networkId: parentCtx.networkId,
+      };
+
+      const grandchildAddress = PrivateKey.random().toPublicKey();
+      const grandchildOwners = parentCtx.owners.map((o) => o.pub);
+      const grandchildOwnersCommitment = computeOwnerChain(grandchildOwners);
+
+      const proposal = createCreateChildProposal(
+        grandchildAddress,
+        grandchildOwnersCommitment,
+        Field(2),
+        Field(3),
+        Field(0),
+        Field(0),
+        childAddress,
+        Field(0),
+        parentCtx.networkId,
+      );
+
+      await expect(
+        proposeTransaction(childCtx, proposal, 0),
+      ).rejects.toThrow('Remote destination proposals must be proposed on a root guard');
+    });
   });
 
   // -- executeAllocateToChildren (on the parent) ------------------------------

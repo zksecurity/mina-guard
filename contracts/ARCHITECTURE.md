@@ -1,6 +1,6 @@
 # MinaGuard Architecture
 
-MinaGuard is a hierarchical multisig vault zkApp for Mina, built with o1js. It manages shared funds via a quorum of owner signatures verified inside zero-knowledge circuits, and supports a parent/child guard hierarchy where a parent can deploy, fund, reclaim from, and destroy child guards.
+MinaGuard is a hierarchical multisig vault zkApp for Mina, built with o1js. It manages shared funds via a quorum of owner signatures verified inside zero-knowledge circuits, and supports a two-level parent/child guard hierarchy where a root guard can deploy, fund, reclaim from, and destroy child guards. Children cannot themselves be parents.
 
 All execution uses a **multi-step on-chain flow** (propose → approve → execute). A proposal is either **LOCAL** (executes on the same guard that stored it) or **REMOTE** (proposed/approved on a parent, executed on a specific child). Cross-contract authorization is done by having the child read the parent's on-chain state as AccountUpdate preconditions and verify an approval Merkle witness.
 
@@ -233,6 +233,8 @@ After execution the approval count is overwritten with `EXECUTED_MARKER`, perman
 
 A child guard is a separate MinaGuard contract instance whose `parent` state field points to another MinaGuard. Child-lifecycle operations (`CREATE_CHILD`, `RECLAIM_CHILD`, `DESTROY_CHILD`, `ENABLE_CHILD_MULTI_SIG`) are REMOTE proposals: proposed and approved on the parent, executed on the child.
 
+The hierarchy is capped at **two levels** (root → child). `propose` asserts that REMOTE proposals (which include `CREATE_CHILD`) can only be raised on a guard whose `parent == PublicKey.empty()` — so only root guards can spawn children, and children cannot themselves become parents.
+
 ### Cross-contract precondition model
 
 When the child runs a REMOTE execute method, it reads the parent's on-chain state via:
@@ -310,6 +312,7 @@ Every contract state field is reconstructable from events alone — no on-chain 
 | Cross-child replay prevented | `childAccount` is inside `proposalHash`; children assert `proposal.childAccount == this.address` |
 | Parent state drift invalidates REMOTE approvals | Child reads `configNonce`/`ownersCommitment`/`approvalRoot`/`threshold` as AccountUpdate preconditions; any parent change aborts the child tx |
 | Deploy-time race closed | `deploy` + `executeSetupChild` batched in one Mina transaction |
+| Hierarchy depth capped at 2 | `propose` rejects REMOTE proposals on any guard whose `parent != PublicKey.empty()`, so children can never raise `CREATE_CHILD` |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
 | Reclaim and destroy are recovery paths | Child-lifecycle methods bypass `childMultiSigEnabled`; the parent can always retrieve funds |
 | Anyone can execute | Execution is permissionless once threshold is met |
