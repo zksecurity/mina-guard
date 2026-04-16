@@ -91,9 +91,10 @@ export class MinaGuardIndexer {
         this.status.indexedHeight = toHeight;
       }
 
-      // Check for expired proposals on every tick, even when no new blocks
-      // were ingested — the chain height may already be past the expiry.
-      await this.deriveExpiredProposals(latestHeight);
+      // Re-derive proposal lifecycle state on every tick, even when no new
+      // blocks were ingested — expiry and nonce/config invalidation are all
+      // functions of current on-chain state.
+      await this.deriveProposalStatuses(latestHeight);
 
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
@@ -214,6 +215,8 @@ export class MinaGuardIndexer {
       await this.applyEvent(contractId, chainEvent);
     }
 
+    await this.refreshContractState(contractId, address);
+
     await prisma.contract.update({
       where: { id: contractId },
       data: { lastSyncedAt: new Date() },
@@ -244,6 +247,17 @@ export class MinaGuardIndexer {
       }
       case 'execution': {
         await this.applyExecutionEvent(contractId, chainEvent);
+        return;
+      }
+      case 'createChild': {
+        await this.applyCreateChildEvent(contractId, chainEvent.event);
+        return;
+      }
+      case 'reclaimChild': {
+        return;
+      }
+      case 'enableChildMultiSig': {
+        await this.applyEnableChildMultiSigEvent(contractId, chainEvent.event);
         return;
       }
       case 'receiver': {
@@ -296,8 +310,10 @@ export class MinaGuardIndexer {
         threshold: asNumber(event.threshold),
         numOwners: asNumber(event.numOwners),
         networkId: asString(event.networkId),
-        configNonce: 0,
         parent: isRoot ? null : parent,
+        nonce: 0,
+        configNonce: 0,
+        parentNonce: 0,
         childMultiSigEnabled: true,
       },
     });
@@ -343,6 +359,11 @@ export class MinaGuardIndexer {
               numOwners: onChain.numOwners,
               networkId: onChain.networkId,
               ownersCommitment: onChain.ownersCommitment,
+              nonce: onChain.nonce,
+              configNonce: onChain.configNonce,
+              parent: onChain.parent,
+              parentNonce: onChain.parentNonce,
+              childMultiSigEnabled: onChain.childMultiSigEnabled,
             },
           });
         }
@@ -374,7 +395,7 @@ export class MinaGuardIndexer {
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
-        uid: asString(event.uid),
+        nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
@@ -383,12 +404,13 @@ export class MinaGuardIndexer {
         childAccount: asNullableAddress(asString(event.childAccount)),
         createdAtBlock: chainEvent.blockHeight,
         status: 'pending',
+        invalidReason: null,
       },
       update: {
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
-        uid: asString(event.uid),
+        nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
@@ -525,7 +547,7 @@ export class MinaGuardIndexer {
 
     const local = await prisma.proposal.updateMany({
       where: { contractId, proposalHash },
-      data: { status: 'executed', executedAtBlock },
+      data: { status: 'executed', invalidReason: null, executedAtBlock },
     });
     if (local.count > 0) return;
 
@@ -543,7 +565,24 @@ export class MinaGuardIndexer {
 
     await prisma.proposal.updateMany({
       where: { contractId: parent.id, proposalHash },
-      data: { status: 'executed', executedAtBlock },
+      data: { status: 'executed', invalidReason: null, executedAtBlock },
+    });
+  }
+
+  /** Persists child-parent linkage when a child finishes CREATE_CHILD setup. */
+  private async applyCreateChildEvent(
+    contractId: number,
+    event: Record<string, unknown>
+  ): Promise<void> {
+    const parent = asString(event.parentAddress);
+    if (parent === null) return;
+
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: {
+        parent,
+        childMultiSigEnabled: true,
+      },
     });
   }
 
@@ -641,26 +680,121 @@ export class MinaGuardIndexer {
     });
   }
 
-  /** Marks pending proposals as expired once their expiryBlock is below latest chain height. */
-  private async deriveExpiredProposals(latestHeight: number): Promise<void> {
-    const pending = await prisma.proposal.findMany({
-      where: { status: 'pending' },
-      select: {
-        id: true,
-        expiryBlock: true,
+  /** Refreshes one contract row from on-chain state when readable. */
+  private async refreshContractState(contractId: number, address: string): Promise<void> {
+    const onChain = await fetchOnChainState(address);
+    if (!onChain) return;
+
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: {
+        threshold: onChain.threshold,
+        numOwners: onChain.numOwners,
+        networkId: onChain.networkId,
+        ownersCommitment: onChain.ownersCommitment,
+        nonce: onChain.nonce,
+        configNonce: onChain.configNonce,
+        parent: onChain.parent,
+        parentNonce: onChain.parentNonce,
+        childMultiSigEnabled: onChain.childMultiSigEnabled,
+      },
+    });
+  }
+
+  /** Recomputes non-executed proposal status from expiry plus current contract nonce/config state. */
+  private async deriveProposalStatuses(latestHeight: number): Promise<void> {
+    const proposals = await prisma.proposal.findMany({
+      where: {
+        status: { not: 'executed' },
+      },
+      include: {
+        contract: {
+          select: {
+            id: true,
+            address: true,
+            configNonce: true,
+            nonce: true,
+            parent: true,
+            parentNonce: true,
+          },
+        },
       },
     });
 
-    for (const proposal of pending) {
+    const contracts = await prisma.contract.findMany({
+      select: {
+        address: true,
+        parent: true,
+        nonce: true,
+        parentNonce: true,
+      },
+    });
+    const contractByAddress = new Map(contracts.map((contract) => [contract.address, contract]));
+
+    for (const proposal of proposals) {
+      let status = 'pending';
+      let invalidReason: string | null = null;
+
       const expiry = Number(proposal.expiryBlock ?? '0');
-      if (!Number.isFinite(expiry) || expiry <= 0) continue;
-      if (latestHeight > expiry) {
+      if (Number.isFinite(expiry) && expiry > 0 && latestHeight > expiry) {
+        status = 'expired';
+      } else if (this.isConfigNonceStale(proposal.configNonce, proposal.contract.configNonce)) {
+        status = 'invalidated';
+        invalidReason = 'config_nonce_stale';
+      } else if (this.isProposalNonceStale(proposal, contractByAddress)) {
+        status = 'invalidated';
+        invalidReason = 'proposal_nonce_stale';
+      }
+
+      if (proposal.status !== status || proposal.invalidReason !== invalidReason) {
         await prisma.proposal.update({
           where: { id: proposal.id },
-          data: { status: 'expired' },
+          data: { status, invalidReason },
         });
       }
     }
+  }
+
+  private isConfigNonceStale(
+    proposalConfigNonce: string | null,
+    currentConfigNonce: number | null,
+  ): boolean {
+    if (proposalConfigNonce === null || currentConfigNonce === null) return false;
+    const parsed = Number(proposalConfigNonce);
+    if (!Number.isFinite(parsed)) return false;
+    return parsed !== currentConfigNonce;
+  }
+
+  private isProposalNonceStale(
+    proposal: {
+      nonce: string | null;
+      destination: string | null;
+      txType: string | null;
+      childAccount: string | null;
+      contract: {
+        nonce: number | null;
+      };
+    },
+    contractByAddress: Map<string, { address: string; parent: string | null; nonce: number | null; parentNonce: number | null }>
+  ): boolean {
+    if (proposal.nonce === null) return false;
+    const parsedNonce = Number(proposal.nonce);
+    if (!Number.isFinite(parsedNonce)) return false;
+
+    const isRemote = proposal.destination === '1';
+    const isCreateChild = proposal.txType === '5';
+
+    if (!isRemote) {
+      return proposal.contract.nonce !== null && parsedNonce <= proposal.contract.nonce;
+    }
+
+    if (isCreateChild) return false;
+
+    if (!proposal.childAccount) return false;
+    const child = contractByAddress.get(proposal.childAccount);
+    return child?.parentNonce !== null && child?.parentNonce !== undefined
+      ? parsedNonce <= child.parentNonce
+      : false;
   }
 
   /** Returns current indexed block height cursor from DB or configured default start. */

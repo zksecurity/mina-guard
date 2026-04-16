@@ -1,7 +1,7 @@
 // -- UI Types ---------------------------------------------------------
 
 /** Indexed proposal lifecycle status used by list/detail screens. */
-export type ProposalStatus = 'pending' | 'executed' | 'expired';
+export type ProposalStatus = 'pending' | 'executed' | 'expired' | 'invalidated';
 
 /** Frontend-friendly transaction type labels mapped from MinaGuard TxType values. */
 export type TxType =
@@ -34,7 +34,7 @@ export interface Proposal {
   tokenId: string | null;
   txType: TxType | null;
   data: string | null;
-  uid: string | null;
+  nonce: string | null;
   configNonce: string | null;
   expiryBlock: string | null;
   networkId: string | null;
@@ -42,6 +42,7 @@ export interface Proposal {
   destination: ProposalDestination | null;
   childAccount: string | null;
   status: ProposalStatus;
+  invalidReason: string | null;
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
@@ -67,11 +68,12 @@ export interface ContractSummary {
   ownersCommitment: string | null;
   threshold: number | null;
   numOwners: number | null;
-  proposalCounter: number | null;
+  nonce: number | null;
   configNonce: number | null;
-  delegate: string | null;
   parent: string | null;
+  parentNonce: number | null;
   childMultiSigEnabled: boolean | null;
+  delegate: string | null;
   discoveredAt: string;
   lastSyncedAt: string | null;
 }

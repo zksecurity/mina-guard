@@ -19,11 +19,12 @@ model Contract {
   ownersCommitment String?
   threshold      Int?
   numOwners      Int?
+  nonce          Int?
   configNonce    Int?
-  proposalCounter Int?
-  delegate       String?
   parent         String?
+  parentNonce    Int?
   childMultiSigEnabled Boolean?
+  delegate       String?
   discoveredAt   DateTime  @default(now())
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())
@@ -59,7 +60,7 @@ model Proposal {
   tokenId         String?
   txType          String?
   data            String?
-  uid             String?
+  nonce           String?
   configNonce     String?
   expiryBlock     String?
   networkId       String?
@@ -67,6 +68,7 @@ model Proposal {
   destination     String?
   childAccount    String?
   status          String    @default("pending")
+  invalidReason   String?
   approvalCount   Int       @default(0)
   createdAtBlock  Int?
   executedAtBlock Int?

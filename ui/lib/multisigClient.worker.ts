@@ -104,7 +104,7 @@ interface ContractState {
   ownersCommitment: string;
   threshold: number;
   numOwners: number;
-  proposalCounter: number;
+  nonce: number;
   voteNullifierRoot: string;
   approvalRoot: string;
   configNonce: number;
@@ -156,7 +156,7 @@ async function fetchContractState(
       ownersCommitment: zkApp.ownersCommitment.get().toString(),
       threshold: Number(zkApp.threshold.get().toString()),
       numOwners: Number(zkApp.numOwners.get().toString()),
-      proposalCounter: Number(zkApp.proposalCounter.get().toString()),
+      nonce: Number(zkApp.nonce.get().toString()),
       voteNullifierRoot: zkApp.voteNullifierRoot.get().toString(),
       approvalRoot: zkApp.approvalRoot.get().toString(),
       configNonce: Number(zkApp.configNonce.get().toString()),
@@ -433,7 +433,7 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'nonce' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
@@ -447,7 +447,7 @@ function buildProposalStruct(
     tokenId: Field(proposal.tokenId ?? '0'),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
-    uid: Field(proposal.uid ?? '0'),
+    nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
@@ -730,7 +730,11 @@ const workerApi = {
     const receivers = buildReceiversForProposal(params.input);
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input);
-    const uid = Field.random();
+
+    progressFn('Fetching on-chain state...');
+    const contractState = await fetchContractState(params.contractAddress);
+    if (!contractState) return null;
+    const nonce = Field(contractState.nonce + 1);
 
     const isRemote =
       params.input.txType === 'createChild' ||
@@ -742,7 +746,7 @@ const workerApi = {
       tokenId: Field(0),
       txType,
       data,
-      uid,
+      nonce,
       configNonce: Field(params.configNonce),
       expiryBlock: Field(params.input.expiryBlock ?? 0),
       networkId: Field(params.networkId),

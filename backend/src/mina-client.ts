@@ -115,10 +115,20 @@ export async function fetchVerificationKeyHash(address: string): Promise<string 
   return hash?.toString() ?? null;
 }
 
-/** Reads on-chain MinaGuard state fields (threshold, numOwners, networkId, ownersCommitment). */
+/** Reads the current on-chain MinaGuard state needed by the backend/indexer. */
 export async function fetchOnChainState(
   address: string
-): Promise<{ threshold: number; numOwners: number; networkId: string; ownersCommitment: string } | null> {
+): Promise<{
+  threshold: number;
+  numOwners: number;
+  networkId: string;
+  ownersCommitment: string;
+  nonce: number;
+  configNonce: number;
+  parent: string;
+  parentNonce: number;
+  childMultiSigEnabled: boolean;
+} | null> {
   const pub = PublicKey.fromBase58(address);
   await fetchAccount({ publicKey: pub });
   const contract = new MinaGuard(pub);
@@ -128,11 +138,21 @@ export async function fetchOnChainState(
     const numOwners = contract.numOwners.get();
     const networkId = contract.networkId.get();
     const ownersCommitment = contract.ownersCommitment.get();
+    const nonce = contract.nonce.get();
+    const configNonce = contract.configNonce.get();
+    const parent = contract.parent.get();
+    const parentNonce = contract.parentNonce.get();
+    const childMultiSigEnabled = contract.childMultiSigEnabled.get();
     return {
       threshold: Number(threshold.toString()),
       numOwners: Number(numOwners.toString()),
       networkId: networkId.toString(),
       ownersCommitment: ownersCommitment.toString(),
+      nonce: Number(nonce.toString()),
+      configNonce: Number(configNonce.toString()),
+      parent: parent.toBase58(),
+      parentNonce: Number(parentNonce.toString()),
+      childMultiSigEnabled: childMultiSigEnabled.toString() === '1',
     };
   } catch {
     return null;

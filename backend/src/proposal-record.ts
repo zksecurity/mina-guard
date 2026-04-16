@@ -13,7 +13,7 @@ export interface SerializedProposalRecord {
   tokenId: string | null;
   txType: string | null;
   data: string | null;
-  uid: string | null;
+  nonce: string | null;
   configNonce: string | null;
   expiryBlock: string | null;
   networkId: string | null;
@@ -21,6 +21,7 @@ export interface SerializedProposalRecord {
   destination: string | null;
   childAccount: string | null;
   status: string;
+  invalidReason: string | null;
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
@@ -59,7 +60,7 @@ export function serializeProposalRecord(
     tokenId: proposal.tokenId,
     txType: proposal.txType,
     data: proposal.data,
-    uid: proposal.uid,
+    nonce: proposal.nonce,
     configNonce: proposal.configNonce,
     expiryBlock: proposal.expiryBlock,
     networkId: proposal.networkId,
@@ -67,6 +68,7 @@ export function serializeProposalRecord(
     destination: proposal.destination,
     childAccount: proposal.childAccount,
     status: proposal.status,
+    invalidReason: proposal.invalidReason,
     approvalCount: proposal.approvalCount,
     createdAtBlock: proposal.createdAtBlock,
     executedAtBlock: proposal.executedAtBlock,

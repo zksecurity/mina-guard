@@ -19,6 +19,7 @@ const statusColors = {
   pending: 'text-yellow-400 bg-yellow-400/10',
   executed: 'text-safe-green bg-safe-green/10',
   expired: 'text-red-400 bg-red-400/10',
+  invalidated: 'text-orange-400 bg-orange-400/10',
 };
 
 /** Compact proposal list card used on dashboard and transactions pages. */
