@@ -25,14 +25,14 @@ describe('MinaGuard - Propose', () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
       [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
-      Field(0),
+      Field(1),
       Field(0),
       ctx.zkAppAddress
     );
 
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
-    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
     expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
     expect(ctx.nullifierStore.isNullified(proposalHash, ctx.owners[0].pub)).toBe(true);
   });
@@ -42,7 +42,7 @@ describe('MinaGuard - Propose', () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
       [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
-      Field(0),
+      Field(1),
       Field(0),
       ctx.zkAppAddress
     );
@@ -75,7 +75,7 @@ describe('MinaGuard - Propose', () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
       [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
-      Field(0),
+      Field(1),
       Field(99), // wrong configNonce
       ctx.zkAppAddress
     );
@@ -107,7 +107,7 @@ describe('MinaGuard - Propose', () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
       [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
-      Field(0),
+      Field(1),
       Field(0),
       ctx.zkAppAddress,
       Field(0),
@@ -142,7 +142,7 @@ describe('MinaGuard - Propose', () => {
     const wrongGuard = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
       [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
-      Field(0),
+      Field(1),
       Field(0),
       wrongGuard
     );
@@ -170,20 +170,20 @@ describe('MinaGuard - Propose', () => {
     }).toThrow('Guard address mismatch');
   });
 
-  it('should increment counter across multiple proposals', async () => {
+  it('should not change execution nonce across multiple proposals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
 
     const proposal1 = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal1, 0);
-    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
 
     const proposal2 = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(2_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(2_000_000_000) })], Field(2), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal2, 1);
-    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(2));
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
   });
 });
 
@@ -209,7 +209,7 @@ describe('MinaGuard - Propose shape rules', () => {
     receivers: Receiver[];
     txType: Field;
     data: Field;
-    uid: Field;
+    nonce: Field;
     configNonce: Field;
     expiryBlock: Field;
     networkId: Field;
@@ -222,7 +222,7 @@ describe('MinaGuard - Propose shape rules', () => {
       tokenId: Field(0),
       txType: overrides.txType ?? TxType.TRANSFER,
       data: overrides.data ?? Field(0),
-      uid: overrides.uid ?? Field(0),
+      nonce: overrides.nonce ?? Field(1),
       configNonce: overrides.configNonce ?? Field(0),
       expiryBlock: overrides.expiryBlock ?? Field(0),
       networkId: overrides.networkId ?? Field(1),
@@ -390,10 +390,10 @@ describe('MinaGuard - Propose shape rules', () => {
   // -- Positive cases --------------------------------------------------------
 
   it('should accept undelegate proposal with empty receivers[0]', async () => {
-    const proposal = createUndelegateProposal(Field(0), Field(0), ctx.zkAppAddress);
+    const proposal = createUndelegateProposal(Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
-    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
   });
 
   it('should accept batch TRANSFER with multiple non-empty receivers', async () => {
@@ -406,19 +406,19 @@ describe('MinaGuard - Propose shape rules', () => {
         new Receiver({ address: r2, amount: UInt64.from(2_000_000_000) }),
         new Receiver({ address: r3, amount: UInt64.from(3_000_000_000) }),
       ],
-      Field(0),
+      Field(1),
       Field(0),
       ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
-    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
   });
 
   it('should accept CHANGE_THRESHOLD with non-zero data (the new threshold)', async () => {
-    const proposal = createThresholdProposal(Field(2), Field(0), Field(0), ctx.zkAppAddress);
+    const proposal = createThresholdProposal(Field(2), Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
-    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(1));
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
   });
 });

@@ -31,7 +31,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -53,7 +53,7 @@ describe('MinaGuard - Execute', () => {
   it('should reject execution with insufficient approvals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -76,7 +76,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = proposal.hash();
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -101,7 +101,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -140,7 +140,7 @@ describe('MinaGuard - Execute', () => {
     const recipient = PrivateKey.random().toPublicKey();
     // Create proposal with wrong configNonce
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(99), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(99), ctx.zkAppAddress
     );
 
     // Can't even propose this since configNonce mismatch happens at propose time
@@ -173,7 +173,7 @@ describe('MinaGuard - Execute', () => {
 
     // 1. Propose and approve a transfer with configNonce=0
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     await approveTransaction(ctx, proposal, 1);
@@ -222,7 +222,7 @@ describe('MinaGuard - Execute', () => {
 
     const transferAmount = UInt64.from(1_000_000_000);
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: transferAmount })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: transferAmount })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -241,4 +241,3 @@ describe('MinaGuard - Execute', () => {
     expect(received).toEqual(UInt64.from(1_000_000_000));
   });
 });
-
