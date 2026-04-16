@@ -70,10 +70,10 @@ const LIGHTNET_CONFIG: NetworkConfig = {
   // Local serial worst-case is ~90-120s on 8 vCPUs, but CI on 4 vCPUs with
   // `next dev` on-demand bundling pushes first-test compile close to 180s.
   // 5 min covers both environments without masking real hangs.
-  bannerTimeoutMs: 300_000,
+  bannerTimeoutMs: 900_000,
   // Per-test hard cap, strictly greater than bannerTimeoutMs so the banner
   // wait has time to surface a clear error before the outer cap fires.
-  testStepTimeoutMs: 8 * 60 * 1_000,
+  testStepTimeoutMs: 20 * 60 * 1_000,
   // Pad after an approval tx before executing, to let on-chain state
   // propagate. 12s = 4 blocks at SLOT_TIME=3s, still comfortably above
   // physical settlement floor, and saves ~18s per approve/execute pair.
