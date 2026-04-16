@@ -160,6 +160,8 @@ export class ExecutionEvent extends Struct({
 
 export class OwnerChangeEvent extends Struct({
   proposalHash: Field,
+  owner: PublicKey,
+  added: Field,
   newNumOwners: Field,
   configNonce: Field,
 }) { }
@@ -167,11 +169,13 @@ export class OwnerChangeEvent extends Struct({
 export class ThresholdChangeEvent extends Struct({
   proposalHash: Field,
   oldThreshold: Field,
+  newThreshold: Field,
   configNonce: Field,
 }) { }
 
 export class DelegateEvent extends Struct({
   proposalHash: Field,
+  delegate: PublicKey,
 }) { }
 
 /** Emitted when a child guard successfully runs executeSetupChild. */
@@ -196,6 +200,7 @@ export class ReclaimChildEvent extends Struct({
 export class EnableChildMultiSigEvent extends Struct({
   proposalHash: Field,
   parentAddress: PublicKey,
+  enabled: Field,
 }) { }
 
 // -- Contract ----------------------------------------------------------------
@@ -1006,6 +1011,8 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('ownerChange', {
       proposalHash,
+      owner: ownerPubKey,
+      added: isAdd.toField(),
       newNumOwners,
       configNonce: currentConfigNonce.add(1),
     });
@@ -1065,6 +1072,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('thresholdChange', {
       proposalHash,
       oldThreshold: currentThreshold,
+      newThreshold,
       configNonce: currentConfigNonce.add(1),
     });
   }
@@ -1110,6 +1118,7 @@ export class MinaGuard extends SmartContract {
 
     this.emitEvent('delegate', {
       proposalHash,
+      delegate: targetDelegate,
     });
   }
 
@@ -1217,6 +1226,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('enableChildMultiSig', {
       proposalHash,
       parentAddress,
+      enabled: Field(0),
     });
   }
 
@@ -1266,6 +1276,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('enableChildMultiSig', {
       proposalHash,
       parentAddress,
+      enabled,
     });
   }
 }
