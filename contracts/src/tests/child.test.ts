@@ -770,6 +770,9 @@ describe('MinaGuard - Child Lifecycle', () => {
       }).toThrow('Child execution root mismatch');
     });
 
+    // Generous per-test timeout: this drives ~13 prove calls end-to-end
+    // (setup + disable + 6 gated methods + re-enable + 6 gated methods) and
+    // routinely runs 90–120s, well beyond the suite's default 20s cap.
     it('disabling blocks every LOCAL multisig method; re-enabling restores them', async () => {
       await setupChildWithParentOwners();
 
@@ -944,7 +947,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           await txn.sign([parentCtx.deployerKey]).send();
         });
       }
-    });
+    }, 180_000);
   });
 
   // -- Cross-child hash isolation ---------------------------------------------
