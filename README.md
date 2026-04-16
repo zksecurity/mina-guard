@@ -129,6 +129,8 @@ Caddy serves this over HTTPS with a self-signed cert (`tls internal`) and sets t
 
 The helper builds `backend`, `frontend`, and `explorer` sequentially before starting the stack. This avoids the RAM spike from `docker compose up -d --build`, which can try to build all three images at once.
 
+The first uncached frontend build can take a few minutes because Next.js has to compile the heavy `o1js` worker bundle. `local-preview.sh` now prints a periodic heartbeat during long builds so this does not look like a freeze.
+
 ```bash
 # Logs
 docker compose -p local logs -f            # all services
