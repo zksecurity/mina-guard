@@ -14,6 +14,12 @@ interface ProposalFormProps {
   txType: TxType;
   /** Indexed subaccounts of this guard, used as targets for CHILD_TX_TYPES. */
   children?: ContractSummary[];
+  initialNonce: number | null;
+  currentNonce: number | null;
+  nonceResetKey: string;
+  deleteMode?: boolean;
+  deleteTargetHash?: string | null;
+  onExitDeleteMode?: () => void;
 }
 
 /** Dynamic proposal form that maps UI inputs to MinaGuard tx type payloads. */
@@ -25,6 +31,12 @@ export default function ProposalForm({
   isSubmitting,
   txType,
   children = [],
+  initialNonce,
+  currentNonce,
+  nonceResetKey,
+  deleteMode = false,
+  deleteTargetHash = null,
+  onExitDeleteMode,
 }: ProposalFormProps) {
   const [transferLines, setTransferLines] = useState('');
   const [newOwner, setNewOwner] = useState('');
@@ -36,6 +48,24 @@ export default function ProposalForm({
   const [delegate, setDelegate] = useState('');
   const [undelegate, setUndelegate] = useState(false);
   const [expiryBlock, setExpiryBlock] = useState('0');
+  const [nonce, setNonce] = useState(initialNonce === null ? '' : String(initialNonce));
+  const [nonceDirty, setNonceDirty] = useState(false);
+
+  useEffect(() => {
+    setNonceDirty(false);
+    setNonce(initialNonce === null ? '' : String(initialNonce));
+  }, [initialNonce, nonceResetKey]);
+
+  useEffect(() => {
+    if (nonceDirty) return;
+    setNonce(initialNonce === null ? '' : String(initialNonce));
+  }, [initialNonce, nonceDirty]);
+
+  useEffect(() => {
+    if (!deleteMode) return;
+    setTransferLines('');
+    setExpiryBlock('0');
+  }, [deleteMode]);
 
   // Subaccount-action fields.
   const [targetChild, setTargetChild] = useState<string>('');
@@ -72,28 +102,40 @@ export default function ProposalForm({
 
   const [validationError, setValidationError] = useState<string | null>(null);
   const transferParse = parseTransferLines(transferLines);
+  const effectiveTxType = deleteMode ? 'transfer' : txType;
 
   /** Emits normalized form payload according to the selected transaction type. */
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError(null);
 
-    if (txType === 'addOwner' && numOwners >= MAX_OWNERS) {
+    const parsedNonce = parseProposalNonce(nonce);
+    if (parsedNonce === null) {
+      setValidationError('Nonce must be a positive integer.');
+      return;
+    }
+    if (currentNonce !== null && parsedNonce <= currentNonce) {
+      setValidationError(`Nonce must be greater than the current executed nonce (${currentNonce}).`);
+      return;
+    }
+
+    if (effectiveTxType === 'addOwner' && numOwners >= MAX_OWNERS) {
       setValidationError(`Cannot exceed the maximum of ${MAX_OWNERS} owners.`);
       return;
     }
-    if ((txType === 'transfer' || txType === 'allocateChild') && !transferParse.ok) {
+    if (!deleteMode && (txType === 'transfer' || txType === 'allocateChild') && !transferParse.ok) {
       setValidationError(transferParse.error);
       return;
     }
     if (
+      !deleteMode &&
       (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') &&
       !targetChild
     ) {
       setValidationError('Pick a subaccount to target.');
       return;
     }
-    if (txType === 'reclaimChild') {
+    if (!deleteMode && txType === 'reclaimChild') {
       const nano = parseMinaToNanomina(reclaimAmount);
       if (!nano) {
         setValidationError('Reclaim amount must be a positive MINA value.');
@@ -104,24 +146,24 @@ export default function ProposalForm({
         return;
       }
     }
-    if (txType === 'destroyChild' && !destroyConfirm) {
+    if (!deleteMode && txType === 'destroyChild' && !destroyConfirm) {
       setValidationError('Confirm the destroy action — this drains the subaccount and disables its multi-sig.');
       return;
     }
-    if (txType === 'addOwner' && owners.includes(newOwner.trim())) {
+    if (effectiveTxType === 'addOwner' && owners.includes(newOwner.trim())) {
       setValidationError('This address is already an owner.');
       return;
     }
-    if (txType === 'removeOwner' && !owners.includes(removeOwnerAddress.trim())) {
+    if (effectiveTxType === 'removeOwner' && !owners.includes(removeOwnerAddress.trim())) {
       setValidationError('This address is not a current owner.');
       return;
     }
-    if (txType === 'removeOwner' && numOwners - 1 < currentThreshold) {
+    if (effectiveTxType === 'removeOwner' && numOwners - 1 < currentThreshold) {
       setValidationError('Reduce the threshold first before removing an owner.');
       return;
     }
     if (
-      txType === 'changeThreshold'
+      effectiveTxType === 'changeThreshold'
       && (
         !Number.isInteger(newThreshold)
         || newThreshold < 1
@@ -131,37 +173,78 @@ export default function ProposalForm({
       setValidationError(`Threshold must be between 1 and ${Math.max(1, numOwners)}.`);
       return;
     }
-    if (txType === 'changeThreshold' && newThreshold === currentThreshold) {
+    if (effectiveTxType === 'changeThreshold' && newThreshold === currentThreshold) {
       setValidationError('The new threshold is the same as the current one.');
       return;
     }
 
     onSubmit({
-      txType,
+      txType: effectiveTxType,
+      nonce: parsedNonce,
       receivers:
-        txType === 'transfer' || txType === 'allocateChild'
-          ? transferParse.receivers
-          : undefined,
-      newOwner: txType === 'addOwner' ? newOwner : undefined,
-      removeOwnerAddress: txType === 'removeOwner' ? removeOwnerAddress : undefined,
-      newThreshold: txType === 'changeThreshold' ? newThreshold : undefined,
-      delegate: txType === 'setDelegate' && !undelegate ? delegate : undefined,
-      undelegate: txType === 'setDelegate' ? undelegate : undefined,
+        effectiveTxType === 'transfer'
+          ? (deleteMode ? [] : transferParse.receivers)
+          : effectiveTxType === 'allocateChild'
+            ? transferParse.receivers
+            : undefined,
+      newOwner: effectiveTxType === 'addOwner' ? newOwner : undefined,
+      removeOwnerAddress: effectiveTxType === 'removeOwner' ? removeOwnerAddress : undefined,
+      newThreshold: effectiveTxType === 'changeThreshold' ? newThreshold : undefined,
+      delegate: effectiveTxType === 'setDelegate' && !undelegate ? delegate : undefined,
+      undelegate: effectiveTxType === 'setDelegate' ? undelegate : undefined,
       childAccount:
-        txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig'
+        !deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig')
           ? targetChild
           : undefined,
       reclaimAmount:
-        txType === 'reclaimChild' ? (parseMinaToNanomina(reclaimAmount) ?? '0') : undefined,
+        !deleteMode && txType === 'reclaimChild' ? (parseMinaToNanomina(reclaimAmount) ?? '0') : undefined,
       childMultiSigEnable:
-        txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
+        !deleteMode && txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
     });
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {(txType === 'transfer' || txType === 'allocateChild') && (
+      {deleteMode && (
+        <div className="rounded-lg border border-orange-400/30 bg-orange-400/10 px-4 py-4 text-sm text-orange-200">
+          <p className="font-semibold text-orange-100">Delete pending proposal</p>
+          <p className="mt-1 opacity-90">
+            This creates a no-op transfer proposal with the same nonce, so if it executes first it will invalidate the pending proposal
+            {deleteTargetHash ? ` ${deleteTargetHash}` : ''}.
+          </p>
+          {onExitDeleteMode && (
+            <button
+              type="button"
+              onClick={onExitDeleteMode}
+              className="mt-3 text-sm font-medium text-orange-100 underline underline-offset-4 hover:opacity-80"
+            >
+              Back to normal proposal
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <FormInput
+          label="Nonce"
+          value={nonce}
+          onChange={(value) => {
+            setNonceDirty(true);
+            setNonce(value);
+          }}
+          placeholder={initialNonce === null ? '1' : String(initialNonce)}
+          inputMode="numeric"
+          required
+        />
+        <p className="text-xs text-safe-text">
+          {currentNonce === null
+            ? 'Use a nonce greater than the contract’s current executed nonce.'
+            : `Current executed nonce: ${currentNonce}. Use a higher nonce for new proposals.`}
+        </p>
+      </div>
+
+      {!deleteMode && (txType === 'transfer' || txType === 'allocateChild') && (
         <div className="space-y-3">
           <label className="block text-sm text-safe-text">
             {txType === 'allocateChild' ? 'Subaccount allocations' : 'Recipients'}
@@ -227,7 +310,7 @@ export default function ProposalForm({
         </div>
       )}
 
-      {(txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') && (
+      {!deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') && (
         <div>
           <label className="block text-sm text-safe-text mb-2">Target Subaccount</label>
           {children.length === 0 ? (
@@ -275,7 +358,7 @@ export default function ProposalForm({
         </div>
       )}
 
-      {txType === 'reclaimChild' && (
+      {!deleteMode && txType === 'reclaimChild' && (
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-sm text-safe-text">Reclaim Amount (MINA)</label>
@@ -310,7 +393,7 @@ export default function ProposalForm({
         </div>
       )}
 
-      {txType === 'destroyChild' && (
+      {!deleteMode && txType === 'destroyChild' && (
         <div className="space-y-2 rounded-lg border border-red-400/40 bg-red-400/5 px-4 py-3">
           <p className="text-xs text-red-300">
             Destroy drains the subaccount&apos;s full balance to the parent and disables its
@@ -327,7 +410,7 @@ export default function ProposalForm({
         </div>
       )}
 
-      {txType === 'enableChildMultiSig' && selectedChild && (
+      {!deleteMode && txType === 'enableChildMultiSig' && selectedChild && (
         <div className="space-y-2 rounded-lg border border-safe-border bg-safe-dark/20 px-4 py-3">
           <div className="flex items-center justify-between text-sm">
             <span className="text-safe-text">Current state</span>
@@ -349,7 +432,7 @@ export default function ProposalForm({
         </div>
       )}
 
-      {txType === 'addOwner' && (
+      {effectiveTxType === 'addOwner' && (
         <FormInput
           label="New Owner Address"
           value={newOwner}
@@ -360,7 +443,7 @@ export default function ProposalForm({
         />
       )}
 
-      {txType === 'removeOwner' && (
+      {effectiveTxType === 'removeOwner' && (
         <div>
           <label className="block text-sm text-safe-text mb-2">Select Owner to Remove</label>
           <div className="space-y-2">
@@ -398,7 +481,7 @@ export default function ProposalForm({
         </div>
       )}
 
-      {txType === 'changeThreshold' && (
+      {effectiveTxType === 'changeThreshold' && (
         <div>
           <label className="text-sm text-safe-text mb-2 flex items-center gap-1">
             New Threshold
@@ -432,7 +515,7 @@ export default function ProposalForm({
         </div>
       )}
 
-      {txType === 'setDelegate' && (
+      {effectiveTxType === 'setDelegate' && (
         <div className="space-y-3">
           <label className="inline-flex items-center gap-2 text-sm text-safe-text">
             <input
@@ -470,7 +553,7 @@ export default function ProposalForm({
         disabled={isSubmitting}
         className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50"
       >
-        {isSubmitting ? 'Submitting Proposal...' : 'Submit Proposal'}
+        {isSubmitting ? 'Submitting Proposal...' : (deleteMode ? 'Create Delete Proposal' : 'Submit Proposal')}
       </button>
     </form>
   );
@@ -585,6 +668,14 @@ function formatNanominaAsMina(value: string): string {
   const frac = normalized.length > 9 ? normalized.slice(-9) : normalized.padStart(9, '0');
   const trimmedFrac = frac.replace(/0+$/, '');
   return trimmedFrac ? `${whole}.${trimmedFrac}` : whole;
+}
+
+function parseProposalNonce(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 /** Shared text input primitive for proposal form field sections. */

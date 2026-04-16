@@ -43,18 +43,75 @@ function NewTransactionPageInner() {
     [isRoot],
   );
 
+  const deleteMode = searchParams.get('mode') === 'delete';
+  const deleteTargetHash = searchParams.get('targetProposalHash');
+  const deleteTargetNonce = searchParams.get('targetNonce');
   const rawType = searchParams.get('type');
   // CREATE_CHILD is wizard-only — bounce back to /accounts/new.
   useEffect(() => {
-    if (rawType === 'createChild' && multisig) {
+    if (!deleteMode && rawType === 'createChild' && multisig) {
       router.replace(`/accounts/new?parent=${multisig.address}`);
     }
-  }, [rawType, multisig, router]);
+  }, [rawType, multisig, router, deleteMode]);
 
-  const initialType = availableTypes.some((t) => t.value === rawType)
-    ? (rawType as TxType)
-    : 'transfer';
+  const initialType: TxType = deleteMode
+    ? 'transfer'
+    : availableTypes.some((t) => t.value === rawType)
+      ? (rawType as TxType)
+      : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
+  const [currentNonce, setCurrentNonce] = useState<number | null>(multisig?.nonce ?? null);
+  const [initialNonce, setInitialNonce] = useState<number | null>(() => {
+    if (deleteMode) {
+      const parsed = Number(deleteTargetNonce ?? '');
+      return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+    return multisig?.nonce !== null && multisig?.nonce !== undefined ? multisig.nonce + 1 : null;
+  });
+
+  useEffect(() => {
+    setTxType(initialType);
+  }, [initialType]);
+
+  useEffect(() => {
+    if (!multisig?.address) {
+      setCurrentNonce(null);
+      setInitialNonce(null);
+      return;
+    }
+
+    let cancelled = false;
+    const fallbackNonce = multisig.nonce ?? null;
+    setCurrentNonce(fallbackNonce);
+    if (deleteMode) {
+      const parsed = Number(deleteTargetNonce ?? '');
+      setInitialNonce(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null);
+    } else {
+      setInitialNonce(fallbackNonce === null ? null : fallbackNonce + 1);
+    }
+
+    void (async () => {
+      const fresh = await fetchContract(multisig.address);
+      if (cancelled || !fresh) return;
+
+      const freshNonce = fresh.nonce ?? null;
+      setCurrentNonce(freshNonce);
+      if (deleteMode) {
+        const parsed = Number(deleteTargetNonce ?? '');
+        setInitialNonce(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null);
+      } else {
+        setInitialNonce(freshNonce === null ? null : freshNonce + 1);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteMode, deleteTargetNonce, multisig?.address, multisig?.nonce]);
+
+  const handleExitDeleteMode = () => {
+    router.replace('/transactions/new?type=transfer');
+  };
 
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
@@ -123,12 +180,14 @@ function NewTransactionPageInner() {
           </div>
         ) : (
           <div className="space-y-4">
-            <TxTypePicker
-              localTypes={availableTypes.filter((t) => LOCAL_TX_TYPES.some((l) => l.value === t.value))}
-              childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
-              selected={txType}
-              onSelect={setTxType}
-            />
+            {!deleteMode && (
+              <TxTypePicker
+                localTypes={availableTypes.filter((t) => LOCAL_TX_TYPES.some((l) => l.value === t.value))}
+                childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
+                selected={txType}
+                onSelect={setTxType}
+              />
+            )}
 
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
               {proposals.some(
@@ -149,6 +208,12 @@ function NewTransactionPageInner() {
                 isSubmitting={isOperating}
                 txType={txType}
                 children={children}
+                initialNonce={initialNonce}
+                currentNonce={currentNonce}
+                nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
+                deleteMode={deleteMode}
+                deleteTargetHash={deleteTargetHash}
+                onExitDeleteMode={handleExitDeleteMode}
               />
             </div>
           </div>

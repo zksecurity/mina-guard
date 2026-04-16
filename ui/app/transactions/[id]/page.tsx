@@ -79,6 +79,7 @@ export default function TransactionDetailPage() {
     proposal.configNonce !== String(multisig.configNonce);
   const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved && !isConfigStale;
   const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold && !isConfigStale;
+  const canDelete = !!proposal && proposal.status === 'pending' && isOwner && proposal.nonce !== null;
   const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
   /** Submits an on-chain approveProposal transaction. */
@@ -154,6 +155,18 @@ export default function TransactionDetailPage() {
       return result;
     });
     if (success) router.push(`/accounts/${captured.contractAddress}`);
+  };
+
+  const handleDelete = () => {
+    if (!proposal?.nonce) return;
+
+    const params = new URLSearchParams({
+      mode: 'delete',
+      type: 'transfer',
+      targetProposalHash: proposal.proposalHash,
+      targetNonce: proposal.nonce,
+    });
+    router.push(`/transactions/new?${params.toString()}`);
   };
 
   if (!wallet.connected || !multisig) {
@@ -302,7 +315,7 @@ export default function TransactionDetailPage() {
         </div>
 
         {proposal.status === 'pending' && (
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             {canApprove && (
               <button
                 onClick={handleApprove}
@@ -319,6 +332,15 @@ export default function TransactionDetailPage() {
                 className="flex-1 border border-safe-green text-safe-green font-semibold rounded-lg py-3 text-sm hover:bg-safe-green/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={handleDelete}
+                disabled={isOperating}
+                className="flex-1 border border-orange-400/50 text-orange-300 font-semibold rounded-lg py-3 text-sm hover:bg-orange-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isOperating ? 'Waiting for pending transaction...' : 'Delete Proposal'}
               </button>
             )}
           </div>

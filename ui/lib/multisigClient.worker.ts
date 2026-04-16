@@ -731,22 +731,18 @@ const workerApi = {
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input);
 
-    progressFn('Fetching on-chain state...');
-    const contractState = await fetchContractState(params.contractAddress);
-    if (!contractState) return null;
-    const nonce = Field(contractState.nonce + 1);
-
     const isRemote =
       params.input.txType === 'createChild' ||
       params.input.txType === 'reclaimChild' ||
       params.input.txType === 'destroyChild' ||
       params.input.txType === 'enableChildMultiSig';
+
     const proposal = new TransactionProposal({
       receivers,
       tokenId: Field(0),
       txType,
       data,
-      nonce,
+      nonce: Field(params.input.nonce),
       configNonce: Field(params.configNonce),
       expiryBlock: Field(params.input.expiryBlock ?? 0),
       networkId: Field(params.networkId),

@@ -112,6 +112,7 @@ export interface IndexerStatus {
 /** User input payload used by proposal creation forms. */
 export interface NewProposalInput {
   txType: TxType;
+  nonce: number;
   receivers?: Array<{ address: string; amount: string }>;
   newOwner?: string;
   removeOwnerAddress?: string;
