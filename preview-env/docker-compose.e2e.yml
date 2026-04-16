@@ -1,0 +1,66 @@
+# Fully-containerized e2e runner.
+#
+# Usage (run from repo root):
+#   docker compose -f preview-env/docker-compose.e2e.yml -p mina-guard-e2e up \
+#       --build --abort-on-container-exit --exit-code-from playwright
+#   docker compose -f preview-env/docker-compose.e2e.yml -p mina-guard-e2e down -v
+#
+# Nothing is published to the host — all inter-service traffic goes over the
+# compose-managed default network. The `playwright` service joins that network
+# and resolves siblings by DNS name (lightnet, db).
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=minaguard
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  lightnet:
+    # Pinned to a known-good digest — upstream keeps clobbering the
+    # `compatible-latest-lightnet` floating tag. Kept in sync with
+    # docker-compose.preview.yml.
+    image: o1labs/mina-local-network@sha256:746190ff2f556f252b7f50215ae60d4a5e786c8adc16f27986e3e35ce6105949
+    environment:
+      # 3s slot time — 3× faster block inclusion vs the default 10s,
+      # which is the single biggest wall-clock lever on lightnet.
+      - SLOT_TIME=3000
+      - PROOF_LEVEL=none
+      - RUN_ARCHIVE_NODE=true
+      - NETWORK_TYPE=single-node
+      - LOG_LEVEL=Info
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"query\":\"{ syncStatus }\"}' http://localhost:8080/graphql && curl -sf -X POST -H 'Content-Type: application/json' -d '{\"query\":\"{ networkState { maxBlockHeight { pendingMaxBlockHeight } } }\"}' http://localhost:8282"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
+
+  playwright:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/minaguard
+      # network-config.ts reads these and overrides LIGHTNET_CONFIG so the
+      # test targets docker DNS names instead of 127.0.0.1.
+      - E2E_MINA_ENDPOINT=http://lightnet:8080/graphql
+      - E2E_ARCHIVE_ENDPOINT=http://lightnet:8282
+      - E2E_ACCOUNT_MANAGER=http://lightnet:8181
+      # Backend + frontend run inside this same container — localhost is correct.
+      - E2E_BACKEND_URL=http://localhost:4000
+      - E2E_FRONTEND_URL=http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      lightnet:
+        condition: service_healthy
+    volumes:
+      - ../e2e/playwright-report:/app/e2e/playwright-report
+      - ../e2e/test-results:/app/e2e/test-results

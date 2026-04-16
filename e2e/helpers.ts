@@ -249,9 +249,14 @@ export async function navigateTo(
   timeoutMs = 30_000
 ): Promise<void> {
   await page.evaluate((p) => (window as any).__e2eNavigate(p), path);
-  // Wait for the pathname to update
+  // Wait for the pathname to update. `__e2ePathname()` returns Next's
+  // `usePathname()` which is pathname-only, so strip any query string from
+  // the expected path before comparing.
   await page.waitForFunction(
-    (expected) => (window as any).__e2ePathname() === expected,
+    (expected) => {
+      const pathOnly = expected.split('?')[0];
+      return (window as any).__e2ePathname() === pathOnly;
+    },
     path,
     { timeout: timeoutMs }
   );

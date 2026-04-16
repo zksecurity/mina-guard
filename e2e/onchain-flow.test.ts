@@ -51,12 +51,15 @@ test.beforeAll(async ({ browser }) => {
   sharedContext = await browser.newContext({ baseURL: netConfig.frontendUrl });
   sharedPage = await sharedContext.newPage();
 
-  // Capture browser console for diagnostics
+  // Capture browser console for diagnostics. Wide filter so [startOperation]
+  // and [MultisigWorker] breadcrumbs flow through — silent worker failures
+  // are otherwise invisible from the Playwright side.
   sharedPage.on('console', (msg) => {
     const text = msg.text();
-    if (text.includes('MultisigWorker') || text.includes('failed') || text.includes('Error')) {
-      log(`[browser] ${text}`);
-    }
+    const type = msg.type();
+    if (type === 'debug') return;
+    if (/\[Fast Refresh\]|webpack|hot-reloader-client/i.test(text)) return;
+    log(`[browser ${type}] ${text}`);
   });
 });
 
@@ -149,15 +152,22 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
     { timeout: 60_000 }
   );
 
-  // Capture the generated contract address — find the element after the "Contract Address" label
+  // Capture the generated contract address — find the <p> immediately after
+  // the "Contract Address" label. Using getByText with exact match avoids the
+  // ancestor-inclusion behaviour that would otherwise collide with the
+  // Owner 1 input's `font-mono` class.
   const addressEl = page
-    .locator('text=Contract Address')
-    .locator('..')
-    .locator('.font-mono');
+    .getByText('Contract Address', { exact: true })
+    .locator('xpath=following-sibling::p[1]');
   await addressEl.waitFor({ state: 'visible', timeout: 10_000 });
   contractAddress = (await addressEl.textContent())?.trim() ?? '';
   expect(contractAddress).toMatch(/^B62/);
   log(`Contract address: ${contractAddress}`);
+
+  // Threshold input has no default — the form rejects submission with
+  // "Please choose a threshold." until we set one. Only 1 owner here, so 1/1.
+  log('Filling threshold...');
+  await page.getByRole('spinbutton', { name: /threshold/i }).fill('1');
 
   // Click deploy
   log('Clicking Deploy...');
@@ -187,61 +197,18 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
 });
 
 // ---------------------------------------------------------------------------
-// 2. Setup contract (account1 as owner, threshold 1/1)
+// 2. Verify contract initialized (account1 as owner, threshold 1/1)
+//
+// The on-chain flow deploys + initializes in a single transaction, so there
+// is no separate setup UI step here. This test just confirms the indexer
+// picked up the owner/threshold events that the deploy emitted.
 // ---------------------------------------------------------------------------
 
-test('2. Setup contract (account1 as owner, threshold=1/1)', async () => { const page = sharedPage;
-  log('=== Step 2: Setup contract ===');
-  await gotoWithWallet('/', accounts[0]);
+test('2. Verify contract initialized (account1 as owner, threshold=1/1)', async () => {
+  log('=== Step 2: Verify initial contract state ===');
 
-  await page.waitForTimeout(SHORT_WAIT);
-
-  // Click "Setup Contract" button
-  log('Clicking Setup Contract...');
-  const setupBtn = page.getByRole('button', { name: /setup contract/i });
-  await setupBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await setupBtn.click();
-
-  // Fill the setup modal
-  log('Filling setup form...');
-
-  // The first owner input should already be present
-  const ownerInput = page.locator('input[placeholder*="Owner"]').first();
-  await ownerInput.waitFor({ state: 'visible', timeout: 10_000 });
-  await ownerInput.fill(accounts[0].publicKey);
-
-  // Set threshold to 1
-  const thresholdInput = page.locator('input[type="number"]').first();
-  await thresholdInput.fill('1');
-
-  // Set network ID (use "1" for testnet)
-  const networkIdInput = page
-    .locator('input')
-    .filter({ hasText: /network/i })
-    .or(page.locator('input').nth(2));
-  // Try to find the network ID input — it might be the third input in the modal
-  const inputs = page.locator('.fixed input, dialog input, [class*="modal"] input');
-  const inputCount = await inputs.count();
-  if (inputCount >= 3) {
-    const lastInput = inputs.nth(inputCount - 1);
-    const placeholder = await lastInput.getAttribute('placeholder');
-    if (placeholder?.toLowerCase().includes('network') || inputCount >= 3) {
-      await lastInput.fill('1');
-    }
-  }
-
-  // Click "Run Setup"
-  log('Clicking Run Setup...');
-  const runSetupBtn = page.getByRole('button', { name: /run setup/i });
-  await runSetupBtn.click();
-
-  // Wait for operation to complete
-  log('Waiting for setup transaction...');
-  await waitForBanner(page, 'success');
-
-  // Wait for indexer to pick up setup events
   await waitForIndexer(
-    'indexer processes setup events',
+    'indexer processes initial owner + threshold events',
     async () => {
       const owners = await getOwners(contractAddress);
       return owners.some(
@@ -250,13 +217,11 @@ test('2. Setup contract (account1 as owner, threshold=1/1)', async () => { const
     }
   );
 
-  // Verify contract state
   const contract = await getContract(contractAddress);
   expect(contract.threshold).toBe(1);
   expect(contract.numOwners).toBe(1);
   log(`Setup verified: threshold=${contract.threshold}, numOwners=${contract.numOwners}`);
 
-  // Verify owner
   const owners = await getOwners(contractAddress);
   const activeOwners = owners.filter((o: any) => o.active);
   expect(activeOwners).toHaveLength(1);
@@ -270,20 +235,10 @@ test('2. Setup contract (account1 as owner, threshold=1/1)', async () => { const
 
 test('3. Propose add owner (account2)', async () => { const page = sharedPage;
   log('=== Step 3: Propose add owner ===');
-  await gotoWithWallet('/', accounts[0]);
+  // Direct nav to /transactions/new with ?type= preselects the tx type,
+  // bypassing the old "click New Proposal → select Add Owner" steps.
+  await gotoWithWallet('/transactions/new?type=addOwner', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-
-  // Click "New Proposal"
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  // Select "Add Owner" type
-  log('Selecting Add Owner type...');
-  const addOwnerType = page.getByText('Add Owner').first();
-  await addOwnerType.click();
 
   // Fill new owner address
   const ownerInput = page.locator('input[placeholder*="B62"]').first();
@@ -385,34 +340,25 @@ test('4. Execute add owner proposal', async () => { const page = sharedPage;
 
 test('5. Propose change threshold to 2/2', async () => { const page = sharedPage;
   log('=== Step 5: Propose threshold change ===');
-  await gotoWithWallet('/', accounts[0]);
-
-  // Wait for the ThresholdBadge to show numOwners=2 (useMultisig polls every 15s)
+  // Wait for the backend to reflect numOwners=2 — the ProposalForm clamps
+  // its threshold input against multisig.numOwners reported by useMultisig.
   log('Waiting for numOwners to update to 2...');
-  await page.waitForFunction(
-    () => {
-      const spans = document.querySelectorAll('span');
-      for (let i = 0; i < spans.length; i++) {
-        if (spans[i].textContent?.trim() === '/' && spans[i + 1]?.textContent?.trim() === '2') {
-          return true;
-        }
-      }
-      return false;
-    },
-    { timeout: 30_000 }
+  await waitForIndexer(
+    'numOwners = 2 in backend',
+    async () => {
+      const contract = await getContract(contractAddress);
+      return contract?.numOwners === 2;
+    }
   );
 
-  // Open proposal modal from dashboard
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
+  await gotoWithWallet('/transactions/new?type=changeThreshold', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
 
-  // Select "Change Threshold" type
-  log('Selecting Change Threshold type...');
-  const thresholdType = page.getByText('Change Threshold').first();
-  await thresholdType.click();
+  // Backend has numOwners=2 but the UI may still be on the previous 15s
+  // useMultisig poll. Wait for the form to actually render "out of 2" before
+  // filling, otherwise input max=1 and the submit fails validation.
+  log('Waiting for form to reflect numOwners=2...');
+  await expect(page.getByText('out of 2')).toBeVisible({ timeout: 30_000 });
 
   // Set new threshold to 2
   const thresholdInput = page.locator('input[type="number"]').first();
@@ -490,29 +436,14 @@ test('6. Execute threshold change', async () => { const page = sharedPage;
 
 test('7. Propose send MINA to account3', async () => { const page = sharedPage;
   log('=== Step 7: Propose MINA transfer ===');
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  // Open proposal modal from dashboard
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  // Select "Send MINA" type
-  log('Selecting Send MINA type...');
-  const sendType = page.getByText('Send MINA').first();
-  await sendType.click();
-
-  // Fill recipient
-  const recipientInput = page.locator('input[placeholder*="B62"]').first();
-  await recipientInput.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientInput.fill(accounts[2].publicKey);
-
-  // Fill amount (1 MINA — the contract is pre-funded with extra MINA in global setup)
-  const amountInput = page.locator('input[placeholder*="0.0"]').first();
-  await amountInput.fill('1');
+  // The transfer form uses a single textarea with `address,amount` per line
+  // (see ProposalForm.tsx — parseTransferLines). 1 MINA to account3.
+  const recipientsTextarea = page.locator('textarea').first();
+  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
+  await recipientsTextarea.fill(`${accounts[2].publicKey},1`);
 
   // Set expiry to 0
   const expiryInput = page.locator('input[placeholder="0"]');
@@ -717,29 +648,8 @@ test('11. Verify Transactions page filtering', async () => { const page = shared
 
 test('12. Propose threshold change to 1/2', async () => { const page = sharedPage;
   log('=== Step 12: Propose threshold change to 1/2 ===');
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet('/transactions/new?type=changeThreshold', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Change Threshold type...');
-  // Click the "Change Threshold" type button. Use the button role with exact text
-  // to avoid matching unrelated elements. The modal may have form fields from the
-  // default "Send MINA" type overlapping, so click the type button directly.
-  const typeButtons = page.locator('button[type="button"]');
-  const count = await typeButtons.count();
-  for (let i = 0; i < count; i++) {
-    const text = await typeButtons.nth(i).textContent();
-    if (text?.includes('Change Threshold')) {
-      await typeButtons.nth(i).click({ force: true });
-      break;
-    }
-  }
-  await page.waitForTimeout(1_000);
 
   // Set threshold to 1
   const thresholdInput = page.locator('input[type="number"]').first();
@@ -842,32 +752,28 @@ test('14. Execute threshold change to 1/2', async () => { const page = sharedPag
 
 test('15. Propose remove owner (account2)', async () => { const page = sharedPage;
   log('=== Step 15: Propose remove owner ===');
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet('/transactions/new?type=removeOwner', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
+  // Test 14 just executed the threshold-to-1 change, but useMultisig polls
+  // every 15s — the form may still see stale `currentThreshold=2` and render
+  // the "Cannot remove an owner..." render-time warning, which blocks submit.
+  // Wait for that warning to disappear before interacting.
+  log('Waiting for UI to reflect post-execute threshold state...');
+  await page.waitForFunction(
+    () => !document.body.textContent?.includes(
+      'Cannot remove an owner while it would go below the threshold'
+    ),
+    { timeout: 30_000 }
+  );
 
-  log('Selecting Remove Owner type...');
-  const removeOwnerType = page.getByText('Remove Owner').first();
-  await removeOwnerType.click();
-  await page.waitForTimeout(500);
-
-  // Select account2 from the owner list (radio button)
-  // The remove owner form shows a list of current owners as selectable options
-  const ownerOption = page.locator(`text=${accounts[1].publicKey.slice(0, 8)}`).first();
-  if (await ownerOption.isVisible().catch(() => false)) {
-    await ownerOption.click();
-  } else {
-    // Fallback: click the second radio/option in the list
-    const options = page.locator('input[type="radio"]');
-    if ((await options.count()) > 0) {
-      await options.last().click();
-    }
-  }
+  // The radio input has class `sr-only` (screen-reader-only) and is covered
+  // by a sibling fake-radio div — Playwright can't click the input directly.
+  // Click the label which wraps the row; native form behaviour toggles the
+  // input. Also wait for account2 to appear in the list (useMultisig may
+  // still be on the previous owner-list refresh).
+  await expect(page.getByText(accounts[1].publicKey, { exact: true })).toBeVisible({ timeout: 30_000 });
+  await page.locator(`label:has-text("${accounts[1].publicKey}")`).click();
 
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
@@ -966,26 +872,8 @@ test('17. Verify state after owner removal', async () => { const page = sharedPa
 
 test('18. Propose set delegate (account3)', async () => { const page = sharedPage;
   log('=== Step 18: Propose set delegate ===');
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet('/transactions/new?type=setDelegate', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Set Delegate type...');
-  const typeButtons = page.locator('button[type="button"]');
-  const count = await typeButtons.count();
-  for (let i = 0; i < count; i++) {
-    const text = await typeButtons.nth(i).textContent();
-    if (text?.includes('Set Delegate')) {
-      await typeButtons.nth(i).click({ force: true });
-      break;
-    }
-  }
-  await page.waitForTimeout(1_000);
 
   // Fill delegate address (account3)
   const delegateInput = page.locator('input[placeholder*="B62"]').first();
@@ -1081,26 +969,8 @@ test('20. Verify delegate card shows delegate', async () => { const page = share
 
 test('21. Propose undelegate', async () => { const page = sharedPage;
   log('=== Step 21: Propose undelegate ===');
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet('/transactions/new?type=setDelegate', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  log('Selecting Set Delegate type...');
-  const typeButtons = page.locator('button[type="button"]');
-  const count = await typeButtons.count();
-  for (let i = 0; i < count; i++) {
-    const text = await typeButtons.nth(i).textContent();
-    if (text?.includes('Set Delegate')) {
-      await typeButtons.nth(i).click({ force: true });
-      break;
-    }
-  }
-  await page.waitForTimeout(1_000);
 
   // Check the "Undelegate" checkbox
   log('Checking Undelegate checkbox...');
@@ -1189,28 +1059,13 @@ test('23. Propose transfer with near-future expiry', async () => { const page = 
   const expiryBlock = currentHeight + netConfig.expiryBlockOffset;
   log(`Current block height: ${currentHeight}, setting expiry: ${expiryBlock}`);
 
-  await gotoWithWallet('/', accounts[0]);
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  log('Clicking New Proposal...');
-  const newProposalBtn = page.getByRole('button', { name: /new proposal/i });
-  await newProposalBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProposalBtn.click();
-  await page.waitForTimeout(1_000);
-
-  // Select "Send MINA"
-  log('Selecting Send MINA type...');
-  const sendType = page.getByText('Send MINA').first();
-  await sendType.click();
-
-  // Fill recipient (account3)
-  const recipientInput = page.locator('input[placeholder*="B62"]').first();
-  await recipientInput.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientInput.fill(accounts[2].publicKey);
-
-  // Fill amount
-  const amountInput = page.locator('input[placeholder*="0.0"]').first();
-  await amountInput.fill('0.5');
+  // 0.5 MINA to account3 as a single textarea line.
+  const recipientsTextarea = page.locator('textarea').first();
+  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
+  await recipientsTextarea.fill(`${accounts[2].publicKey},0.5`);
 
   // Set the low expiry block
   const expiryInput = page.locator('input[placeholder="0"]');

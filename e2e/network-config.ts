@@ -53,20 +53,34 @@ export interface NetworkConfig {
   skipProofs: boolean;
 }
 
+// E2E_* env vars override these defaults so the suite can be pointed at
+// docker-compose service DNS names (lightnet, db, backend) from the inline
+// runner container in preview-env/docker-compose.e2e.yml.
 const LIGHTNET_CONFIG: NetworkConfig = {
   mode: 'lightnet',
-  minaEndpoint: 'http://127.0.0.1:8080/graphql',
-  archiveEndpoint: 'http://127.0.0.1:8282',
-  accountManagerUrl: 'http://127.0.0.1:8181',
-  backendUrl: 'http://localhost:4000',
-  frontendUrl: 'http://localhost:3000',
+  minaEndpoint: process.env.E2E_MINA_ENDPOINT ?? 'http://127.0.0.1:8080/graphql',
+  archiveEndpoint: process.env.E2E_ARCHIVE_ENDPOINT ?? 'http://127.0.0.1:8282',
+  accountManagerUrl: process.env.E2E_ACCOUNT_MANAGER ?? 'http://127.0.0.1:8181',
+  backendUrl: process.env.E2E_BACKEND_URL ?? 'http://localhost:4000',
+  frontendUrl: process.env.E2E_FRONTEND_URL ?? 'http://localhost:3000',
   blockTimeMs: 3_000,
   indexerPollIntervalMs: 5_000,
   indexerTimeoutMs: 240_000,
-  bannerTimeoutMs: 600_000,
-  testStepTimeoutMs: 15 * 60 * 1_000,
-  settlementWaitMs: 30_000,
-  expiryBlockOffset: 2,
+  // Banner wait covers first-test compile + tx build + broadcast + inclusion.
+  // Local serial worst-case is ~90-120s on 8 vCPUs, but CI on 4 vCPUs with
+  // `next dev` on-demand bundling pushes first-test compile close to 180s.
+  // 5 min covers both environments without masking real hangs.
+  bannerTimeoutMs: 300_000,
+  // Per-test hard cap, strictly greater than bannerTimeoutMs so the banner
+  // wait has time to surface a clear error before the outer cap fires.
+  testStepTimeoutMs: 8 * 60 * 1_000,
+  // Pad after an approval tx before executing, to let on-chain state
+  // propagate. 12s = 4 blocks at SLOT_TIME=3s, still comfortably above
+  // physical settlement floor, and saves ~18s per approve/execute pair.
+  settlementWaitMs: 12_000,
+  // Offset is in blocks; at 3s blocks this gives us ~15s of live window
+  // for the propose-with-expiry test before it expires.
+  expiryBlockOffset: 5,
   skipProofs: true,
 };
 
