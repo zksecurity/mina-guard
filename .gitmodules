@@ -1,3 +1,4 @@
 [submodule "ui/deps/o1js"]
 	path = ui/deps/o1js
 	url = https://github.com/graikos/o1js.git
+	branch = develop-3.0
