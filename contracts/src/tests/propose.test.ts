@@ -362,7 +362,7 @@ describe('MinaGuard - Propose shape rules', () => {
     });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('data must be zero for non-threshold proposals');
+    }).toThrow('data must be zero for this txType');
   });
 
   it('should reject TRANSFER with non-zero data', async () => {
