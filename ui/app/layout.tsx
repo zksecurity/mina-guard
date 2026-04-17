@@ -169,7 +169,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           onConnect={connect}
           onConnectAuro={connectAuro}
           onConnectLedger={connectLedger}
-          onDisconnect={async () => { await disconnect(); clearBanner(); }}
+          onDisconnect={async () => { await disconnect(); clearBanner(); router.push('/'); }}
           onNetworkChange={setWalletNetwork}
         />
         <div className="flex flex-1 min-h-0">

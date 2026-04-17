@@ -100,7 +100,7 @@ export default function CreateAccountWizard() {
     void startOperation('Building deploy transaction...', async (onProgress) => {
       return await deployAndSetupContract(captured, onProgress, signer);
     });
-    router.push(`/accounts/${keypair.publicKey}`);
+    router.push(`/accounts/${keypair.publicKey}?pending=1`);
   };
 
   return (

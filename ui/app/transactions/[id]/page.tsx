@@ -120,7 +120,7 @@ export default function TransactionDetailPage() {
       if (result) success = true;
       return result;
     });
-    if (success) router.push('/');
+    if (success) router.push(`/accounts/${multisig.address}`);
   };
 
   if (!wallet.connected || !multisig) {

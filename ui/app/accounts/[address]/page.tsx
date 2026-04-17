@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import TransactionList from '@/components/TransactionList';
@@ -15,6 +15,10 @@ import Link from 'next/link';
 export default function AccountPage() {
   const params = useParams<{ address: string }>();
   const urlAddress = params?.address ?? null;
+  const searchParams = useSearchParams();
+  // Set by the new-account page right after deploy submission, to differentiate
+  // "indexer hasn't caught up yet" from "no such account".
+  const isPendingIndex = searchParams.get('pending') === '1';
 
   const {
     wallet,
@@ -153,15 +157,21 @@ export default function AccountPage() {
             </div>
           </div>
         ) : urlAddress && !contracts.some((c) => c.address === urlAddress) ? (
-          <div className="text-center py-20">
-            <p className="text-safe-text mb-4">Account not found.</p>
-            <Link
-              href="/"
-              className="inline-block bg-safe-green text-safe-dark font-semibold rounded-lg px-6 py-3 text-sm hover:brightness-110 transition-all"
-            >
-              Back to accounts
-            </Link>
-          </div>
+          isPendingIndex ? (
+            <div className="text-center py-20">
+              <p className="text-safe-text">Your account will appear here shortly…</p>
+            </div>
+          ) : (
+            <div className="text-center py-20">
+              <p className="text-safe-text mb-4">Account not found.</p>
+              <Link
+                href="/"
+                className="inline-block bg-safe-green text-safe-dark font-semibold rounded-lg px-6 py-3 text-sm hover:brightness-110 transition-all"
+              >
+                Back to accounts
+              </Link>
+            </div>
+          )
         ) : (
           <div className="text-center py-20">
             <p className="text-safe-text">Loading account…</p>
