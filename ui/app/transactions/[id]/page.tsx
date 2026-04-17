@@ -53,10 +53,12 @@ export default function TransactionDetailPage() {
     if (!multisig || !proposal) return;
     // Don't fetch until proposals have been loaded for the current contract
     if (proposalsAddress !== multisig.address) return;
+    let cancelled = false;
     (async () => {
       const rows = await fetchApprovals(multisig.address, proposalHash);
-      setApprovalAddresses(rows.map((row) => row.approver));
+      if (!cancelled) setApprovalAddresses(rows.map((row) => row.approver));
     })();
+    return () => { cancelled = true; };
   }, [multisig, proposal, proposalHash, proposalsAddress]);
 
   const isOwner = useMemo(() => {

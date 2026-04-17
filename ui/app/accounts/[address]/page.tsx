@@ -87,7 +87,11 @@ export default function AccountPage() {
 
   useEffect(() => {
     if (!multisig?.address) return;
-    fetchBalance(multisig.address).then((b) => setBalance(b));
+    let cancelled = false;
+    fetchBalance(multisig.address).then((b) => {
+      if (!cancelled) setBalance(b);
+    });
+    return () => { cancelled = true; };
   }, [multisig?.address, indexerStatus?.lastSuccessfulRunAt]);
 
   return (
