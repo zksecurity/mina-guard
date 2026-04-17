@@ -26,6 +26,12 @@ export default defineConfig({
         '--disable-gpu',
         '--disable-features=TranslateUI',
         '--disable-blink-features=AutomationControlled',
+        // o1js proof generation accumulates ~600 MB per Mina.transaction
+        // between GC cycles. Default V8 old-space cap (~4 GB) gets hit after
+        // 5-7 txs on the same worker, causing renderer-level GC thrashing
+        // that manifests as a silent tx.prove() hang. Bumping to 8 GB is
+        // enough to clear the 25-step onchain-flow chain + subaccount tests.
+        '--js-flags=--max-old-space-size=8192',
       ],
     },
   },
