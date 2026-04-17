@@ -131,6 +131,16 @@ The helper builds `backend`, `frontend`, and `explorer` sequentially before star
 
 The first uncached frontend build can take a few minutes because Next.js has to compile the heavy `o1js` worker bundle. `local-preview.sh` now prints a periodic heartbeat during long builds so this does not look like a freeze.
 
+To seed coherent test data, prefer the real on-chain fixture helper over direct DB inserts:
+
+```bash
+bun run dev-helpers/cli.ts lightnet-fixture --main-address <YOUR_WALLET_ADDRESS>
+```
+
+By default this uses the quick-test `minimal` scenario: 2 vaults, 2 executed proposals per vault, and both vaults ending with your wallet as the sole owner at threshold 1. For broader coverage, you can also use `--scenario full`.
+
+That command acquires a funded lightnet deployer, generates helper signers, deploys real MinaGuard contracts that include your wallet address as an owner, submits real propose / approve / execute transactions with proofs disabled, and waits for the preview indexer to ingest them. The result is fixture data that stays consistent across chain, backend, and UI.
+
 ```bash
 # Logs
 docker compose -p local logs -f            # all services

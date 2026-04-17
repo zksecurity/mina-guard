@@ -170,6 +170,7 @@ function CreateAccountWizard() {
         networkId: parentContract.networkId!,
         input: {
           txType: 'createChild',
+          nonce: (parentContract.nonce ?? 0) + 1,
           childAccount: childAddress,
           createChildConfigHash: configHash,
         },
