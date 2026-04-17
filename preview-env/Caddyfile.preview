@@ -26,8 +26,14 @@
         }
     }
 
-    # Lightnet accounts manager
-    handle /preview/{$PR_NUMBER}/accounts/* {
+    # Lightnet accounts manager — match only the specific endpoints it exposes
+    # so the frontend's /accounts/* routes (e.g. /accounts/new) fall through to
+    # the catch-all below.
+    handle /preview/{$PR_NUMBER}/accounts/acquire-account {
+        uri strip_prefix /preview/{$PR_NUMBER}/accounts
+        reverse_proxy lightnet:8181
+    }
+    handle /preview/{$PR_NUMBER}/accounts/release-account {
         uri strip_prefix /preview/{$PR_NUMBER}/accounts
         reverse_proxy lightnet:8181
     }
