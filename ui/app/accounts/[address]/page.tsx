@@ -105,7 +105,7 @@ export default function AccountPage() {
         ) : multisig && multisig.address === urlAddress ? (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+              <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Address</p>
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="text-sm font-mono flex min-w-0">
@@ -134,7 +134,7 @@ export default function AccountPage() {
                 </div>
               </div>
 
-              <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+              <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Threshold</p>
                 <div className="mt-2">
                   <ThresholdBadge
@@ -145,7 +145,7 @@ export default function AccountPage() {
                 </div>
               </div>
 
-              <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+              <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Balance</p>
                 <p className="text-lg font-semibold mt-1">
                   {balance !== null ? formatMina(balance) : '-'}{' '}
@@ -153,7 +153,7 @@ export default function AccountPage() {
                 </p>
               </div>
 
-              <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+              <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Block Producer Delegate</p>
                 <p className="text-sm font-mono mt-1 truncate" title={multisig.delegate ?? undefined}>
                   {multisig.delegate ? truncateAddress(multisig.delegate, 10) : 'None'}
@@ -182,7 +182,7 @@ export default function AccountPage() {
               )}
             </div>
 
-            <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+            <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
               <p className="text-xs text-safe-text uppercase tracking-wider mb-3">New Proposal</p>
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
@@ -210,7 +210,7 @@ export default function AccountPage() {
               </div>
             </div>
 
-            <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+            <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs text-safe-text uppercase tracking-wider">Recent Proposals</p>
                 <Link href="/transactions" className="text-xs text-safe-green hover:underline">
@@ -316,7 +316,7 @@ function OwnersCard({ owners, walletAddress, threshold }: OwnersCardProps) {
   };
 
   return (
-    <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+    <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-safe-text uppercase tracking-wider">
           Owners ({owners.length})
@@ -382,7 +382,7 @@ interface ParentCardProps {
 
 function ParentCard({ parent, parentContract, childMultiSigEnabled }: ParentCardProps) {
   return (
-    <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+    <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Parent Account</p>
@@ -418,8 +418,9 @@ function PendingSubaccountsBanner({
   parentAddress: string;
   isOwner: boolean;
 }) {
-  const { wallet, indexerStatus, contracts, startOperation, isOperating } = useAppContext();
+  const { wallet, indexerStatus, contracts, proposals, multisig, startOperation, isOperating } = useAppContext();
   const [pending, setPending] = useState<PendingSubaccount[]>([]);
+  const parentThreshold = multisig?.address === parentAddress ? (multisig.threshold ?? 0) : 0;
 
   // Reload from localStorage when the parent changes, the indexer ticks, or
   // savePendingSubaccount/clearPendingSubaccount fires its custom event (so
@@ -478,36 +479,53 @@ function PendingSubaccountsBanner({
         <h3 className="text-sm font-semibold text-amber-200">Pending Subaccounts ({visible.length})</h3>
       </div>
       <ul className="space-y-2">
-        {visible.map((record) => (
-          <li
-            key={`${record.parentAddress}:${record.childAddress}`}
-            className="bg-safe-dark border border-safe-border rounded-lg px-3 py-2 flex items-center gap-3"
-          >
-            <div className="flex-1 min-w-0">
-              {record.childName && (
-                <p className="text-sm font-semibold truncate">{record.childName}</p>
+        {visible.map((record) => {
+          const proposal = proposals.find((p) => p.proposalHash === record.proposalHash);
+          // Proposal must be indexed, still pending, and at or above the
+          // parent's threshold before executeSetupChild can succeed.
+          const thresholdMet = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= parentThreshold;
+          const canFinalize = thresholdMet;
+          const statusHint = !proposal
+            ? 'Waiting for indexer…'
+            : proposal.status !== 'pending'
+              ? `Proposal ${proposal.status}`
+              : proposal.approvalCount < parentThreshold
+                ? `${proposal.approvalCount}/${parentThreshold} approvals`
+                : null;
+          return (
+            <li
+              key={`${record.parentAddress}:${record.childAddress}`}
+              className="bg-safe-dark border border-safe-border rounded-lg px-3 py-2 flex items-center gap-3"
+            >
+              <div className="flex-1 min-w-0">
+                {record.childName && (
+                  <p className="text-sm font-semibold truncate">{record.childName}</p>
+                )}
+                <p className="font-mono text-xs text-safe-text truncate">
+                  {truncateAddress(record.childAddress, 10)}
+                </p>
+                <p className="text-[10px] text-safe-text mt-0.5">
+                  Proposal {record.proposalHash.slice(0, 10)}… ·{' '}
+                  {record.childThreshold}/{record.childOwners.length} owners
+                  {statusHint && <> · <span className="text-amber-300">{statusHint}</span></>}
+                </p>
+              </div>
+              {isOwner && (
+                <button
+                  type="button"
+                  disabled={isOperating || !canFinalize}
+                  onClick={() => handleFinalize(record)}
+                  className="bg-safe-green text-safe-dark text-xs font-semibold rounded-lg px-3 py-1.5 hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={canFinalize
+                    ? 'Runs executeSetupChild on the new child address.'
+                    : 'Waiting for the parent CREATE_CHILD proposal to reach threshold.'}
+                >
+                  {isOperating ? 'Finalizing…' : 'Finalize deployment'}
+                </button>
               )}
-              <p className="font-mono text-xs text-safe-text truncate">
-                {truncateAddress(record.childAddress, 10)}
-              </p>
-              <p className="text-[10px] text-safe-text mt-0.5">
-                Proposal {record.proposalHash.slice(0, 10)}… ·{' '}
-                {record.childThreshold}/{record.childOwners.length} owners
-              </p>
-            </div>
-            {isOwner && (
-              <button
-                type="button"
-                disabled={isOperating}
-                onClick={() => handleFinalize(record)}
-                className="bg-safe-green text-safe-dark text-xs font-semibold rounded-lg px-3 py-1.5 hover:brightness-110 transition-all disabled:opacity-60"
-                title="Runs executeSetupChild on the new child address. Requires the parent proposal to have reached threshold."
-              >
-                {isOperating ? 'Finalizing…' : 'Finalize deployment'}
-              </button>
-            )}
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -529,7 +547,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
 
   if (children === null) {
     return (
-      <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+      <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
         <p className="text-xs text-safe-text uppercase tracking-wider mb-2">Subaccounts</p>
         <p className="text-sm text-safe-text">Loading…</p>
       </div>
@@ -538,7 +556,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
 
   if (children.length === 0) {
     return (
-      <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+      <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
         <p className="text-xs text-safe-text uppercase tracking-wider mb-2">Subaccounts</p>
         <p className="text-sm text-safe-text">No subaccounts yet.</p>
       </div>
@@ -546,7 +564,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
   }
 
   return (
-    <div className="bg-safe-gray border border-safe-green/40 rounded-xl p-5 shadow-md shadow-safe-green/20">
+    <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-safe-text uppercase tracking-wider">
           Subaccounts ({children.length})
