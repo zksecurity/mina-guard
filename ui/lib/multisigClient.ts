@@ -215,3 +215,60 @@ export async function executeProposalOnchain(params: {
     proxiedSignFeePayer(signer),
   );
 }
+
+/**
+ * Computes the createChild proposal data hash + generates a fresh child keypair.
+ * Returns everything the wizard needs to (a) submit a CREATE_CHILD proposal
+ * on the parent, then (b) finalize via deployAndSetupChild later.
+ */
+export async function computeCreateChildConfigHash(params: {
+  childOwners: string[];
+  childThreshold: number;
+}): Promise<{
+  ownersCommitment: string;
+  configHash: string;
+  childAddressKeypair: { privateKey: string; publicKey: string };
+}> {
+  return getWorkerApi().computeCreateChildConfigHash(params);
+}
+
+/**
+ * Deploys a new child guard at `childPrivateKey` and runs `executeSetupChild`
+ * in the same transaction. Used to finalize a CREATE_CHILD proposal once the
+ * parent has reached threshold.
+ */
+export async function deployAndSetupChildOnchain(params: {
+  parentAddress: string;
+  childPrivateKeyBase58: string;
+  feePayerAddress: string;
+  childOwners: string[];
+  childThreshold: number;
+  proposal: Proposal;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  await assertLedgerReady(signer);
+  return getWorkerApi().deployAndSetupChildOnchain(
+    params,
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer),
+  );
+}
+
+/**
+ * Executes a REMOTE child-lifecycle proposal on the child guard:
+ * RECLAIM_CHILD / DESTROY_CHILD / ENABLE_CHILD_MULTI_SIG.
+ */
+export async function executeChildLifecycleOnchain(params: {
+  childAddress: string;
+  parentAddress: string;
+  executorAddress: string;
+  proposal: Proposal;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  await assertLedgerReady(signer);
+  return getWorkerApi().executeChildLifecycleOnchain(
+    params,
+    proxiedSendTx(signer),
+    proxiedProgress(onProgress),
+    proxiedSignFeePayer(signer),
+  );
+}

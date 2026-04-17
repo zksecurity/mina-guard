@@ -11,6 +11,8 @@ let baseUrl = '';
 
 const contractAddress = PrivateKey.random().toPublicKey().toBase58();
 const otherContractAddress = PrivateKey.random().toPublicKey().toBase58();
+const childOneAddress = PrivateKey.random().toPublicKey().toBase58();
+const childTwoAddress = PrivateKey.random().toPublicKey().toBase58();
 const ownerA = PrivateKey.random().toPublicKey().toBase58();
 const ownerB = PrivateKey.random().toPublicKey().toBase58();
 const ownerC = PrivateKey.random().toPublicKey().toBase58();
@@ -19,6 +21,8 @@ const proposalHashA = '101';
 const proposalHashB = '202';
 const proposalHashC = '303';
 const otherProposalHash = '404';
+// REMOTE child-lifecycle proposal targeting childOne — exercises destination/childAccount.
+const remoteProposalHash = '505';
 
 function get(path: string) {
   return fetch(`${baseUrl}${path}`);
@@ -37,6 +41,10 @@ async function seedDatabase() {
     data: [
       { address: contractAddress, networkId: '1' },
       { address: otherContractAddress, networkId: '1' },
+      // Two subaccounts of `contractAddress`. childTwo has multi-sig disabled
+      // (e.g. after a destroy) so the API exposes both states.
+      { address: childOneAddress, networkId: '1', parent: contractAddress, childMultiSigEnabled: true },
+      { address: childTwoAddress, networkId: '1', parent: contractAddress, childMultiSigEnabled: false },
     ],
   });
 
@@ -80,6 +88,16 @@ async function seedDatabase() {
         proposalHash: otherProposalHash,
         status: 'pending',
         createdAtBlock: 40,
+      },
+      // REMOTE child-lifecycle proposal on the parent, targeting childOne.
+      {
+        contractId: contract.id,
+        proposalHash: remoteProposalHash,
+        status: 'pending',
+        createdAtBlock: 50,
+        destination: 'remote',
+        childAccount: childOneAddress,
+        txType: '7', // RECLAIM_CHILD
       },
     ],
   });
@@ -130,7 +148,7 @@ beforeAll(async () => {
       latestChainHeight: 0,
       indexedHeight: 0,
       lastError: null,
-      discoveredContracts: 2,
+      discoveredContracts: 4,
     }),
   } as unknown as MinaGuardIndexer;
 
@@ -214,8 +232,9 @@ describe('GET /api/contracts/:address/proposals', () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toHaveLength(3);
+    expect(body).toHaveLength(4);
     expect(body.map((proposal: { proposalHash: string }) => proposal.proposalHash)).toEqual([
+      remoteProposalHash,
       proposalHashC,
       proposalHashB,
       proposalHashA,
@@ -228,20 +247,97 @@ describe('GET /api/contracts/:address/proposals', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveLength(1);
-    expect(body[0].proposalHash).toBe(proposalHashC);
+    expect(body[0].proposalHash).toBe(remoteProposalHash);
   });
 
   test('treats empty status as missing and non-empty status as filter', async () => {
     const emptyStatusRes = await get(`/api/contracts/${contractAddress}/proposals?status=`);
     expect(emptyStatusRes.status).toBe(200);
     const emptyStatusBody = await emptyStatusRes.json();
-    expect(emptyStatusBody).toHaveLength(3);
+    expect(emptyStatusBody).toHaveLength(4);
 
     const filteredRes = await get(`/api/contracts/${contractAddress}/proposals?status=pending`);
     expect(filteredRes.status).toBe(200);
     const filteredBody = await filteredRes.json();
-    expect(filteredBody).toHaveLength(2);
+    expect(filteredBody).toHaveLength(3);
     expect(filteredBody.every((proposal: { status: string }) => proposal.status === 'pending')).toBe(true);
+  });
+
+  test('exposes destination and childAccount on REMOTE proposals', async () => {
+    const res = await get(`/api/contracts/${contractAddress}/proposals/${remoteProposalHash}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.proposalHash).toBe(remoteProposalHash);
+    expect(body.destination).toBe('remote');
+    expect(body.childAccount).toBe(childOneAddress);
+  });
+
+  test('LOCAL proposals leave destination and childAccount null', async () => {
+    const res = await get(`/api/contracts/${contractAddress}/proposals/${proposalHashA}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.destination).toBeNull();
+    expect(body.childAccount).toBeNull();
+  });
+});
+
+describe('GET /api/contracts/:address (subaccount fields)', () => {
+  test('exposes parent and childMultiSigEnabled on child contracts', async () => {
+    const res = await get(`/api/contracts/${childOneAddress}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.address).toBe(childOneAddress);
+    expect(body.parent).toBe(contractAddress);
+    expect(body.childMultiSigEnabled).toBe(true);
+  });
+
+  test('reports childMultiSigEnabled=false for destroyed/disabled children', async () => {
+    const res = await get(`/api/contracts/${childTwoAddress}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.parent).toBe(contractAddress);
+    expect(body.childMultiSigEnabled).toBe(false);
+  });
+
+  test('parent is null on root contracts', async () => {
+    const res = await get(`/api/contracts/${contractAddress}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.parent).toBeNull();
+  });
+});
+
+describe('GET /api/contracts/:address/children', () => {
+  test('lists subaccounts whose parent matches the requested address', async () => {
+    const res = await get(`/api/contracts/${contractAddress}/children`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveLength(2);
+    const addresses = body.map((c: { address: string }) => c.address).sort();
+    expect(addresses).toEqual([childOneAddress, childTwoAddress].sort());
+  });
+
+  test('returns an empty array for a contract with no subaccounts', async () => {
+    const res = await get(`/api/contracts/${otherContractAddress}/children`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual([]);
+  });
+
+  test('returns an empty array even when the address is unknown', async () => {
+    const unknown = PrivateKey.random().toPublicKey().toBase58();
+    const res = await get(`/api/contracts/${unknown}/children`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual([]);
   });
 });
 

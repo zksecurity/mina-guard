@@ -85,8 +85,24 @@ function normalizeTxType(value: string | null): string | null {
     '2': 'removeOwner',
     '3': 'changeThreshold',
     '4': 'setDelegate',
+    '5': 'createChild',
+    '6': 'allocateChild',
+    '7': 'reclaimChild',
+    '8': 'destroyChild',
+    '9': 'enableChildMultiSig',
   };
   return map[value] ?? value;
+}
+
+export async function getChildren(parentAddress: string): Promise<any[]> {
+  return (await apiGet<any[]>(`/api/contracts/${parentAddress}/children`)) ?? [];
+}
+
+/** Reads an account's on-chain balance in nanomina, or 0 if the account doesn't exist. */
+export async function getAccountBalance(address: string): Promise<bigint> {
+  const pub = PublicKey.fromBase58(address);
+  const result = await fetchAccount({ publicKey: pub });
+  return result.account ? BigInt(result.account.balance.toBigInt()) : 0n;
 }
 
 export async function getProposals(

@@ -9,7 +9,12 @@ import {
   formatMina,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
-import { approveProposalOnchain, executeProposalOnchain, assertLedgerReady } from '@/lib/multisigClient';
+import {
+  approveProposalOnchain,
+  executeProposalOnchain,
+  executeChildLifecycleOnchain,
+  assertLedgerReady,
+} from '@/lib/multisigClient';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -112,6 +117,31 @@ export default function TransactionDetailPage() {
     }
     let success = false;
     await startOperation('Building execute transaction...', async (onProgress) => {
+      // REMOTE child-lifecycle proposals (RECLAIM/DESTROY/ENABLE) execute on the
+      // child guard, not the parent. CREATE_CHILD finalizes via the wizard's
+      // "Finalize deployment" path, not from this generic execute button.
+      const isRemoteLifecycle =
+        captured.proposal.destination === 'remote' &&
+        captured.proposal.childAccount &&
+        (captured.proposal.txType === 'reclaimChild' ||
+          captured.proposal.txType === 'destroyChild' ||
+          captured.proposal.txType === 'enableChildMultiSig');
+
+      if (isRemoteLifecycle) {
+        const result = await executeChildLifecycleOnchain({
+          childAddress: captured.proposal.childAccount!,
+          parentAddress: captured.contractAddress,
+          executorAddress: captured.executorAddress,
+          proposal: captured.proposal,
+        }, onProgress, signer);
+        if (result) success = true;
+        return result;
+      }
+
+      if (captured.proposal.txType === 'createChild') {
+        return 'CREATE_CHILD proposals finalize via the parent detail page → Pending Subaccounts → Finalize deployment.';
+      }
+
       const result = await executeProposalOnchain({
         contractAddress: captured.contractAddress,
         executorAddress: captured.executorAddress,
@@ -120,7 +150,7 @@ export default function TransactionDetailPage() {
       if (result) success = true;
       return result;
     });
-    if (success) router.push(`/accounts/${multisig.address}`);
+    if (success) router.push(`/accounts/${captured.contractAddress}`);
   };
 
   if (!wallet.connected || !multisig) {

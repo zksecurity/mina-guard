@@ -109,6 +109,18 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json(contract);
   }));
 
+  /** Lists child contracts (subaccounts) whose `parent` points at the given address. */
+  router.get('/api/contracts/:address/children', addressParamsMiddleware, safe(async (req, res) => {
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+
+    const children = await prisma.contract.findMany({
+      where: { parent: address },
+      orderBy: { discoveredAt: 'asc' },
+    });
+
+    res.json(children);
+  }));
+
   /** Lists owner records for a contract with optional active-state filter. */
   router.get(
     '/api/contracts/:address/owners',

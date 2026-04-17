@@ -290,7 +290,7 @@ All event structs are defined in `MinaGuard.ts` and registered on `this.events`.
 Every contract state field is reconstructable from events alone — no on-chain state reads required.
 
 - **LOCAL proposal lifecycle:** `ProposalEvent` → `ApprovalEvent`(s) → `ExecutionEvent` (with the corresponding governance sibling event) on the same guard.
-- **REMOTE proposal lifecycle:** `ProposalEvent` on the parent → `ApprovalEvent`(s) on the parent → `ExecutionEvent` on the **child**. The single `applyExecutionEvent` handler marks the parent's `Proposal` row executed by looking up the global `proposalHash` (which includes `guardAddress` + `networkId` + `childAccount` and is unique). Child-lifecycle sibling events drive state-specific mutations (flip `childMultiSigEnabled`, etc.).
+- **REMOTE proposal lifecycle:** `ProposalEvent` on the parent → `ApprovalEvent`(s) on the parent → `ExecutionEvent` on the **child**. `applyExecutionEvent` marks the parent's `Proposal` row executed by trying `(emittingContractId, proposalHash)` first and, on a miss, walking the child's `Contract.parent` field to retry against the parent's contractId. Child-lifecycle sibling events drive state-specific mutations (flip `childMultiSigEnabled`, etc.).
 - **`Contract.parent`** populated from `SetupEvent.parent` (empty for root, real parent for child).
 - **`Contract.childMultiSigEnabled`** initialized `true` at `SetupEvent`. Flipped on `EnableChildMultiSigEvent` by reading `event.enabled` directly; `executeDestroy` emits the same event with `enabled: 0`, so a single indexer handler covers both flows.
 
@@ -341,3 +341,40 @@ Set in `deploy()`:
 | `setTiming` | `impossible()` | Not used |
 
 All other permissions use `Permissions.default()`.
+
+## UI model
+
+The Next.js UI under `ui/` exposes the contract via three pages:
+
+- `/` — flat-level account list, but renders as an **indented tree** when subaccounts exist. Visibility rule is "full subtree": if the connected wallet owns any node in a tree, the page renders the entire tree (root + every descendant) — even sibling children the user doesn't own. Trees with no owned node are hidden. Built client-side from the `parent` pointer on every `Contract` row returned by `GET /api/contracts`.
+- `/accounts/[address]` — detail dashboard: stat cards, parent + subaccounts cards, propose-button rows, recent proposals.
+- `/accounts/new` — Safe-style two-step wizard. Adding `?parent=<address>` switches the wizard into subaccount-creation mode (network locked to parent, submit becomes "Propose subaccount" rather than direct deploy).
+
+### Propose-button gating matrix
+
+| Page is… | Wallet is owner | `childMultiSigEnabled` | Local actions (`LOCAL_TX_TYPES`) | Subaccount actions (`CHILD_TX_TYPES`) |
+|---|---|---|---|---|
+| Root | yes | n/a | enabled | enabled (all 5: create / allocate / reclaim / destroy / toggle) |
+| Root | no | n/a | disabled (tooltip: "Not an owner") | disabled |
+| Child | yes | true | enabled | hidden — children don't manage further subaccounts |
+| Child | yes | false | disabled (tooltip: "Multi-sig disabled by parent") | hidden |
+| Child | no | any | disabled | hidden |
+
+Disabled buttons are rendered greyed-out with a tooltip rather than removed, so the user always sees what actions exist and why they're locked.
+
+### CREATE_CHILD two-transaction flow
+
+Deploying a subaccount requires two separate Mina transactions:
+
+1. **Propose** — `/accounts/new?parent=…` generates a fresh keypair for the child, computes `Poseidon.hash([ownersCommitment, threshold, numOwners])` for the proposal `data`, builds a `CREATE_CHILD` REMOTE proposal, and submits it to the parent via the parent's `propose()`. The generated keypair plus child config is persisted to `localStorage` keyed by `<parentAddress>:<childAddress>`.
+2. **Finalize** — once the parent's CREATE_CHILD proposal has reached threshold approvals, the parent detail page shows a "Pending Subaccounts" banner with a **Finalize deployment** button. Clicking it loads the stashed keypair + config, then runs `executeSetupChild` on the child address (deploy + setup in a single transaction so the deployed-but-unconfigured child cannot be hijacked).
+
+`localStorage` records are auto-pruned once the child's `SetupEvent` has been indexed (the parent detail page drops any record whose child address now appears in the contract list).
+
+### REMOTE proposal execution routing
+
+`/transactions/[id]` execute button dispatches based on `proposal.destination` + `proposal.txType`:
+
+- `destination === 'local'` → `executeProposalOnchain` (calls `executeTransfer`/`executeOwnerChange`/`executeThresholdChange`/`executeDelegate`/`executeAllocateToChildren` on the parent).
+- `destination === 'remote'` and `txType ∈ {reclaimChild, destroyChild, enableChildMultiSig}` → `executeChildLifecycleOnchain` (calls the matching `execute*` method on the **child** guard, with parent approval witness + child execution witness assembled client-side from indexed events).
+- `txType === 'createChild'` → no-op from this page; the user is directed to the parent detail page's Pending Subaccounts banner for the explicit two-step finalization.

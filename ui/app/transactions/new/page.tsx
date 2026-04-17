@@ -1,13 +1,19 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ProposalForm from '@/components/ProposalForm';
-import { type NewProposalInput, type TxType, TX_TYPES } from '@/lib/types';
+import {
+  CHILD_TX_TYPES,
+  LOCAL_TX_TYPES,
+  type ContractSummary,
+  type NewProposalInput,
+  type TxType,
+} from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOnchainProposal } from '@/lib/multisigClient';
-import { fetchContract } from '@/lib/api';
+import { fetchChildren, fetchContract } from '@/lib/api';
 
 export default function NewTransactionPage() {
   return (
@@ -29,9 +35,42 @@ function NewTransactionPageInner() {
     startOperation,
   } = useAppContext();
 
+  const isRoot = !!multisig && !multisig.parent;
+
+  // Available tx types: LOCAL on every guard; subaccount actions only on roots.
+  const availableTypes = useMemo(
+    () => (isRoot ? [...LOCAL_TX_TYPES, ...CHILD_TX_TYPES.filter((t) => t.value !== 'createChild')] : LOCAL_TX_TYPES),
+    [isRoot],
+  );
+
   const rawType = searchParams.get('type');
-  const initialType = TX_TYPES.some((t) => t.value === rawType) ? (rawType as TxType) : 'transfer';
+  // CREATE_CHILD is wizard-only — bounce back to /accounts/new.
+  useEffect(() => {
+    if (rawType === 'createChild' && multisig) {
+      router.replace(`/accounts/new?parent=${multisig.address}`);
+    }
+  }, [rawType, multisig, router]);
+
+  const initialType = availableTypes.some((t) => t.value === rawType)
+    ? (rawType as TxType)
+    : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
+
+  // Children are needed by the form for child-target pickers and allocate hints.
+  const [children, setChildren] = useState<ContractSummary[]>([]);
+  useEffect(() => {
+    if (!multisig?.address || !isRoot) {
+      setChildren([]);
+      return;
+    }
+    let cancelled = false;
+    fetchChildren(multisig.address).then((list) => {
+      if (!cancelled) setChildren(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [multisig?.address, isRoot]);
 
   const handleSubmit = async (data: NewProposalInput) => {
     if (!wallet.address || !multisig) return;
@@ -84,26 +123,12 @@ function NewTransactionPageInner() {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {TX_TYPES.map((type) => (
-                <button
-                  key={type.value}
-                  type="button"
-                  onClick={() => setTxType(type.value)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-center transition-all ${
-                    txType === type.value
-                      ? 'bg-safe-green text-safe-dark shadow-md shadow-safe-green/20'
-                      : 'bg-safe-gray border border-safe-border text-safe-text hover:bg-safe-hover hover:text-white'
-                  }`}
-                >
-                  <TxTypeIcon icon={type.icon} className="w-4 h-4" />
-                  {type.label}
-                  {txType === type.value && (
-                    <span className="w-2 h-2 rounded-full bg-safe-dark/40" />
-                  )}
-                </button>
-              ))}
-            </div>
+            <TxTypePicker
+              localTypes={availableTypes.filter((t) => LOCAL_TX_TYPES.some((l) => l.value === t.value))}
+              childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
+              selected={txType}
+              onSelect={setTxType}
+            />
 
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
               {proposals.some(
@@ -123,10 +148,65 @@ function NewTransactionPageInner() {
                 onSubmit={handleSubmit}
                 isSubmitting={isOperating}
                 txType={txType}
+                children={children}
               />
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+interface TxTypePickerProps {
+  localTypes: typeof LOCAL_TX_TYPES;
+  childTypes: typeof CHILD_TX_TYPES;
+  selected: TxType;
+  onSelect: (value: TxType) => void;
+}
+
+/** Two-row picker: Account actions on top, Subaccount actions below (only on roots). */
+function TxTypePicker({ localTypes, childTypes, selected, onSelect }: TxTypePickerProps) {
+  return (
+    <div className="space-y-3">
+      <PickerRow label="Account" types={localTypes} selected={selected} onSelect={onSelect} />
+      {childTypes.length > 0 && (
+        <PickerRow label="Subaccount" types={childTypes} selected={selected} onSelect={onSelect} />
+      )}
+    </div>
+  );
+}
+
+interface PickerRowProps {
+  label: string;
+  types: typeof LOCAL_TX_TYPES;
+  selected: TxType;
+  onSelect: (value: TxType) => void;
+}
+
+function PickerRow({ label, types, selected, onSelect }: PickerRowProps) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0 w-20">{label}</span>
+      <div className="flex flex-wrap gap-2">
+        {types.map((type) => (
+          <button
+            key={type.value}
+            type="button"
+            onClick={() => onSelect(type.value)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-center transition-all ${
+              selected === type.value
+                ? 'bg-safe-green text-safe-dark shadow-md shadow-safe-green/20'
+                : 'bg-safe-gray border border-safe-border text-safe-text hover:bg-safe-hover hover:text-white'
+            }`}
+          >
+            <TxTypeIcon icon={type.icon} className="w-4 h-4" />
+            {type.label}
+            {selected === type.value && (
+              <span className="w-2 h-2 rounded-full bg-safe-dark/40" />
+            )}
+          </button>
+        ))}
       </div>
     </div>
   );

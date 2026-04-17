@@ -1,3 +1,8 @@
+// TODO(migrations): dev currently applies this schema via `prisma db push`.
+// Before prod cutover, initialize `prisma/migrations/` with a baseline and
+// switch the `start` script to `prisma migrate deploy`. Full plan +
+// pre-deploy checklist + Hetzner notes in PRODUCTION_ARCHITECTURE.md § 5.6.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -17,6 +22,8 @@ model Contract {
   configNonce    Int?
   proposalCounter Int?
   delegate       String?
+  parent         String?
+  childMultiSigEnabled Boolean?
   discoveredAt   DateTime  @default(now())
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())
@@ -24,6 +31,8 @@ model Contract {
   owners         Owner[]
   proposals      Proposal[]
   events         EventRaw[]
+
+  @@index([parent])
 }
 
 model Owner {
@@ -55,6 +64,8 @@ model Proposal {
   expiryBlock     String?
   networkId       String?
   guardAddress    String?
+  destination     String?
+  childAccount    String?
   status          String    @default("pending")
   approvalCount   Int       @default(0)
   createdAtBlock  Int?

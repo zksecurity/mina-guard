@@ -1,12 +1,18 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { MAX_OWNERS } from '@/lib/constants';
 import { useAppContext } from '@/lib/app-context';
-import { deployAndSetupContract, generateKeypair, assertLedgerReady } from '@/lib/multisigClient';
-import { saveAccountName } from '@/lib/storage';
+import {
+  assertLedgerReady,
+  computeCreateChildConfigHash,
+  createOnchainProposal,
+  deployAndSetupContract,
+  generateKeypair,
+} from '@/lib/multisigClient';
+import { saveAccountName, savePendingSubaccount } from '@/lib/storage';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', networkId: '0', enabled: true },
@@ -14,14 +20,31 @@ const NETWORKS = [
   { label: 'Mainnet (coming soon)', value: 'mainnet', networkId: '1', enabled: false },
 ] as const;
 
-/** Stepped wizard for creating a new MinaGuard account. */
-export default function CreateAccountWizard() {
+export default function CreateAccountWizardPage() {
+  return (
+    <Suspense>
+      <CreateAccountWizard />
+    </Suspense>
+  );
+}
+
+/** Stepped wizard for creating a new MinaGuard account, optionally as a subaccount. */
+function CreateAccountWizard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const parentAddress = searchParams?.get('parent') ?? null;
+  const isSubaccount = !!parentAddress;
   const {
     wallet,
+    contracts,
     startOperation,
     isOperating,
   } = useAppContext();
+
+  const parentContract = useMemo(
+    () => (parentAddress ? contracts.find((c) => c.address === parentAddress) ?? null : null),
+    [contracts, parentAddress],
+  );
 
   const [step, setStep] = useState<1 | 2>(1);
 
@@ -29,6 +52,13 @@ export default function CreateAccountWizard() {
   const [name, setName] = useState('');
   const [networkValue, setNetworkValue] = useState<typeof NETWORKS[number]['value']>('testnet');
   const network = NETWORKS.find((n) => n.value === networkValue) ?? NETWORKS[0];
+
+  // For subaccounts: lock network to the parent's networkId.
+  useEffect(() => {
+    if (!isSubaccount || !parentContract?.networkId) return;
+    const match = NETWORKS.find((n) => n.networkId === parentContract.networkId);
+    if (match) setNetworkValue(match.value);
+  }, [isSubaccount, parentContract?.networkId]);
 
   // Step 2 fields
   const [keypair, setKeypair] = useState<{ privateKey: string; publicKey: string } | null>(null);
@@ -103,6 +133,70 @@ export default function CreateAccountWizard() {
     router.push(`/accounts/${keypair.publicKey}?pending=1`);
   };
 
+  /** Submits a CREATE_CHILD proposal on the parent and stashes deployment state for finalization. */
+  const handleProposeSubaccount = async () => {
+    const error = validateStep2();
+    if (error) { setFormError(error); return; }
+    if (!wallet.address || !parentAddress || !parentContract || !keypair) return;
+    if (parentContract.configNonce == null || !parentContract.networkId) {
+      setFormError('Parent contract not fully indexed yet — try again in a moment.');
+      return;
+    }
+
+    setFormError(null);
+    const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
+    try {
+      await assertLedgerReady(signer);
+    } catch (err) {
+      void startOperation('Propose subaccount', async () => { throw err; });
+      return;
+    }
+
+    const childThreshold = Number(threshold);
+    const childPrivateKey = keypair.privateKey;
+    const childAddress = keypair.publicKey;
+
+    void startOperation('Preparing subaccount proposal…', async (onProgress) => {
+      onProgress('Computing child config hash…');
+      const { configHash } = await computeCreateChildConfigHash({
+        childOwners: parsedOwners,
+        childThreshold,
+      });
+
+      const proposalHash = await createOnchainProposal({
+        contractAddress: parentAddress,
+        proposerAddress: wallet.address!,
+        configNonce: parentContract.configNonce!,
+        networkId: parentContract.networkId!,
+        input: {
+          txType: 'createChild',
+          childAccount: childAddress,
+          createChildConfigHash: configHash,
+        },
+      }, onProgress, signer);
+
+      if (!proposalHash) return null;
+
+      if (name.trim()) saveAccountName(childAddress, name);
+
+      savePendingSubaccount({
+        parentAddress,
+        childAddress,
+        childPrivateKey,
+        childOwners: parsedOwners,
+        childThreshold,
+        childName: name.trim(),
+        proposalHash,
+        expiryBlock: null,
+        createdAt: new Date().toISOString(),
+      });
+
+      return `Subaccount proposal submitted. Approve on the parent, then return to finalize deployment.`;
+    });
+
+    router.push(`/accounts/${parentAddress}`);
+  };
+
   return (
     <div>
       <div className="p-6 max-w-3xl mx-auto w-full">
@@ -112,7 +206,22 @@ export default function CreateAccountWizard() {
           </div>
         ) : (
           <div>
-            <h1 className="text-2xl font-bold mb-6">Create new account</h1>
+            <h1 className="text-2xl font-bold mb-2">
+              {isSubaccount ? 'Create subaccount' : 'Create new account'}
+            </h1>
+            {isSubaccount && parentAddress && (
+              <p className="text-xs text-safe-text mb-6">
+                Subaccount of{' '}
+                <Link
+                  href={`/accounts/${parentAddress}`}
+                  className="text-safe-green hover:underline font-mono"
+                >
+                  {parentAddress.slice(0, 8)}…{parentAddress.slice(-6)}
+                </Link>
+                . Parent owners must approve before deployment finalizes.
+              </p>
+            )}
+            {!isSubaccount && <div className="mb-6" />}
 
             <div className="bg-safe-gray border border-safe-border rounded-xl">
               <div className="flex h-1 bg-safe-border rounded-t-xl overflow-hidden">
@@ -169,8 +278,13 @@ export default function CreateAccountWizard() {
                       <select
                         value={networkValue}
                         onChange={(e) => setNetworkValue(e.target.value as typeof networkValue)}
-                        className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green"
-                        title="Devnet and Mainnet support is coming soon."
+                        disabled={isSubaccount}
+                        className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green disabled:opacity-60"
+                        title={
+                          isSubaccount
+                            ? 'Subaccounts inherit the parent network.'
+                            : 'Devnet and Mainnet support is coming soon.'
+                        }
                       >
                         {NETWORKS.map((n) => (
                           <option key={n.value} value={n.value} disabled={!n.enabled}>
@@ -178,7 +292,11 @@ export default function CreateAccountWizard() {
                           </option>
                         ))}
                       </select>
-                      <span className="text-[10px] text-safe-text">Only Testnet is available right now.</span>
+                      <span className="text-[10px] text-safe-text">
+                        {isSubaccount
+                          ? 'Locked to the parent account network.'
+                          : 'Only Testnet is available right now.'}
+                      </span>
                     </label>
                   </div>
                 ) : (
@@ -283,6 +401,15 @@ export default function CreateAccountWizard() {
                     className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all"
                   >
                     Next
+                  </button>
+                ) : isSubaccount ? (
+                  <button
+                    disabled={isOperating || !parentContract}
+                    onClick={handleProposeSubaccount}
+                    className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
+                    title={!parentContract ? 'Loading parent contract…' : undefined}
+                  >
+                    {isOperating ? 'Proposing…' : 'Propose subaccount'}
                   </button>
                 ) : (
                   <button

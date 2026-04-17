@@ -14,7 +14,9 @@ import {
   PrivateKey,
   Signature,
   sendZkapp,
-  Bool
+  Bool,
+  MerkleMap,
+  Poseidon,
 } from 'o1js';
 
 import Client from 'mina-signer';
@@ -302,13 +304,50 @@ async function rebuildStoresFromBackend(contractAddress: string) {
     if (event.eventType === 'execution' || event.eventType === 'executionBatch') {
       const payload = event.payload as Record<string, unknown>;
       const proposalHash = payload.proposalHash;
-      if (typeof proposalHash === 'string') {
+      const txType = payload.txType;
+      // REMOTE child-lifecycle methods (CREATE_CHILD=5, RECLAIM_CHILD=7,
+      // DESTROY_CHILD=8, ENABLE_CHILD_MULTI_SIG=9) emit `execution` events on
+      // the child, but they touch `childExecutionRoot` — NOT `approvalRoot`.
+      // Skip those here so the reconstructed approvalStore stays in sync with
+      // the on-chain approvalRoot (rebuildChildExecutionMap handles the other
+      // map separately).
+      const isRemoteExecution =
+        typeof txType === 'string' && (txType === '5' || txType === '7' || txType === '8' || txType === '9');
+      if (typeof proposalHash === 'string' && !isRemoteExecution) {
         approvalStore.setCount(Field(proposalHash), EXECUTED_MARKER);
       }
     }
   }
 
   return { ownerStore, approvalStore, nullifierStore };
+}
+
+/**
+ * Rebuilds the child's `childExecutionRoot` MerkleMap from indexed events.
+ *
+ * The child writes EXECUTED_MARKER at proposalHash on each lifecycle method
+ * (executeReclaim / executeDestroy / executeEnableChildMultiSig). Reconstruct
+ * by scanning the child's `execution` events and inserting EXECUTED_MARKER
+ * for every REMOTE-execution proposalHash.
+ */
+async function rebuildChildExecutionMap(childAddress: string): Promise<InstanceType<typeof MerkleMap>> {
+  const map = new MerkleMap();
+  const events = await fetchAllEvents(childAddress);
+
+  // The numeric TxType field values for REMOTE child-lifecycle methods.
+  const remoteExecutionTypes = new Set(['7', '8', '9']); // RECLAIM, DESTROY, ENABLE_CHILD_MULTI_SIG
+
+  for (const event of events) {
+    if (event.eventType !== 'execution' && event.eventType !== 'executionBatch') continue;
+    const payload = event.payload as Record<string, unknown>;
+    const proposalHash = payload.proposalHash;
+    const txType = payload.txType;
+    if (typeof proposalHash !== 'string') continue;
+    if (typeof txType !== 'string' || !remoteExecutionTypes.has(txType)) continue;
+    map.set(Field(proposalHash), EXECUTED_MARKER);
+  }
+
+  return map;
 }
 
 /** Safely parses a base58 public key, falling back to PublicKey.empty() for the zero point. */
@@ -326,12 +365,27 @@ function uiTxTypeToField(type: string): InstanceType<typeof Field> {
   if (type === 'addOwner') return Field(1);
   if (type === 'removeOwner') return Field(2);
   if (type === 'changeThreshold') return Field(3);
-  return Field(4);
+  if (type === 'setDelegate') return Field(4);
+  if (type === 'createChild') return Field(5);
+  if (type === 'allocateChild') return Field(6);
+  if (type === 'reclaimChild') return Field(7);
+  if (type === 'destroyChild') return Field(8);
+  if (type === 'enableChildMultiSig') return Field(9);
+  throw new Error(`Unknown TxType: ${type}`);
 }
 
 function buildProposalDataField(input: NewProposalInput): InstanceType<typeof Field> {
   if (input.txType === 'changeThreshold') {
     return Field(input.newThreshold ?? 0);
+  }
+  if (input.txType === 'reclaimChild') {
+    return Field(input.reclaimAmount ?? '0');
+  }
+  if (input.txType === 'enableChildMultiSig') {
+    return Field(input.childMultiSigEnable ? 1 : 0);
+  }
+  if (input.txType === 'createChild') {
+    return Field(input.createChildConfigHash ?? '0');
   }
   return Field(0);
 }
@@ -350,7 +404,7 @@ function governanceTargetAddress(input: NewProposalInput): string | null {
  *  - threshold / undelegate: all empty slots.
  */
 function buildReceiversForProposal(input: NewProposalInput): InstanceType<typeof Receiver>[] {
-  if (input.txType === 'transfer') {
+  if (input.txType === 'transfer' || input.txType === 'allocateChild') {
     return buildTransferReceivers(input.receivers ?? []);
   }
   const arr = Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty());
@@ -379,11 +433,15 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
   const txType = normalizeTxType(proposal.txType);
+  const destination = proposal.destination === 'remote' ? Destination.REMOTE : Destination.LOCAL;
+  const childAccount = proposal.childAccount
+    ? safePublicKey(proposal.childAccount)
+    : PublicKey.empty();
   return new TransactionProposal({
     receivers: buildTransferReceivers(proposal.receivers),
     tokenId: Field(proposal.tokenId ?? '0'),
@@ -394,8 +452,8 @@ function buildProposalStruct(
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
-    destination: Destination.LOCAL,
-    childAccount: PublicKey.empty(),
+    destination,
+    childAccount,
   });
 }
 
@@ -674,6 +732,11 @@ const workerApi = {
     const data = buildProposalDataField(params.input);
     const uid = Field.random();
 
+    const isRemote =
+      params.input.txType === 'createChild' ||
+      params.input.txType === 'reclaimChild' ||
+      params.input.txType === 'destroyChild' ||
+      params.input.txType === 'enableChildMultiSig';
     const proposal = new TransactionProposal({
       receivers,
       tokenId: Field(0),
@@ -684,8 +747,10 @@ const workerApi = {
       expiryBlock: Field(params.input.expiryBlock ?? 0),
       networkId: Field(params.networkId),
       guardAddress: PublicKey.fromBase58(params.contractAddress),
-      destination: Destination.LOCAL,
-      childAccount: PublicKey.empty(),
+      destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
+      childAccount: params.input.childAccount
+        ? PublicKey.fromBase58(params.input.childAccount)
+        : PublicKey.empty(),
     });
 
     const proposalHash = proposal.hash();
@@ -849,6 +914,11 @@ const workerApi = {
         return;
       }
 
+      if (txType === 'allocateChild') {
+        await contract.executeAllocateToChildren(proposalStruct, approvalWitness, approvalCount);
+        return;
+      }
+
       if (txType === 'addOwner' || txType === 'removeOwner') {
         const target = proposalStruct.receivers[0].address;
         const pred = ownerStore.sortedPredecessor(target);
@@ -884,6 +954,212 @@ const workerApi = {
     const executeHash = await submitTx(tx, sendFn, signFeePayerFn);
     if (!executeHash) return null;
     return `Transaction submitted: ${executeHash}`;
+  },
+
+  /**
+   * Deploys a fresh MinaGuard at `childPrivateKey` and runs `executeSetupChild`
+   * in the same transaction. Used to finalize a CREATE_CHILD parent proposal
+   * once it has reached threshold.
+   *
+   * Single-tx so a deployed-but-unconfigured child can't be hijacked by an
+   * attacker calling `executeSetupChild` with a different proposal.
+   */
+  async deployAndSetupChildOnchain(
+    params: {
+      parentAddress: string;
+      childPrivateKeyBase58: string;
+      feePayerAddress: string;
+      childOwners: string[];
+      childThreshold: number;
+      proposal: Proposal; // the parent's CREATE_CHILD proposal
+    },
+    sendFn: SendTxFn | null,
+    progressFn: ProgressFn,
+    signFeePayerFn?: SignFeePayerFn
+  ): Promise<string | null> {
+    progressFn('Compiling contract...');
+    configureNetwork();
+    const ok = await compileContract();
+    if (!ok) return null;
+
+    progressFn('Rebuilding parent stores...');
+    const { approvalStore } = await rebuildStoresFromBackend(params.parentAddress);
+
+    const childKey = PrivateKey.fromBase58(params.childPrivateKeyBase58);
+    const childAddress = childKey.toPublicKey();
+    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
+
+    const ownerStore = new OwnerStore();
+    const ownerKeys = params.childOwners.map((address) => PublicKey.fromBase58(address));
+    for (const owner of ownerKeys) ownerStore.addSorted(owner);
+    const paddedOwners = [...ownerStore.owners];
+    while (paddedOwners.length < MAX_OWNERS) paddedOwners.push(PublicKey.empty());
+
+    const ownersCommitment = ownerStore.getCommitment();
+    const numOwners = Field(ownerKeys.length);
+    const threshold = Field(params.childThreshold);
+
+    // Build the REMOTE proposal struct exactly as it was hashed on the parent.
+    const proposalStruct = buildProposalStruct({
+      ...params.proposal,
+      childAccount: params.proposal.childAccount ?? childAddress.toBase58(),
+      destination: 'remote',
+    }, params.parentAddress);
+    const proposalHash = proposalStruct.hash();
+    const approvalWitness = approvalStore.getWitness(proposalHash);
+    const approvalCount = approvalStore.getCount(proposalHash);
+
+    const childZkApp = new MinaGuard(childAddress);
+
+    progressFn('Building transaction...');
+    await fetchAccount({ publicKey: feePayer });
+    clearStaleTransaction();
+    const tx = await Mina.transaction(txSender(feePayer), async () => {
+      AccountUpdate.fundNewAccount(feePayer);
+      await childZkApp.deploy();
+      await childZkApp.executeSetupChild(
+        ownersCommitment,
+        threshold,
+        numOwners,
+        new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) }),
+        proposalStruct,
+        approvalWitness,
+        approvalCount,
+      );
+    });
+
+    progressFn('Generating proof...');
+    await tx.prove();
+
+    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [childKey]);
+    if (!txHash) return null;
+    return `Subaccount deployed: ${txHash}`;
+  },
+
+  /**
+   * Executes a REMOTE child-lifecycle proposal on the child guard:
+   * RECLAIM_CHILD / DESTROY_CHILD / ENABLE_CHILD_MULTI_SIG.
+   *
+   * The child verifies the parent's approval witness via cross-contract
+   * preconditions, then mutates its own state and marks the proposal
+   * executed in its local `childExecutionRoot`.
+   */
+  async executeChildLifecycleOnchain(
+    params: {
+      childAddress: string;
+      parentAddress: string;
+      executorAddress: string;
+      proposal: Proposal;
+    },
+    sendFn: SendTxFn | null,
+    progressFn: ProgressFn,
+    signFeePayerFn?: SignFeePayerFn
+  ): Promise<string | null> {
+    progressFn('Compiling contract...');
+    configureNetwork();
+    const ok = await compileContract();
+    if (!ok) return null;
+
+    const txType = normalizeTxType(params.proposal.txType);
+    if (
+      txType !== 'reclaimChild' &&
+      txType !== 'destroyChild' &&
+      txType !== 'enableChildMultiSig'
+    ) {
+      throw new Error(`Unsupported child lifecycle txType: ${txType ?? 'unknown'}`);
+    }
+
+    progressFn('Rebuilding parent approval store...');
+    const { approvalStore } = await rebuildStoresFromBackend(params.parentAddress);
+
+    progressFn('Rebuilding child execution map...');
+    const childExecutionMap = await rebuildChildExecutionMap(params.childAddress);
+
+    const proposalStruct = buildProposalStruct({
+      ...params.proposal,
+      destination: 'remote',
+      childAccount: params.proposal.childAccount ?? params.childAddress,
+    }, params.parentAddress);
+    const proposalHash = proposalStruct.hash();
+    const approvalWitness = approvalStore.getWitness(proposalHash);
+    const approvalCount = approvalStore.getCount(proposalHash);
+    const childExecutionWitness = childExecutionMap.getWitness(proposalHash);
+
+    const childZkApp = new MinaGuard(PublicKey.fromBase58(params.childAddress));
+    const executor = PublicKey.fromBase58(params.executorAddress);
+
+    progressFn('Building transaction...');
+    await fetchAccount({ publicKey: executor });
+    await fetchAccount({ publicKey: PublicKey.fromBase58(params.childAddress) });
+    await fetchAccount({ publicKey: PublicKey.fromBase58(params.parentAddress) });
+    clearStaleTransaction();
+    const tx = await Mina.transaction(txSender(executor), async () => {
+      if (txType === 'reclaimChild') {
+        const amount = UInt64.from(params.proposal.data ?? '0');
+        await childZkApp.executeReclaimToParent(
+          proposalStruct,
+          approvalWitness,
+          approvalCount,
+          childExecutionWitness,
+          amount,
+        );
+        return;
+      }
+      if (txType === 'destroyChild') {
+        await childZkApp.executeDestroy(
+          proposalStruct,
+          approvalWitness,
+          approvalCount,
+          childExecutionWitness,
+        );
+        return;
+      }
+      // enableChildMultiSig
+      const enabled = Field(params.proposal.data ?? '0');
+      await childZkApp.executeEnableChildMultiSig(
+        proposalStruct,
+        approvalWitness,
+        approvalCount,
+        childExecutionWitness,
+        enabled,
+      );
+    });
+
+    progressFn('Generating proof...');
+    await tx.prove();
+
+    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    if (!txHash) return null;
+    return `Subaccount action submitted: ${txHash}`;
+  },
+
+  /**
+   * Computes the createChild `data` field: Poseidon.hash([ownersCommitment, threshold, numOwners]).
+   * Exposed so the wizard can compute it without dragging Poseidon into the main thread.
+   */
+  computeCreateChildConfigHash(params: {
+    childOwners: string[];
+    childThreshold: number;
+  }): { ownersCommitment: string; configHash: string; childAddressKeypair: { privateKey: string; publicKey: string } } {
+    const ownerStore = new OwnerStore();
+    for (const addr of params.childOwners) {
+      ownerStore.addSorted(PublicKey.fromBase58(addr));
+    }
+    const ownersCommitment = ownerStore.getCommitment();
+    const numOwners = Field(params.childOwners.length);
+    const threshold = Field(params.childThreshold);
+    const configHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    const childKey = PrivateKey.random();
+    return {
+      ownersCommitment: ownersCommitment.toString(),
+      configHash: configHash.toString(),
+      childAddressKeypair: {
+        privateKey: childKey.toBase58(),
+        publicKey: childKey.toPublicKey().toBase58(),
+      },
+    };
   },
 };
 

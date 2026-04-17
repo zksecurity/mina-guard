@@ -189,6 +189,9 @@ export class MinaGuardIndexer {
       ownerChange: 7,
       thresholdChange: 8,
       delegate: 9,
+      createChild: 10,
+      reclaimChild: 11,
+      enableChildMultiSig: 12,
     };
     events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
 
@@ -259,6 +262,20 @@ export class MinaGuardIndexer {
         await this.applyDelegateEvent(contractId, chainEvent.event);
         return;
       }
+      case 'createChild': {
+        // Informational only; Contract row populated by applySetupEvent and
+        // parent's CREATE_CHILD Proposal marked executed by applyExecutionEvent.
+        return;
+      }
+      case 'reclaimChild': {
+        // Informational only; MINA flowed child→parent on chain. Parent's
+        // Proposal is marked executed by the sibling ExecutionEvent.
+        return;
+      }
+      case 'enableChildMultiSig': {
+        await this.applyEnableChildMultiSigEvent(contractId, chainEvent.event);
+        return;
+      }
       default:
         return;
     }
@@ -269,6 +286,9 @@ export class MinaGuardIndexer {
     contractId: number,
     event: Record<string, unknown>
   ): Promise<void> {
+    const parent = asString(event.parent);
+    const isRoot = parent === null || parent === EMPTY_PUBLIC_KEY;
+
     await prisma.contract.update({
       where: { id: contractId },
       data: {
@@ -277,6 +297,8 @@ export class MinaGuardIndexer {
         numOwners: asNumber(event.numOwners),
         networkId: asString(event.networkId),
         configNonce: 0,
+        parent: isRoot ? null : parent,
+        childMultiSigEnabled: true,
       },
     });
   }
@@ -357,6 +379,8 @@ export class MinaGuardIndexer {
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
+        destination: normalizeDestination(asString(event.destination)),
+        childAccount: asNullableAddress(asString(event.childAccount)),
         createdAtBlock: chainEvent.blockHeight,
         status: 'pending',
       },
@@ -369,6 +393,8 @@ export class MinaGuardIndexer {
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
+        destination: normalizeDestination(asString(event.destination)),
+        childAccount: asNullableAddress(asString(event.childAccount)),
       },
     });
   }
@@ -480,20 +506,44 @@ export class MinaGuardIndexer {
     });
   }
 
-  /** Marks proposals executed when execution events are observed. */
+  /**
+   * Marks proposals executed when execution events are observed.
+   *
+   * LOCAL path: the Proposal row lives under the emitting contract, so
+   * (contractId, proposalHash) resolves it directly.
+   *
+   * REMOTE path: child-lifecycle methods (executeSetupChild, executeReclaim,
+   * executeDestroy, executeEnableChildMultiSig) emit ExecutionEvent on the
+   * child guard, but the Proposal row lives under the parent's contractId.
+   * On a local miss, walk to the child's `parent` and retry.
+   */
   private async applyExecutionEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
     const proposalHash = asString(chainEvent.event.proposalHash);
     if (!proposalHash) return;
 
+    const executedAtBlock = chainEvent.blockHeight;
+
+    const local = await prisma.proposal.updateMany({
+      where: { contractId, proposalHash },
+      data: { status: 'executed', executedAtBlock },
+    });
+    if (local.count > 0) return;
+
+    const child = await prisma.contract.findUnique({
+      where: { id: contractId },
+      select: { parent: true },
+    });
+    if (!child?.parent) return;
+
+    const parent = await prisma.contract.findUnique({
+      where: { address: child.parent },
+      select: { id: true },
+    });
+    if (!parent) return;
+
     await prisma.proposal.updateMany({
-      where: {
-        contractId,
-        proposalHash,
-      },
-      data: {
-        status: 'executed',
-        executedAtBlock: chainEvent.blockHeight,
-      },
+      where: { contractId: parent.id, proposalHash },
+      data: { status: 'executed', executedAtBlock },
     });
   }
 
@@ -570,6 +620,24 @@ export class MinaGuardIndexer {
     await prisma.contract.update({
       where: { id: contractId },
       data: { delegate },
+    });
+  }
+
+  /**
+   * Flips child.childMultiSigEnabled from EnableChildMultiSigEvent on the child guard.
+   * Doubles as the destroy state-flip handler since executeDestroy emits the same
+   * event with enabled=0.
+   */
+  private async applyEnableChildMultiSigEvent(
+    contractId: number,
+    event: Record<string, unknown>
+  ): Promise<void> {
+    const enabled = asNumber(event.enabled);
+    if (enabled === null) return;
+
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: { childMultiSigEnabled: enabled === 1 },
     });
   }
 
@@ -661,4 +729,18 @@ function asNumber(value: unknown): number | null {
   if (!asText) return null;
   const parsed = Number(asText);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Maps Destination field values to human-readable "local"/"remote" strings. */
+function normalizeDestination(value: string | null): string | null {
+  if (value === null) return null;
+  if (value === '0' || value === 'local') return 'local';
+  if (value === '1' || value === 'remote') return 'remote';
+  return value;
+}
+
+/** Returns null for empty-pubkey sentinels so child-lookup queries don't match LOCAL proposals. */
+function asNullableAddress(value: string | null): string | null {
+  if (!value || value === EMPTY_PUBLIC_KEY) return null;
+  return value;
 }

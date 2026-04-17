@@ -9,7 +9,15 @@ export type TxType =
   | 'addOwner'
   | 'removeOwner'
   | 'changeThreshold'
-  | 'setDelegate';
+  | 'setDelegate'
+  | 'createChild'
+  | 'allocateChild'
+  | 'reclaimChild'
+  | 'destroyChild'
+  | 'enableChildMultiSig';
+
+/** Whether a proposal runs locally on its guard or is executed remotely on a child. */
+export type ProposalDestination = 'local' | 'remote';
 
 /** One transfer receiver entry persisted and returned by the backend. */
 export interface ProposalReceiver {
@@ -31,6 +39,8 @@ export interface Proposal {
   expiryBlock: string | null;
   networkId: string | null;
   guardAddress: string | null;
+  destination: ProposalDestination | null;
+  childAccount: string | null;
   status: ProposalStatus;
   approvalCount: number;
   createdAtBlock: number | null;
@@ -60,6 +70,8 @@ export interface ContractSummary {
   proposalCounter: number | null;
   configNonce: number | null;
   delegate: string | null;
+  parent: string | null;
+  childMultiSigEnabled: boolean | null;
   discoveredAt: string;
   lastSyncedAt: string | null;
 }
@@ -105,6 +117,14 @@ export interface NewProposalInput {
   delegate?: string;
   undelegate?: boolean;
   expiryBlock?: number;
+  /** Subaccount the proposal targets (REMOTE proposals or pre-known child for CREATE/ALLOCATE). */
+  childAccount?: string;
+  /** Reclaim amount (nanomina) for reclaimChild. */
+  reclaimAmount?: string;
+  /** Toggle target (true=enable, false=disable) for enableChildMultiSig. */
+  childMultiSigEnable?: boolean;
+  /** Pre-computed Poseidon hash of [ownersCommitment, threshold, numOwners] for createChild. */
+  createChildConfigHash?: string;
 }
 
 export const TX_TYPE_LABELS: Record<TxType, string> = {
@@ -113,15 +133,31 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
   removeOwner: 'Remove Owner',
   changeThreshold: 'Change Threshold',
   setDelegate: 'Set Delegate',
+  createChild: 'Create Subaccount',
+  allocateChild: 'Allocate to Subaccounts',
+  reclaimChild: 'Reclaim from Subaccount',
+  destroyChild: 'Destroy Subaccount',
+  enableChildMultiSig: 'Toggle Subaccount Multi-sig',
 };
 
-/** Proposal type options used by dashboard and new-proposal forms. */
-export const TX_TYPES: { value: TxType; label: string; icon: string }[] = [
+export type TxTypeOption = { value: TxType; label: string; icon: string };
+
+/** Local (single-guard) proposal actions — shown on every owned account's detail page. */
+export const LOCAL_TX_TYPES: TxTypeOption[] = [
   { value: 'transfer', label: 'Send MINA', icon: 'send' },
   { value: 'addOwner', label: 'Add Owner', icon: 'user-plus' },
   { value: 'removeOwner', label: 'Remove Owner', icon: 'user-minus' },
   { value: 'changeThreshold', label: 'Change Threshold', icon: 'shield' },
   { value: 'setDelegate', label: 'Set Delegate', icon: 'link' },
+];
+
+/** Subaccount-management actions — only shown on root (parent) account detail pages. */
+export const CHILD_TX_TYPES: TxTypeOption[] = [
+  { value: 'createChild', label: 'Create Subaccount', icon: 'plus-circle' },
+  { value: 'allocateChild', label: 'Allocate to Subaccounts', icon: 'share' },
+  { value: 'reclaimChild', label: 'Reclaim from Subaccount', icon: 'arrow-down' },
+  { value: 'destroyChild', label: 'Destroy Subaccount', icon: 'trash' },
+  { value: 'enableChildMultiSig', label: 'Toggle Subaccount Multi-sig', icon: 'toggle' },
 ];
 
 /** Truncates long addresses for compact UI chips and labels. */
@@ -161,23 +197,45 @@ export function parseTxType(value: string | null): TxType | null {
       return 'changeThreshold';
     case '4':
       return 'setDelegate';
+    case '5':
+      return 'createChild';
+    case '6':
+      return 'allocateChild';
+    case '7':
+      return 'reclaimChild';
+    case '8':
+      return 'destroyChild';
+    case '9':
+      return 'enableChildMultiSig';
     default:
       return null;
   }
 }
 
+const TX_TYPE_NAME_SET: ReadonlySet<TxType> = new Set<TxType>([
+  'transfer',
+  'addOwner',
+  'removeOwner',
+  'changeThreshold',
+  'setDelegate',
+  'createChild',
+  'allocateChild',
+  'reclaimChild',
+  'destroyChild',
+  'enableChildMultiSig',
+]);
+
 /** Parses backend tx type strings to preserve already-humanized values when present. */
 export function normalizeTxType(value: string | null): TxType | null {
   if (!value) return null;
-  if (
-    value === 'transfer' ||
-    value === 'addOwner' ||
-    value === 'removeOwner' ||
-    value === 'changeThreshold' ||
-    value === 'setDelegate'
-  ) {
-    return value;
-  }
-
+  if (TX_TYPE_NAME_SET.has(value as TxType)) return value as TxType;
   return parseTxType(value);
+}
+
+/** Parses Destination enum values from either numeric Field form or humanized string form. */
+export function normalizeDestination(value: string | null): ProposalDestination | null {
+  if (value === null) return null;
+  if (value === 'local' || value === '0') return 'local';
+  if (value === 'remote' || value === '1') return 'remote';
+  return null;
 }

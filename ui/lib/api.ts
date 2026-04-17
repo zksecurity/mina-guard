@@ -5,6 +5,7 @@ import {
   type OwnerRecord,
   type Proposal,
   type ProposalReceiver,
+  normalizeDestination,
   normalizeTxType,
 } from '@/lib/types';
 
@@ -26,6 +27,15 @@ export async function fetchContracts(): Promise<ContractSummary[]> {
 export async function fetchContract(address: string): Promise<ContractSummary | null> {
   const data = await getJson<Record<string, unknown>>(`/api/contracts/${address}`);
   return data ? toContractSummary(data) : null;
+}
+
+/** Lists direct subaccounts of a parent contract. */
+export async function fetchChildren(parentAddress: string): Promise<ContractSummary[]> {
+  const data = await getJson<Array<Record<string, unknown>>>(
+    `/api/contracts/${parentAddress}/children`,
+  );
+  if (!data) return [];
+  return data.map((item) => toContractSummary(item));
 }
 
 /** Fetches owner list for the selected contract. */
@@ -118,6 +128,8 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
     proposalCounter: asNullableNumber(input.proposalCounter),
     configNonce: asNullableNumber(input.configNonce),
     delegate: asNullableString(input.delegate),
+    parent: asNullableString(input.parent),
+    childMultiSigEnabled: asNullableBoolean(input.childMultiSigEnabled),
     discoveredAt: asString(input.discoveredAt) ?? new Date(0).toISOString(),
     lastSyncedAt: asNullableString(input.lastSyncedAt),
   };
@@ -142,6 +154,8 @@ function toProposal(input: Record<string, unknown>): Proposal {
     expiryBlock: asNullableString(input.expiryBlock),
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
+    destination: normalizeDestination(asNullableString(input.destination)),
+    childAccount: asNullableString(input.childAccount),
     status: asProposalStatus(input.status),
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
@@ -185,6 +199,19 @@ function asBoolean(value: unknown): boolean {
   if (typeof value === 'string') return value === 'true' || value === '1';
   if (typeof value === 'number') return value === 1;
   return false;
+}
+
+/** Converts unknown values to nullable boolean; distinguishes unset vs false. */
+function asNullableBoolean(value: unknown): boolean | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return null;
+  }
+  if (typeof value === 'number') return value === 1;
+  return null;
 }
 
 /** Converts unknown values to nullable strings for optional columns. */
