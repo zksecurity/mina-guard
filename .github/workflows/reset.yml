@@ -18,9 +18,13 @@ jobs:
           submodules: recursive
 
       - name: Reset
+        # Safety net for quiet periods on main: same `down && up` sequence
+        # as deploy.yml, so the stack self-heals from bloat/drift every 3
+        # days even if nothing has been pushed.
         run: |
           chmod +x deploy/deploy.sh
-          ./deploy/deploy.sh reset
+          ./deploy/deploy.sh down
+          ./deploy/deploy.sh up
 
       - name: Wait for services
         run: |

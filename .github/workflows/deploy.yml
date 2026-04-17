@@ -25,8 +25,13 @@ jobs:
           submodules: recursive
 
       - name: Deploy
+        # `down` wipes volumes before `up` rebuilds the stack. Without the
+        # `down`, `up --force-recreate` spins up a fresh lightnet (no volume
+        # → genesis chain) while the app DB keeps its old IndexerCursor and
+        # EventRaw rows — the indexer ends up pointing at a dead chain.
         run: |
           chmod +x deploy/deploy.sh
+          ./deploy/deploy.sh down
           ./deploy/deploy.sh up
 
       - name: Wait for services
