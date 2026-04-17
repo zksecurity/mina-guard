@@ -35,13 +35,37 @@ cp backend/.env.example backend/.env
 cd backend && bunx prisma generate && cd ..
 ```
 
-Prior to testing with lightnet, accounts must have funds. To fund them, add the
-public keys to `dev-helpers/.env` and run:
+#### Lightnet helpers
+
+`dev-helpers/lightnet-up.sh` starts a standalone Mesa lightnet on the host (ports `8080` GraphQL, `8282` archive, `8181` account manager, `5432` Postgres). It first frees those host ports by stopping any colliding containers (`zkao-postgres-dev`, `local-lightnet-1`) and records what it stopped:
+
 ```bash
-cd dev-helpers && bun run cli.ts lightnet-fund
+./dev-helpers/lightnet-up.sh
 ```
 
+`dev-helpers/lightnet-down.sh` stops lightnet and restarts whatever the up script paused, so you're back where you started:
+
+```bash
+./dev-helpers/lightnet-down.sh
+```
+
+Once lightnet is running, accounts must have funds before they can submit transactions. Two ways:
+
+- **From the UI** — once a wallet is connected on a testnet network, the header shows a "Fund" button that calls the backend's `/api/fund` route (which in turn drips from the lightnet account manager).
+- **From the CLI** — add public keys to `dev-helpers/.env` and run:
+  ```bash
+  cd dev-helpers && bun run cli.ts lightnet-fund
+  ```
+
 **NOTE**: To test with a Ledger device, its public key (corresponding to the account index used) must be funded similarly. Only the public key is needed.
+
+**Lightnet resets:** lightnet sometimes stops or wipes its chain state without warning. When that happens the backend's indexed view (contracts, proposals, etc.) no longer matches the live chain, so wipe the DB to start clean:
+
+```bash
+cd backend && bunx prisma db push --force-reset --skip-generate
+```
+
+Then restart lightnet (`./dev-helpers/lightnet-up.sh`) and the backend.
 
 ### Running
 
@@ -115,6 +139,29 @@ docker compose -p local logs -f lightnet   # mina node + archive
 # Tear down
 ./preview-env/local-preview.sh down 1
 ```
+
+### Develop on the remote server via SSH tunnel
+
+When you want the heavy services (lightnet, backend, frontend dev server) to run on the server but iterate from your laptop's browser + Auro wallet.
+
+On the **server**, follow [First-time setup](#first-time-setup) and [Running](#running) so lightnet, backend, and the UI dev server are listening on the default `localhost:*` ports. `backend/.env` and `ui/.env.local` need no changes.
+
+On the **laptop**, open one SSH tunnel that forwards every port the bundle references:
+
+```bash
+ssh -L 3000:localhost:3000 \
+    -L 3001:localhost:3001 \
+    -L 8080:localhost:8080 \
+    -L 8282:localhost:8282 \
+    user@server
+```
+
+Then open `http://localhost:3000` in the browser. The frontend bundle has `localhost:*` baked in for the backend / Mina / archive URLs; both the server-side dev server and the laptop-side browser resolve `localhost` to themselves, so the URLs work on both ends as long as the tunnel is up.
+
+Notes:
+
+- Add a custom network in Auro Wallet pointing at `http://localhost:8080/graphql` and switch to it before connecting.
+- Tunnel dies → the page errors. Run the SSH command inside `tmux`/`screen` if you want it sticky.
 
 ### Architecture
 
