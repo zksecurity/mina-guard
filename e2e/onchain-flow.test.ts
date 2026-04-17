@@ -14,7 +14,6 @@ import {
   getProposals,
   getProposal,
   getApprovals,
-  getChildren,
   checkTxStatus,
   fundContract,
   getIndexerStatus,
@@ -34,9 +33,6 @@ const SHORT_WAIT = netConfig.mode === 'devnet' ? 10_000 : 3_000;
 let accounts: TestAccount[];
 let contractAddress: string;
 let proposalHashes: string[] = [];
-// Shared state for subaccount tests. Captured once from the wizard's
-// "Contract Address" label on step 26 and reused by 27-28.
-let childAddress: string = '';
 
 // Shared page — avoids Web Worker restart (and contract recompilation) between tests
 let sharedPage: Page;
@@ -1196,166 +1192,10 @@ test('25. Verify final state', async () => { const page = sharedPage;
 });
 
 // ---------------------------------------------------------------------------
-// 26. Propose CREATE_CHILD (subaccount) on parent
-//
-// By this point the parent has 1 owner (account1) at threshold 1/1, so the
-// propose() auto-approve is immediately at threshold — no separate approval
-// step is needed before finalizing.
-// ---------------------------------------------------------------------------
-
-test('26. Propose CREATE_CHILD on parent', async () => { const page = sharedPage;
-  log('=== Step 26: Propose CREATE_CHILD ===');
-
-  // Subaccount wizard: /accounts/new?parent=<parent> locks the network and
-  // swaps "Deploy account" for "Propose subaccount".
-  await gotoWithWallet(`/accounts/new?parent=${contractAddress}`, accounts[0]);
-
-  // Wait for wallet
-  await page.waitForFunction(
-    (addr: string) => document.body.textContent?.includes(addr.slice(0, 6)),
-    accounts[0].publicKey,
-    { timeout: 30_000 }
-  );
-
-  // Step 1 → Step 2
-  log('Advancing wizard to step 2...');
-  await page.getByRole('button', { name: /^next$/i }).click();
-
-  // Wait for the pre-generated keypair (step 2 mounts → auto-generate)
-  log('Waiting for child keypair generation...');
-  await page.waitForFunction(
-    () => !document.body.textContent?.includes('Generating keypair'),
-    { timeout: 60_000 }
-  );
-
-  // Capture the new child address from the same locator pattern used by step 1
-  const addressEl = page
-    .getByText('Contract Address', { exact: true })
-    .locator('xpath=following-sibling::p[1]');
-  await addressEl.waitFor({ state: 'visible', timeout: 10_000 });
-  childAddress = (await addressEl.textContent())?.trim() ?? '';
-  expect(childAddress).toMatch(/^B62/);
-  expect(childAddress).not.toBe(contractAddress);
-  log(`Child address: ${childAddress}`);
-
-  // Single-owner (account1) subaccount, threshold 1/1. Pre-filled by the
-  // wizard to the connected wallet's address on mount, so threshold is all
-  // that needs explicit input.
-  log('Filling threshold...');
-  await page.locator('input[type="number"]').first().fill('1');
-
-  // Submit — this is "Propose subaccount" in subaccount mode
-  log('Clicking Propose subaccount...');
-  await page.getByRole('button', { name: /propose subaccount/i }).click();
-  await waitForBanner(page, 'success');
-
-  // Indexer picks up the CREATE_CHILD proposal on the parent
-  await waitForIndexer(
-    'indexer processes CREATE_CHILD proposal',
-    async () => {
-      const proposals = await getProposals(contractAddress);
-      return proposals.some(
-        (p: any) => p.txType === 'createChild' && p.childAccount === childAddress
-      );
-    }
-  );
-
-  const created = (await getProposals(contractAddress)).find(
-    (p: any) => p.txType === 'createChild' && p.childAccount === childAddress
-  );
-  expect(created).toBeDefined();
-  expect(created.destination).toBe('remote');
-  expect(created.approvalCount).toBe(1); // 1/1 threshold already met by proposer auto-approve
-  proposalHashes.push(created.proposalHash);
-  log(
-    `CREATE_CHILD proposal: hash=${created.proposalHash.slice(0, 12)}..., approvals=${created.approvalCount}`
-  );
-});
-
-// ---------------------------------------------------------------------------
-// 27. Finalize subaccount deployment (executeSetupChild on the new child)
-// ---------------------------------------------------------------------------
-
-test('27. Finalize subaccount deployment', async () => { const page = sharedPage;
-  log('=== Step 27: Finalize subaccount deployment ===');
-
-  // The wizard redirects back to the parent detail page after propose. The
-  // "Pending Subaccounts" banner shows a Finalize deployment button that
-  // runs executeSetupChild.
-  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
-  await page.waitForTimeout(SHORT_WAIT);
-
-  const finalizeBtn = page.getByRole('button', { name: /finalize deployment/i });
-  await finalizeBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  log('Clicking Finalize deployment...');
-  await finalizeBtn.click();
-
-  log('Waiting for executeSetupChild transaction...');
-  await waitForBanner(page, 'success');
-
-  // Indexer picks up the child's SetupEvent + the parent's CREATE_CHILD
-  // execution (applyExecutionEvent walks child.parent on a local miss).
-  await waitForIndexer(
-    'indexer discovers child contract + marks parent proposal executed',
-    async () => {
-      const child = await getContract(childAddress);
-      const parent = await getProposal(contractAddress, proposalHashes[proposalHashes.length - 1]);
-      return child !== null && parent?.status === 'executed';
-    },
-    netConfig.mode === 'devnet' ? 2_400_000 : 180_000,
-    netConfig.indexerPollIntervalMs
-  );
-
-  const child = await getContract(childAddress);
-  expect(child.parent).toBe(contractAddress);
-  expect(child.childMultiSigEnabled).toBe(true);
-  expect(child.threshold).toBe(1);
-  expect(child.numOwners).toBe(1);
-  log(
-    `Child contract indexed: parent=${child.parent.slice(0, 12)}..., multiSig=${child.childMultiSigEnabled}, threshold=${child.threshold}/${child.numOwners}`
-  );
-
-  const parentProposal = await getProposal(contractAddress, proposalHashes[proposalHashes.length - 1]);
-  expect(parentProposal.status).toBe('executed');
-  log(`Parent CREATE_CHILD proposal marked executed at block ${parentProposal.executedAtBlock}`);
-});
-
-// ---------------------------------------------------------------------------
-// 28. Verify subaccount shows up in the UI tree + child detail page renders
-// ---------------------------------------------------------------------------
-
-test('28. Verify subaccount in UI tree', async () => { const page = sharedPage;
-  log('=== Step 28: Verify subaccount in UI ===');
-
-  // Root accounts list: the tree view should now show the parent with a
-  // single indented subaccount underneath.
-  await gotoWithWallet('/', accounts[0]);
-  await page.waitForTimeout(SHORT_WAIT);
-
-  const childRow = page.locator('a', {
-    has: page.locator(`text=${childAddress.slice(0, 10)}`),
-  });
-  await expect(childRow).toBeVisible({ timeout: 15_000 });
-  log('Child row visible in account tree');
-
-  // Parent detail page: Subaccounts card should list the child.
-  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
-  await page.waitForTimeout(SHORT_WAIT);
-  await expect(page.locator('text=Subaccounts (1)')).toBeVisible({ timeout: 10_000 });
-  log('Subaccounts (1) card visible on parent dashboard');
-
-  // Child detail page renders with Parent card + multi-sig enabled state.
-  await gotoWithWallet(`/accounts/${childAddress}`, accounts[0]);
-  await page.waitForTimeout(SHORT_WAIT);
-  await expect(page.locator('text=Parent Account')).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator('text=Enabled').first()).toBeVisible({ timeout: 10_000 });
-  log('Child detail renders with Parent card + multi-sig Enabled');
-});
-
-// ---------------------------------------------------------------------------
-// TODO: Restore tests 29-32 (ALLOCATE_CHILD, RECLAIM_CHILD, DESTROY_CHILD
-// final-state verification) once worker-recycling lands. The combined LOCAL +
-// subaccount flow silently hangs `tx.prove()` around step 29; the 8 GB V8
-// heap bump tripled runway but is not enough for the full chain. May need
-// periodic page reload + persistent VK cache to work.
+// TODO: Restore tests 26-32 (CREATE_CHILD, finalize, ALLOCATE_CHILD,
+// RECLAIM_CHILD, DESTROY_CHILD, final-state verification) once worker-
+// recycling lands. The combined LOCAL + subaccount flow silently hangs
+// `tx.prove()` around the 20th proof; the 8 GB V8 heap bump tripled
+// runway but is not enough. Likely needs periodic page reload + persistent
+// VK cache to work.
 // ---------------------------------------------------------------------------
