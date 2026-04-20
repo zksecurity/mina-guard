@@ -2,6 +2,8 @@ import { Mina, PublicKey, fetchAccount, UInt32 } from 'o1js';
 import { MinaGuard } from 'contracts';
 import type { BackendConfig, } from './config.js';
 
+const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
+
 /** Decoded chain event shape consumed by the indexer. */
 export interface ChainEvent {
   type: string;
@@ -115,7 +117,10 @@ export async function fetchVerificationKeyHash(address: string): Promise<string 
   return hash?.toString() ?? null;
 }
 
-/** Reads the current on-chain MinaGuard state needed by the backend/indexer. */
+/** Reads the current on-chain MinaGuard state needed by the backend/indexer.
+ *  Values are normalized for persistence: the empty-pubkey sentinel used by
+ *  root contracts for `parent` is flattened to null so callers don't need to
+ *  re-check it at every write site. */
 export async function fetchOnChainState(
   address: string
 ): Promise<{
@@ -125,7 +130,7 @@ export async function fetchOnChainState(
   ownersCommitment: string;
   nonce: number;
   configNonce: number;
-  parent: string;
+  parent: string | null;
   parentNonce: number;
   childMultiSigEnabled: boolean;
 } | null> {
@@ -140,7 +145,7 @@ export async function fetchOnChainState(
     const ownersCommitment = contract.ownersCommitment.get();
     const nonce = contract.nonce.get();
     const configNonce = contract.configNonce.get();
-    const parent = contract.parent.get();
+    const parent = contract.parent.get().toBase58();
     const parentNonce = contract.parentNonce.get();
     const childMultiSigEnabled = contract.childMultiSigEnabled.get();
     return {
@@ -150,7 +155,7 @@ export async function fetchOnChainState(
       ownersCommitment: ownersCommitment.toString(),
       nonce: Number(nonce.toString()),
       configNonce: Number(configNonce.toString()),
-      parent: parent.toBase58(),
+      parent: parent === EMPTY_PUBLIC_KEY ? null : parent,
       parentNonce: Number(parentNonce.toString()),
       childMultiSigEnabled: childMultiSigEnabled.toString() === '1',
     };
