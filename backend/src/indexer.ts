@@ -4,12 +4,15 @@ import { PublicKey } from 'o1js';
 import {
   configureNetwork,
   discoverCandidateAddresses,
+  fetchBestChainHeaders,
   fetchDecodedContractEvents,
   fetchLatestBlockHeight,
   fetchOnChainState,
   fetchVerificationKeyHash,
   type ChainEvent,
 } from './mina-client.js';
+
+const REORG_DETECTION_WINDOW = 290;
 
 const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
 
@@ -90,6 +93,17 @@ export class MinaGuardIndexer {
       const latestHeight = await fetchLatestBlockHeight(this.config);
       this.status.latestChainHeight = latestHeight;
 
+      // Detect a chain reorg before doing any new work. If detected, rollback
+      // has rewound the cursor and deleted all rows above the fork; bail out
+      // of this tick and let the next one resume syncing from the new cursor.
+      const rolledBackTo = await this.detectAndRollbackReorg();
+      if (rolledBackTo !== null) {
+        this.status.indexedHeight = rolledBackTo;
+        this.status.lastSuccessfulRunAt = new Date().toISOString();
+        this.status.lastError = null;
+        return;
+      }
+
       const indexedHeight = await this.getIndexedHeight();
       this.status.indexedHeight = indexedHeight;
 
@@ -110,6 +124,11 @@ export class MinaGuardIndexer {
     } catch (error) {
       this.status.lastError = error instanceof Error ? error.message : 'Unknown indexer error';
     }
+  }
+
+  /** Instance wrapper around {@link detectAndRollbackReorg} for use inside tick(). */
+  private async detectAndRollbackReorg(): Promise<number | null> {
+    return detectAndRollbackReorg(this.config);
   }
 
   /** Discovers candidate contracts and stores verified MinaGuard addresses. */
@@ -167,8 +186,12 @@ export class MinaGuardIndexer {
     }
   }
 
-  /** Fetches, stores, and applies decoded events for a single contract address. */
-  private async syncSingleContract(
+  /**
+   * Fetches, stores, and applies decoded events for a single contract address.
+   * Public so tests can drive the event-apply pipeline with mocked chain data
+   * (used by the reorg-reconstruction test).
+   */
+  async syncSingleContract(
     contractId: number,
     address: string,
     fromHeight: number,
@@ -210,6 +233,22 @@ export class MinaGuardIndexer {
       const fingerprint = this.fingerprintEvent(address, chainEvent);
       const existingRaw = await prisma.eventRaw.findUnique({ where: { fingerprint } });
       if (existingRaw) continue;
+
+      // Record the block identity before applying the event. Many events may
+      // share a height — upsert so the first writer wins and subsequent ones
+      // are no-ops. If hashes disagree across events at the same height, the
+      // reorg detector will catch that on the next tick.
+      if (chainEvent.blockHash) {
+        await prisma.blockHeader.upsert({
+          where: { height: chainEvent.blockHeight },
+          create: {
+            height: chainEvent.blockHeight,
+            blockHash: chainEvent.blockHash,
+            parentHash: chainEvent.parentHash,
+          },
+          update: {},
+        });
+      }
 
       const eventRaw = await prisma.eventRaw.create({
         data: {
@@ -820,4 +859,105 @@ function normalizeDestination(value: string | null): string | null {
 function asNullableAddress(value: string | null): string | null {
   if (!value || value === EMPTY_PUBLIC_KEY) return null;
   return value;
+}
+
+/**
+ * Compares stored BlockHeader hashes against the daemon's current bestChain.
+ * On mismatch, rolls back all history above the fork point and returns the
+ * fork height. Returns null when stored state agrees with the chain, no
+ * stored headers overlap the detection window, or the daemon is unreachable.
+ *
+ * Exported so tests can drive reorg handling directly without the rest of tick().
+ */
+export async function detectAndRollbackReorg(config: BackendConfig): Promise<number | null> {
+  let headers: Awaited<ReturnType<typeof fetchBestChainHeaders>>;
+  try {
+    headers = await fetchBestChainHeaders(config, REORG_DETECTION_WINDOW);
+  } catch (error) {
+    console.warn(
+      '[indexer] reorg detection skipped: bestChain fetch failed:',
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+  if (headers.length === 0) return null;
+
+  const minHeight = headers[0].height;
+  const maxHeight = headers[headers.length - 1].height;
+
+  const stored = await prisma.blockHeader.findMany({
+    where: { height: { gte: minHeight, lte: maxHeight } },
+    orderBy: { height: 'asc' },
+  });
+  if (stored.length === 0) return null;
+
+  const chainByHeight = new Map(headers.map((h) => [h.height, h]));
+
+  // Walk descending. The fork point is the highest stored height whose hash
+  // matches the chain — every stored row above it is non-canonical and must
+  // be rolled back. We can't stop at the first mismatch: a multi-block reorg
+  // may have a run of mismatches before hitting the last agreed height below.
+  let forkHeight: number | null = null;
+  let highestMismatch: { height: number; stored: string; chain: string } | null = null;
+  for (let i = stored.length - 1; i >= 0; i--) {
+    const s = stored[i];
+    const c = chainByHeight.get(s.height);
+    if (!c) continue;
+    if (c.blockHash === s.blockHash) {
+      forkHeight = s.height;
+      break;
+    }
+    if (highestMismatch === null) {
+      highestMismatch = { height: s.height, stored: s.blockHash, chain: c.blockHash };
+    }
+  }
+
+  if (highestMismatch === null) {
+    // No mismatches anywhere in the overlap — stored state is a prefix of the
+    // chain, nothing to do.
+    return null;
+  }
+
+  if (forkHeight === null) {
+    // Every stored row in the detection window disagrees with the chain. The
+    // reorg is deeper than our visibility; we can't pinpoint the fork safely.
+    // Log loudly and bail — operator intervention needed (Mina finality is
+    // ~290 blocks, so this effectively shouldn't happen in practice).
+    console.error(
+      `[indexer] reorg deeper than detection window (${REORG_DETECTION_WINDOW} blocks); ` +
+      `all overlapping stored headers disagree with chain. Skipping rollback.`,
+    );
+    return null;
+  }
+
+  console.warn(
+    `[indexer] reorg detected: highest mismatch at ${highestMismatch.height} ` +
+    `(stored=${highestMismatch.stored} chain=${highestMismatch.chain}); ` +
+    `rolling back to last agreed height ${forkHeight}`,
+  );
+  await rollbackAboveFork(forkHeight);
+  return forkHeight;
+}
+
+/**
+ * Atomically deletes all append-only history rows above `forkHeight` and
+ * rewinds the indexer cursor. The next tick resumes syncing from fork + 1.
+ * Exported for testing.
+ */
+export async function rollbackAboveFork(forkHeight: number): Promise<void> {
+  await prisma.$transaction([
+    prisma.blockHeader.deleteMany({ where: { height: { gt: forkHeight } } }),
+    prisma.eventRaw.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
+    prisma.contractConfig.deleteMany({ where: { validFromBlock: { gt: forkHeight } } }),
+    prisma.ownerMembership.deleteMany({ where: { validFromBlock: { gt: forkHeight } } }),
+    prisma.proposalExecution.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
+    prisma.approval.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
+    prisma.proposal.deleteMany({ where: { createdAtBlock: { gt: forkHeight } } }),
+    prisma.contract.deleteMany({ where: { discoveredAtBlock: { gt: forkHeight } } }),
+    prisma.indexerCursor.upsert({
+      where: { key: 'indexed_height' },
+      create: { key: 'indexed_height', value: String(forkHeight) },
+      update: { value: String(forkHeight) },
+    }),
+  ]);
 }
