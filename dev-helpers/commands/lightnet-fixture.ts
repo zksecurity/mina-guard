@@ -270,6 +270,26 @@ function createDelegateProposal(
   });
 }
 
+function createNoopProposal(
+  contractAddress: PublicKey,
+  nonce: number,
+  configNonce: number,
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.NOOP,
+    data: Field(0),
+    nonce: Field(nonce),
+    configNonce: Field(configNonce),
+    expiryBlock: Field(0),
+    networkId: NETWORK_ID,
+    guardAddress: contractAddress,
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
+  });
+}
+
 async function submitTransaction(
   label: string,
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
@@ -748,20 +768,29 @@ async function runMinimalScenario(ctx: FixtureRuntimeContext): Promise<FixtureSu
   await propose(vault2, signerB, vault2Transfer, 'Vault 2: propose transfer', deployer);
   await executeTransfer(vault2, signerB, vault2Transfer, 'Vault 2: execute transfer', deployer);
 
-  // Left intentionally unexecuted so the user has an approved-ready proposal
-  // sitting on Vault 2 — useful for manually exercising the execute / delete
-  // flows from the UI.
+  // Both proposals below share the same nonce — whichever executes first
+  // invalidates the other. Demonstrates the noop/delete mechanism end-to-end:
+  // if the user executes the remove-helper they get the governance change; if
+  // they execute the noop instead it burns the nonce and kills the remove.
+  const competingNonce = vault2.nextProposalNonce++;
   const vault2RemoveHelper = createRemoveOwnerProposal(
     vault2.zkAppAddress,
-    vault2.nextProposalNonce++,
+    competingNonce,
     vault2.configNonce,
     signerB.pub,
   );
   await propose(vault2, signerB, vault2RemoveHelper, 'Vault 2: propose remove helper (approved, not executed)', deployer);
 
+  const vault2Noop = createNoopProposal(
+    vault2.zkAppAddress,
+    competingNonce,
+    vault2.configNonce,
+  );
+  await propose(vault2, signerB, vault2Noop, 'Vault 2: propose noop at same nonce (delete candidate)', deployer);
+
   await waitForIndexedContracts(previewBaseUrl, [
     { address: vault1.zkAppAddress.toBase58(), proposalCount: 2 },
-    { address: vault2.zkAppAddress.toBase58(), proposalCount: 2 },
+    { address: vault2.zkAppAddress.toBase58(), proposalCount: 3 },
   ]);
 
   return {
@@ -786,7 +815,8 @@ async function runMinimalScenario(ctx: FixtureRuntimeContext): Promise<FixtureSu
         address: vault2.zkAppAddress.toBase58(),
         scenarios: [
           'proposal 1 executed transfer to the main address',
-          'proposal 2 approved and ready to execute (remove helper signer)',
+          'proposal 2 approved and ready (remove helper signer)',
+          'proposal 3 approved and ready noop at the same nonce as proposal 2 — executing either invalidates the other',
           'main address and helper still own with threshold 1',
         ],
       },

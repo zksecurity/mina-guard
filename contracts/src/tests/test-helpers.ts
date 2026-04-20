@@ -336,6 +336,29 @@ export function createUndelegateProposal(
   });
 }
 
+/** Builds a noop proposal payload — all-empty receivers, data=0, LOCAL. */
+export function createNoopProposal(
+  nonce: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  return new TransactionProposal({
+    receivers: emptyReceivers(),
+    tokenId: Field(0),
+    txType: TxType.NOOP,
+    data: Field(0),
+    nonce,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
+  });
+}
+
 // -- Child Proposal Helpers --------------------------------------------------
 
 /**

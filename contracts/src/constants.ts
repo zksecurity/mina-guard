@@ -24,6 +24,7 @@ export const TxType = {
   RECLAIM_CHILD: Field(7),
   DESTROY_CHILD: Field(8),
   ENABLE_CHILD_MULTI_SIG: Field(9),
+  NOOP: Field(10),
 };
 
 export const Destination = {

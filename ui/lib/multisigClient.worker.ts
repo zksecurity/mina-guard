@@ -371,6 +371,7 @@ function uiTxTypeToField(type: string): InstanceType<typeof Field> {
   if (type === 'reclaimChild') return Field(7);
   if (type === 'destroyChild') return Field(8);
   if (type === 'enableChildMultiSig') return Field(9);
+  if (type === 'noop') return Field(10);
   throw new Error(`Unknown TxType: ${type}`);
 }
 
@@ -941,6 +942,11 @@ const workerApi = {
 
       if (txType === 'setDelegate') {
         await contract.executeDelegate(proposalStruct, approvalWitness, approvalCount);
+        return;
+      }
+
+      if (txType === 'noop') {
+        await contract.executeNoop(proposalStruct, approvalWitness, approvalCount);
         return;
       }
 

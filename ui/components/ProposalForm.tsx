@@ -116,7 +116,7 @@ export default function ProposalForm({
 
   const [validationError, setValidationError] = useState<string | null>(null);
   const transferParse = parseTransferLines(transferLines);
-  const effectiveTxType = deleteMode ? 'transfer' : txType;
+  const effectiveTxType: TxType = deleteMode ? 'noop' : txType;
 
   /** Emits normalized form payload according to the selected transaction type. */
   const handleSubmit = (e: React.FormEvent) => {
@@ -202,11 +202,9 @@ export default function ProposalForm({
       txType: effectiveTxType,
       nonce: parsedNonce,
       receivers:
-        effectiveTxType === 'transfer'
-          ? (deleteMode ? [] : transferParse.receivers)
-          : effectiveTxType === 'allocateChild'
-            ? transferParse.receivers
-            : undefined,
+        effectiveTxType === 'transfer' || effectiveTxType === 'allocateChild'
+          ? transferParse.receivers
+          : undefined,
       newOwner: effectiveTxType === 'addOwner' ? newOwner : undefined,
       removeOwnerAddress: effectiveTxType === 'removeOwner' ? removeOwnerAddress : undefined,
       newThreshold: effectiveTxType === 'changeThreshold' ? newThreshold : undefined,
@@ -231,7 +229,7 @@ export default function ProposalForm({
           <div>
             <p className="font-semibold text-orange-100">Delete pending proposal</p>
             <p className="mt-1 opacity-90">
-              This creates a no-op transfer proposal with the same nonce, so if it executes first it will invalidate the proposal below.
+              This creates a no-op proposal with the same nonce, so if it executes first it will invalidate the proposal below.
             </p>
           </div>
 

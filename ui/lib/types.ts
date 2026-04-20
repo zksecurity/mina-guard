@@ -14,7 +14,8 @@ export type TxType =
   | 'allocateChild'
   | 'reclaimChild'
   | 'destroyChild'
-  | 'enableChildMultiSig';
+  | 'enableChildMultiSig'
+  | 'noop';
 
 /** Whether a proposal runs locally on its guard or is executed remotely on a child. */
 export type ProposalDestination = 'local' | 'remote';
@@ -141,6 +142,7 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
   reclaimChild: 'Reclaim from Subaccount',
   destroyChild: 'Destroy Subaccount',
   enableChildMultiSig: 'Toggle Subaccount Multi-sig',
+  noop: 'Noop',
 };
 
 export type TxTypeOption = { value: TxType; label: string; icon: string };
@@ -210,6 +212,8 @@ export function parseTxType(value: string | null): TxType | null {
       return 'destroyChild';
     case '9':
       return 'enableChildMultiSig';
+    case '10':
+      return 'noop';
     default:
       return null;
   }
@@ -226,6 +230,7 @@ const TX_TYPE_NAME_SET: ReadonlySet<TxType> = new Set<TxType>([
   'reclaimChild',
   'destroyChild',
   'enableChildMultiSig',
+  'noop',
 ]);
 
 /** Parses backend tx type strings to preserve already-humanized values when present. */
@@ -243,13 +248,13 @@ export function normalizeDestination(value: string | null): ProposalDestination 
   return null;
 }
 
-/** True when a proposal was minted via delete-mode (transfer with zero receivers).
- *  Two deletes of the same target have an identical proposalHash, so we never
- *  offer to "delete" one — it would collide with itself on-chain. */
+/** True when a proposal was minted via delete-mode. Noop proposals carry the
+ *  same nonce as the proposal they're intended to invalidate — we never offer
+ *  to "delete" one since a second noop would have an identical proposalHash. */
 export function isDeleteProposal(
-  proposal: Pick<Proposal, 'txType' | 'recipientCount'> | null | undefined
+  proposal: Pick<Proposal, 'txType'> | null | undefined
 ): boolean {
-  return !!proposal && proposal.txType === 'transfer' && proposal.recipientCount === 0;
+  return !!proposal && proposal.txType === 'noop';
 }
 
 /** Smallest nonce strictly greater than every still-racing proposal on this

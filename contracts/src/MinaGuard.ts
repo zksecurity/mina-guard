@@ -800,6 +800,7 @@ export class MinaGuard extends SmartContract {
     const isReclaimChild = proposal.txType.equals(TxType.RECLAIM_CHILD);
     const isDestroyChild = proposal.txType.equals(TxType.DESTROY_CHILD);
     const isEnableChildMultiSig = proposal.txType.equals(TxType.ENABLE_CHILD_MULTI_SIG);
+    const isNoop = proposal.txType.equals(TxType.NOOP);
 
     isTransfer
       .or(isChangeThreshold)
@@ -811,6 +812,7 @@ export class MinaGuard extends SmartContract {
       .or(isReclaimChild)
       .or(isDestroyChild)
       .or(isEnableChildMultiSig)
+      .or(isNoop)
       .assertTrue('Unknown txType');
 
     /*
@@ -827,8 +829,9 @@ export class MinaGuard extends SmartContract {
     const needsPubKey = isAddOwner.or(isRemoveOwner);
     needsPubKey.and(slot0Empty).assertFalse('addOwner/removeOwner requires target pubkey in receivers[0]');
 
-    // Rule 2: CHANGE_THRESHOLD requires empty slot 0
-    isChangeThreshold.and(slot0Empty.not()).assertFalse('changeThreshold must have empty receivers[0]');
+    // Rule 2: CHANGE_THRESHOLD and NOOP require empty slot 0
+    isChangeThreshold.or(isNoop).and(slot0Empty.not())
+      .assertFalse('changeThreshold/noop must have empty receivers[0]');
 
     // Rule 3: Only transfer-like txTypes (TRANSFER, ALLOCATE_CHILD) may use
     // multiple receiver slots. Everything else is limited to at most one.
@@ -979,6 +982,40 @@ export class MinaGuard extends SmartContract {
     this.assertAndIncrementLocalNonce(proposal);
 
     this.executeTransfers(proposal);
+
+    this.markExecuted(approvalWitness);
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+  }
+
+  /** Executes noop proposals — runs all standard checks, burns the nonce,
+   *  and emits ExecutionEvent without any side effect. Used by the delete flow. */
+  @method async executeNoop(
+    proposal: TransactionProposal,
+    approvalWitness: MerkleMapWitness,
+    approvalCount: Field
+  ) {
+    this.assertChildMultiSigEnabledIfChild();
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.NOOP, 'Not a noop tx');
+    this.assertLocalProposal(proposal);
+
+    const proposalHash = proposal.hash();
+
+    this.assertProposalConfigNetworkAndGuard(proposal);
+    this.assertProposalNotExpired(proposal);
+    this.assertNotExecuted(approvalCount);
+    this.assertProposalExists(approvalCount);
+
+    const { threshold } = this.getGovernanceState();
+    this.assertThresholdSatisfied(approvalCount, threshold);
+
+    this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
+    this.assertAndIncrementLocalNonce(proposal);
 
     this.markExecuted(approvalWitness);
 

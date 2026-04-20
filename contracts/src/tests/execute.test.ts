@@ -7,6 +7,7 @@ import {
   proposeTransaction,
   approveTransaction,
   createTransferProposal,
+  createNoopProposal,
   fundAccount,
   getBalance,
   makeOwnerWitness,
@@ -213,6 +214,63 @@ describe('MinaGuard - Execute', () => {
       await txn.prove();
       await txn.sign([ctx.deployerKey]).send();
     }).toThrow('Config nonce mismatch - governance changed since proposal');
+  });
+
+  it('should execute a noop: advances nonce, no balance change', async () => {
+    const noop = createNoopProposal(Field(1), Field(0), ctx.zkAppAddress);
+    const proposalHash = await proposeTransaction(ctx, noop, 0);
+    await approveTransaction(ctx, noop, 1);
+
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
+    const balanceBefore = getBalance(ctx.zkAppAddress);
+
+    const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+    const executeTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeNoop(noop, approvalWitness, Field(3));
+    });
+    await executeTxn.prove();
+    await executeTxn.sign([ctx.deployerKey]).send();
+
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(1));
+    expect(getBalance(ctx.zkAppAddress)).toEqual(balanceBefore);
+  });
+
+  it('should invalidate a competing proposal once the noop executes (delete flow)', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    await fundAccount(ctx, recipient);
+
+    // A real transfer and a delete-noop both submitted at nonce 1.
+    const transfer = createTransferProposal(
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
+      Field(1), Field(0), ctx.zkAppAddress,
+    );
+    const noop = createNoopProposal(Field(1), Field(0), ctx.zkAppAddress);
+
+    await proposeTransaction(ctx, transfer, 0);
+    await approveTransaction(ctx, transfer, 1);
+    const noopHash = await proposeTransaction(ctx, noop, 0);
+    await approveTransaction(ctx, noop, 1);
+
+    // Execute the noop first — it burns nonce 1.
+    const noopWitness = ctx.approvalStore.getWitness(noopHash);
+    const noopTxn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeNoop(noop, noopWitness, Field(3));
+    });
+    await noopTxn.prove();
+    await noopTxn.sign([ctx.deployerKey]).send();
+    ctx.approvalStore.setCount(noopHash, EXECUTED_MARKER);
+
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(1));
+
+    // The competing transfer now has a stale nonce and can't execute.
+    await expect(async () => {
+      const transferWitness = ctx.approvalStore.getWitness(transfer.hash());
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeTransfer(transfer, transferWitness, Field(3));
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+    }).toThrow();
   });
 
   it('should allow anyone to trigger execution (not just owners)', async () => {
