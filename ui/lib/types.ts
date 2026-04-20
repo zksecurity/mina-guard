@@ -46,6 +46,8 @@ export interface Proposal {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  lastApproveError: string | null;
+  lastExecuteError: string | null;
   createdAt: string;
   updatedAt: string;
   receivers: ProposalReceiver[];

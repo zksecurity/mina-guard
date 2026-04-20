@@ -206,12 +206,13 @@ async function signAndSend(
     ? (result.hash as () => string)()
     : result.hash;
 
-  // Log send errors if any
-  if ((result as any).errors?.length) {
-    console.error('[MultisigWorker] Transaction send errors:', (result as any).errors);
+  const errors = (result as any).errors as Array<{ message?: string }> | undefined;
+  if (errors?.length) {
+    const message = errors.map((e) => e?.message ?? 'Unknown error').join('; ');
+    throw new Error(`Transaction rejected by node: ${message}`);
   }
   if ((result as any).status === 'rejected') {
-    console.error('[MultisigWorker] Transaction was rejected by the node');
+    throw new Error('Transaction was rejected by the node');
   }
 
   console.log('[MultisigWorker] Transaction sent:', hash);
@@ -567,10 +568,14 @@ async function broadcastWithLedgerSig(
 
   const [response, error] = await sendZkapp(JSON.stringify(parsed));
   if (error) {
-    console.error('[MultisigWorker] sendZkapp error:', error);
-    return null;
+    const message = typeof error === 'string'
+      ? error
+      : (error as { message?: string })?.message ?? JSON.stringify(error);
+    throw new Error(`Transaction rejected by node: ${message}`);
   }
-  return response?.data?.sendZkapp?.zkapp?.hash ?? null;
+  const hash = response?.data?.sendZkapp?.zkapp?.hash;
+  if (!hash) throw new Error('sendZkapp returned no tx hash');
+  return hash;
 }
 
 /** Dispatches transaction submission to test mode, Ledger, or Auro. */

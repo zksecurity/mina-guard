@@ -72,6 +72,10 @@ model Proposal {
   approvalCount   Int       @default(0)
   createdAtBlock  Int?
   executedAtBlock Int?
+  lastApproveTxHash  String?
+  lastApproveError   String?
+  lastExecuteTxHash  String?
+  lastExecuteError   String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   contract        Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)

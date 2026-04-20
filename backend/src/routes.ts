@@ -46,6 +46,11 @@ const eventsQuerySchema = z.object({
   offset: clampedIntQuerySchema(0, 0, 50_000),
 });
 
+const submissionBodySchema = z.object({
+  action: z.enum(['approve', 'execute']),
+  txHash: z.string().min(1).max(200),
+});
+
 type OwnersQuery = z.infer<typeof ownersQuerySchema>;
 type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
 type EventsQuery = z.infer<typeof eventsQuerySchema>;
@@ -227,6 +232,46 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       }
 
       res.json(serializeProposalRecord(proposal));
+    })
+  );
+
+  /** Records a freshly-submitted approve/execute tx hash for later status polling.
+   *  Clears any prior error for that action so the UI banner disappears on retry. */
+  router.post(
+    '/api/contracts/:address/proposals/:proposalHash/submissions',
+    proposalParamsMiddleware,
+    safe(async (req, res) => {
+      const { address, proposalHash } = proposalParamsSchema.parse(req.params) as ProposalParams;
+      const parsed = submissionBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'Invalid submission payload' });
+        return;
+      }
+      const { action, txHash } = parsed.data;
+
+      const contract = await prisma.contract.findUnique({
+        where: { address },
+        select: { id: true },
+      });
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
+
+      const update = action === 'approve'
+        ? { lastApproveTxHash: txHash, lastApproveError: null }
+        : { lastExecuteTxHash: txHash, lastExecuteError: null };
+
+      const result = await prisma.proposal.updateMany({
+        where: { contractId: contract.id, proposalHash },
+        data: update,
+      });
+
+      if (result.count === 0) {
+        res.status(404).json({ error: 'Proposal not found' });
+        return;
+      }
+      res.json({ ok: true });
     })
   );
 

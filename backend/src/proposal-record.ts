@@ -25,6 +25,8 @@ export interface SerializedProposalRecord {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  lastApproveError: string | null;
+  lastExecuteError: string | null;
   createdAt: Date;
   updatedAt: Date;
   receivers: ProposalReceiverRecord[];
@@ -72,6 +74,8 @@ export function serializeProposalRecord(
     approvalCount: proposal.approvalCount,
     createdAtBlock: proposal.createdAtBlock,
     executedAtBlock: proposal.executedAtBlock,
+    lastApproveError: proposal.lastApproveError,
+    lastExecuteError: proposal.lastExecuteError,
     createdAt: proposal.createdAt,
     updatedAt: proposal.updatedAt,
     receivers,

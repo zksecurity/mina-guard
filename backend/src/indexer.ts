@@ -8,6 +8,7 @@ import {
   fetchLatestBlockHeight,
   fetchOnChainState,
   fetchVerificationKeyHash,
+  fetchZkappTxStatus,
   type ChainEvent,
 } from './mina-client.js';
 
@@ -95,6 +96,10 @@ export class MinaGuardIndexer {
       // blocks were ingested — expiry and nonce/config invalidation are all
       // functions of current on-chain state.
       await this.deriveProposalStatuses(latestHeight);
+
+      // Check in-flight approve/execute submissions and surface any on-chain
+      // failures (e.g. insufficient fee-payer balance, account update errors).
+      await this.pollPendingSubmissions();
 
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
@@ -496,10 +501,15 @@ export class MinaGuardIndexer {
     });
 
     const approvals = await prisma.approval.count({ where: { proposalId: proposal.id } });
+    const matchesTrackedApprove =
+      chainEvent.txHash !== null && proposal.lastApproveTxHash === chainEvent.txHash;
     await prisma.proposal.update({
       where: { id: proposal.id },
       data: {
         approvalCount: approvals,
+        ...(matchesTrackedApprove
+          ? { lastApproveTxHash: null, lastApproveError: null }
+          : {}),
       },
     });
   }
@@ -521,11 +531,26 @@ export class MinaGuardIndexer {
 
     const executedAtBlock = chainEvent.blockHeight;
 
-    const local = await prisma.proposal.updateMany({
-      where: { contractId, proposalHash },
-      data: { status: 'executed', invalidReason: null, executedAtBlock },
+    const markExecutedData = (row: { lastExecuteTxHash: string | null }) => ({
+      status: 'executed',
+      invalidReason: null,
+      executedAtBlock,
+      ...(chainEvent.txHash && row.lastExecuteTxHash === chainEvent.txHash
+        ? { lastExecuteTxHash: null, lastExecuteError: null }
+        : {}),
     });
-    if (local.count > 0) return;
+
+    const localRow = await prisma.proposal.findUnique({
+      where: { contractId_proposalHash: { contractId, proposalHash } },
+      select: { id: true, lastExecuteTxHash: true },
+    });
+    if (localRow) {
+      await prisma.proposal.update({
+        where: { id: localRow.id },
+        data: markExecutedData(localRow),
+      });
+      return;
+    }
 
     const child = await prisma.contract.findUnique({
       where: { id: contractId },
@@ -539,10 +564,16 @@ export class MinaGuardIndexer {
     });
     if (!parent) return;
 
-    await prisma.proposal.updateMany({
-      where: { contractId: parent.id, proposalHash },
-      data: { status: 'executed', invalidReason: null, executedAtBlock },
+    const parentRow = await prisma.proposal.findUnique({
+      where: { contractId_proposalHash: { contractId: parent.id, proposalHash } },
+      select: { id: true, lastExecuteTxHash: true },
     });
+    if (parentRow) {
+      await prisma.proposal.update({
+        where: { id: parentRow.id },
+        data: markExecutedData(parentRow),
+      });
+    }
   }
 
   /** Persists child-parent linkage when a child finishes CREATE_CHILD setup. */
@@ -778,6 +809,49 @@ export class MinaGuardIndexer {
     return child?.parentNonce !== null && child?.parentNonce !== undefined
       ? parsedNonce <= child.parentNonce
       : false;
+  }
+
+  /** Polls each in-flight approve/execute submission's tx status and records
+   *  failures. Successful txs clear via matching Approval/Execution events in
+   *  applyApprovalEvent / applyExecutionEvent, so nothing to do here on success. */
+  private async pollPendingSubmissions(): Promise<void> {
+    const proposals = await prisma.proposal.findMany({
+      where: {
+        OR: [
+          { AND: [{ lastExecuteTxHash: { not: null } }, { lastExecuteError: null }, { status: { not: 'executed' } }] },
+          { AND: [{ lastApproveTxHash: { not: null } }, { lastApproveError: null }] },
+        ],
+      },
+      select: {
+        id: true,
+        status: true,
+        lastApproveTxHash: true,
+        lastApproveError: true,
+        lastExecuteTxHash: true,
+        lastExecuteError: true,
+      },
+    });
+
+    for (const proposal of proposals) {
+      if (proposal.lastExecuteTxHash && !proposal.lastExecuteError && proposal.status !== 'executed') {
+        const result = await fetchZkappTxStatus(this.config, proposal.lastExecuteTxHash);
+        if (result.status === 'failed') {
+          await prisma.proposal.update({
+            where: { id: proposal.id },
+            data: { lastExecuteError: result.reason ?? 'Execution transaction failed on-chain' },
+          });
+        }
+      }
+      if (proposal.lastApproveTxHash && !proposal.lastApproveError) {
+        const result = await fetchZkappTxStatus(this.config, proposal.lastApproveTxHash);
+        if (result.status === 'failed') {
+          await prisma.proposal.update({
+            where: { id: proposal.id },
+            data: { lastApproveError: result.reason ?? 'Approval transaction failed on-chain' },
+          });
+        }
+      }
+    }
   }
 
   /** Returns current indexed block height cursor from DB or configured default start. */

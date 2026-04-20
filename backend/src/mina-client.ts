@@ -164,6 +164,41 @@ export async function fetchOnChainState(
   }
 }
 
+/** Polls the archive for a submitted zkApp tx and classifies it as still-pending,
+ *  included-successfully, or failed (with the failure reason if any). */
+export async function fetchZkappTxStatus(
+  config: BackendConfig,
+  txHash: string
+): Promise<{ status: 'pending' | 'included' | 'failed'; reason?: string }> {
+  const query = `query TxStatus($hash: String!) {
+    zkapps(query: { hash: $hash }, limit: 1) {
+      hash
+      failureReason { failures }
+    }
+  }`;
+
+  try {
+    const data = await graphqlRequest<{
+      zkapps?: Array<{
+        hash: string;
+        failureReason?: { failures?: string[] } | null;
+      }>;
+    }>(query, config.archiveEndpoint, config.archiveFallbackEndpoint, { hash: txHash });
+
+    const row = data.zkapps?.[0];
+    if (!row) return { status: 'pending' };
+
+    const failures = row.failureReason?.failures ?? [];
+    if (failures.length > 0) {
+      return { status: 'failed', reason: failures.join('; ') };
+    }
+    return { status: 'included' };
+  } catch (err) {
+    console.warn('[mina-client] fetchZkappTxStatus failed', txHash, err);
+    return { status: 'pending' };
+  }
+}
+
 /** Fetches decoded MinaGuard events for a contract within a block range. */
 export async function fetchDecodedContractEvents(
   address: string,
@@ -186,13 +221,14 @@ export async function fetchDecodedContractEvents(
 async function graphqlRequest<T>(
   query: string,
   endpoint: string,
-  fallbackEndpoint: string | null
+  fallbackEndpoint: string | null,
+  variables?: Record<string, unknown>,
 ): Promise<T> {
-  const primary = await runGraphqlQuery<T>(endpoint, query);
+  const primary = await runGraphqlQuery<T>(endpoint, query, variables);
   if (primary.ok) return primary.data;
 
   if (fallbackEndpoint) {
-    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query);
+    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query, variables);
     if (fallback.ok) return fallback.data;
   }
 
@@ -202,13 +238,14 @@ async function graphqlRequest<T>(
 /** Executes a single GraphQL POST request and returns typed payload/error. */
 async function runGraphqlQuery<T>(
   endpoint: string,
-  query: string
+  query: string,
+  variables?: Record<string, unknown>,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify(variables ? { query, variables } : { query }),
     });
     if (!response.ok) {
       return { ok: false, error: `${response.status} ${response.statusText}` };

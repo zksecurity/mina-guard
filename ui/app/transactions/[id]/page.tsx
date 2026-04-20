@@ -9,7 +9,7 @@ import {
   formatMina,
   isDeleteProposal,
 } from '@/lib/types';
-import { fetchApprovals } from '@/lib/api';
+import { fetchApprovals, extractTxHash, recordSubmission } from '@/lib/api';
 import {
   approveProposalOnchain,
   executeProposalOnchain,
@@ -111,6 +111,10 @@ export default function TransactionDetailPage() {
         approverAddress: captured.approverAddress,
         proposal: captured.proposal,
       }, onProgress, signer);
+      const txHash = extractTxHash(result);
+      if (txHash) {
+        await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'approve', txHash);
+      }
       if (result) success = true;
       return result;
     });
@@ -148,6 +152,10 @@ export default function TransactionDetailPage() {
           executorAddress: captured.executorAddress,
           proposal: captured.proposal,
         }, onProgress, signer);
+        const txHash = extractTxHash(result);
+        if (txHash) {
+          await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
+        }
         if (result) success = true;
         return result;
       }
@@ -161,6 +169,10 @@ export default function TransactionDetailPage() {
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
       }, onProgress, signer);
+      const txHash = extractTxHash(result);
+      if (txHash) {
+        await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
+      }
       if (result) success = true;
       return result;
     });
@@ -328,6 +340,19 @@ export default function TransactionDetailPage() {
             status={proposal.status}
           />
         </div>
+
+        {proposal.status === 'pending' && (proposal.lastExecuteError || proposal.lastApproveError) && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-300 text-sm space-y-1">
+            <p className="font-semibold">Last attempt failed</p>
+            {proposal.lastExecuteError && (
+              <p className="opacity-90 break-words">Execute: {proposal.lastExecuteError}</p>
+            )}
+            {proposal.lastApproveError && (
+              <p className="opacity-90 break-words">Approve: {proposal.lastApproveError}</p>
+            )}
+            <p className="opacity-75 text-xs pt-1">Use the button below to retry.</p>
+          </div>
+        )}
 
         {proposal.status === 'pending' && (
           <div className="flex gap-3 flex-wrap">
