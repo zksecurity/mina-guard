@@ -66,14 +66,13 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json(indexer.getStatus());
   }));
 
-  /** Lists tracked contracts with owner/proposal aggregate counts. */
+  /** Lists tracked contracts with derived config + aggregate counts. */
   router.get('/api/contracts', safe(async (_req, res) => {
     const contracts = await prisma.contract.findMany({
       orderBy: { discoveredAt: 'desc' },
       include: {
         _count: {
           select: {
-            owners: true,
             proposals: true,
             events: true,
           },
@@ -81,7 +80,17 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       },
     });
 
-    res.json(contracts);
+    const enriched = await Promise.all(
+      contracts.map(async (contract) => {
+        const [config, ownerCount] = await Promise.all([
+          latestContractConfig(contract.id),
+          currentOwnerCount(contract.id),
+        ]);
+        return decorateContract(contract, config, ownerCount);
+      })
+    );
+
+    res.json(enriched);
   }));
 
   /** Returns one tracked contract by base58 address. */
@@ -93,7 +102,6 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       include: {
         _count: {
           select: {
-            owners: true,
             proposals: true,
             events: true,
           },
@@ -106,7 +114,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    res.json(contract);
+    const [config, ownerCount] = await Promise.all([
+      latestContractConfig(contract.id),
+      currentOwnerCount(contract.id),
+    ]);
+    res.json(decorateContract(contract, config, ownerCount));
   }));
 
   /** Lists child contracts (subaccounts) whose `parent` points at the given address. */
@@ -118,7 +130,14 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       orderBy: { discoveredAt: 'asc' },
     });
 
-    res.json(children);
+    const enriched = await Promise.all(
+      children.map(async (child) => {
+        const config = await latestContractConfig(child.id);
+        return decorateContract(child, config, null);
+      })
+    );
+
+    res.json(enriched);
   }));
 
   /** Lists owner records for a contract with optional active-state filter. */
@@ -140,14 +159,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      const owners = await prisma.owner.findMany({
-        where: {
-          contractId: contract.id,
-          ...(active === undefined ? {} : { active }),
-        },
-        orderBy: [{ index: 'asc' }, { createdAt: 'asc' }],
-      });
-
+      const owners = await listOwners(contract.id, active);
       res.json(owners);
     })
   );
@@ -171,22 +183,38 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
+      const latestHeight = indexer.getStatus().latestChainHeight;
+
+      // Status is derived from ProposalExecution existence + expiry vs
+      // latestHeight, so filtering happens in Prisma via relation filters
+      // where possible, and in memory for the expiry-based cases.
+      const dbFilter = buildProposalStatusWhere(status);
+
       const proposals = await prisma.proposal.findMany({
         where: {
           contractId: contract.id,
-          ...(status ? { status } : {}),
+          ...dbFilter,
         },
         include: {
-          receivers: {
-            orderBy: { idx: 'asc' },
-          },
+          receivers: { orderBy: { idx: 'asc' } },
+          executions: { select: { blockHeight: true, txHash: true } },
+          _count: { select: { approvals: true } },
         },
         orderBy: [{ createdAtBlock: 'desc' }, { createdAt: 'desc' }],
-        take: limit,
-        skip: offset,
+        // Over-fetch when status requires in-memory filtering; clamp after.
+        take: needsInMemoryStatusFilter(status) ? undefined : limit,
+        skip: needsInMemoryStatusFilter(status) ? undefined : offset,
       });
 
-      res.json(proposals.map((proposal) => serializeProposalRecord(proposal)));
+      const serialized = proposals.map((p) => serializeProposalRecord(p, latestHeight));
+      const filtered = status
+        ? serialized.filter((s) => s.status === status)
+        : serialized;
+      const paged = needsInMemoryStatusFilter(status)
+        ? filtered.slice(offset, offset + limit)
+        : filtered;
+
+      res.json(paged);
     })
   );
 
@@ -215,9 +243,9 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
           },
         },
         include: {
-          receivers: {
-            orderBy: { idx: 'asc' },
-          },
+          receivers: { orderBy: { idx: 'asc' } },
+          executions: { select: { blockHeight: true, txHash: true } },
+          _count: { select: { approvals: true } },
         },
       });
 
@@ -226,7 +254,8 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      res.json(serializeProposalRecord(proposal));
+      const latestHeight = indexer.getStatus().latestChainHeight;
+      res.json(serializeProposalRecord(proposal, latestHeight));
     })
   );
 
@@ -470,4 +499,97 @@ function compactMeta(input: Record<string, unknown>): Record<string, unknown> {
       return true;
     })
   );
+}
+
+/** Returns the latest ContractConfig snapshot for a contract, or null. */
+async function latestContractConfig(contractId: number) {
+  return prisma.contractConfig.findFirst({
+    where: { contractId },
+    orderBy: [{ validFromBlock: 'desc' }, { eventOrder: 'desc' }],
+  });
+}
+
+/** Returns the count of currently-active owners for a contract. */
+async function currentOwnerCount(contractId: number): Promise<number> {
+  const owners = await listOwners(contractId, true);
+  return owners.length;
+}
+
+type ContractRow = { id: number; address: string; parent: string | null };
+
+/** Merges a Contract row with its latest config snapshot and an owners count for the API shape. */
+function decorateContract<T extends ContractRow & { _count?: Record<string, number> }>(
+  contract: T,
+  config: Awaited<ReturnType<typeof latestContractConfig>>,
+  ownerCount: number | null,
+) {
+  const { _count, ...rest } = contract;
+  return {
+    ...rest,
+    threshold: config?.threshold ?? null,
+    numOwners: config?.numOwners ?? null,
+    configNonce: config?.configNonce ?? null,
+    delegate: config?.delegate ?? null,
+    childMultiSigEnabled: config?.childMultiSigEnabled ?? null,
+    ownersCommitment: config?.ownersCommitment ?? null,
+    networkId: config?.networkId ?? null,
+    ...(_count !== undefined || ownerCount !== null
+      ? {
+          _count: {
+            ...(_count ?? {}),
+            ...(ownerCount !== null ? { owners: ownerCount } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * Returns current owners for a contract by collapsing OwnerMembership history
+ * to the latest row per address. If `active` is defined, filters to `added`
+ * (true) or `removed` (false); otherwise returns every address ever present.
+ */
+async function listOwners(contractId: number, active?: boolean) {
+  const memberships = await prisma.ownerMembership.findMany({
+    where: { contractId },
+    orderBy: [{ validFromBlock: 'desc' }, { eventOrder: 'desc' }, { id: 'desc' }],
+  });
+
+  const latestByAddress = new Map<string, typeof memberships[number]>();
+  for (const m of memberships) {
+    if (!latestByAddress.has(m.address)) latestByAddress.set(m.address, m);
+  }
+
+  const shaped = [...latestByAddress.values()]
+    .map((m) => ({
+      contractId: m.contractId,
+      address: m.address,
+      index: m.index,
+      ownerHash: m.ownerHash,
+      active: m.action === 'added',
+      createdAt: m.createdAt,
+    }))
+    .sort((a, b) => {
+      const ai = a.index ?? Number.MAX_SAFE_INTEGER;
+      const bi = b.index ?? Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+
+  if (active === undefined) return shaped;
+  return shaped.filter((o) => o.active === active);
+}
+
+/**
+ * Maps a status filter to a Prisma `where` fragment where possible. Only
+ * `executed` is expressible directly via the `executions` relation; `pending`
+ * and `expired` require an additional in-memory pass using `latestHeight`.
+ */
+function buildProposalStatusWhere(status: string | undefined) {
+  if (status === 'executed') return { executions: { some: {} } };
+  return {};
+}
+
+function needsInMemoryStatusFilter(status: string | undefined): boolean {
+  return status === 'pending' || status === 'expired';
 }

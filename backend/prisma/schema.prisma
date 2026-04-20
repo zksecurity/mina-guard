@@ -12,72 +12,103 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Contract {
-  id             Int       @id @default(autoincrement())
-  address        String    @unique
-  networkId      String?
-  ownersCommitment String?
-  threshold      Int?
-  numOwners      Int?
-  configNonce    Int?
-  proposalCounter Int?
-  delegate       String?
-  parent         String?
-  childMultiSigEnabled Boolean?
-  discoveredAt   DateTime  @default(now())
-  lastSyncedAt   DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  owners         Owner[]
-  proposals      Proposal[]
-  events         EventRaw[]
+model BlockHeader {
+  height     Int      @id
+  blockHash  String
+  parentHash String
+  indexedAt  DateTime @default(now())
 
-  @@index([parent])
+  @@index([blockHash])
 }
 
-model Owner {
-  id         Int       @id @default(autoincrement())
-  contractId Int
-  address    String
-  ownerHash  String?
-  index      Int?
-  active     Boolean   @default(true)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  contract   Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+model Contract {
+  id                Int       @id @default(autoincrement())
+  address           String    @unique
+  parent            String?
+  discoveredAt      DateTime  @default(now())
+  discoveredAtBlock Int?
+  lastSyncedAt      DateTime?
+  proposalCounter   Int?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  @@unique([contractId, address])
-  @@index([contractId, active])
+  configs     ContractConfig[]
+  memberships OwnerMembership[]
+  proposals   Proposal[]
+  events      EventRaw[]
+
+  @@index([parent])
+  @@index([discoveredAtBlock])
+}
+
+model ContractConfig {
+  id                   Int      @id @default(autoincrement())
+  contractId           Int
+  validFromBlock       Int
+  eventOrder           Int      @default(0)
+  threshold            Int?
+  numOwners            Int?
+  configNonce          Int?
+  delegate             String?
+  childMultiSigEnabled Boolean?
+  ownersCommitment     String?
+  networkId            String?
+  sourceEventId        Int?
+  createdAt            DateTime @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId, validFromBlock(sort: Desc), eventOrder(sort: Desc)])
+  @@index([validFromBlock])
+}
+
+model OwnerMembership {
+  id             Int      @id @default(autoincrement())
+  contractId     Int
+  address        String
+  action         String
+  index          Int?
+  ownerHash      String?
+  validFromBlock Int
+  eventOrder     Int      @default(0)
+  sourceEventId  Int?
+  createdAt      DateTime @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId, address, validFromBlock(sort: Desc), eventOrder(sort: Desc)])
+  @@index([contractId, validFromBlock(sort: Desc)])
+  @@index([validFromBlock])
 }
 
 model Proposal {
-  id              Int       @id @default(autoincrement())
-  contractId      Int
-  proposalHash    String
-  proposer        String?
-  toAddress       String?
-  tokenId         String?
-  txType          String?
-  data            String?
-  uid             String?
-  configNonce     String?
-  expiryBlock     String?
-  networkId       String?
-  guardAddress    String?
-  destination     String?
-  childAccount    String?
-  status          String    @default("pending")
-  approvalCount   Int       @default(0)
-  createdAtBlock  Int?
-  executedAtBlock Int?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  contract        Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  approvals       Approval[]
-  receivers       ProposalReceiver[]
+  id             Int      @id @default(autoincrement())
+  contractId     Int
+  proposalHash   String
+  proposer       String?
+  toAddress      String?
+  tokenId        String?
+  txType         String?
+  data           String?
+  uid            String?
+  configNonce    String?
+  expiryBlock    String?
+  networkId      String?
+  guardAddress   String?
+  destination    String?
+  childAccount   String?
+  createdAtBlock Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  contract   Contract            @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  approvals  Approval[]
+  receivers  ProposalReceiver[]
+  executions ProposalExecution[]
 
   @@unique([contractId, proposalHash])
-  @@index([contractId, status])
+  @@index([contractId, createdAtBlock])
+  @@index([createdAtBlock])
 }
 
 model ProposalReceiver {
@@ -87,8 +118,8 @@ model ProposalReceiver {
   address    String
   amount     String
   createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
   @@unique([proposalId, idx])
   @@index([proposalId])
@@ -99,25 +130,46 @@ model Approval {
   proposalId  Int
   approver    String
   approvalRaw String?
-  blockHeight Int?
+  blockHeight Int
+  eventOrder  Int      @default(0)
   createdAt   DateTime @default(now())
-  proposal    Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
   @@unique([proposalId, approver])
+  @@index([proposalId, blockHeight])
+  @@index([blockHeight])
+}
+
+model ProposalExecution {
+  id          Int      @id @default(autoincrement())
+  proposalId  Int
+  blockHeight Int
+  txHash      String?
+  eventOrder  Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId])
+  @@index([proposalId, blockHeight])
+  @@index([blockHeight])
 }
 
 model EventRaw {
-  id          Int       @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   contractId  Int?
   blockHeight Int
   txHash      String?
   eventType   String
   payload     String
-  fingerprint String    @unique
-  createdAt   DateTime  @default(now())
-  contract    Contract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  fingerprint String   @unique
+  createdAt   DateTime @default(now())
+
+  contract Contract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
 
   @@index([contractId, blockHeight])
+  @@index([blockHeight])
 }
 
 model IndexerCursor {
