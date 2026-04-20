@@ -131,6 +131,24 @@ The helper builds `backend`, `frontend`, and `explorer` sequentially before star
 
 The first uncached frontend build can take a few minutes because Next.js has to compile the heavy `o1js` worker bundle. `local-preview.sh` now prints a periodic heartbeat during long builds so this does not look like a freeze.
 
+Frontend changes do not hot-reload in this Docker preview flow. The container runs a built `next start` app, so after changing files under `ui/`, rebuild the `frontend` image and restart only that service:
+
+```bash
+PR_NUMBER=1 PREVIEW_PORT=10001 docker compose \
+  -f preview-env/docker-compose.preview.yml \
+  -f preview-env/docker-compose.local.yml \
+  -p local \
+  build frontend
+
+PR_NUMBER=1 PREVIEW_PORT=10001 docker compose \
+  -f preview-env/docker-compose.preview.yml \
+  -f preview-env/docker-compose.local.yml \
+  -p local \
+  up -d --no-deps frontend
+```
+
+`build frontend` picks up your latest UI code. `up -d --no-deps frontend` recreates just the frontend container without restarting backend, lightnet, explorer, or Caddy.
+
 To seed coherent test data, prefer the real on-chain fixture helper over direct DB inserts:
 
 ```bash

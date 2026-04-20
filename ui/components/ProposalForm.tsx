@@ -3,7 +3,15 @@
 import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
 import { useEffect, useState } from 'react';
 import { fetchBalance } from '@/lib/api';
-import { formatMina, NewProposalInput, TxType, type ContractSummary } from '@/lib/types';
+import {
+  formatMina,
+  truncateAddress,
+  NewProposalInput,
+  TxType,
+  type ContractSummary,
+  type Proposal,
+} from '@/lib/types';
+import TransactionCard from '@/components/TransactionCard';
 
 interface ProposalFormProps {
   owners: string[];
@@ -22,6 +30,7 @@ interface ProposalFormProps {
   nonceResetKey: string;
   deleteMode?: boolean;
   deleteTargetHash?: string | null;
+  deleteTargetProposal?: Proposal | null;
   onExitDeleteMode?: () => void;
 }
 
@@ -40,6 +49,7 @@ export default function ProposalForm({
   nonceResetKey,
   deleteMode = false,
   deleteTargetHash = null,
+  deleteTargetProposal = null,
   onExitDeleteMode,
 }: ProposalFormProps) {
   const [transferLines, setTransferLines] = useState('');
@@ -217,17 +227,37 @@ export default function ProposalForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {deleteMode && (
-        <div className="rounded-lg border border-orange-400/30 bg-orange-400/10 px-4 py-4 text-sm text-orange-200">
-          <p className="font-semibold text-orange-100">Delete pending proposal</p>
-          <p className="mt-1 opacity-90">
-            This creates a no-op transfer proposal with the same nonce, so if it executes first it will invalidate the pending proposal
-            {deleteTargetHash ? ` ${deleteTargetHash}` : ''}.
-          </p>
+        <div className="rounded-lg border border-orange-400/30 bg-orange-400/10 px-4 py-4 text-sm text-orange-200 space-y-3">
+          <div>
+            <p className="font-semibold text-orange-100">Delete pending proposal</p>
+            <p className="mt-1 opacity-90">
+              This creates a no-op transfer proposal with the same nonce, so if it executes first it will invalidate the proposal below.
+            </p>
+          </div>
+
+          {deleteTargetProposal ? (
+            <div className="space-y-2">
+              <TransactionCard
+                proposal={deleteTargetProposal}
+                index={Number(deleteTargetProposal.nonce) || 0}
+                threshold={currentThreshold}
+                owners={owners}
+              />
+              <p className="text-xs opacity-75 font-mono break-all">
+                Nonce {deleteTargetProposal.nonce} · Hash {truncateAddress(deleteTargetProposal.proposalHash, 8)}
+              </p>
+            </div>
+          ) : deleteTargetHash && (
+            <p className="text-xs opacity-75 font-mono break-all">
+              Hash {deleteTargetHash}
+            </p>
+          )}
+
           {onExitDeleteMode && (
             <button
               type="button"
               onClick={onExitDeleteMode}
-              className="mt-3 text-sm font-medium text-orange-100 underline underline-offset-4 hover:opacity-80"
+              className="text-sm font-medium text-orange-100 underline underline-offset-4 hover:opacity-80"
             >
               Back to normal proposal
             </button>

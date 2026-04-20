@@ -47,6 +47,13 @@ function NewTransactionPageInner() {
   const deleteMode = searchParams.get('mode') === 'delete';
   const deleteTargetHash = searchParams.get('targetProposalHash');
   const deleteTargetNonce = searchParams.get('targetNonce');
+  const deleteTargetProposal = useMemo(
+    () =>
+      deleteMode && deleteTargetHash
+        ? proposals.find((p) => p.proposalHash === deleteTargetHash) ?? null
+        : null,
+    [deleteMode, deleteTargetHash, proposals],
+  );
   const rawType = searchParams.get('type');
   // CREATE_CHILD is wizard-only — bounce back to /accounts/new.
   useEffect(() => {
@@ -212,6 +219,7 @@ function NewTransactionPageInner() {
                 nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
                 deleteMode={deleteMode}
                 deleteTargetHash={deleteTargetHash}
+                deleteTargetProposal={deleteTargetProposal}
                 onExitDeleteMode={handleExitDeleteMode}
               />
             </div>
