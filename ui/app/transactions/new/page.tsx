@@ -7,6 +7,7 @@ import ProposalForm from '@/components/ProposalForm';
 import {
   CHILD_TX_TYPES,
   LOCAL_TX_TYPES,
+  nextAvailableNonce,
   type ContractSummary,
   type NewProposalInput,
   type TxType,
@@ -61,13 +62,26 @@ function NewTransactionPageInner() {
       : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
   const [currentNonce, setCurrentNonce] = useState<number | null>(multisig?.nonce ?? null);
-  const [initialNonce, setInitialNonce] = useState<number | null>(() => {
-    if (deleteMode) {
-      const parsed = Number(deleteTargetNonce ?? '');
-      return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-    }
-    return multisig?.nonce !== null && multisig?.nonce !== undefined ? multisig.nonce + 1 : null;
-  });
+
+  const deleteTargetInitialNonce = (() => {
+    if (!deleteMode) return null;
+    const parsed = Number(deleteTargetNonce ?? '');
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  })();
+  const initialNonce = deleteMode
+    ? deleteTargetInitialNonce
+    : nextAvailableNonce(currentNonce, proposals);
+
+  const takenNonces = useMemo(
+    () =>
+      new Set(
+        proposals
+          .filter((p) => p.status === 'pending')
+          .map((p) => Number(p.nonce))
+          .filter((n) => Number.isFinite(n)),
+      ),
+    [proposals],
+  );
 
   useEffect(() => {
     setTxType(initialType);
@@ -76,38 +90,22 @@ function NewTransactionPageInner() {
   useEffect(() => {
     if (!multisig?.address) {
       setCurrentNonce(null);
-      setInitialNonce(null);
       return;
     }
 
     let cancelled = false;
-    const fallbackNonce = multisig.nonce ?? null;
-    setCurrentNonce(fallbackNonce);
-    if (deleteMode) {
-      const parsed = Number(deleteTargetNonce ?? '');
-      setInitialNonce(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null);
-    } else {
-      setInitialNonce(fallbackNonce === null ? null : fallbackNonce + 1);
-    }
+    setCurrentNonce(multisig.nonce ?? null);
 
     void (async () => {
       const fresh = await fetchContract(multisig.address);
       if (cancelled || !fresh) return;
-
-      const freshNonce = fresh.nonce ?? null;
-      setCurrentNonce(freshNonce);
-      if (deleteMode) {
-        const parsed = Number(deleteTargetNonce ?? '');
-        setInitialNonce(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null);
-      } else {
-        setInitialNonce(freshNonce === null ? null : freshNonce + 1);
-      }
+      setCurrentNonce(fresh.nonce ?? null);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [deleteMode, deleteTargetNonce, multisig?.address, multisig?.nonce]);
+  }, [multisig?.address, multisig?.nonce]);
 
   const handleExitDeleteMode = () => {
     router.replace('/transactions/new?type=transfer');
@@ -210,6 +208,7 @@ function NewTransactionPageInner() {
                 children={children}
                 initialNonce={initialNonce}
                 currentNonce={currentNonce}
+                takenNonces={takenNonces}
                 nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
                 deleteMode={deleteMode}
                 deleteTargetHash={deleteTargetHash}

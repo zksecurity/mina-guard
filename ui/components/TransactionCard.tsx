@@ -5,6 +5,7 @@ import {
   Proposal,
   TX_TYPE_LABELS,
   formatMina,
+  isDeleteProposal,
 } from '@/lib/types';
 import ApprovalProgress from './ApprovalProgress';
 
@@ -30,7 +31,9 @@ export default function TransactionCard({
   owners,
 }: TransactionCardProps) {
   const timeAgo = getTimeAgo(new Date(proposal.createdAt).getTime());
-  const label = proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
+  const label = isDeleteProposal(proposal)
+    ? 'Delete proposal'
+    : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
   return (
     <Link href={`/transactions/${proposal.proposalHash}`}>
@@ -47,7 +50,7 @@ export default function TransactionCard({
                   {proposal.status}
                 </span>
               </div>
-              {proposal.txType === 'transfer' && (
+              {proposal.txType === 'transfer' && !isDeleteProposal(proposal) && (
                 <p className="text-xs text-safe-text mt-0.5">
                   {proposal.recipientCount} recipients · {formatMina(proposal.totalAmount)} MINA
                 </p>

@@ -16,6 +16,9 @@ interface ProposalFormProps {
   children?: ContractSummary[];
   initialNonce: number | null;
   currentNonce: number | null;
+  /** Nonces of still-pending proposals on this contract — used to block
+   *  accidental collisions (except in delete mode, which collides on purpose). */
+  takenNonces?: ReadonlySet<number>;
   nonceResetKey: string;
   deleteMode?: boolean;
   deleteTargetHash?: string | null;
@@ -33,6 +36,7 @@ export default function ProposalForm({
   children = [],
   initialNonce,
   currentNonce,
+  takenNonces,
   nonceResetKey,
   deleteMode = false,
   deleteTargetHash = null,
@@ -116,6 +120,12 @@ export default function ProposalForm({
     }
     if (currentNonce !== null && parsedNonce <= currentNonce) {
       setValidationError(`Nonce must be greater than the current executed nonce (${currentNonce}).`);
+      return;
+    }
+    if (!deleteMode && takenNonces?.has(parsedNonce)) {
+      setValidationError(
+        `Nonce ${parsedNonce} is already used by a pending proposal. Pick a different nonce to avoid colliding with it.`,
+      );
       return;
     }
 
@@ -240,7 +250,9 @@ export default function ProposalForm({
         <p className="text-xs text-safe-text">
           {currentNonce === null
             ? 'Use a nonce greater than the contract’s current executed nonce.'
-            : `Current executed nonce: ${currentNonce}. Use a higher nonce for new proposals.`}
+            : initialNonce !== null
+              ? `Next available nonce: ${initialNonce}. Current executed: ${currentNonce}.`
+              : `Current executed nonce: ${currentNonce}. Use a higher nonce for new proposals.`}
         </p>
       </div>
 

@@ -748,14 +748,16 @@ async function runMinimalScenario(ctx: FixtureRuntimeContext): Promise<FixtureSu
   await propose(vault2, signerB, vault2Transfer, 'Vault 2: propose transfer', deployer);
   await executeTransfer(vault2, signerB, vault2Transfer, 'Vault 2: execute transfer', deployer);
 
+  // Left intentionally unexecuted so the user has an approved-ready proposal
+  // sitting on Vault 2 — useful for manually exercising the execute / delete
+  // flows from the UI.
   const vault2RemoveHelper = createRemoveOwnerProposal(
     vault2.zkAppAddress,
     vault2.nextProposalNonce++,
     vault2.configNonce,
     signerB.pub,
   );
-  await propose(vault2, signerB, vault2RemoveHelper, 'Vault 2: propose remove helper', deployer);
-  await executeOwnerChange(vault2, signerB, vault2RemoveHelper, 'Vault 2: execute remove helper', deployer);
+  await propose(vault2, signerB, vault2RemoveHelper, 'Vault 2: propose remove helper (approved, not executed)', deployer);
 
   await waitForIndexedContracts(previewBaseUrl, [
     { address: vault1.zkAppAddress.toBase58(), proposalCount: 2 },
@@ -784,8 +786,8 @@ async function runMinimalScenario(ctx: FixtureRuntimeContext): Promise<FixtureSu
         address: vault2.zkAppAddress.toBase58(),
         scenarios: [
           'proposal 1 executed transfer to the main address',
-          'proposal 2 executed removal of the helper signer',
-          'main address is now the lone owner with threshold 1',
+          'proposal 2 approved and ready to execute (remove helper signer)',
+          'main address and helper still own with threshold 1',
         ],
       },
     ],

@@ -242,3 +242,28 @@ export function normalizeDestination(value: string | null): ProposalDestination 
   if (value === 'remote' || value === '1') return 'remote';
   return null;
 }
+
+/** True when a proposal was minted via delete-mode (transfer with zero receivers).
+ *  Two deletes of the same target have an identical proposalHash, so we never
+ *  offer to "delete" one — it would collide with itself on-chain. */
+export function isDeleteProposal(
+  proposal: Pick<Proposal, 'txType' | 'recipientCount'> | null | undefined
+): boolean {
+  return !!proposal && proposal.txType === 'transfer' && proposal.recipientCount === 0;
+}
+
+/** Smallest nonce strictly greater than every still-racing proposal on this
+ *  contract. Skips expired/invalidated rows — their nonces are reusable.
+ *  Returns null when the contract's nonce is unknown. */
+export function nextAvailableNonce(
+  contractNonce: number | null,
+  proposals: ReadonlyArray<Pick<Proposal, 'nonce' | 'status'>>,
+): number | null {
+  if (contractNonce === null) return null;
+  const maxPending = proposals.reduce((acc, p) => {
+    if (p.status !== 'pending') return acc;
+    const n = Number(p.nonce ?? '');
+    return Number.isFinite(n) ? Math.max(acc, n) : acc;
+  }, contractNonce);
+  return maxPending + 1;
+}

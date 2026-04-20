@@ -7,6 +7,7 @@ import ApprovalProgress from '@/components/ApprovalProgress';
 import {
   TX_TYPE_LABELS,
   formatMina,
+  isDeleteProposal,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
 import {
@@ -79,7 +80,12 @@ export default function TransactionDetailPage() {
     proposal.configNonce !== String(multisig.configNonce);
   const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved && !isConfigStale;
   const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold && !isConfigStale;
-  const canDelete = !!proposal && proposal.status === 'pending' && isOwner && proposal.nonce !== null;
+  const canDelete =
+    !!proposal &&
+    proposal.status === 'pending' &&
+    isOwner &&
+    proposal.nonce !== null &&
+    !isDeleteProposal(proposal);
   const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
   /** Submits an on-chain approveProposal transaction. */
@@ -208,7 +214,9 @@ export default function TransactionDetailPage() {
     invalidated: 'text-orange-400 bg-orange-400/10 border-orange-400/20',
   };
 
-  const txLabel = proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
+  const txLabel = isDeleteProposal(proposal)
+    ? 'Delete proposal'
+    : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
   return (
     <div>
@@ -252,7 +260,7 @@ export default function TransactionDetailPage() {
             <DetailRow label="Proposal Hash" value={proposal.proposalHash} mono copyable />
             <DetailRow label="Nonce" value={proposal.nonce ?? '-'} mono copyable />
             <DetailRow label="Proposed by" value={proposal.proposer ?? '-'} mono copyable />
-            {proposal.txType === 'transfer' && (
+            {proposal.txType === 'transfer' && !isDeleteProposal(proposal) && (
               <>
                 <DetailRow label="Recipients" value={String(proposal.recipientCount)} />
                 <DetailRow label="Total Amount" value={`${formatMina(proposal.totalAmount)} MINA`} />

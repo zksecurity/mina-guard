@@ -12,6 +12,8 @@ import {
   deployAndSetupContract,
   generateKeypair,
 } from '@/lib/multisigClient';
+import { fetchProposals } from '@/lib/api';
+import { nextAvailableNonce, type Proposal } from '@/lib/types';
 import { saveAccountName, savePendingSubaccount } from '@/lib/storage';
 
 const NETWORKS = [
@@ -45,6 +47,21 @@ function CreateAccountWizard() {
     () => (parentAddress ? contracts.find((c) => c.address === parentAddress) ?? null : null),
     [contracts, parentAddress],
   );
+
+  const [parentProposals, setParentProposals] = useState<Proposal[]>([]);
+  useEffect(() => {
+    if (!parentAddress) {
+      setParentProposals([]);
+      return;
+    }
+    let cancelled = false;
+    fetchProposals(parentAddress).then((list) => {
+      if (!cancelled) setParentProposals(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [parentAddress]);
 
   const [step, setStep] = useState<1 | 2>(1);
 
@@ -170,7 +187,7 @@ function CreateAccountWizard() {
         networkId: parentContract.networkId!,
         input: {
           txType: 'createChild',
-          nonce: (parentContract.nonce ?? 0) + 1,
+          nonce: nextAvailableNonce(parentContract.nonce, parentProposals) ?? 1,
           childAccount: childAddress,
           createChildConfigHash: configHash,
         },
