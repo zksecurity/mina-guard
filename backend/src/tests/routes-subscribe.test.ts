@@ -176,7 +176,9 @@ describe('POST /api/subscribe', () => {
 
 describe('DELETE /api/subscribe/:address', () => {
   test('removes the contract and cascades its related rows', async () => {
-    const contract = await prisma.contract.create({ data: { address: subscribedAddress } });
+    const contract = await prisma.contract.create({
+      data: { address: subscribedAddress, ready: true },
+    });
     await prisma.contractConfig.create({
       data: { contractId: contract.id, validFromBlock: 1, networkId: '1' },
     });
@@ -221,6 +223,84 @@ describe('DELETE /api/subscribe/:address', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe('Invalid contract address');
+  });
+});
+
+describe('DELETE /api/subscribe/:address child cascade', () => {
+  test('also deletes children and their related rows', async () => {
+    const parent = await prisma.contract.create({
+      data: { address: subscribedAddress, ready: true },
+    });
+    const childAddress = PrivateKey.random().toPublicKey().toBase58();
+    const child = await prisma.contract.create({
+      data: { address: childAddress, parent: subscribedAddress, ready: true },
+    });
+
+    await prisma.contractConfig.create({
+      data: { contractId: child.id, validFromBlock: 2, networkId: '1' },
+    });
+    await prisma.eventRaw.create({
+      data: {
+        contractId: child.id,
+        blockHeight: 2,
+        eventType: 'x',
+        payload: '{}',
+        fingerprint: `fp-child-${child.id}`,
+      },
+    });
+
+    const res = await del(`/api/subscribe/${subscribedAddress}`);
+    expect(res.status).toBe(200);
+
+    expect(await prisma.contract.findUnique({ where: { id: parent.id } })).toBeNull();
+    expect(await prisma.contract.findUnique({ where: { id: child.id } })).toBeNull();
+    expect(await prisma.contractConfig.count({ where: { contractId: child.id } })).toBe(0);
+    expect(await prisma.eventRaw.count({ where: { contractId: child.id } })).toBe(0);
+  });
+});
+
+describe('ready flag visibility', () => {
+  test('GET /api/contracts hides unready rows', async () => {
+    const readyAddress = PrivateKey.random().toPublicKey().toBase58();
+    const unreadyAddress = PrivateKey.random().toPublicKey().toBase58();
+    await prisma.contract.create({ data: { address: readyAddress, ready: true } });
+    await prisma.contract.create({ data: { address: unreadyAddress, ready: false } });
+
+    const res = await fetch(`${baseUrl}/api/contracts`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Array<{ address: string }>;
+    const addresses = body.map((c) => c.address);
+    expect(addresses).toContain(readyAddress);
+    expect(addresses).not.toContain(unreadyAddress);
+  });
+
+  test('GET /api/contracts/:address returns 404 for unready rows', async () => {
+    const unreadyAddress = PrivateKey.random().toPublicKey().toBase58();
+    await prisma.contract.create({ data: { address: unreadyAddress, ready: false } });
+
+    const res = await fetch(`${baseUrl}/api/contracts/${unreadyAddress}`);
+    expect(res.status).toBe(404);
+  });
+
+  test('GET /api/contracts/:parent/children hides unready children', async () => {
+    const parentAddress = PrivateKey.random().toPublicKey().toBase58();
+    const readyChild = PrivateKey.random().toPublicKey().toBase58();
+    const unreadyChild = PrivateKey.random().toPublicKey().toBase58();
+
+    await prisma.contract.create({ data: { address: parentAddress, ready: true } });
+    await prisma.contract.create({
+      data: { address: readyChild, parent: parentAddress, ready: true },
+    });
+    await prisma.contract.create({
+      data: { address: unreadyChild, parent: parentAddress, ready: false },
+    });
+
+    const res = await fetch(`${baseUrl}/api/contracts/${parentAddress}/children`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Array<{ address: string }>;
+    const addresses = body.map((c) => c.address);
+    expect(addresses).toContain(readyChild);
+    expect(addresses).not.toContain(unreadyChild);
   });
 });
 

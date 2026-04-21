@@ -173,18 +173,29 @@ export class MinaGuardIndexer {
   }
 
   /**
-   * Backfills events for a newly tracked contract from a small margin before
-   * the current indexed height. The contract was presumed deployed within the
-   * bestChain window (~290 blocks), so scanning 300 blocks back is sufficient
-   * and stays cheap on mainnet. Exposed for use by the subscribe API route.
+   * Backfills events for a newly tracked contract, then flips Contract.ready
+   * so the row becomes visible to API read routes. In full mode the backfill
+   * spans 300 blocks (bestChain window — the contract was just discovered there,
+   * so any earlier events are out of reorg range anyway). In lite mode the
+   * backfill starts at config.indexStartHeight (default 0) so a cold-started
+   * indexer pulls full history for any user-subscribed contract.
+   *
+   * Exposed for use by the subscribe API route and the auto-subscribe path.
    */
   async backfillContract(contractId: number, address: string): Promise<void> {
     const indexedHeight = await this.getIndexedHeight();
-    const backfillFrom = Math.max(0, indexedHeight - 300);
+    const backfillFrom =
+      this.config.indexerMode === 'lite'
+        ? this.config.indexStartHeight
+        : Math.max(0, indexedHeight - 300);
     if (indexedHeight > backfillFrom) {
       console.log(`[indexer] backfilling events for ${address} from block ${backfillFrom} to ${indexedHeight}`);
       await this.syncSingleContract(contractId, address, backfillFrom, indexedHeight);
     }
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: { ready: true },
+    });
   }
 
   /** Indexes events for all tracked contracts across the requested block range. */
@@ -652,6 +663,9 @@ export class MinaGuardIndexer {
     });
     if (local) {
       await this.upsertProposalExecution(local.id, blockHeight, txHash, eventOrder);
+      if (this.config.indexerMode === 'lite') {
+        await this.maybeAutoSubscribeChild(contractId, proposalHash);
+      }
       return;
     }
 
@@ -687,6 +701,40 @@ export class MinaGuardIndexer {
       create: { proposalId, blockHeight, txHash, eventOrder },
       update: { blockHeight, txHash, eventOrder },
     });
+  }
+
+  /**
+   * Lite-mode auto-subscribe: when a CREATE_CHILD proposal is marked executed on
+   * a parent we already track, insert a Contract row for the child and backfill
+   * its history. No-op for non-CREATE_CHILD executions or if the child is already
+   * tracked.
+   */
+  private async maybeAutoSubscribeChild(
+    parentContractId: number,
+    proposalHash: string,
+  ): Promise<void> {
+    const proposal = await prisma.proposal.findUnique({
+      where: { contractId_proposalHash: { contractId: parentContractId, proposalHash } },
+      select: { txType: true, childAccount: true },
+    });
+    if (!proposal || proposal.txType !== '5' || !proposal.childAccount) return;
+
+    const parent = await prisma.contract.findUnique({
+      where: { id: parentContractId },
+      select: { address: true },
+    });
+    if (!parent) return;
+
+    const existing = await prisma.contract.findUnique({
+      where: { address: proposal.childAccount },
+    });
+    if (existing) return;
+
+    const child = await prisma.contract.create({
+      data: { address: proposal.childAccount, parent: parent.address },
+    });
+    console.log(`[indexer] auto-subscribing child ${proposal.childAccount} of parent ${parent.address}`);
+    await this.backfillContract(child.id, proposal.childAccount);
   }
 
   /** Records an owner add/remove governance result and appends a ContractConfig snapshot. */

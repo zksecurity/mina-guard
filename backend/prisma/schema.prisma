@@ -25,6 +25,7 @@ model Contract {
   id                Int       @id @default(autoincrement())
   address           String    @unique
   parent            String?
+  ready             Boolean   @default(false)
   discoveredAt      DateTime  @default(now())
   discoveredAtBlock Int?
   lastSyncedAt      DateTime?

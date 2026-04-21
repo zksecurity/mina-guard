@@ -70,6 +70,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   /** Lists tracked contracts with derived config + aggregate counts. */
   router.get('/api/contracts', safe(async (_req, res) => {
     const contracts = await prisma.contract.findMany({
+      where: { ready: true },
       orderBy: { discoveredAt: 'desc' },
       include: {
         _count: {
@@ -110,7 +111,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       },
     });
 
-    if (!contract) {
+    if (!contract || !contract.ready) {
       res.status(404).json({ error: 'Contract not found' });
       return;
     }
@@ -127,7 +128,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     const { address } = addressParamsSchema.parse(req.params) as AddressParams;
 
     const children = await prisma.contract.findMany({
-      where: { parent: address },
+      where: { parent: address, ready: true },
       orderBy: { discoveredAt: 'asc' },
     });
 
@@ -152,10 +153,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true },
+        select: { id: true, ready: true },
       });
 
-      if (!contract) {
+      if (!contract || !contract.ready) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -176,10 +177,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true },
+        select: { id: true, ready: true },
       });
 
-      if (!contract) {
+      if (!contract || !contract.ready) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -228,10 +229,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true },
+        select: { id: true, ready: true },
       });
 
-      if (!contract) {
+      if (!contract || !contract.ready) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -269,10 +270,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true },
+        select: { id: true, ready: true },
       });
 
-      if (!contract) {
+      if (!contract || !contract.ready) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -312,10 +313,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true },
+        select: { id: true, ready: true },
       });
 
-      if (!contract) {
+      if (!contract || !contract.ready) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -497,6 +498,15 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
+    // Cascade to children: the MinaGuard hierarchy is capped at two levels, so
+    // one layer of child deletion is sufficient (no recursion needed).
+    const children = await prisma.contract.findMany({
+      where: { parent: contract.address },
+      select: { id: true },
+    });
+    for (const child of children) {
+      await deleteContract(child.id);
+    }
     await deleteContract(contract.id);
     res.json({ ok: true });
   }));

@@ -42,12 +42,12 @@ async function clearDatabase() {
 async function seedDatabase() {
   await prisma.contract.createMany({
     data: [
-      { address: contractAddress },
-      { address: otherContractAddress },
+      { address: contractAddress, ready: true },
+      { address: otherContractAddress, ready: true },
       // Two subaccounts of `contractAddress`. childTwo has multi-sig disabled
       // (e.g. after a destroy) so the API exposes both states.
-      { address: childOneAddress, parent: contractAddress },
-      { address: childTwoAddress, parent: contractAddress },
+      { address: childOneAddress, parent: contractAddress, ready: true },
+      { address: childTwoAddress, parent: contractAddress, ready: true },
     ],
   });
 
