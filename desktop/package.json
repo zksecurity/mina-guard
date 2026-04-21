@@ -5,16 +5,59 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/preload.js dist/ && mkdir -p dist/auro && cp src/auro/page.html dist/auro/",
-    "build:ui": "cd ../ui && next build",
-    "dev": "tsc -p tsconfig.json && cp src/preload.js dist/ && mkdir -p dist/auro && cp src/auro/page.html dist/auro/ && electron --no-sandbox ."
+    "prepare:backend": "cd ../backend && bun run prisma:generate:sqlite && tsc -p tsconfig.json && rm -rf dist/generated && cp -R src/generated dist/generated && cd ../desktop && node scripts/fix-contracts-esm.mjs",
+    "prepare:schema-sql": "mkdir -p assets && cd ../backend && node scripts/check-schema-sync.mjs && DATABASE_URL=file:/tmp/mg-schema-dummy.db bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.sqlite.prisma --script > ../desktop/assets/schema.sql",
+    "prepare:assets": "bun run prepare:schema-sql && mkdir -p dist/assets && cp assets/schema.sql dist/assets/schema.sql",
+    "build:ui": "NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050 bash -c 'cd ../ui && next build'",
+    "build:electron": "tsc -p tsconfig.json && cp src/preload.js dist/ && mkdir -p dist/auro && cp src/auro/page.html dist/auro/",
+    "build": "bun run prepare:backend && bun run prepare:assets && bun run build:ui && bun run build:electron",
+    "dev": "bun run prepare:backend && bun run prepare:assets && bun run build:electron && electron --no-sandbox .",
+    "package": "bun run build && electron-builder --dir"
   },
   "dependencies": {
+    "backend": "workspace:*",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
     "next": "^14.2.0",
     "ui": "workspace:*"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
     "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.8.2"
+  },
+  "build": {
+    "appId": "xyz.zksecurity.minaguard",
+    "productName": "MinaGuard",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "package.json",
+      {
+        "from": "../backend/dist",
+        "to": "backend/dist"
+      },
+      {
+        "from": "../backend/src/generated/prisma",
+        "to": "backend/generated/prisma"
+      },
+      {
+        "from": "../ui/.next",
+        "to": "ui/.next"
+      },
+      {
+        "from": "../ui/public",
+        "to": "ui/public"
+      }
+    ],
+    "asarUnpack": [
+      "backend/generated/prisma/**",
+      "backend/dist/**",
+      "dist/assets/**"
+    ]
   }
 }
