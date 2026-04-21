@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { PublicKey, fetchAccount } from 'o1js';
 
 import { prisma } from './db.js';
-import type { MinaGuardIndexer } from './indexer.js';
+import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
+import { fetchLatestBlockHeight, fetchVerificationKeyHash } from './mina-client.js';
 import { serializeProposalRecord } from './proposal-record.js';
 import {
   acquireLightnetAccount,
@@ -428,6 +429,76 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       const status = error instanceof LightnetAcquireError ? 502 : 500;
       res.status(status).json({ error: message });
     }
+  }));
+
+  /**
+   * Subscribes the indexer to a contract address. The address must resolve to
+   * an on-chain account carrying a verification key. Idempotent: re-subscribing
+   * an already-tracked address returns the existing row. Lite mode only —
+   * full mode auto-discovers contracts on every tick.
+   */
+  router.post('/api/subscribe', safe(async (req, res) => {
+    if (config?.indexerMode !== 'lite') {
+      res.status(404).json({ error: 'Subscribe API is only available in lite mode' });
+      return;
+    }
+
+    const { address } = req.body as { address?: string };
+    if (!address || typeof address !== 'string') {
+      res.status(400).json({ error: 'address is required' });
+      return;
+    }
+
+    try {
+      PublicKey.fromBase58(address);
+    } catch {
+      res.status(400).json({ error: 'Invalid Mina public key' });
+      return;
+    }
+
+    const existing = await prisma.contract.findUnique({ where: { address } });
+    if (existing) {
+      res.json(existing);
+      return;
+    }
+
+    const verificationKeyHash = await fetchVerificationKeyHash(address);
+    if (!verificationKeyHash) {
+      res.status(404).json({ error: 'No verification key found for address; not a zkApp' });
+      return;
+    }
+
+    const latestHeight = await fetchLatestBlockHeight(config);
+    const created = await prisma.contract.create({
+      data: { address, discoveredAtBlock: latestHeight },
+    });
+
+    await indexer.backfillContract(created.id, address);
+
+    res.json(created);
+  }));
+
+  /**
+   * Unsubscribes from a contract and deletes all of its tracked history
+   * (events, configs, memberships, proposals, approvals, executions).
+   * Lite mode only.
+   */
+  router.delete('/api/subscribe/:address', addressParamsMiddleware, safe(async (req, res) => {
+    if (config?.indexerMode !== 'lite') {
+      res.status(404).json({ error: 'Subscribe API is only available in lite mode' });
+      return;
+    }
+
+    const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+
+    const contract = await prisma.contract.findUnique({ where: { address } });
+    if (!contract) {
+      res.status(404).json({ error: 'Contract not found' });
+      return;
+    }
+
+    await deleteContract(contract.id);
+    res.json({ ok: true });
   }));
 
   router.use((error: unknown, req: any, res: any, _next: any) => {

@@ -115,13 +115,16 @@ export class MinaGuardIndexer {
       // between the latestHeight read and the bestChain call. Clamped to 290
       // (Mina's bestChain cap); reorg safety is handled by detectAndRollbackReorg
       // above, which rewinds IndexerCursor on fork — the next tick's window
-      // naturally re-covers the reorged range.
-      const DISCOVERY_MARGIN = 5;
-      const discoveryWindow = Math.max(
-        1,
-        Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
-      );
-      await this.discoverContracts(discoveryWindow, latestHeight);
+      // naturally re-covers the reorged range. Lite mode skips discovery
+      // entirely and tracks only contracts added via the /subscribe route.
+      if (this.config.indexerMode === 'full') {
+        const DISCOVERY_MARGIN = 5;
+        const discoveryWindow = Math.max(
+          1,
+          Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
+        );
+        await this.discoverContracts(discoveryWindow, latestHeight);
+      }
 
       if (toHeight >= fromHeight) {
         await this.syncKnownContracts(fromHeight, toHeight);
@@ -163,18 +166,25 @@ export class MinaGuardIndexer {
         data: { address, discoveredAtBlock: latestHeight },
       });
 
-      // Backfill events for the newly discovered contract. The contract was
-      // deployed within the bestChain window (~290 blocks), so scanning from
-      // a small margin before discovery is sufficient and stays cheap on mainnet.
-      const indexedHeight = await this.getIndexedHeight();
-      const backfillFrom = Math.max(0, indexedHeight - 300);
-      if (indexedHeight > backfillFrom) {
-        console.log(`[indexer] backfilling events for ${address} from block ${backfillFrom} to ${indexedHeight}`);
-        await this.syncSingleContract(created.id, address, backfillFrom, indexedHeight);
-      }
+      await this.backfillContract(created.id, address);
     }
 
     this.status.discoveredContracts = await prisma.contract.count();
+  }
+
+  /**
+   * Backfills events for a newly tracked contract from a small margin before
+   * the current indexed height. The contract was presumed deployed within the
+   * bestChain window (~290 blocks), so scanning 300 blocks back is sufficient
+   * and stays cheap on mainnet. Exposed for use by the subscribe API route.
+   */
+  async backfillContract(contractId: number, address: string): Promise<void> {
+    const indexedHeight = await this.getIndexedHeight();
+    const backfillFrom = Math.max(0, indexedHeight - 300);
+    if (indexedHeight > backfillFrom) {
+      console.log(`[indexer] backfilling events for ${address} from block ${backfillFrom} to ${indexedHeight}`);
+      await this.syncSingleContract(contractId, address, backfillFrom, indexedHeight);
+    }
   }
 
   /** Indexes events for all tracked contracts across the requested block range. */
@@ -947,6 +957,21 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
   );
   await rollbackAboveFork(forkHeight);
   return forkHeight;
+}
+
+/**
+ * Atomically deletes a single contract and all of its tracked history
+ * (events, configs, memberships, proposals and their executions/approvals).
+ * Used by the unsubscribe API route in lite mode.
+ *
+ * Relation cascades cover everything except EventRaw (SetNull), so we delete
+ * events explicitly up front.
+ */
+export async function deleteContract(contractId: number): Promise<void> {
+  await prisma.$transaction([
+    prisma.eventRaw.deleteMany({ where: { contractId } }),
+    prisma.contract.delete({ where: { id: contractId } }),
+  ]);
 }
 
 /**

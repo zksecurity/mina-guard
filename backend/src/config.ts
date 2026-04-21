@@ -10,6 +10,7 @@ export interface BackendConfig {
   indexPollIntervalMs: number;
   indexStartHeight: number;
   minaguardVkHash: string | null;
+  indexerMode: 'full' | 'lite';
 }
 
 /** Throws if a required environment variable is missing or empty. */
@@ -38,6 +39,12 @@ export function loadConfig(): BackendConfig {
   const archiveEndpoint = requireEnv('ARCHIVE_ENDPOINT');
   const lightnetAccountManager = process.env.LIGHTNET_ACCOUNT_MANAGER;
 
+  const rawMode = process.env.INDEXER_MODE ?? 'full';
+  if (rawMode !== 'full' && rawMode !== 'lite') {
+    throw new Error(`Env var INDEXER_MODE must be 'full' or 'lite', got: "${rawMode}"`);
+  }
+  const indexerMode: 'full' | 'lite' = rawMode;
+
   return {
     port,
     databaseUrl,
@@ -49,5 +56,6 @@ export function loadConfig(): BackendConfig {
     indexPollIntervalMs: numericEnv('INDEX_POLL_INTERVAL_MS', 15000),
     indexStartHeight: numericEnv('INDEX_START_HEIGHT', 0),
     minaguardVkHash: process.env.MINAGUARD_VK_HASH ?? null,
+    indexerMode,
   };
 }
