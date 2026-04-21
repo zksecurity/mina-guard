@@ -64,7 +64,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
   /** Returns current polling indexer status and latest sync metadata. */
   router.get('/api/indexer/status', safe(async (_req, res) => {
-    res.json(indexer.getStatus());
+    res.json({ ...indexer.getStatus(), indexerMode: config?.indexerMode ?? 'full' });
   }));
 
   /** Lists tracked contracts with derived config + aggregate counts. */

@@ -25,6 +25,7 @@ export interface IndexerStatus {
   indexedHeight: number;
   lastError: string | null;
   discoveredContracts: number;
+  indexerMode: 'full' | 'lite';
 }
 
 /** Fields describing a single ContractConfig row — subset used when merging deltas. */
@@ -45,7 +46,7 @@ type ContractConfigChanges = Partial<ContractConfigFields>;
 export class MinaGuardIndexer {
   private readonly config: BackendConfig;
   private intervalHandle: NodeJS.Timeout | null = null;
-  private status: IndexerStatus = {
+  private status: Omit<IndexerStatus, 'indexerMode'> = {
     running: false,
     lastRunAt: null,
     lastSuccessfulRunAt: null,
@@ -80,8 +81,8 @@ export class MinaGuardIndexer {
     this.status.running = false;
   }
 
-  /** Returns the latest in-memory indexer status snapshot. */
-  getStatus(): IndexerStatus {
+  /** Returns the latest in-memory indexer status snapshot. Does not include `indexerMode` — the route layer adds it from config. */
+  getStatus(): Omit<IndexerStatus, 'indexerMode'> {
     return { ...this.status };
   }
 
