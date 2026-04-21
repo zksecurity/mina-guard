@@ -128,8 +128,11 @@ async function compileContract(): Promise<boolean> {
 
   if (!compilePromise) {
     compilePromise = (async () => {
+      console.log('[MultisigWorker] MinaGuard.compile() starting');
+      const t0 = performance.now();
       configureNetwork();
       await MinaGuard.compile();
+      console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
     })();
   }
 
@@ -559,11 +562,6 @@ const workerApi = {
     skipProofs = skip;
   },
 
-  generateKeypair(): { privateKey: string; publicKey: string } {
-    const key = PrivateKey.random();
-    return { privateKey: key.toBase58(), publicKey: key.toPublicKey().toBase58() };
-  },
-
   async deployContract(
     params: { feePayerAddress: string; zkAppPrivateKeyBase58: string },
     sendFn: SendTxFn | null,
@@ -612,6 +610,7 @@ const workerApi = {
     progressFn: ProgressFn,
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
+    console.log('[MultisigWorker] deployAndSetupContract entered');
     progressFn('Compiling contract...');
     const ok = await compileContract();
     if (!ok) return null;
@@ -1184,7 +1183,8 @@ const workerApi = {
 
 export type WorkerApi = typeof workerApi;
 
+console.log('[MultisigWorker] worker module loaded, exposing API');
+Comlink.expose(workerApi);
+
 // Eagerly start compilation as soon as the worker loads
 compileContract().catch(() => { });
-
-Comlink.expose(workerApi);

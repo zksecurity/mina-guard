@@ -16,6 +16,8 @@ services:
       - "${PREVIEW_PORT:-10001}:443"
     volumes: !override
       - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - ./certs/localhost.pem:/etc/caddy/localhost.pem:ro
+      - ./certs/localhost-key.pem:/etc/caddy/localhost-key.pem:ro
       - caddy-local-data:/data
 
 volumes:

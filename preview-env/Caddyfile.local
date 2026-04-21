@@ -3,12 +3,21 @@
 # host Caddy provides in production.
 
 https://localhost {
-    tls internal
+    tls /etc/caddy/localhost.pem /etc/caddy/localhost-key.pem
 
-    # Do NOT add Cross-Origin-Resource-Policy: same-origin — it blocks
-    # o1js blob URL sub-workers.
-    header Cross-Origin-Opener-Policy "same-origin"
-    header Cross-Origin-Embedder-Policy "credentialless"
+    # Site-wide COOP/COEP for HTML pages and non-worker requests. We use
+    # `credentialless` at the page level because o1js spawns blob-URL
+    # sub-workers that break under `require-corp`.
+    #
+    # Exclude /_next/static/* so the dedicated-worker chunk can keep its
+    # own `require-corp` (dedicated workers are required to be loaded
+    # with `require-corp` when participating in a COI context; Chrome
+    # rejects `credentialless` for them). Without this matcher, Caddy's
+    # directive order has site-level `header` wrap the handle and
+    # overwrite the stricter per-handle value back to `credentialless`.
+    @nonStatic not path /preview/{$PR_NUMBER}/_next/static/*
+    header @nonStatic Cross-Origin-Opener-Policy "same-origin"
+    header @nonStatic Cross-Origin-Embedder-Policy "credentialless"
 
     # Backend health
     handle /preview/{$PR_NUMBER}/health {
@@ -72,9 +81,26 @@ https://localhost {
         reverse_proxy explorer:3000
     }
 
-    # Static assets (content-hashed filenames, safe to cache long-term)
+    # Static assets (content-hashed filenames, safe to cache long-term).
+    # COOP/COEP must be repeated here: site-level headers don't reliably
+    # flow into a `handle` whose only directive is `reverse_proxy`.
+    # The worker script chunk in particular needs `require-corp` (not the
+    # page-level `credentialless`) — dedicated workers must be loaded with
+    # `require-corp` to participate in the page's cross-origin-isolated
+    # context; `credentialless` alone makes Chrome block the load.
     handle /preview/{$PR_NUMBER}/_next/static/* {
-        reverse_proxy frontend:3000
+        # Strip upstream COOP/COEP from Next.js (set via next.config.mjs
+        # headers()) so our stricter per-handle values are the only ones
+        # the browser sees. Without this, the response carries both
+        # `credentialless` (Next.js) and `require-corp` (us), and Chrome
+        # treats the combined value as invalid and blocks the worker.
+        reverse_proxy frontend:3000 {
+            header_down -Cross-Origin-Opener-Policy
+            header_down -Cross-Origin-Embedder-Policy
+        }
+        header Cross-Origin-Opener-Policy "same-origin"
+        header Cross-Origin-Embedder-Policy "require-corp"
+        header Cross-Origin-Resource-Policy "same-origin"
     }
 
     # Frontend (catch-all — HTML pages get no-cache to prevent stale chunk references after rebuilds)
