@@ -110,8 +110,18 @@ export class MinaGuardIndexer {
       const fromHeight = indexedHeight + 1;
       const toHeight = latestHeight;
 
-      // Scan bestChain for new contract deployments
-      await this.discoverContracts(Math.max(1, Math.min(290, latestHeight)), latestHeight);
+      // Scan bestChain for new contract deployments. Only look at the
+      // un-indexed delta plus a small margin for the race where a block lands
+      // between the latestHeight read and the bestChain call. Clamped to 290
+      // (Mina's bestChain cap); reorg safety is handled by detectAndRollbackReorg
+      // above, which rewinds IndexerCursor on fork — the next tick's window
+      // naturally re-covers the reorged range.
+      const DISCOVERY_MARGIN = 5;
+      const discoveryWindow = Math.max(
+        1,
+        Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
+      );
+      await this.discoverContracts(discoveryWindow, latestHeight);
 
       if (toHeight >= fromHeight) {
         await this.syncKnownContracts(fromHeight, toHeight);
