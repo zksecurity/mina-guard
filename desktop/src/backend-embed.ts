@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { RequestHandler } from 'express';
 
 export interface EmbeddedBackendHandle {
@@ -14,12 +15,15 @@ export interface EmbeddedBackendOptions {
   minaEndpoint: string;
   archiveEndpoint: string;
   indexStartHeight?: number;
-  /**
-   * Path to the bundled schema.sql. Defaults to <desktopDist>/assets/schema.sql
-   * but must be overridable because at runtime the file may live under
-   * app.asar.unpacked/, not next to the compiled JS.
-   */
+  /** Path to the bundled schema.sql used to bootstrap a fresh SQLite file. */
   schemaSqlPath: string;
+  /**
+   * Absolute path to the esbuild-produced backend bundle (a single .js file
+   * exporting prisma/loadConfig/MinaGuardIndexer/createApiRouter). Same path
+   * in dev and packaged builds — sits under packaging-stage/backend-bundle.js
+   * inside desktop/ or inside app.asar/.
+   */
+  backendBundlePath: string;
 }
 
 /**
@@ -52,15 +56,12 @@ export async function startEmbeddedBackend(
     mkdirSync(dirname(opts.dbPath), { recursive: true });
   }
 
-  const [{ prisma }, { loadConfig }, { MinaGuardIndexer }, { createApiRouter }, expressMod, corsMod] =
-    await Promise.all([
-      import('backend/dist/db.js'),
-      import('backend/dist/config.js'),
-      import('backend/dist/indexer.js'),
-      import('backend/dist/routes.js'),
-      import('express'),
-      import('cors'),
-    ]);
+  const [bundle, expressMod, corsMod] = await Promise.all([
+    import(pathToFileURL(opts.backendBundlePath).href),
+    import('express'),
+    import('cors'),
+  ]);
+  const { prisma, loadConfig, MinaGuardIndexer, createApiRouter } = bundle;
 
   if (freshDb) {
     console.log(`[desktop] creating SQLite schema at ${opts.dbPath}`);

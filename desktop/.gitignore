@@ -1,3 +1,4 @@
 dist/
 assets/schema.sql
+packaging-stage/
 release/

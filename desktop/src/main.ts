@@ -9,20 +9,22 @@ import { buildPickerScript } from './hid-picker.js';
 import { startEmbeddedBackend, type EmbeddedBackendHandle } from './backend-embed.js';
 
 const PORT = 5050;
-const uiDir = join(import.meta.dirname, '..', '..', 'ui');
 
 // Mainnet defaults; a future settings UI can override per user.
 const DEFAULT_MINA_ENDPOINT = 'https://api.minascan.io/node/mainnet/v1/graphql';
 const DEFAULT_ARCHIVE_ENDPOINT = 'https://api.minascan.io/archive/mainnet/v1/graphql';
 
-let backend: EmbeddedBackendHandle | null = null;
+// All external resources (backend build output, UI build output) are
+// pre-staged inside desktop/packaging-stage/ by the `stage` npm script —
+// which runs for both dev and packaged builds. That keeps runtime paths
+// identical across modes and lets electron-builder see everything inside
+// its own appDir without cross-boundary file mappings.
+const stageDir = join(import.meta.dirname, '..', 'packaging-stage');
+const backendBundlePath = join(stageDir, 'backend-bundle.js');
+const uiDir = join(stageDir, 'ui');
+const schemaSqlPath = join(import.meta.dirname, 'assets', 'schema.sql');
 
-function resolveSchemaSqlPath(): string {
-  // In dev, the schema lives at desktop/dist/assets/schema.sql relative to the
-  // compiled main.js (import.meta.dirname points to dist/).
-  // In a packaged build, electron-builder unpacks it to app.asar.unpacked/.
-  return join(import.meta.dirname, 'assets', 'schema.sql');
-}
+let backend: EmbeddedBackendHandle | null = null;
 
 async function startHttpServer(
   backendHandle: EmbeddedBackendHandle,
@@ -51,7 +53,8 @@ app.whenReady().then(async () => {
     dbPath: join(app.getPath('userData'), 'minaguard.db'),
     minaEndpoint: process.env.MINA_ENDPOINT ?? DEFAULT_MINA_ENDPOINT,
     archiveEndpoint: process.env.ARCHIVE_ENDPOINT ?? DEFAULT_ARCHIVE_ENDPOINT,
-    schemaSqlPath: resolveSchemaSqlPath(),
+    schemaSqlPath,
+    backendBundlePath,
   });
 
   await startHttpServer(backend);
