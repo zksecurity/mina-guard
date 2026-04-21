@@ -736,7 +736,10 @@ const workerApi = {
       params.input.txType === 'createChild' ||
       params.input.txType === 'reclaimChild' ||
       params.input.txType === 'destroyChild' ||
-      params.input.txType === 'enableChildMultiSig';
+      params.input.txType === 'enableChildMultiSig' ||
+      // Noop is LOCAL by default; it's only REMOTE when deleting a remote
+      // proposal, in which case the form passes the target's childAccount.
+      (params.input.txType === 'noop' && !!params.input.childAccount);
 
     const proposal = new TransactionProposal({
       receivers,
@@ -1071,7 +1074,8 @@ const workerApi = {
     if (
       txType !== 'reclaimChild' &&
       txType !== 'destroyChild' &&
-      txType !== 'enableChildMultiSig'
+      txType !== 'enableChildMultiSig' &&
+      txType !== 'noop'
     ) {
       throw new Error(`Unsupported child lifecycle txType: ${txType ?? 'unknown'}`);
     }
@@ -1114,6 +1118,15 @@ const workerApi = {
       }
       if (txType === 'destroyChild') {
         await childZkApp.executeDestroy(
+          proposalStruct,
+          approvalWitness,
+          approvalCount,
+          childExecutionWitness,
+        );
+        return;
+      }
+      if (txType === 'noop') {
+        await childZkApp.executeRemoteNoop(
           proposalStruct,
           approvalWitness,
           approvalCount,

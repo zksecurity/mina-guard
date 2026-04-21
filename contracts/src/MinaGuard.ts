@@ -1025,6 +1025,41 @@ export class MinaGuard extends SmartContract {
     });
   }
 
+  /** Executes a REMOTE noop proposal on a child guard — burns the child's
+   *  parentNonce slot so any competing remote proposal at the same nonce is
+   *  invalidated. No balance or state change beyond the nonce advance. */
+  @method async executeRemoteNoop(
+    proposal: TransactionProposal,
+    parentApprovalWitness: MerkleMapWitness,
+    parentApprovalCount: Field,
+    childExecutionWitness: MerkleMapWitness,
+  ) {
+    this.getInitializedOwnersCommitment();
+
+    proposal.txType.assertEquals(TxType.NOOP, 'Not a noop tx');
+    this.assertValidRemoteProposal(proposal);
+
+    const proposalHash = this.verifyParentApproval(
+      proposal,
+      parentApprovalWitness,
+      parentApprovalCount,
+    );
+
+    this.assertChildExecutionWitnessValue(
+      proposalHash,
+      childExecutionWitness,
+      Field(0),
+    );
+    this.assertAndIncrementParentNonce(proposal);
+
+    this.markChildExecuted(childExecutionWitness);
+
+    this.emitEvent('execution', {
+      proposalHash,
+      txType: proposal.txType,
+    });
+  }
+
   @method async executeAllocateToChildren(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,

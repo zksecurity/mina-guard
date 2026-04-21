@@ -128,7 +128,10 @@ export default function ProposalForm({
       setValidationError('Nonce must be a positive integer.');
       return;
     }
-    if (currentNonce !== null && parsedNonce <= currentNonce) {
+    // Skip the executed-nonce floor in delete mode: the target proposal's
+    // nonce is authoritative, and REMOTE targets use child.parentNonce
+    // (independent of the parent's LOCAL nonce exposed as `currentNonce`).
+    if (!deleteMode && currentNonce !== null && parsedNonce <= currentNonce) {
       setValidationError(`Nonce must be greater than the current executed nonce (${currentNonce}).`);
       return;
     }
@@ -211,9 +214,11 @@ export default function ProposalForm({
       delegate: effectiveTxType === 'setDelegate' && !undelegate ? delegate : undefined,
       undelegate: effectiveTxType === 'setDelegate' ? undelegate : undefined,
       childAccount:
-        !deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig')
-          ? targetChild
-          : undefined,
+        deleteMode && deleteTargetProposal?.destination === 'remote' && deleteTargetProposal.childAccount
+          ? deleteTargetProposal.childAccount
+          : !deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig')
+            ? targetChild
+            : undefined,
       reclaimAmount:
         !deleteMode && txType === 'reclaimChild' ? (parseMinaToNanomina(reclaimAmount) ?? '0') : undefined,
       childMultiSigEnable:

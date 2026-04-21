@@ -62,8 +62,11 @@ function NewTransactionPageInner() {
     }
   }, [rawType, multisig, router, deleteMode]);
 
+  // In delete mode the form forces effectiveTxType='noop' regardless of this
+  // value; we still seed txType coherently so any non-form consumer reads the
+  // semantically-correct type.
   const initialType: TxType = deleteMode
-    ? 'transfer'
+    ? 'noop'
     : availableTypes.some((t) => t.value === rawType)
       ? (rawType as TxType)
       : 'transfer';

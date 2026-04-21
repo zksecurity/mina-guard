@@ -345,30 +345,6 @@ export class MinaGuardIndexer {
         active: true,
       },
     });
-
-    // Derive threshold/numOwners from on-chain state when no setup event was emitted.
-    {
-      const contract = await prisma.contract.findUnique({ where: { id: contractId } });
-      if (contract && contract.threshold == null) {
-        const onChain = await fetchOnChainState(contract.address);
-        if (onChain) {
-          await prisma.contract.update({
-            where: { id: contractId },
-            data: {
-              threshold: onChain.threshold,
-              numOwners: onChain.numOwners,
-              networkId: onChain.networkId,
-              ownersCommitment: onChain.ownersCommitment,
-              nonce: onChain.nonce,
-              configNonce: onChain.configNonce,
-              parent: onChain.parent,
-              parentNonce: onChain.parentNonce,
-              childMultiSigEnabled: onChain.childMultiSigEnabled,
-            },
-          });
-        }
-      }
-    }
   }
 
   /**
@@ -762,7 +738,10 @@ export class MinaGuardIndexer {
     if (proposalConfigNonce === null || currentConfigNonce === null) return false;
     const parsed = Number(proposalConfigNonce);
     if (!Number.isFinite(parsed)) return false;
-    return parsed !== currentConfigNonce;
+    // Strict-less-than: only invalidate when the proposal is behind the contract.
+    // A proposal with a future configNonce (shouldn't happen) is left alone so
+    // the on-chain configNonce check can surface the mismatch at execute time.
+    return parsed < currentConfigNonce;
   }
 
   private isProposalNonceStale(

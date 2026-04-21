@@ -85,7 +85,10 @@ export default function TransactionDetailPage() {
     proposal.status === 'pending' &&
     isOwner &&
     proposal.nonce !== null &&
-    !isDeleteProposal(proposal);
+    !isDeleteProposal(proposal) &&
+    // CREATE_CHILD uses the reserved nonce=0 sentinel, which the current delete
+    // mechanism (noop at same nonce) can't replicate safely.
+    proposal.txType !== 'createChild';
   const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
   /** Submits an on-chain approveProposal transaction. */
@@ -135,7 +138,8 @@ export default function TransactionDetailPage() {
         captured.proposal.childAccount &&
         (captured.proposal.txType === 'reclaimChild' ||
           captured.proposal.txType === 'destroyChild' ||
-          captured.proposal.txType === 'enableChildMultiSig');
+          captured.proposal.txType === 'enableChildMultiSig' ||
+          captured.proposal.txType === 'noop');
 
       if (isRemoteLifecycle) {
         const result = await executeChildLifecycleOnchain({
@@ -168,7 +172,7 @@ export default function TransactionDetailPage() {
 
     const params = new URLSearchParams({
       mode: 'delete',
-      type: 'transfer',
+      type: 'noop',
       targetProposalHash: proposal.proposalHash,
       targetNonce: proposal.nonce,
     });
