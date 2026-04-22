@@ -90,10 +90,24 @@ https://localhost {
     # context; `credentialless` alone makes Chrome block the load.
     handle /preview/{$PR_NUMBER}/_next/static/* {
         # Strip upstream COOP/COEP from Next.js (set via next.config.mjs
-        # headers()) so our stricter per-handle values are the only ones
-        # the browser sees. Without this, the response carries both
-        # `credentialless` (Next.js) and `require-corp` (us), and Chrome
-        # treats the combined value as invalid and blocks the worker.
+        # headers()) so the final response carries exactly one of each —
+        # Chrome treats duplicated COEP values as invalid and blocks the
+        # worker load.
+        #
+        # Dedicated workers (our o1js worker chunk) require `require-corp`
+        # to participate in cross-origin isolation and get access to
+        # SharedArrayBuffer — `credentialless` would load the script but
+        # leave the worker without COI, silently hanging `MinaGuard.compile()`
+        # at its first SAB use.
+        #
+        # CORP is required: under `COEP: require-corp`, every subresource
+        # (including same-origin) must carry CORP or be CORS-qualified, or
+        # the browser refuses to participate in isolation for the importing
+        # worker. Without CORP here, SharedArrayBuffer is unavailable inside
+        # the worker and rayon's thread pool traps with WASM `unreachable`
+        # on its first atomic op during `tx.prove()`.
+        # (Rayon's runtime-spawned `blob:` sub-workers never go through
+        # Caddy, so nothing we set here can affect them.)
         reverse_proxy frontend:3000 {
             header_down -Cross-Origin-Opener-Policy
             header_down -Cross-Origin-Embedder-Policy

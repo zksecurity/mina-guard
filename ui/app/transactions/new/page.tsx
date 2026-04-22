@@ -62,11 +62,12 @@ function NewTransactionPageInner() {
     }
   }, [rawType, multisig, router, deleteMode]);
 
-  // In delete mode the form forces effectiveTxType='noop' regardless of this
-  // value; we still seed txType coherently so any non-form consumer reads the
-  // semantically-correct type.
+  // In delete mode the form recomputes effectiveTxType from the target's
+  // destination (LOCAL→transfer / REMOTE→reclaimChild), but we still seed a
+  // coherent txType so non-form consumers see the shape they'll end up
+  // submitting.
   const initialType: TxType = deleteMode
-    ? 'noop'
+    ? (deleteTargetProposal?.destination === 'remote' ? 'reclaimChild' : 'transfer')
     : availableTypes.some((t) => t.value === rawType)
       ? (rawType as TxType)
       : 'transfer';

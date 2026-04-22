@@ -8,7 +8,7 @@ import {
   createTransferProposal,
   createThresholdProposal,
   createUndelegateProposal,
-  createNoopProposal,
+  createDeleteProposal,
   makeOwnerWitness,
   type TestContext,
 } from './test-helpers.js';
@@ -288,7 +288,7 @@ describe('MinaGuard - Propose shape rules', () => {
     });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('changeThreshold/noop must have empty receivers[0]');
+    }).toThrow('changeThreshold must have empty receivers[0]');
   });
 
   // -- Rule 3: non-transfer requires at most one receiver --------------------
@@ -388,28 +388,10 @@ describe('MinaGuard - Propose shape rules', () => {
     }).toThrow('data must be zero for this txType');
   });
 
-  // -- NOOP validation -------------------------------------------------------
+  // -- Delete-flow (zero-value transfer) -------------------------------------
 
-  it('should reject NOOP with non-empty receivers[0]', async () => {
-    const stray = PrivateKey.random().toPublicKey();
-    const proposal = buildProposal({
-      txType: TxType.NOOP,
-      receivers: receiversWithSlot0(stray),
-    });
-    await expect(async () => {
-      await tryPropose(proposal);
-    }).toThrow('changeThreshold/noop must have empty receivers[0]');
-  });
-
-  it('should reject NOOP with non-zero data', async () => {
-    const proposal = buildProposal({ txType: TxType.NOOP, data: Field(42) });
-    await expect(async () => {
-      await tryPropose(proposal);
-    }).toThrow('data must be zero for this txType');
-  });
-
-  it('should accept a well-formed NOOP proposal', async () => {
-    const proposal = createNoopProposal(Field(1), Field(0), ctx.zkAppAddress);
+  it('should accept a zero-value transfer to the empty pubkey (delete flow)', async () => {
+    const proposal = createDeleteProposal(Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
     expect(ctx.approvalStore.getCount(proposalHash)).toEqual(Field(2));
     expect(ctx.zkApp.nonce.get()).toEqual(Field(0));

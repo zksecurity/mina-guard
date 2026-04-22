@@ -14,8 +14,7 @@ export type TxType =
   | 'allocateChild'
   | 'reclaimChild'
   | 'destroyChild'
-  | 'enableChildMultiSig'
-  | 'noop';
+  | 'enableChildMultiSig';
 
 /** Whether a proposal runs locally on its guard or is executed remotely on a child. */
 export type ProposalDestination = 'local' | 'remote';
@@ -142,7 +141,6 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
   reclaimChild: 'Reclaim from Subaccount',
   destroyChild: 'Destroy Subaccount',
   enableChildMultiSig: 'Toggle Subaccount Multi-sig',
-  noop: 'Noop',
 };
 
 export type TxTypeOption = { value: TxType; label: string; icon: string };
@@ -212,8 +210,6 @@ export function parseTxType(value: string | null): TxType | null {
       return 'destroyChild';
     case '9':
       return 'enableChildMultiSig';
-    case '10':
-      return 'noop';
     default:
       return null;
   }
@@ -230,7 +226,6 @@ const TX_TYPE_NAME_SET: ReadonlySet<TxType> = new Set<TxType>([
   'reclaimChild',
   'destroyChild',
   'enableChildMultiSig',
-  'noop',
 ]);
 
 /** Parses backend tx type strings to preserve already-humanized values when present. */
@@ -248,13 +243,32 @@ export function normalizeDestination(value: string | null): ProposalDestination 
   return null;
 }
 
-/** True when a proposal was minted via delete-mode. Noop proposals carry the
- *  same nonce as the proposal they're intended to invalidate — we never offer
- *  to "delete" one since a second noop would have an identical proposalHash. */
+/** Canonical base58 of PublicKey.empty() — the sentinel we write into
+ *  delete-flow receivers. Verified via o1js. */
+export const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+
+/** True when a proposal was minted via delete-mode. Delete proposals carry
+ *  the same nonce as the proposal they're intended to invalidate, so there's
+ *  no user value in ever offering to "delete" one.
+ *
+ *  Shape:
+ *   - LOCAL delete: TRANSFER to (empty, 0)
+ *   - REMOTE delete: RECLAIM_CHILD with amount/data = 0 */
 export function isDeleteProposal(
-  proposal: Pick<Proposal, 'txType'> | null | undefined
+  proposal:
+    | Pick<Proposal, 'txType' | 'destination' | 'receivers' | 'data'>
+    | null
+    | undefined
 ): boolean {
-  return !!proposal && proposal.txType === 'noop';
+  if (!proposal) return false;
+  if (proposal.txType === 'transfer' && proposal.destination === 'local') {
+    const r0 = proposal.receivers?.[0];
+    return !!r0 && r0.amount === '0' && r0.address === EMPTY_PUBKEY_B58;
+  }
+  if (proposal.txType === 'reclaimChild' && proposal.destination === 'remote') {
+    return proposal.data === '0';
+  }
+  return false;
 }
 
 /** Smallest nonce strictly greater than every still-racing proposal on this

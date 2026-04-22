@@ -336,18 +336,24 @@ export function createUndelegateProposal(
   });
 }
 
-/** Builds a noop proposal payload — all-empty receivers, data=0, LOCAL. */
-export function createNoopProposal(
+/**
+ * Builds a LOCAL zero-value transfer used by the delete flow — receivers[0]
+ * is (PublicKey.empty(), 0), the rest are empty. Same nonce as the target
+ * proposal: whichever executes first burns the slot and invalidates the other.
+ */
+export function createDeleteProposal(
   nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
   networkId = Field(1),
 ): TransactionProposal {
+  const receivers = emptyReceivers();
+  receivers[0] = new Receiver({ address: PublicKey.empty(), amount: UInt64.zero });
   return new TransactionProposal({
-    receivers: emptyReceivers(),
+    receivers,
     tokenId: Field(0),
-    txType: TxType.NOOP,
+    txType: TxType.TRANSFER,
     data: Field(0),
     nonce,
     configNonce,

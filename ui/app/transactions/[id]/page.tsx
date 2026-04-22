@@ -86,8 +86,9 @@ export default function TransactionDetailPage() {
     isOwner &&
     proposal.nonce !== null &&
     !isDeleteProposal(proposal) &&
-    // CREATE_CHILD uses the reserved nonce=0 sentinel, which the current delete
-    // mechanism (noop at same nonce) can't replicate safely.
+    // CREATE_CHILD uses the reserved nonce=0 sentinel, which the current
+    // delete mechanism (zero-value proposal at same nonce) can't replicate
+    // safely.
     proposal.txType !== 'createChild';
   const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
@@ -138,8 +139,7 @@ export default function TransactionDetailPage() {
         captured.proposal.childAccount &&
         (captured.proposal.txType === 'reclaimChild' ||
           captured.proposal.txType === 'destroyChild' ||
-          captured.proposal.txType === 'enableChildMultiSig' ||
-          captured.proposal.txType === 'noop');
+          captured.proposal.txType === 'enableChildMultiSig');
 
       if (isRemoteLifecycle) {
         const result = await executeChildLifecycleOnchain({
@@ -170,9 +170,12 @@ export default function TransactionDetailPage() {
   const handleDelete = () => {
     if (!proposal?.nonce) return;
 
+    // The form recomputes `effectiveTxType` from the target's destination, so
+    // the `type` URL param here is informational only. We pick `transfer` as
+    // the neutral default (matches the LOCAL-delete shape).
     const params = new URLSearchParams({
       mode: 'delete',
-      type: 'noop',
+      type: 'transfer',
       targetProposalHash: proposal.proposalHash,
       targetNonce: proposal.nonce,
     });

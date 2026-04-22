@@ -326,6 +326,61 @@ async function rebuildStoresFromBackend(contractAddress: string) {
 }
 
 /**
+ * Dumps on-chain vs locally-rebuilt values side-by-side so a failed
+ * propose() tx.prove() can be narrowed to the specific mismatched constraint
+ * (owner commitment, nullifier/approval root, configNonce, networkId, nonce).
+ */
+function logProposeDiagnostics(args: {
+  contract: InstanceType<typeof MinaGuard>;
+  contractAddress: InstanceType<typeof PublicKey>;
+  proposer: InstanceType<typeof PublicKey>;
+  proposal: InstanceType<typeof TransactionProposal>;
+  proposalHash: InstanceType<typeof Field>;
+  signature: InstanceType<typeof Signature>;
+  ownerStore: InstanceType<typeof OwnerStore>;
+  approvalStore: InstanceType<typeof ApprovalStore>;
+  nullifierStore: InstanceType<typeof VoteNullifierStore>;
+}) {
+  const {
+    contract, contractAddress, proposer, proposal, proposalHash, signature,
+    ownerStore, approvalStore, nullifierStore,
+  } = args;
+  const dump = {
+    contractAddress: contractAddress.toBase58(),
+    proposer: proposer.toBase58(),
+    proposalHash: proposalHash.toString(),
+    signatureVerifies: signature.verify(proposer, [proposalHash]).toBoolean(),
+    proposalGuardAddress: proposal.guardAddress.toBase58(),
+    proposalChildAccount: proposal.childAccount.toBase58(),
+    proposalDestination: proposal.destination.toString(),
+    proposalTxType: proposal.txType.toString(),
+    proposalData: proposal.data.toString(),
+    proposalExpiryBlock: proposal.expiryBlock.toString(),
+    proposalReceiver0: proposal.receivers[0].address.toBase58(),
+    onchainOwnersCommitment: contract.ownersCommitment.get().toString(),
+    storeOwnersCommitment: ownerStore.getCommitment().toString(),
+    onchainNonce: contract.nonce.get().toString(),
+    proposalNonce: proposal.nonce.toString(),
+    onchainConfigNonce: contract.configNonce.get().toString(),
+    proposalConfigNonce: proposal.configNonce.toString(),
+    onchainNetworkId: contract.networkId.get().toString(),
+    proposalNetworkId: proposal.networkId.toString(),
+    onchainVoteNullifierRoot: contract.voteNullifierRoot.get().toString(),
+    storeVoteNullifierRoot: nullifierStore.getRoot().toString(),
+    onchainApprovalRoot: contract.approvalRoot.get().toString(),
+    storeApprovalRoot: approvalStore.getRoot().toString(),
+    onchainParent: contract.parent.get().toBase58(),
+    onchainChildMultiSigEnabled: contract.childMultiSigEnabled.get().toString(),
+    proposerIsOwner: ownerStore.isOwner(proposer),
+    ownerCount: ownerStore.length,
+  };
+  // Logged as a JSON string so each field stays inline-copyable even when
+  // devtools can't clone/serialize the object form (observed with Chrome
+  // freezing on worker-side o1js objects).
+  console.log('[propose debug]\n' + JSON.stringify(dump, null, 2));
+}
+
+/**
  * Rebuilds the child's `childExecutionRoot` MerkleMap from indexed events.
  *
  * The child writes EXECUTED_MARKER at proposalHash on each lifecycle method
@@ -374,7 +429,6 @@ function uiTxTypeToField(type: string): InstanceType<typeof Field> {
   if (type === 'reclaimChild') return Field(7);
   if (type === 'destroyChild') return Field(8);
   if (type === 'enableChildMultiSig') return Field(9);
-  if (type === 'noop') return Field(10);
   throw new Error(`Unknown TxType: ${type}`);
 }
 
@@ -735,10 +789,7 @@ const workerApi = {
       params.input.txType === 'createChild' ||
       params.input.txType === 'reclaimChild' ||
       params.input.txType === 'destroyChild' ||
-      params.input.txType === 'enableChildMultiSig' ||
-      // Noop is LOCAL by default; it's only REMOTE when deleting a remote
-      // proposal, in which case the form passes the target's childAccount.
-      (params.input.txType === 'noop' && !!params.input.childAccount);
+      params.input.txType === 'enableChildMultiSig';
 
     const proposal = new TransactionProposal({
       receivers,
@@ -772,8 +823,29 @@ const workerApi = {
     const approvalWitness = approvalStore.getWitness(proposalHash);
 
     progressFn('Building transaction...');
-    const contract = new MinaGuard(PublicKey.fromBase58(params.contractAddress));
-    await fetchAccount({ publicKey: proposer });
+    const contractAddress = PublicKey.fromBase58(params.contractAddress);
+    const contract = new MinaGuard(contractAddress);
+    // The circuit reads ownersCommitment / voteNullifierRoot / approvalRoot /
+    // configNonce / networkId / nonce via getAndRequireEquals(); without a
+    // fresh fetch of the zkApp account, o1js sees Field(0) and the circuit
+    // traps with a WASM `unreachable` during prove.
+    await Promise.all([
+      fetchAccount({ publicKey: proposer }),
+      fetchAccount({ publicKey: contractAddress }),
+    ]);
+
+    logProposeDiagnostics({
+      contract,
+      contractAddress,
+      proposer,
+      proposal,
+      proposalHash,
+      signature,
+      ownerStore,
+      approvalStore,
+      nullifierStore,
+    });
+
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(proposer), async () => {
       await contract.propose(
@@ -785,6 +857,17 @@ const workerApi = {
         approvalWitness
       );
     });
+
+    // Rayon's thread pool inside o1js requires SharedArrayBuffer, which is
+    // only available when the worker scope is cross-origin isolated. If
+    // isolation is broken (e.g. missing CORP header on _next/static/*),
+    // prove() traps with WASM `unreachable` during pool startup. Logging
+    // this makes header regressions obvious.
+    console.log('[prove env] ' + JSON.stringify({
+      crossOriginIsolated: (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated ?? null,
+      sharedArrayBuffer: typeof SharedArrayBuffer,
+      hardwareConcurrency: self.navigator?.hardwareConcurrency ?? null,
+    }));
 
     progressFn('Generating proof...');
     await tx.prove();
@@ -947,11 +1030,6 @@ const workerApi = {
         return;
       }
 
-      if (txType === 'noop') {
-        await contract.executeNoop(proposalStruct, approvalWitness, approvalCount);
-        return;
-      }
-
       throw new Error('Unsupported proposal type for execution');
     });
 
@@ -1073,8 +1151,7 @@ const workerApi = {
     if (
       txType !== 'reclaimChild' &&
       txType !== 'destroyChild' &&
-      txType !== 'enableChildMultiSig' &&
-      txType !== 'noop'
+      txType !== 'enableChildMultiSig'
     ) {
       throw new Error(`Unsupported child lifecycle txType: ${txType ?? 'unknown'}`);
     }
@@ -1117,15 +1194,6 @@ const workerApi = {
       }
       if (txType === 'destroyChild') {
         await childZkApp.executeDestroy(
-          proposalStruct,
-          approvalWitness,
-          approvalCount,
-          childExecutionWitness,
-        );
-        return;
-      }
-      if (txType === 'noop') {
-        await childZkApp.executeRemoteNoop(
           proposalStruct,
           approvalWitness,
           approvalCount,

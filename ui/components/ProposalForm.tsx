@@ -8,6 +8,7 @@ import {
   truncateAddress,
   NewProposalInput,
   TxType,
+  EMPTY_PUBKEY_B58,
   type ContractSummary,
   type Proposal,
 } from '@/lib/types';
@@ -116,7 +117,14 @@ export default function ProposalForm({
 
   const [validationError, setValidationError] = useState<string | null>(null);
   const transferParse = parseTransferLines(transferLines);
-  const effectiveTxType: TxType = deleteMode ? 'noop' : txType;
+  // Delete-mode shape: LOCAL target → zero-value transfer; REMOTE target →
+  // zero-amount reclaim. The on-chain methods are the real transfer/reclaim
+  // circuits; the delete semantics live purely in the (empty, 0) /
+  // reclaim-0 pattern, which isDeleteProposal() re-detects for display.
+  const isRemoteDelete = deleteMode && deleteTargetProposal?.destination === 'remote';
+  const effectiveTxType: TxType = deleteMode
+    ? (isRemoteDelete ? 'reclaimChild' : 'transfer')
+    : txType;
 
   /** Emits normalized form payload according to the selected transaction type. */
   const handleSubmit = (e: React.FormEvent) => {
@@ -201,26 +209,35 @@ export default function ProposalForm({
       return;
     }
 
+    const deleteReceivers = deleteMode && !isRemoteDelete
+      ? [{ address: EMPTY_PUBKEY_B58, amount: '0' }]
+      : undefined;
+
     onSubmit({
       txType: effectiveTxType,
       nonce: parsedNonce,
       receivers:
-        effectiveTxType === 'transfer' || effectiveTxType === 'allocateChild'
+        deleteReceivers ??
+        (effectiveTxType === 'transfer' || effectiveTxType === 'allocateChild'
           ? transferParse.receivers
-          : undefined,
-      newOwner: effectiveTxType === 'addOwner' ? newOwner : undefined,
-      removeOwnerAddress: effectiveTxType === 'removeOwner' ? removeOwnerAddress : undefined,
-      newThreshold: effectiveTxType === 'changeThreshold' ? newThreshold : undefined,
-      delegate: effectiveTxType === 'setDelegate' && !undelegate ? delegate : undefined,
-      undelegate: effectiveTxType === 'setDelegate' ? undelegate : undefined,
+          : undefined),
+      newOwner: !deleteMode && effectiveTxType === 'addOwner' ? newOwner : undefined,
+      removeOwnerAddress: !deleteMode && effectiveTxType === 'removeOwner' ? removeOwnerAddress : undefined,
+      newThreshold: !deleteMode && effectiveTxType === 'changeThreshold' ? newThreshold : undefined,
+      delegate: !deleteMode && effectiveTxType === 'setDelegate' && !undelegate ? delegate : undefined,
+      undelegate: !deleteMode && effectiveTxType === 'setDelegate' ? undelegate : undefined,
       childAccount:
-        deleteMode && deleteTargetProposal?.destination === 'remote' && deleteTargetProposal.childAccount
+        isRemoteDelete && deleteTargetProposal?.childAccount
           ? deleteTargetProposal.childAccount
           : !deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig')
             ? targetChild
             : undefined,
       reclaimAmount:
-        !deleteMode && txType === 'reclaimChild' ? (parseMinaToNanomina(reclaimAmount) ?? '0') : undefined,
+        isRemoteDelete
+          ? '0'
+          : !deleteMode && txType === 'reclaimChild'
+            ? (parseMinaToNanomina(reclaimAmount) ?? '0')
+            : undefined,
       childMultiSigEnable:
         !deleteMode && txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
@@ -234,7 +251,7 @@ export default function ProposalForm({
           <div>
             <p className="font-semibold text-orange-100">Delete pending proposal</p>
             <p className="mt-1 opacity-90">
-              This creates a no-op proposal with the same nonce, so if it executes first it will invalidate the proposal below.
+              This creates a zero-effect proposal with the same nonce, so if it executes first it will invalidate the proposal below.
             </p>
           </div>
 
