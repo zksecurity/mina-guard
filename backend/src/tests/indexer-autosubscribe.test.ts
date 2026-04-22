@@ -168,78 +168,55 @@ describe('backfillContract window', () => {
   });
 });
 
-describe('maybeAutoSubscribeChild via applyExecutionEvent', () => {
-  async function seedParentWithCreateChildProposal(
-    parentAddress: string,
-    proposalHash: string,
-    childAddress: string,
-  ) {
-    const parent = await prisma.contract.create({
+describe('eager child auto-subscribe on CREATE_CHILD proposal', () => {
+  async function seedParent(parentAddress: string) {
+    return prisma.contract.create({
       data: { address: parentAddress, ready: true },
     });
-    await prisma.proposal.create({
-      data: {
-        contractId: parent.id,
-        proposalHash,
-        txType: '5',
-        childAccount: childAddress,
-        createdAtBlock: 10,
-      },
-    });
-    return parent;
   }
 
-  test('lite mode: auto-subscribes child on CREATE_CHILD execution', async () => {
+  test('lite mode: eager-subscribes child on CREATE_CHILD proposal event', async () => {
     const parentAddress = PrivateKey.random().toPublicKey().toBase58();
     const childAddress = PrivateKey.random().toPublicKey().toBase58();
     const proposalHash = '42';
-    await seedParentWithCreateChildProposal(parentAddress, proposalHash, childAddress);
+    await seedParent(parentAddress);
     await setCursor(100);
 
-    // Two calls to fetchDecodedContractEvents are expected during the test:
-    // 1) parent sync (returns the execution event)
-    // 2) child auto-subscribe's backfillContract (no events to return)
-    const eventsByAddress: Record<string, Array<ReturnType<typeof makeExecutionEvent>>> = {
-      [parentAddress]: [makeExecutionEvent(proposalHash, 20)],
-      [childAddress]: [],
-    };
     mock.module('../mina-client.js', () => ({
       ...minaClient,
-      fetchDecodedContractEvents: async (addr: string) => eventsByAddress[addr] ?? [],
+      fetchDecodedContractEvents: async (addr: string) =>
+        addr === parentAddress
+          ? [makeCreateChildProposalEvent(proposalHash, childAddress, 20)]
+          : [],
     }));
 
     const indexer = new MinaGuardIndexer(liteConfig);
-    // Drive via the parent's backfill — this runs syncSingleContract, which
-    // processes the execution event and triggers maybeAutoSubscribeChild.
     const parent = await prisma.contract.findUniqueOrThrow({ where: { address: parentAddress } });
     await indexer.backfillContract(parent.id, parentAddress);
 
     const child = await prisma.contract.findUnique({ where: { address: childAddress } });
     expect(child).not.toBeNull();
     expect(child?.parent).toBe(parentAddress);
-    // discoveredAtBlock is the execution-event block height (the child's
-    // own events land in the same block on-chain), so the unready rescan
-    // will re-scan from there.
+    // discoveredAtBlock is the propose-event block height. The child's
+    // deploy and its own setup events land at or after this block, so
+    // the rescan's lower bound stays below them.
     expect(child?.discoveredAtBlock).toBe(20);
-    // ready stays false because this mock returns no events for the child
-    // address. In production the child emits its own setup/setupOwner
-    // events in the same tx as the parent's execution; the unready-rescan
-    // path will flip ready=true on the next tick once the child's events
-    // are fetched and ingested.
     expect(child?.ready).toBe(false);
   });
 
-  test('full mode: does NOT auto-subscribe', async () => {
+  test('full mode: does NOT eager-subscribe children on proposal', async () => {
     const parentAddress = PrivateKey.random().toPublicKey().toBase58();
     const childAddress = PrivateKey.random().toPublicKey().toBase58();
     const proposalHash = '43';
-    await seedParentWithCreateChildProposal(parentAddress, proposalHash, childAddress);
+    await seedParent(parentAddress);
     await setCursor(100);
 
     mock.module('../mina-client.js', () => ({
       ...minaClient,
       fetchDecodedContractEvents: async (addr: string) =>
-        addr === parentAddress ? [makeExecutionEvent(proposalHash, 20)] : [],
+        addr === parentAddress
+          ? [makeCreateChildProposalEvent(proposalHash, childAddress, 20)]
+          : [],
     }));
 
     const indexer = new MinaGuardIndexer(fullConfig);
@@ -254,25 +231,91 @@ describe('maybeAutoSubscribeChild via applyExecutionEvent', () => {
     const parentAddress = PrivateKey.random().toPublicKey().toBase58();
     const childAddress = PrivateKey.random().toPublicKey().toBase58();
     const proposalHash = '44';
-    await seedParentWithCreateChildProposal(parentAddress, proposalHash, childAddress);
+    await seedParent(parentAddress);
     await setCursor(100);
 
     mock.module('../mina-client.js', () => ({
       ...minaClient,
       fetchDecodedContractEvents: async (addr: string) =>
-        addr === parentAddress ? [makeExecutionEvent(proposalHash, 20)] : [],
+        addr === parentAddress
+          ? [makeCreateChildProposalEvent(proposalHash, childAddress, 20)]
+          : [],
     }));
 
     const indexer = new MinaGuardIndexer(liteConfig);
     const parent = await prisma.contract.findUniqueOrThrow({ where: { address: parentAddress } });
     await indexer.backfillContract(parent.id, parentAddress);
-    // Second pass: eventRaw fingerprint dedup prevents re-applying the
-    // execution event, but maybeAutoSubscribeChild's own existing-check is
-    // what prevents a duplicate child row here — both should hold.
     await indexer.backfillContract(parent.id, parentAddress);
 
     const childCount = await prisma.contract.count({ where: { address: childAddress } });
     expect(childCount).toBe(1);
+  });
+
+  test('non-CREATE_CHILD proposals do not eager-subscribe anything', async () => {
+    const parentAddress = PrivateKey.random().toPublicKey().toBase58();
+    await seedParent(parentAddress);
+    await setCursor(100);
+
+    // txType='1' (addOwner) should not trigger any child insertion.
+    const proposalHash = '99';
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchDecodedContractEvents: async (addr: string) =>
+        addr === parentAddress
+          ? [makeAddOwnerProposalEvent(proposalHash, 20)]
+          : [],
+    }));
+
+    const indexer = new MinaGuardIndexer(liteConfig);
+    const parent = await prisma.contract.findUniqueOrThrow({ where: { address: parentAddress } });
+    await indexer.backfillContract(parent.id, parentAddress);
+
+    // Only the parent should exist; no eager child insert for governance.
+    const count = await prisma.contract.count();
+    expect(count).toBe(1);
+  });
+
+  test('REMOTE path records execution once child is tracked (end-to-end)', async () => {
+    // Simulates the full subaccount flow: parent emits CREATE_CHILD proposal
+    // (eager-inserts child), then the child eventually emits an execution
+    // event. applyExecutionEvent's REMOTE path must walk back to the parent
+    // and upsert ProposalExecution so the proposal flips to executed.
+    const parentAddress = PrivateKey.random().toPublicKey().toBase58();
+    const childAddress = PrivateKey.random().toPublicKey().toBase58();
+    const proposalHash = '77';
+    await seedParent(parentAddress);
+    await setCursor(100);
+
+    const eventsByAddress: Record<string, unknown[]> = {
+      [parentAddress]: [makeCreateChildProposalEvent(proposalHash, childAddress, 20)],
+      [childAddress]: [makeExecutionEvent(proposalHash, 25)],
+    };
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchDecodedContractEvents: async (addr: string) => eventsByAddress[addr] ?? [],
+    }));
+
+    const indexer = new MinaGuardIndexer(liteConfig);
+
+    // Step 1: sync parent → eager-inserts child + creates proposal row.
+    const parent = await prisma.contract.findUniqueOrThrow({ where: { address: parentAddress } });
+    await indexer.backfillContract(parent.id, parentAddress);
+
+    const child = await prisma.contract.findUniqueOrThrow({ where: { address: childAddress } });
+    expect(child.parent).toBe(parentAddress);
+
+    // Step 2: sync child → ingests execution event; REMOTE path walks back
+    // to parent's proposal and upserts ProposalExecution.
+    await indexer.backfillContract(child.id, childAddress);
+
+    const proposal = await prisma.proposal.findUniqueOrThrow({
+      where: {
+        contractId_proposalHash: { contractId: parent.id, proposalHash },
+      },
+      include: { executions: true },
+    });
+    expect(proposal.executions).toHaveLength(1);
+    expect(proposal.executions[0].blockHeight).toBe(25);
   });
 });
 
@@ -284,6 +327,41 @@ function makeExecutionEvent(proposalHash: string, blockHeight: number) {
     blockHash: `h${blockHeight}`,
     parentHash: `h${blockHeight - 1}`,
     txHash: `tx-${proposalHash}`,
+  };
+}
+
+function makeCreateChildProposalEvent(
+  proposalHash: string,
+  childAddress: string,
+  blockHeight: number,
+) {
+  return {
+    type: 'proposal',
+    event: {
+      proposalHash,
+      txType: '5',
+      childAccount: childAddress,
+      // Other proposal fields left as nullish — applyProposalEvent only
+      // reads the fields that matter for this test.
+    },
+    blockHeight,
+    blockHash: `h${blockHeight}`,
+    parentHash: `h${blockHeight - 1}`,
+    txHash: `tx-propose-${proposalHash}`,
+  };
+}
+
+function makeAddOwnerProposalEvent(proposalHash: string, blockHeight: number) {
+  return {
+    type: 'proposal',
+    event: {
+      proposalHash,
+      txType: '1',
+    },
+    blockHeight,
+    blockHash: `h${blockHeight}`,
+    parentHash: `h${blockHeight - 1}`,
+    txHash: `tx-propose-${proposalHash}`,
   };
 }
 

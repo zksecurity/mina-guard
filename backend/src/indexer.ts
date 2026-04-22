@@ -523,6 +523,13 @@ export class MinaGuardIndexer {
    * Creates a proposal row from on-chain event data.
    * ProposalEvent includes all TransactionProposal fields so the indexer
    * can reconstruct full proposal details purely from on-chain events.
+   *
+   * For CREATE_CHILD proposals in lite mode, eagerly inserts the child's
+   * Contract row so the indexer starts tracking its address immediately.
+   * This is required because `executeSetupChild` emits its execution event
+   * on the child, not the parent — if the child weren't tracked, the
+   * REMOTE path in applyExecutionEvent could never walk back to upsert
+   * ProposalExecution, and the proposal would stay pending forever.
    */
   private async applyProposalEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
     const event = chainEvent.event;
@@ -565,6 +572,33 @@ export class MinaGuardIndexer {
         childAccount: asNullableAddress(asString(event.childAccount)),
       },
     });
+
+    if (this.config.indexerMode === 'lite' && asString(event.txType) === '5') {
+      const childAddress = asNullableAddress(asString(event.childAccount));
+      if (childAddress) {
+        const parent = await prisma.contract.findUnique({
+          where: { id: contractId },
+          select: { address: true },
+        });
+        if (parent) {
+          const existing = await prisma.contract.findUnique({
+            where: { address: childAddress },
+          });
+          if (!existing) {
+            await prisma.contract.create({
+              data: {
+                address: childAddress,
+                parent: parent.address,
+                discoveredAtBlock: chainEvent.blockHeight,
+              },
+            });
+            console.log(
+              `[indexer] eager-subscribing child ${childAddress} of parent ${parent.address} on CREATE_CHILD proposal`,
+            );
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -700,9 +734,6 @@ export class MinaGuardIndexer {
     });
     if (local) {
       await this.upsertProposalExecution(local.id, blockHeight, txHash, eventOrder);
-      if (this.config.indexerMode === 'lite') {
-        await this.maybeAutoSubscribeChild(contractId, proposalHash, blockHeight);
-      }
       return;
     }
 
@@ -738,46 +769,6 @@ export class MinaGuardIndexer {
       create: { proposalId, blockHeight, txHash, eventOrder },
       update: { blockHeight, txHash, eventOrder },
     });
-  }
-
-  /**
-   * Lite-mode auto-subscribe: when a CREATE_CHILD proposal is marked executed
-   * on a parent we already track, insert a Contract row for the child with
-   * `discoveredAtBlock` set to the execution-event block height (the child's
-   * own setup events land in the same block). The tick's unready-rescan will
-   * pick up the child's events on the next tick and flip `ready=true`.
-   * No-op for non-CREATE_CHILD executions or if the child is already tracked.
-   */
-  private async maybeAutoSubscribeChild(
-    parentContractId: number,
-    proposalHash: string,
-    executionBlockHeight: number,
-  ): Promise<void> {
-    const proposal = await prisma.proposal.findUnique({
-      where: { contractId_proposalHash: { contractId: parentContractId, proposalHash } },
-      select: { txType: true, childAccount: true },
-    });
-    if (!proposal || proposal.txType !== '5' || !proposal.childAccount) return;
-
-    const parent = await prisma.contract.findUnique({
-      where: { id: parentContractId },
-      select: { address: true },
-    });
-    if (!parent) return;
-
-    const existing = await prisma.contract.findUnique({
-      where: { address: proposal.childAccount },
-    });
-    if (existing) return;
-
-    await prisma.contract.create({
-      data: {
-        address: proposal.childAccount,
-        parent: parent.address,
-        discoveredAtBlock: executionBlockHeight,
-      },
-    });
-    console.log(`[indexer] auto-subscribing child ${proposal.childAccount} of parent ${parent.address}`);
   }
 
   /** Records an owner add/remove governance result and appends a ContractConfig snapshot. */
