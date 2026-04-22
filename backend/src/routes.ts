@@ -433,12 +433,24 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   }));
 
   /**
-   * Subscribes the indexer to a contract address. Idempotent: re-subscribing
-   * an already-tracked address returns the existing row. Lite mode only —
-   * full mode auto-discovers contracts on every tick. The address is not
-   * required to be deployed on-chain yet: a subscribed-before-deploy contract
-   * sits with `ready=false` until `syncSingleContract` ingests its first event,
-   * so it stays hidden from API read routes until it's actually populated.
+   * Subscribes the indexer to a contract address. Lite mode only — full
+   * mode auto-discovers contracts on every tick. Idempotent: re-subscribing
+   * an already-tracked address returns the existing row unchanged (the
+   * original discoveredAtBlock is preserved).
+   *
+   * The address is not required to be deployed on-chain yet. The contract
+   * row is inserted with ready=false; the indexer tick's unready-rescan
+   * loop then scans [discoveredAtBlock, latestHeight] every tick until
+   * events are ingested and ready flips to true.
+   *
+   * Body: { address: string, fromBlock?: number }
+   *   - fromBlock, when supplied, sets discoveredAtBlock directly. Use
+   *     this for historical subscribes (e.g. fromBlock: 0 for full
+   *     history).
+   *   - When omitted, discoveredAtBlock defaults to
+   *     `latestHeight - SUBSCRIBE_MARGIN` so a block landing between
+   *     submitTx and this handler doesn't push the lower bound past the
+   *     deploy.
    */
   router.post('/api/subscribe', safe(async (req, res) => {
     if (config?.indexerMode !== 'lite') {
@@ -446,7 +458,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    const { address } = req.body as { address?: string };
+    const { address, fromBlock } = req.body as {
+      address?: string;
+      fromBlock?: unknown;
+    };
     if (!address || typeof address !== 'string') {
       res.status(400).json({ error: 'address is required' });
       return;
@@ -459,18 +474,38 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
+    let fromBlockNum: number | null = null;
+    if (fromBlock !== undefined) {
+      if (
+        typeof fromBlock !== 'number' ||
+        !Number.isInteger(fromBlock) ||
+        fromBlock < 0
+      ) {
+        res.status(400).json({ error: 'fromBlock must be a non-negative integer' });
+        return;
+      }
+      fromBlockNum = fromBlock;
+    }
+
     const existing = await prisma.contract.findUnique({ where: { address } });
     if (existing) {
       res.json(existing);
       return;
     }
 
-    const latestHeight = await fetchLatestBlockHeight(config);
-    const created = await prisma.contract.create({
-      data: { address, discoveredAtBlock: latestHeight },
-    });
+    // Safety margin on the default path: the UI calls subscribe right
+    // after submitTx, but a block may land between submitTx and this
+    // handler's fetchLatestBlockHeight. Without the margin, the unready
+    // rescan's lower bound could sit one block past the deploy and
+    // permanently miss it. Mirrors DISCOVERY_MARGIN in tick().
+    const SUBSCRIBE_MARGIN = 5;
+    const discoveredAtBlock =
+      fromBlockNum ??
+      Math.max(0, (await fetchLatestBlockHeight(config)) - SUBSCRIBE_MARGIN);
 
-    await indexer.backfillContract(created.id, address);
+    const created = await prisma.contract.create({
+      data: { address, discoveredAtBlock },
+    });
 
     res.json(created);
   }));

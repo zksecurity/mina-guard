@@ -109,7 +109,12 @@ function del(path: string) {
 }
 
 describe('POST /api/subscribe', () => {
-  test('creates a contract entry when given a valid address', async () => {
+  test('creates a contract entry with ready=false and discoveredAtBlock set to latestHeight - SUBSCRIBE_MARGIN', async () => {
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => 1000,
+    }));
+
     const res = await post('/api/subscribe', { address: subscribedAddress });
 
     expect(res.status).toBe(200);
@@ -118,13 +123,16 @@ describe('POST /api/subscribe', () => {
 
     const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
     expect(stored).not.toBeNull();
+    expect(stored?.ready).toBe(false);
+    expect(stored?.discoveredAtBlock).toBe(995);
   });
 
   test('accepts addresses that are not yet deployed on-chain; row stays unready until events are ingested', async () => {
-    // The subscribe route no longer performs a VK lookup, so a freshly
-    // submitted deploy tx (still in the mempool) can be subscribed
-    // immediately. The row should exist but remain hidden from API reads
-    // via ready=false until syncSingleContract ingests an event.
+    // The subscribe route no longer ingests events or looks up the
+    // verification key. A freshly submitted deploy tx (still in the
+    // mempool) can be subscribed immediately. The row exists but is
+    // hidden from API reads via ready=false until the indexer tick's
+    // unready-rescan ingests an event.
     const res = await post('/api/subscribe', { address: subscribedAddress });
 
     expect(res.status).toBe(200);
@@ -138,16 +146,69 @@ describe('POST /api/subscribe', () => {
     expect(body.map((c) => c.address)).not.toContain(subscribedAddress);
   });
 
-  test('is idempotent when the contract is already tracked', async () => {
-    await prisma.contract.create({ data: { address: subscribedAddress } });
+  test('accepts explicit fromBlock and uses it as discoveredAtBlock (bypassing the margin)', async () => {
+    let fetchLatestCalls = 0;
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => {
+        fetchLatestCalls += 1;
+        return 9999;
+      },
+    }));
 
-    const res = await post('/api/subscribe', { address: subscribedAddress });
+    const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 0 });
+
+    expect(res.status).toBe(200);
+    const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
+    expect(stored?.discoveredAtBlock).toBe(0);
+    // fromBlock takes precedence, so we should not have fetched the tip.
+    expect(fetchLatestCalls).toBe(0);
+  });
+
+  test('accepts a non-zero fromBlock verbatim', async () => {
+    const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 500 });
+
+    expect(res.status).toBe(200);
+    const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
+    expect(stored?.discoveredAtBlock).toBe(500);
+  });
+
+  test('rejects negative fromBlock', async () => {
+    const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: -1 });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('fromBlock must be a non-negative integer');
+  });
+
+  test('rejects non-integer fromBlock', async () => {
+    const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 1.5 });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('fromBlock must be a non-negative integer');
+  });
+
+  test('rejects non-number fromBlock', async () => {
+    const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: '100' });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('fromBlock must be a non-negative integer');
+  });
+
+  test('is idempotent when the contract is already tracked; fromBlock does not overwrite discoveredAtBlock', async () => {
+    await prisma.contract.create({
+      data: { address: subscribedAddress, discoveredAtBlock: 42 },
+    });
+
+    const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 0 });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.address).toBe(subscribedAddress);
+    expect(body.discoveredAtBlock).toBe(42);
 
     const count = await prisma.contract.count({ where: { address: subscribedAddress } });
     expect(count).toBe(1);
+    const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
+    expect(stored?.discoveredAtBlock).toBe(42);
   });
 
   test('rejects missing address', async () => {

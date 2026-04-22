@@ -217,10 +217,15 @@ describe('maybeAutoSubscribeChild via applyExecutionEvent', () => {
     const child = await prisma.contract.findUnique({ where: { address: childAddress } });
     expect(child).not.toBeNull();
     expect(child?.parent).toBe(parentAddress);
-    // ready stays false here because this mock returns no events for the
-    // child address. In production the child emits its own setup/setupOwner
-    // events in the same tx as the parent's execution; the next tick would
-    // flip ready=true once the child's events are fetched and ingested.
+    // discoveredAtBlock is the execution-event block height (the child's
+    // own events land in the same block on-chain), so the unready rescan
+    // will re-scan from there.
+    expect(child?.discoveredAtBlock).toBe(20);
+    // ready stays false because this mock returns no events for the child
+    // address. In production the child emits its own setup/setupOwner
+    // events in the same tx as the parent's execution; the unready-rescan
+    // path will flip ready=true on the next tick once the child's events
+    // are fetched and ingested.
     expect(child?.ready).toBe(false);
   });
 
@@ -281,3 +286,115 @@ function makeExecutionEvent(proposalHash: string, blockHeight: number) {
     txHash: `tx-${proposalHash}`,
   };
 }
+
+describe('tick: rescanUnreadyContracts', () => {
+  async function runSingleTick(config: BackendConfig): Promise<MinaGuardIndexer> {
+    const indexer = new MinaGuardIndexer(config);
+    await indexer.start();
+    indexer.stop();
+    return indexer;
+  }
+
+  test('unready contract with no archive events stays unready', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: false, discoveredAtBlock: 50 },
+    });
+    await setCursor(100);
+
+    let callCount = 0;
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => 100,
+      fetchBestChainHeaders: async () => [],
+      fetchDecodedContractEvents: async () => {
+        callCount += 1;
+        return [];
+      },
+    }));
+
+    await runSingleTick(liteConfig);
+
+    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(false);
+    // The rescan should have queried events for the unready contract at
+    // least once during the tick.
+    expect(callCount).toBeGreaterThan(0);
+  });
+
+  test('unready contract flips to ready on tick once events are present', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: false, discoveredAtBlock: 50 },
+    });
+    await setCursor(100);
+
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => 100,
+      fetchBestChainHeaders: async () => [],
+      // Return a MinaGuard execution event for the unready contract's
+      // address — any event is proof the contract was initialized.
+      fetchDecodedContractEvents: async (_addr: string, from: number) => {
+        if (from <= 60) return [makeExecutionEvent('rescan-hash', 60)];
+        return [];
+      },
+    }));
+
+    await runSingleTick(liteConfig);
+
+    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(true);
+  });
+
+  test('uses discoveredAtBlock as the lower bound of the rescan range', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    await prisma.contract.create({
+      data: { address, ready: false, discoveredAtBlock: 77 },
+    });
+    await setCursor(100);
+
+    const rescanRanges: Array<{ from: number; to: number }> = [];
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => 100,
+      fetchBestChainHeaders: async () => [],
+      fetchDecodedContractEvents: async (_addr: string, from: number, to: number) => {
+        rescanRanges.push({ from, to });
+        return [];
+      },
+    }));
+
+    await runSingleTick(liteConfig);
+
+    // The rescan-path call is the one with from === discoveredAtBlock.
+    const rescan = rescanRanges.find((r) => r.from === 77);
+    expect(rescan).toBeDefined();
+    expect(rescan?.to).toBe(100);
+  });
+
+  test('skips contracts whose discoveredAtBlock is above latestHeight', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    await prisma.contract.create({
+      data: { address, ready: false, discoveredAtBlock: 9999 },
+    });
+    await setCursor(100);
+
+    const calls: string[] = [];
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => 100,
+      fetchBestChainHeaders: async () => [],
+      fetchDecodedContractEvents: async (addr: string) => {
+        calls.push(addr);
+        return [];
+      },
+    }));
+
+    await runSingleTick(liteConfig);
+
+    // The unready contract should not have been queried: its lower bound
+    // sits above the chain tip, so there's nothing to rescan yet.
+    expect(calls).not.toContain(address);
+  });
+});
