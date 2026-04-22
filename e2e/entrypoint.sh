@@ -23,6 +23,12 @@ trap cleanup EXIT INT TERM
 log "Resetting backend database at $DATABASE_URL"
 (cd /app/backend && bunx prisma db push --force-reset --skip-generate)
 
+if [ -z "${MINAGUARD_VK_HASH:-}" ] && [ -f /app/.vk-hash ]; then
+  MINAGUARD_VK_HASH=$(cat /app/.vk-hash)
+  export MINAGUARD_VK_HASH
+  log "Loaded VK hash from build: ${MINAGUARD_VK_HASH:0:20}..."
+fi
+
 log "Starting backend on :4000"
 (
   cd /app
@@ -30,6 +36,7 @@ log "Starting backend on :4000"
   MINA_ENDPOINT="$E2E_MINA_ENDPOINT" \
   ARCHIVE_ENDPOINT="$E2E_ARCHIVE_ENDPOINT" \
   LIGHTNET_ACCOUNT_MANAGER="$E2E_ACCOUNT_MANAGER" \
+  MINAGUARD_VK_HASH="${MINAGUARD_VK_HASH:-}" \
   PORT=4000 \
   INDEX_POLL_INTERVAL_MS=5000 \
   bun run --filter backend dev
