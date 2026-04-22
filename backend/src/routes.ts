@@ -5,7 +5,7 @@ import { PublicKey, fetchAccount } from 'o1js';
 import { prisma } from './db.js';
 import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
-import { fetchLatestBlockHeight, fetchVerificationKeyHash } from './mina-client.js';
+import { fetchLatestBlockHeight } from './mina-client.js';
 import { serializeProposalRecord } from './proposal-record.js';
 import {
   acquireLightnetAccount,
@@ -433,10 +433,12 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   }));
 
   /**
-   * Subscribes the indexer to a contract address. The address must resolve to
-   * an on-chain account carrying a verification key. Idempotent: re-subscribing
+   * Subscribes the indexer to a contract address. Idempotent: re-subscribing
    * an already-tracked address returns the existing row. Lite mode only —
-   * full mode auto-discovers contracts on every tick.
+   * full mode auto-discovers contracts on every tick. The address is not
+   * required to be deployed on-chain yet: a subscribed-before-deploy contract
+   * sits with `ready=false` until `syncSingleContract` ingests its first event,
+   * so it stays hidden from API read routes until it's actually populated.
    */
   router.post('/api/subscribe', safe(async (req, res) => {
     if (config?.indexerMode !== 'lite') {
@@ -460,12 +462,6 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     const existing = await prisma.contract.findUnique({ where: { address } });
     if (existing) {
       res.json(existing);
-      return;
-    }
-
-    const verificationKeyHash = await fetchVerificationKeyHash(address);
-    if (!verificationKeyHash) {
-      res.status(404).json({ error: 'No verification key found for address; not a zkApp' });
       return;
     }
 

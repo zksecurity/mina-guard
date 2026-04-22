@@ -174,12 +174,16 @@ export class MinaGuardIndexer {
   }
 
   /**
-   * Backfills events for a newly tracked contract, then flips Contract.ready
-   * so the row becomes visible to API read routes. In full mode the backfill
+   * Backfills events for a newly tracked contract. In full mode the backfill
    * spans 300 blocks (bestChain window — the contract was just discovered there,
    * so any earlier events are out of reorg range anyway). In lite mode the
    * backfill starts at config.indexStartHeight (default 0) so a cold-started
    * indexer pulls full history for any user-subscribed contract.
+   *
+   * Readiness is flipped by syncSingleContract on first event ingestion —
+   * a subscribed-before-deploy contract returns from here with ready=false
+   * and becomes ready once its deploy tx lands and the next sync picks up
+   * events for it.
    *
    * Exposed for use by the subscribe API route and the auto-subscribe path.
    */
@@ -193,10 +197,6 @@ export class MinaGuardIndexer {
       console.log(`[indexer] backfilling events for ${address} from block ${backfillFrom} to ${indexedHeight}`);
       await this.syncSingleContract(contractId, address, backfillFrom, indexedHeight);
     }
-    await prisma.contract.update({
-      where: { id: contractId },
-      data: { ready: true },
-    });
   }
 
   /** Indexes events for all tracked contracts across the requested block range. */
@@ -260,6 +260,7 @@ export class MinaGuardIndexer {
     };
     events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
 
+    let ingested = false;
     for (let seq = 0; seq < events.length; seq++) {
       const chainEvent = events[seq];
       const fingerprint = this.fingerprintEvent(address, chainEvent);
@@ -292,13 +293,21 @@ export class MinaGuardIndexer {
           fingerprint,
         },
       });
+      ingested = true;
 
       await this.applyEvent(contractId, chainEvent, seq, eventRaw.id);
     }
 
+    // Any MinaGuard event other than setup/setupOwner can only fire after
+    // the contract was initialized on-chain, so event presence is proof of
+    // a real, set-up contract. Flipping ready here gates a subscribed-before-
+    // deploy contract from appearing in API read routes until its first
+    // event actually lands.
     await prisma.contract.update({
       where: { id: contractId },
-      data: { lastSyncedAt: new Date() },
+      data: ingested
+        ? { lastSyncedAt: new Date(), ready: true }
+        : { lastSyncedAt: new Date() },
     });
   }
 

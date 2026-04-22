@@ -109,12 +109,7 @@ function del(path: string) {
 }
 
 describe('POST /api/subscribe', () => {
-  test('creates a contract entry when given a valid zkApp address', async () => {
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
-      fetchVerificationKeyHash: async () => 'vk-hash-stub',
-    }));
-
+  test('creates a contract entry when given a valid address', async () => {
     const res = await post('/api/subscribe', { address: subscribedAddress });
 
     expect(res.status).toBe(200);
@@ -125,15 +120,26 @@ describe('POST /api/subscribe', () => {
     expect(stored).not.toBeNull();
   });
 
+  test('accepts addresses that are not yet deployed on-chain; row stays unready until events are ingested', async () => {
+    // The subscribe route no longer performs a VK lookup, so a freshly
+    // submitted deploy tx (still in the mempool) can be subscribed
+    // immediately. The row should exist but remain hidden from API reads
+    // via ready=false until syncSingleContract ingests an event.
+    const res = await post('/api/subscribe', { address: subscribedAddress });
+
+    expect(res.status).toBe(200);
+    const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
+    expect(stored).not.toBeNull();
+    expect(stored?.ready).toBe(false);
+
+    // And it is hidden from the contracts list endpoint.
+    const listRes = await fetch(`${baseUrl}/api/contracts`);
+    const body = (await listRes.json()) as Array<{ address: string }>;
+    expect(body.map((c) => c.address)).not.toContain(subscribedAddress);
+  });
+
   test('is idempotent when the contract is already tracked', async () => {
     await prisma.contract.create({ data: { address: subscribedAddress } });
-
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
-      fetchVerificationKeyHash: async () => {
-        throw new Error('should not be called when contract already exists');
-      },
-    }));
 
     const res = await post('/api/subscribe', { address: subscribedAddress });
     expect(res.status).toBe(200);
@@ -156,21 +162,6 @@ describe('POST /api/subscribe', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe('Invalid Mina public key');
-  });
-
-  test('rejects addresses without an on-chain verification key', async () => {
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
-      fetchVerificationKeyHash: async () => null,
-    }));
-
-    const res = await post('/api/subscribe', { address: subscribedAddress });
-    expect(res.status).toBe(404);
-    const body = await res.json();
-    expect(body.error).toMatch(/verification key/i);
-
-    const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
-    expect(stored).toBeNull();
   });
 });
 

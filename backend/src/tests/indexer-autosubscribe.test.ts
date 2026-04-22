@@ -106,7 +106,7 @@ describe('backfillContract window', () => {
     expect(calls[0].to).toBe(1000);
   });
 
-  test('flips ready to true after backfill completes', async () => {
+  test('leaves ready=false when backfill ingested no events (subscribe-before-deploy)', async () => {
     const address = PrivateKey.random().toPublicKey().toBase58();
     const contract = await prisma.contract.create({ data: { address, ready: false } });
     await setCursor(500);
@@ -120,13 +120,34 @@ describe('backfillContract window', () => {
     await indexer.backfillContract(contract.id, address);
 
     const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(false);
+  });
+
+  test('flips ready=true when backfill ingests at least one event', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({ data: { address, ready: false } });
+    await setCursor(100);
+
+    // Any MinaGuard event is proof the contract was initialized on-chain.
+    // Use an execution event because it's the simplest to stub without
+    // triggering the deeper setup/ownerChange/etc. state machinery.
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchDecodedContractEvents: async () => [makeExecutionEvent('hash-x', 50)],
+    }));
+
+    const indexer = new MinaGuardIndexer(liteConfig);
+    await indexer.backfillContract(contract.id, address);
+
+    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(true);
   });
 
-  test('flips ready to true even when there is nothing to backfill', async () => {
+  test('does not touch ready when nothing to backfill (indexedHeight <= backfillFrom)', async () => {
     const address = PrivateKey.random().toPublicKey().toBase58();
     const contract = await prisma.contract.create({ data: { address, ready: false } });
-    // indexedHeight == 0 == indexStartHeight, so no network call should fire.
+    // indexedHeight == 0 == indexStartHeight, so no network call and no
+    // sync should run; readiness stays at its inserted value.
     await setCursor(0);
 
     let called = false;
@@ -143,7 +164,7 @@ describe('backfillContract window', () => {
 
     expect(called).toBe(false);
     const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
-    expect(updated.ready).toBe(true);
+    expect(updated.ready).toBe(false);
   });
 });
 
@@ -196,7 +217,11 @@ describe('maybeAutoSubscribeChild via applyExecutionEvent', () => {
     const child = await prisma.contract.findUnique({ where: { address: childAddress } });
     expect(child).not.toBeNull();
     expect(child?.parent).toBe(parentAddress);
-    expect(child?.ready).toBe(true);
+    // ready stays false here because this mock returns no events for the
+    // child address. In production the child emits its own setup/setupOwner
+    // events in the same tx as the parent's execution; the next tick would
+    // flip ready=true once the child's events are fetched and ingested.
+    expect(child?.ready).toBe(false);
   });
 
   test('full mode: does NOT auto-subscribe', async () => {
