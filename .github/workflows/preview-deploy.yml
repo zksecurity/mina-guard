@@ -49,7 +49,7 @@ jobs:
           PR_NUMBER: ${{ github.event.number }}
         run: |
           chmod +x preview-env/preview.sh
-          # ./preview-env/preview.sh down $PR_NUMBER
+          ./preview-env/preview.sh down $PR_NUMBER
           ./preview-env/preview.sh up $PR_NUMBER
 
       - name: Wait for services
