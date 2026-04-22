@@ -170,6 +170,10 @@ function CreateAccountWizard() {
         networkId: parentContract.networkId!,
         input: {
           txType: 'createChild',
+          // CREATE_CHILD uses the reserved nonce=0 sentinel enforced by
+          // assertFreshProposalNonce's isRemoteCreate branch. The usual
+          // "next available nonce" logic doesn't apply here.
+          nonce: 0,
           childAccount: childAddress,
           createChildConfigHash: configHash,
         },

@@ -2,6 +2,8 @@ import { Mina, PublicKey, fetchAccount, UInt32 } from 'o1js';
 import { MinaGuard } from 'contracts';
 import type { BackendConfig, } from './config.js';
 
+const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
+
 /** Decoded chain event shape consumed by the indexer. */
 export interface ChainEvent {
   type: string;
@@ -115,10 +117,23 @@ export async function fetchVerificationKeyHash(address: string): Promise<string 
   return hash?.toString() ?? null;
 }
 
-/** Reads on-chain MinaGuard state fields (threshold, numOwners, networkId, ownersCommitment). */
+/** Reads the current on-chain MinaGuard state needed by the backend/indexer.
+ *  Values are normalized for persistence: the empty-pubkey sentinel used by
+ *  root contracts for `parent` is flattened to null so callers don't need to
+ *  re-check it at every write site. */
 export async function fetchOnChainState(
   address: string
-): Promise<{ threshold: number; numOwners: number; networkId: string; ownersCommitment: string } | null> {
+): Promise<{
+  threshold: number;
+  numOwners: number;
+  networkId: string;
+  ownersCommitment: string;
+  nonce: number;
+  configNonce: number;
+  parent: string | null;
+  parentNonce: number;
+  childMultiSigEnabled: boolean;
+} | null> {
   const pub = PublicKey.fromBase58(address);
   await fetchAccount({ publicKey: pub });
   const contract = new MinaGuard(pub);
@@ -128,11 +143,21 @@ export async function fetchOnChainState(
     const numOwners = contract.numOwners.get();
     const networkId = contract.networkId.get();
     const ownersCommitment = contract.ownersCommitment.get();
+    const nonce = contract.nonce.get();
+    const configNonce = contract.configNonce.get();
+    const parent = contract.parent.get().toBase58();
+    const parentNonce = contract.parentNonce.get();
+    const childMultiSigEnabled = contract.childMultiSigEnabled.get();
     return {
       threshold: Number(threshold.toString()),
       numOwners: Number(numOwners.toString()),
       networkId: networkId.toString(),
       ownersCommitment: ownersCommitment.toString(),
+      nonce: Number(nonce.toString()),
+      configNonce: Number(configNonce.toString()),
+      parent: parent === EMPTY_PUBLIC_KEY ? null : parent,
+      parentNonce: Number(parentNonce.toString()),
+      childMultiSigEnabled: childMultiSigEnabled.toString() === '1',
     };
   } catch {
     return null;

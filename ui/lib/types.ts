@@ -1,7 +1,7 @@
 // -- UI Types ---------------------------------------------------------
 
 /** Indexed proposal lifecycle status used by list/detail screens. */
-export type ProposalStatus = 'pending' | 'executed' | 'expired';
+export type ProposalStatus = 'pending' | 'executed' | 'expired' | 'invalidated';
 
 /** Frontend-friendly transaction type labels mapped from MinaGuard TxType values. */
 export type TxType =
@@ -34,7 +34,7 @@ export interface Proposal {
   tokenId: string | null;
   txType: TxType | null;
   data: string | null;
-  uid: string | null;
+  nonce: string | null;
   configNonce: string | null;
   expiryBlock: string | null;
   networkId: string | null;
@@ -42,6 +42,7 @@ export interface Proposal {
   destination: ProposalDestination | null;
   childAccount: string | null;
   status: ProposalStatus;
+  invalidReason: string | null;
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
@@ -67,11 +68,12 @@ export interface ContractSummary {
   ownersCommitment: string | null;
   threshold: number | null;
   numOwners: number | null;
-  proposalCounter: number | null;
+  nonce: number | null;
   configNonce: number | null;
-  delegate: string | null;
   parent: string | null;
+  parentNonce: number | null;
   childMultiSigEnabled: boolean | null;
+  delegate: string | null;
   discoveredAt: string;
   lastSyncedAt: string | null;
 }
@@ -110,6 +112,7 @@ export interface IndexerStatus {
 /** User input payload used by proposal creation forms. */
 export interface NewProposalInput {
   txType: TxType;
+  nonce: number;
   receivers?: Array<{ address: string; amount: string }>;
   newOwner?: string;
   removeOwnerAddress?: string;
@@ -238,4 +241,48 @@ export function normalizeDestination(value: string | null): ProposalDestination 
   if (value === 'local' || value === '0') return 'local';
   if (value === 'remote' || value === '1') return 'remote';
   return null;
+}
+
+/** Canonical base58 of PublicKey.empty() — the sentinel we write into
+ *  delete-flow receivers. Verified via o1js. */
+export const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+
+/** True when a proposal was minted via delete-mode. Delete proposals carry
+ *  the same nonce as the proposal they're intended to invalidate, so there's
+ *  no user value in ever offering to "delete" one.
+ *
+ *  Shape:
+ *   - LOCAL delete: TRANSFER to (empty, 0)
+ *   - REMOTE delete: RECLAIM_CHILD with amount/data = 0 */
+export function isDeleteProposal(
+  proposal:
+    | Pick<Proposal, 'txType' | 'destination' | 'receivers' | 'data'>
+    | null
+    | undefined
+): boolean {
+  if (!proposal) return false;
+  if (proposal.txType === 'transfer' && proposal.destination === 'local') {
+    const r0 = proposal.receivers?.[0];
+    return !!r0 && r0.amount === '0' && r0.address === EMPTY_PUBKEY_B58;
+  }
+  if (proposal.txType === 'reclaimChild' && proposal.destination === 'remote') {
+    return proposal.data === '0';
+  }
+  return false;
+}
+
+/** Smallest nonce strictly greater than every still-racing proposal on this
+ *  contract. Skips expired/invalidated rows — their nonces are reusable.
+ *  Returns null when the contract's nonce is unknown. */
+export function nextAvailableNonce(
+  contractNonce: number | null,
+  proposals: ReadonlyArray<Pick<Proposal, 'nonce' | 'status'>>,
+): number | null {
+  if (contractNonce === null) return null;
+  const maxPending = proposals.reduce((acc, p) => {
+    if (p.status !== 'pending') return acc;
+    const n = Number(p.nonce ?? '');
+    return Number.isFinite(n) ? Math.max(acc, n) : acc;
+  }, contractNonce);
+  return maxPending + 1;
 }

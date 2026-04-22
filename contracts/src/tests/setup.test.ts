@@ -24,7 +24,8 @@ describe('MinaGuard - Setup', () => {
     expect(ctx.zkApp.ownersCommitment.get()).toEqual(getOwnersCommitment(ctx));
     expect(ctx.zkApp.threshold.get()).toEqual(Field(2));
     expect(ctx.zkApp.numOwners.get()).toEqual(Field(3));
-    expect(ctx.zkApp.proposalCounter.get()).toEqual(Field(0));
+    expect(ctx.zkApp.nonce.get()).toEqual(Field(0));
+    expect(ctx.zkApp.parentNonce.get()).toEqual(Field(0));
     expect(ctx.zkApp.configNonce.get()).toEqual(Field(0));
     expect(ctx.zkApp.approvalRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
     expect(ctx.zkApp.voteNullifierRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);

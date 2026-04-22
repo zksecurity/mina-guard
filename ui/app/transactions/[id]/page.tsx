@@ -7,6 +7,7 @@ import ApprovalProgress from '@/components/ApprovalProgress';
 import {
   TX_TYPE_LABELS,
   formatMina,
+  isDeleteProposal,
 } from '@/lib/types';
 import { fetchApprovals } from '@/lib/api';
 import {
@@ -79,6 +80,17 @@ export default function TransactionDetailPage() {
     proposal.configNonce !== String(multisig.configNonce);
   const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved && !isConfigStale;
   const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold && !isConfigStale;
+  const canDelete =
+    !!proposal &&
+    proposal.status === 'pending' &&
+    isOwner &&
+    proposal.nonce !== null &&
+    !isDeleteProposal(proposal) &&
+    // CREATE_CHILD uses the reserved nonce=0 sentinel, which the current
+    // delete mechanism (zero-value proposal at same nonce) can't replicate
+    // safely.
+    proposal.txType !== 'createChild';
+  const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
   /** Submits an on-chain approveProposal transaction. */
   const handleApprove = async () => {
@@ -155,6 +167,21 @@ export default function TransactionDetailPage() {
     if (success) router.push(`/accounts/${captured.contractAddress}`);
   };
 
+  const handleDelete = () => {
+    if (!proposal?.nonce) return;
+
+    // The form recomputes `effectiveTxType` from the target's destination, so
+    // the `type` URL param here is informational only. We pick `transfer` as
+    // the neutral default (matches the LOCAL-delete shape).
+    const params = new URLSearchParams({
+      mode: 'delete',
+      type: 'transfer',
+      targetProposalHash: proposal.proposalHash,
+      targetNonce: proposal.nonce,
+    });
+    router.push(`/transactions/new?${params.toString()}`);
+  };
+
   if (!wallet.connected || !multisig) {
     return (
       <div>
@@ -191,9 +218,12 @@ export default function TransactionDetailPage() {
     pending: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20',
     executed: 'text-safe-green bg-safe-green/10 border-safe-green/20',
     expired: 'text-red-400 bg-red-400/10 border-red-400/20',
+    invalidated: 'text-orange-400 bg-orange-400/10 border-orange-400/20',
   };
 
-  const txLabel = proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
+  const txLabel = isDeleteProposal(proposal)
+    ? 'Delete proposal'
+    : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
   return (
     <div>
@@ -220,14 +250,24 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {isNonceStale && (
+          <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
+            <p className="font-semibold mb-1">Proposal invalidated by a later nonce</p>
+            <p className="opacity-90">
+              Another proposal in the same execution order was executed first, so this proposal can no longer be
+              approved or executed. Create a new proposal with a fresh nonce to proceed.
+            </p>
+          </div>
+        )}
+
         <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
           <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Details</h3>
           <div className="space-y-3">
             <DetailRow label="Type" value={txLabel} />
             <DetailRow label="Proposal Hash" value={proposal.proposalHash} mono copyable />
-            <DetailRow label="UID" value={proposal.uid ?? '-'} mono copyable />
+            <DetailRow label="Nonce" value={proposal.nonce ?? '-'} mono copyable />
             <DetailRow label="Proposed by" value={proposal.proposer ?? '-'} mono copyable />
-            {proposal.txType === 'transfer' && (
+            {proposal.txType === 'transfer' && !isDeleteProposal(proposal) && (
               <>
                 <DetailRow label="Recipients" value={String(proposal.recipientCount)} />
                 <DetailRow label="Total Amount" value={`${formatMina(proposal.totalAmount)} MINA`} />
@@ -290,7 +330,7 @@ export default function TransactionDetailPage() {
         </div>
 
         {proposal.status === 'pending' && (
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             {canApprove && (
               <button
                 onClick={handleApprove}
@@ -307,6 +347,15 @@ export default function TransactionDetailPage() {
                 className="flex-1 border border-safe-green text-safe-green font-semibold rounded-lg py-3 text-sm hover:bg-safe-green/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={handleDelete}
+                disabled={isOperating}
+                className="flex-1 border border-orange-400/50 text-orange-300 font-semibold rounded-lg py-3 text-sm hover:bg-orange-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isOperating ? 'Waiting for pending transaction...' : 'Delete Proposal'}
               </button>
             )}
           </div>

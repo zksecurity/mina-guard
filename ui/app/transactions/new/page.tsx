@@ -43,18 +43,73 @@ function NewTransactionPageInner() {
     [isRoot],
   );
 
+  const deleteMode = searchParams.get('mode') === 'delete';
+  const deleteTargetHash = searchParams.get('targetProposalHash');
+  const deleteTargetNonce = searchParams.get('targetNonce');
+  const deleteTargetProposal = useMemo(
+    () =>
+      deleteMode && deleteTargetHash
+        ? proposals.find((p) => p.proposalHash === deleteTargetHash) ?? null
+        : null,
+    [deleteMode, deleteTargetHash, proposals],
+  );
   const rawType = searchParams.get('type');
   // CREATE_CHILD is wizard-only — bounce back to /accounts/new.
   useEffect(() => {
-    if (rawType === 'createChild' && multisig) {
+    if (!deleteMode && rawType === 'createChild' && multisig) {
       router.replace(`/accounts/new?parent=${multisig.address}`);
     }
-  }, [rawType, multisig, router]);
+  }, [rawType, multisig, router, deleteMode]);
 
-  const initialType = availableTypes.some((t) => t.value === rawType)
-    ? (rawType as TxType)
-    : 'transfer';
+  // In delete mode the form recomputes effectiveTxType from the target's
+  // destination (LOCAL→transfer / REMOTE→reclaimChild), but we still seed a
+  // coherent txType so non-form consumers see the shape they'll end up
+  // submitting.
+  const initialType: TxType = deleteMode
+    ? (deleteTargetProposal?.destination === 'remote' ? 'reclaimChild' : 'transfer')
+    : availableTypes.some((t) => t.value === rawType)
+      ? (rawType as TxType)
+      : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
+  const [currentNonce, setCurrentNonce] = useState<number | null>(multisig?.nonce ?? null);
+
+  // Delete-mode pins the form's nonce to the target proposal's nonce; the
+  // form derives its own default nonce in every other case based on the
+  // active txType's nonce space (LOCAL vs REMOTE).
+  const initialNonce = deleteMode
+    ? (() => {
+        const parsed = Number(deleteTargetNonce ?? '');
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+      })()
+    : null;
+
+  useEffect(() => {
+    setTxType(initialType);
+  }, [initialType]);
+
+  useEffect(() => {
+    if (!multisig?.address) {
+      setCurrentNonce(null);
+      return;
+    }
+
+    let cancelled = false;
+    setCurrentNonce(multisig.nonce ?? null);
+
+    void (async () => {
+      const fresh = await fetchContract(multisig.address);
+      if (cancelled || !fresh) return;
+      setCurrentNonce(fresh.nonce ?? null);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [multisig?.address, multisig?.nonce]);
+
+  const handleExitDeleteMode = () => {
+    router.replace('/transactions/new?type=transfer');
+  };
 
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
@@ -123,12 +178,14 @@ function NewTransactionPageInner() {
           </div>
         ) : (
           <div className="space-y-4">
-            <TxTypePicker
-              localTypes={availableTypes.filter((t) => LOCAL_TX_TYPES.some((l) => l.value === t.value))}
-              childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
-              selected={txType}
-              onSelect={setTxType}
-            />
+            {!deleteMode && (
+              <TxTypePicker
+                localTypes={availableTypes.filter((t) => LOCAL_TX_TYPES.some((l) => l.value === t.value))}
+                childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
+                selected={txType}
+                onSelect={setTxType}
+              />
+            )}
 
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
               {proposals.some(
@@ -149,6 +206,14 @@ function NewTransactionPageInner() {
                 isSubmitting={isOperating}
                 txType={txType}
                 children={children}
+                initialNonce={initialNonce}
+                currentNonce={currentNonce}
+                proposals={proposals}
+                nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
+                deleteMode={deleteMode}
+                deleteTargetHash={deleteTargetHash}
+                deleteTargetProposal={deleteTargetProposal}
+                onExitDeleteMode={handleExitDeleteMode}
               />
             </div>
           </div>

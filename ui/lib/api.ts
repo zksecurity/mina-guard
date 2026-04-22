@@ -125,11 +125,12 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
     ownersCommitment: asNullableString(input.ownersCommitment),
     threshold: asNullableNumber(input.threshold),
     numOwners: asNullableNumber(input.numOwners),
-    proposalCounter: asNullableNumber(input.proposalCounter),
+    nonce: asNullableNumber(input.nonce) ?? asNullableNumber(input.proposalCounter),
     configNonce: asNullableNumber(input.configNonce),
-    delegate: asNullableString(input.delegate),
     parent: asNullableString(input.parent),
+    parentNonce: asNullableNumber(input.parentNonce),
     childMultiSigEnabled: asNullableBoolean(input.childMultiSigEnabled),
+    delegate: asNullableString(input.delegate),
     discoveredAt: asString(input.discoveredAt) ?? new Date(0).toISOString(),
     lastSyncedAt: asNullableString(input.lastSyncedAt),
   };
@@ -149,7 +150,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     tokenId: asNullableString(input.tokenId),
     txType: normalizeTxType(asNullableString(input.txType)),
     data: asNullableString(input.data),
-    uid: asNullableString(input.uid),
+    nonce: asNullableString(input.nonce) ?? asNullableString(input.uid),
     configNonce: asNullableString(input.configNonce),
     expiryBlock: asNullableString(input.expiryBlock),
     networkId: asNullableString(input.networkId),
@@ -157,6 +158,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     destination: normalizeDestination(asNullableString(input.destination)),
     childAccount: asNullableString(input.childAccount),
     status: asProposalStatus(input.status),
+    invalidReason: asNullableString(input.invalidReason),
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
@@ -223,7 +225,7 @@ function asNullableString(value: unknown): string | null {
 /** Converts status text to one of the allowed proposal status values. */
 function asProposalStatus(value: unknown): Proposal['status'] {
   const text = asString(value);
-  if (text === 'executed' || text === 'expired') return text;
+  if (text === 'executed' || text === 'expired' || text === 'invalidated') return text;
   return 'pending';
 }
 

@@ -6,6 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  productionBrowserSourceMaps: process.env.ENABLE_SOURCE_MAPS !== 'false',
   webpack(config, { isServer }) {
     // Disable minification: SWC/terser minifiers are known to mangle BigInt
     // operations (see terser/terser#546, terser/terser#525). o1js relies on

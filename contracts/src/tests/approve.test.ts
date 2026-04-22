@@ -23,7 +23,7 @@ describe('MinaGuard - Approve', () => {
   it('should allow owner to approve with valid signature', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -36,7 +36,7 @@ describe('MinaGuard - Approve', () => {
   it('should allow multiple owners to approve same proposal', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -52,7 +52,7 @@ describe('MinaGuard - Approve', () => {
   it('should prevent double-voting (vote nullifier)', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     await proposeTransaction(ctx, proposal, 0);
 
@@ -66,7 +66,7 @@ describe('MinaGuard - Approve', () => {
   it('should reject invalid signature', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -96,7 +96,7 @@ describe('MinaGuard - Approve', () => {
   it('should reject approval from non-owner', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -137,7 +137,7 @@ describe('MinaGuard - Approve', () => {
     await fundTxn.sign([ctx.deployerKey]).send();
 
     const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(0), Field(0), ctx.zkAppAddress
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
     );
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
@@ -158,6 +158,6 @@ describe('MinaGuard - Approve', () => {
     // Try to approve after execution - should fail
     await expect(async () => {
       await approveTransaction(ctx, proposal, 2);
-    }).toThrow('Proposal already executed');
+    }).toThrow('Proposal nonce stale');
   });
 });

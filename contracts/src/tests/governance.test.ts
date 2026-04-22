@@ -31,7 +31,7 @@ describe('MinaGuard - Governance', () => {
       const newOwnerKey = PrivateKey.random();
       const newOwner = newOwnerKey.toPublicKey();
 
-      const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -63,7 +63,7 @@ describe('MinaGuard - Governance', () => {
     it('should reject adding an already-existing owner', async () => {
       const existingOwner = ctx.owners[1].pub;
 
-      const proposal = createAddOwnerProposal(existingOwner, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(existingOwner, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -89,7 +89,7 @@ describe('MinaGuard - Governance', () => {
 
     it('should reject unproposed owner change with approvalCount = 0', async () => {
       const newOwner = PrivateKey.random().toPublicKey();
-      const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = proposal.hash();
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
@@ -113,7 +113,7 @@ describe('MinaGuard - Governance', () => {
     it('should increment configNonce after adding owner', async () => {
       const newOwner = PrivateKey.random().toPublicKey();
 
-      const proposal = createAddOwnerProposal(newOwner, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -140,7 +140,7 @@ describe('MinaGuard - Governance', () => {
     it('should remove an owner via multisig', async () => {
       const ownerToRemove = ctx.owners[2].pub;
 
-      const proposal = createRemoveOwnerProposal(ownerToRemove, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createRemoveOwnerProposal(ownerToRemove, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -169,7 +169,7 @@ describe('MinaGuard - Governance', () => {
     it('should reject removal if it would go below threshold', async () => {
       // First remove one owner (3 -> 2, threshold = 2, ok)
       const ownerToRemove1 = ctx.owners[2].pub;
-      const proposal1 = createRemoveOwnerProposal(ownerToRemove1, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal1 = createRemoveOwnerProposal(ownerToRemove1, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash1 = await proposeTransaction(ctx, proposal1, 0);
       await approveTransaction(ctx, proposal1, 1);
 
@@ -189,7 +189,7 @@ describe('MinaGuard - Governance', () => {
       // Now try to remove another (2 -> 1, threshold = 2, should fail)
       const ownerToRemove2 = ctx.owners[1].pub;
       const proposal2 = createRemoveOwnerProposal(
-        ownerToRemove2, Field(1), Field(1), ctx.zkAppAddress // configNonce is now 1
+        ownerToRemove2, Field(2), Field(1), ctx.zkAppAddress // configNonce is now 1
       );
       const proposalHash2 = await proposeTransaction(ctx, proposal2, 0);
       await approveTransaction(ctx, proposal2, 1);
@@ -211,7 +211,7 @@ describe('MinaGuard - Governance', () => {
     it('should reject removing a non-existent owner', async () => {
       const nonOwner = PrivateKey.random().toPublicKey();
 
-      const proposal = createRemoveOwnerProposal(nonOwner, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createRemoveOwnerProposal(nonOwner, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -235,7 +235,7 @@ describe('MinaGuard - Governance', () => {
   describe('changeThreshold', () => {
     it('should change threshold via multisig', async () => {
       const newThreshold = Field(3);
-      const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -253,7 +253,7 @@ describe('MinaGuard - Governance', () => {
 
     it('should reject threshold = 0', async () => {
       const newThreshold = Field(0);
-      const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -272,7 +272,7 @@ describe('MinaGuard - Governance', () => {
 
     it('should reject unproposed threshold change with approvalCount = 0', async () => {
       const newThreshold = Field(1);
-      const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = proposal.hash();
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const thresholdBefore = ctx.zkApp.threshold.get();
@@ -292,7 +292,7 @@ describe('MinaGuard - Governance', () => {
 
     it('should reject threshold above numOwners', async () => {
       const newThreshold = Field(10); // Only 3 owners
-      const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -311,7 +311,7 @@ describe('MinaGuard - Governance', () => {
 
     it('should increment configNonce after threshold change', async () => {
       const newThreshold = Field(1);
-      const proposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
+      const proposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -330,7 +330,7 @@ describe('MinaGuard - Governance', () => {
     it('should invalidate old proposals after governance change', async () => {
       // Change threshold first (configNonce goes to 1)
       const newThreshold = Field(1);
-      const thresholdProposal = createThresholdProposal(newThreshold, Field(0), Field(0), ctx.zkAppAddress);
+      const thresholdProposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash1 = await proposeTransaction(ctx, thresholdProposal, 0);
       await approveTransaction(ctx, thresholdProposal, 1);
 
@@ -355,7 +355,7 @@ describe('MinaGuard - Governance', () => {
         tokenId: Field(0),
         txType: TxType.TRANSFER,
         data: Field(0),
-        uid: Field(1),
+        nonce: Field(1),
         configNonce: Field(0), // old configNonce
         expiryBlock: Field(0),
         networkId: Field(1),
@@ -388,4 +388,3 @@ describe('MinaGuard - Governance', () => {
     });
   });
 });
-

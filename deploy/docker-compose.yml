@@ -69,6 +69,7 @@ services:
         - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-nodes.duckdns.org/app/archive
         - NEXT_PUBLIC_MINA_NETWORK=testnet
         - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-nodes.duckdns.org/app/explorer
+        - ENABLE_SOURCE_MAPS=false
     restart: unless-stopped
     depends_on:
       - backend

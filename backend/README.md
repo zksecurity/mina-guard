@@ -146,7 +146,7 @@ Returns `404` if contract not found.
 Lists proposals for a contract.  
 Query params:
 
-- `status` (optional; e.g. `pending`, `executed`, `expired`)
+- `status` (optional; e.g. `pending`, `executed`, `expired`, `invalidated`)
 - `limit` (default `50`, min `1`, max `200`)
 - `offset` (default `0`, min `0`, max `10000`)
 
@@ -187,7 +187,7 @@ Tracked MinaGuard contract metadata:
 
 - identity: `id`, unique `address`
 - setup/config: `networkId`, `ownersCommitment`, `threshold`, `numOwners`
-- state: `configNonce`, `proposalCounter`, `isValid`, `invalidReason`
+- state: `nonce`, `configNonce`, `parent`, `parentNonce`, `childMultiSigEnabled`
 - sync timestamps: `discoveredAt`, `lastSyncedAt`
 
 Relations: `owners`, `proposals`, `events`.
@@ -208,7 +208,8 @@ Normalized proposal lifecycle record:
 - indexed: `@@index([contractId, status])`
 - fields include `proposer`, `toAddress`, `amount`, `tokenId`, `txType`, `data`
 - lifecycle: `status`, `approvalCount`, `createdAtBlock`, `executedAtBlock`
-- metadata: `nonce`, `configNonce`, `expiryBlock`, `networkId`, `guardAddress`
+- metadata: `nonce`, `configNonce`, `expiryBlock`, `networkId`, `guardAddress`, `destination`, `childAccount`
+- invalidation: `status`, `invalidReason`
 
 ### `Approval`
 
@@ -239,11 +240,17 @@ Indexer applies contract events as follows:
 - `setupOwner`: upsert owner rows
 - `proposal`: upsert proposal with `status = pending`
 - `approval`: upsert approval, recompute `proposal.approvalCount`
-- `execution`: mark proposal `executed`, set `executedAtBlock`
+- `execution`: mark proposal `executed`, set `executedAtBlock` by global `proposalHash` so REMOTE child executions update the parent-stored proposal row
 - `ownerChange`: toggle owner active state, update `numOwners` when provided
 - `thresholdChange`: update contract threshold
+- `createChild`: persist child `parent` linkage and bootstrap `childMultiSigEnabled = true`
+- `enableChildMultiSig`: mirror child enable/disable state on the indexed contract row
 
-After event ingestion, pending proposals are re-evaluated and moved to `expired` if `latestHeight > expiryBlock`.
+After event ingestion, non-executed proposals are re-evaluated and moved to:
+
+- `expired` if `latestHeight > expiryBlock`
+- `invalidated` if `configNonce` is stale
+- `invalidated` if the proposal nonce is no longer fresh for its LOCAL or REMOTE nonce domain
 
 ## Logging
 
