@@ -117,6 +117,15 @@ export default function ProposalForm({
 
   const [validationError, setValidationError] = useState<string | null>(null);
   const transferParse = parseTransferLines(transferLines);
+  // Live warning for nonce collisions with pending proposals — non-blocking,
+  // matches the delete-mode race-to-execute semantics.
+  const nonceCollisionWarning = (() => {
+    if (deleteMode) return null;
+    const parsed = parseProposalNonce(nonce);
+    if (parsed === null) return null;
+    if (!takenNonces?.has(parsed)) return null;
+    return parsed;
+  })();
   // Delete-mode shape: LOCAL target → zero-value transfer; REMOTE target →
   // zero-amount reclaim. The on-chain methods are the real transfer/reclaim
   // circuits; the delete semantics live purely in the (empty, 0) /
@@ -143,12 +152,10 @@ export default function ProposalForm({
       setValidationError(`Nonce must be greater than the current executed nonce (${currentNonce}).`);
       return;
     }
-    if (!deleteMode && takenNonces?.has(parsedNonce)) {
-      setValidationError(
-        `Nonce ${parsedNonce} is already used by a pending proposal. Pick a different nonce to avoid colliding with it.`,
-      );
-      return;
-    }
+    // Nonce collision with a pending proposal is deliberately allowed — it's
+    // the same mechanism as delete-mode (whichever executes first burns the
+    // slot and invalidates the other). A non-blocking warning is rendered
+    // below the form instead.
 
     if (effectiveTxType === 'addOwner' && numOwners >= MAX_OWNERS) {
       setValidationError(`Cannot exceed the maximum of ${MAX_OWNERS} owners.`);
@@ -607,6 +614,17 @@ export default function ProposalForm({
         placeholder="0"
         inputMode="numeric"
       />
+
+      {nonceCollisionWarning && (
+        <div className="rounded-lg border border-orange-400/30 bg-orange-400/10 px-4 py-3 text-sm text-orange-200">
+          <p className="font-semibold mb-1">Nonce {nonceCollisionWarning} is already in use</p>
+          <p className="opacity-90">
+            Another pending proposal is queued at this nonce. Submitting will race it — whichever
+            executes first burns the nonce and invalidates the other. This is the same mechanism as
+            delete-mode.
+          </p>
+        </div>
+      )}
 
       {validationError && <p className="text-sm text-red-400">{validationError}</p>}
 

@@ -760,7 +760,11 @@ export class MinaGuardIndexer {
     const parsedNonce = Number(proposal.nonce);
     if (!Number.isFinite(parsedNonce)) return false;
 
-    const isRemote = proposal.destination === '1';
+    // `destination` is persisted already normalized by normalizeDestination()
+    // to 'local' / 'remote' strings. Comparing to the raw field value '1'
+    // here silently misrouted REMOTE proposals (including CREATE_CHILD) into
+    // the LOCAL-nonce branch.
+    const isRemote = proposal.destination === 'remote';
     const isCreateChild = proposal.txType === '5';
 
     if (!isRemote) {

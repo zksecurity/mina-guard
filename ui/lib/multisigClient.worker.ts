@@ -41,6 +41,7 @@ import {
   type NewProposalInput,
   type Proposal,
   normalizeTxType,
+  EMPTY_PUBKEY_B58,
 } from '@/lib/types';
 import {
   fetchAllEvents,
@@ -477,7 +478,13 @@ function buildTransferReceivers(
   receivers: Array<{ address: string; amount: string }>
 ): InstanceType<typeof Receiver>[] {
   const normalized = receivers.map((receiver) => new Receiver({
-    address: PublicKey.fromBase58(receiver.address),
+    // PublicKey.empty() produces a sentinel at (x=0, isOdd=false) — a point
+    // that ISN'T on the curve, so PublicKey.fromBase58 rejects its own
+    // toBase58() output with "not a valid group element". Use the sentinel
+    // directly for the delete-flow empty receiver.
+    address: receiver.address === EMPTY_PUBKEY_B58
+      ? PublicKey.empty()
+      : PublicKey.fromBase58(receiver.address),
     amount: UInt64.from(receiver.amount),
   }));
 
@@ -993,8 +1000,26 @@ const workerApi = {
     const executor = PublicKey.fromBase58(params.executorAddress);
 
     await fetchAccount({ publicKey: executor });
+
+    // For fund-moving executes, every recipient that doesn't yet exist on
+    // chain costs 1 MINA of account-creation fee. Without an explicit
+    // AccountUpdate.fundNewAccount(executor, N) inside the tx, the node
+    // rejects with Invalid_fee_excess.
+    let newAccountCount = 0;
+    if (txType === 'transfer' || txType === 'allocateChild') {
+      for (const r of params.proposal.receivers ?? []) {
+        if (!r.address || r.address === EMPTY_PUBKEY_B58) continue;
+        const { account } = await fetchAccount({ publicKey: PublicKey.fromBase58(r.address) });
+        if (!account) newAccountCount += 1;
+      }
+    }
+
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(executor), async () => {
+      if (newAccountCount > 0) {
+        AccountUpdate.fundNewAccount(executor, newAccountCount);
+      }
+
       if (txType === 'transfer') {
         await contract.executeTransfer(proposalStruct, approvalWitness, approvalCount);
         return;
