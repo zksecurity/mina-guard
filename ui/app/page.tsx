@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ThresholdBadge from '@/components/ThresholdBadge';
+import AddExistingAccountModal from '@/components/AddExistingAccountModal';
 import { fetchBalance } from '@/lib/api';
+import { resolveIndexerMode } from '@/lib/indexer-mode';
 import { formatMina, truncateAddress, type ContractSummary } from '@/lib/types';
 import { getAccountName } from '@/lib/storage';
 
@@ -79,10 +82,13 @@ function buildOwnedForest(
 
 /** Root page — shows every subtree that contains a wallet-owned account. */
 export default function AccountsListPage() {
-  const { contracts, allContractOwners, wallet } = useAppContext();
+  const { contracts, allContractOwners, wallet, indexerStatus } = useAppContext();
+  const router = useRouter();
 
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [showAddExisting, setShowAddExisting] = useState(false);
+  const isLiteMode = resolveIndexerMode(indexerStatus) === 'lite';
 
   const forest = useMemo(
     () => buildOwnedForest(contracts, allContractOwners, wallet.address),
@@ -129,12 +135,23 @@ export default function AccountsListPage() {
                 : `${ownedCount} ${ownedCount === 1 ? 'account' : 'accounts'}`}
             </p>
           </div>
-          <Link
-            href="/accounts/new"
-            className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all"
-          >
-            + Create account
-          </Link>
+          <div className="flex gap-3">
+            {isLiteMode && (
+              <button
+                type="button"
+                onClick={() => setShowAddExisting(true)}
+                className="bg-safe-gray border border-safe-border text-white font-semibold rounded-lg px-5 py-2.5 text-sm hover:bg-safe-hover transition-colors"
+              >
+                + Add existing
+              </button>
+            )}
+            <Link
+              href="/accounts/new"
+              className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all"
+            >
+              + Create account
+            </Link>
+          </div>
         </div>
 
         <div className="bg-safe-gray border border-safe-border rounded-xl">
@@ -197,6 +214,16 @@ export default function AccountsListPage() {
           )}
         </div>
       </div>
+
+      {showAddExisting && (
+        <AddExistingAccountModal
+          onClose={() => setShowAddExisting(false)}
+          onSubmitted={(address) => {
+            setShowAddExisting(false);
+            router.push(`/accounts/${address}?pending=1`);
+          }}
+        />
+      )}
     </div>
   );
 }
