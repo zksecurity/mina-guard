@@ -13,6 +13,8 @@ import {
   generateKeypair,
 } from '@/lib/multisigClient';
 import { saveAccountName, savePendingSubaccount } from '@/lib/storage';
+import { subscribeAddress } from '@/lib/api';
+import { resolveIndexerMode } from '@/lib/indexer-mode';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', networkId: '0', enabled: true },
@@ -37,6 +39,7 @@ function CreateAccountWizard() {
   const {
     wallet,
     contracts,
+    indexerStatus,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -128,7 +131,12 @@ function CreateAccountWizard() {
     }
     if (name.trim()) saveAccountName(keypair.publicKey, name);
     void startOperation('Building deploy transaction...', async (onProgress) => {
-      return await deployAndSetupContract(captured, onProgress, signer);
+      const result = await deployAndSetupContract(captured, onProgress, signer);
+      if (result && resolveIndexerMode(indexerStatus) === 'lite') {
+        onProgress('Subscribing indexer…');
+        await subscribeAddress(keypair.publicKey);
+      }
+      return result;
     });
     router.push(`/accounts/${keypair.publicKey}?pending=1`);
   };
