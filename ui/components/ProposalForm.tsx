@@ -1,10 +1,11 @@
 'use client';
 
 import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { fetchBalance } from '@/lib/api';
 import {
   formatMina,
+  nextAvailableNonce,
   truncateAddress,
   NewProposalInput,
   TxType,
@@ -23,11 +24,15 @@ interface ProposalFormProps {
   txType: TxType;
   /** Indexed subaccounts of this guard, used as targets for CHILD_TX_TYPES. */
   children?: ContractSummary[];
+  /** Delete-mode only: target's nonce from URL params. Ignored otherwise;
+   *  the form derives the default nonce from the active txType's nonce space. */
   initialNonce: number | null;
+  /** Parent guard's current executed LOCAL nonce. Only applies to LOCAL
+   *  txTypes; REMOTE txTypes read the selected child's parentNonce instead. */
   currentNonce: number | null;
-  /** Nonces of still-pending proposals on this contract — used to block
-   *  accidental collisions (except in delete mode, which collides on purpose). */
-  takenNonces?: ReadonlySet<number>;
+  /** All known proposals on this guard. Used to compute per-nonce-space
+   *  collision warnings and next-available defaults. */
+  proposals: ReadonlyArray<Proposal>;
   nonceResetKey: string;
   deleteMode?: boolean;
   deleteTargetHash?: string | null;
@@ -46,7 +51,7 @@ export default function ProposalForm({
   children = [],
   initialNonce,
   currentNonce,
-  takenNonces,
+  proposals,
   nonceResetKey,
   deleteMode = false,
   deleteTargetHash = null,
@@ -63,18 +68,6 @@ export default function ProposalForm({
   const [delegate, setDelegate] = useState('');
   const [undelegate, setUndelegate] = useState(false);
   const [expiryBlock, setExpiryBlock] = useState('0');
-  const [nonce, setNonce] = useState(initialNonce === null ? '' : String(initialNonce));
-  const [nonceDirty, setNonceDirty] = useState(false);
-
-  useEffect(() => {
-    setNonceDirty(false);
-    setNonce(initialNonce === null ? '' : String(initialNonce));
-  }, [initialNonce, nonceResetKey]);
-
-  useEffect(() => {
-    if (nonceDirty) return;
-    setNonce(initialNonce === null ? '' : String(initialNonce));
-  }, [initialNonce, nonceDirty]);
 
   useEffect(() => {
     if (!deleteMode) return;
@@ -97,6 +90,74 @@ export default function ProposalForm({
   const selectedChild = children.find((c) => c.address === targetChild) ?? null;
   const currentMultiSigEnabled = selectedChild?.childMultiSigEnabled !== false;
   const enableTarget: 'enable' | 'disable' = currentMultiSigEnabled ? 'disable' : 'enable';
+
+  // Delete-mode shape: LOCAL target → zero-value transfer; REMOTE target →
+  // zero-amount reclaim.
+  const isRemoteDelete = deleteMode && deleteTargetProposal?.destination === 'remote';
+  const effectiveTxType: TxType = deleteMode
+    ? (isRemoteDelete ? 'reclaimChild' : 'transfer')
+    : txType;
+
+  // LOCAL vs REMOTE nonce space. REMOTE non-create proposals use the target
+  // child's `parentNonce` counter; LOCAL proposals use the parent guard's
+  // `nonce` counter. createChild uses nonce=0 sentinel (not offered here).
+  const isRemoteSpaceTxType =
+    effectiveTxType === 'reclaimChild' ||
+    effectiveTxType === 'destroyChild' ||
+    effectiveTxType === 'enableChildMultiSig';
+
+  // For delete-remote the target child comes from the target proposal (the
+  // form's own targetChild dropdown isn't surfaced in delete mode).
+  const nonceSpaceChildAddress = isRemoteDelete
+    ? (deleteTargetProposal?.childAccount ?? null)
+    : (isRemoteSpaceTxType ? targetChild || null : null);
+  const nonceSpaceChild = nonceSpaceChildAddress
+    ? (children.find((c) => c.address === nonceSpaceChildAddress) ?? null)
+    : null;
+
+  const effectiveNonceFloor = isRemoteSpaceTxType
+    ? (nonceSpaceChild?.parentNonce ?? null)
+    : currentNonce;
+
+  const effectiveSpaceProposals = useMemo(() => {
+    if (isRemoteSpaceTxType) {
+      return proposals.filter(
+        (p) => p.destination === 'remote' && p.childAccount === nonceSpaceChildAddress,
+      );
+    }
+    return proposals.filter((p) => p.destination === 'local');
+  }, [proposals, isRemoteSpaceTxType, nonceSpaceChildAddress]);
+
+  const effectiveTakenNonces = useMemo(
+    () =>
+      new Set(
+        effectiveSpaceProposals
+          .filter((p) => p.status === 'pending')
+          .map((p) => Number(p.nonce))
+          .filter((n) => Number.isFinite(n)),
+      ),
+    [effectiveSpaceProposals],
+  );
+
+  const effectiveDefaultNonce = useMemo(() => {
+    if (deleteMode) return initialNonce;
+    return nextAvailableNonce(effectiveNonceFloor, effectiveSpaceProposals);
+  }, [deleteMode, initialNonce, effectiveNonceFloor, effectiveSpaceProposals]);
+
+  const [nonce, setNonce] = useState(
+    effectiveDefaultNonce === null ? '' : String(effectiveDefaultNonce),
+  );
+  const [nonceDirty, setNonceDirty] = useState(false);
+
+  useEffect(() => {
+    setNonceDirty(false);
+    setNonce(effectiveDefaultNonce === null ? '' : String(effectiveDefaultNonce));
+  }, [effectiveDefaultNonce, nonceResetKey]);
+
+  useEffect(() => {
+    if (nonceDirty) return;
+    setNonce(effectiveDefaultNonce === null ? '' : String(effectiveDefaultNonce));
+  }, [effectiveDefaultNonce, nonceDirty]);
 
   // Fetch the selected child's balance so the reclaim form can show the upper bound.
   const [targetBalance, setTargetBalance] = useState<string | null>(null);
@@ -123,17 +184,9 @@ export default function ProposalForm({
     if (deleteMode) return null;
     const parsed = parseProposalNonce(nonce);
     if (parsed === null) return null;
-    if (!takenNonces?.has(parsed)) return null;
+    if (!effectiveTakenNonces.has(parsed)) return null;
     return parsed;
   })();
-  // Delete-mode shape: LOCAL target → zero-value transfer; REMOTE target →
-  // zero-amount reclaim. The on-chain methods are the real transfer/reclaim
-  // circuits; the delete semantics live purely in the (empty, 0) /
-  // reclaim-0 pattern, which isDeleteProposal() re-detects for display.
-  const isRemoteDelete = deleteMode && deleteTargetProposal?.destination === 'remote';
-  const effectiveTxType: TxType = deleteMode
-    ? (isRemoteDelete ? 'reclaimChild' : 'transfer')
-    : txType;
 
   /** Emits normalized form payload according to the selected transaction type. */
   const handleSubmit = (e: React.FormEvent) => {
@@ -146,10 +199,13 @@ export default function ProposalForm({
       return;
     }
     // Skip the executed-nonce floor in delete mode: the target proposal's
-    // nonce is authoritative, and REMOTE targets use child.parentNonce
-    // (independent of the parent's LOCAL nonce exposed as `currentNonce`).
-    if (!deleteMode && currentNonce !== null && parsedNonce <= currentNonce) {
-      setValidationError(`Nonce must be greater than the current executed nonce (${currentNonce}).`);
+    // nonce is authoritative. Otherwise the floor depends on txType's nonce
+    // space (parent's localNonce for LOCAL, child's parentNonce for REMOTE).
+    if (!deleteMode && effectiveNonceFloor !== null && parsedNonce <= effectiveNonceFloor) {
+      const floorLabel = isRemoteSpaceTxType
+        ? `the selected subaccount's executed remote nonce (${effectiveNonceFloor})`
+        : `the current executed nonce (${effectiveNonceFloor})`;
+      setValidationError(`Nonce must be greater than ${floorLabel}.`);
       return;
     }
     // Nonce collision with a pending proposal is deliberately allowed — it's
@@ -300,16 +356,23 @@ export default function ProposalForm({
             setNonceDirty(true);
             setNonce(value);
           }}
-          placeholder={initialNonce === null ? '1' : String(initialNonce)}
+          placeholder={effectiveDefaultNonce === null ? '1' : String(effectiveDefaultNonce)}
           inputMode="numeric"
           required
         />
         <p className="text-xs text-safe-text">
-          {currentNonce === null
-            ? 'Use a nonce greater than the contract’s current executed nonce.'
-            : initialNonce !== null
-              ? `Next available nonce: ${initialNonce}. Current executed: ${currentNonce}.`
-              : `Current executed nonce: ${currentNonce}. Use a higher nonce for new proposals.`}
+          {(() => {
+            const floorLabel = isRemoteSpaceTxType
+              ? 'subaccount’s executed remote nonce'
+              : 'contract’s executed nonce';
+            if (effectiveNonceFloor === null) {
+              return `Use a nonce greater than the ${floorLabel}.`;
+            }
+            if (effectiveDefaultNonce !== null) {
+              return `Next available nonce: ${effectiveDefaultNonce}. Current ${floorLabel}: ${effectiveNonceFloor}.`;
+            }
+            return `Current ${floorLabel}: ${effectiveNonceFloor}. Use a higher nonce for new proposals.`;
+          })()}
         </p>
       </div>
 

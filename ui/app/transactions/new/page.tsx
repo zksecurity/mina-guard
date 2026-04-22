@@ -7,7 +7,6 @@ import ProposalForm from '@/components/ProposalForm';
 import {
   CHILD_TX_TYPES,
   LOCAL_TX_TYPES,
-  nextAvailableNonce,
   type ContractSummary,
   type NewProposalInput,
   type TxType,
@@ -74,25 +73,15 @@ function NewTransactionPageInner() {
   const [txType, setTxType] = useState<TxType>(initialType);
   const [currentNonce, setCurrentNonce] = useState<number | null>(multisig?.nonce ?? null);
 
-  const deleteTargetInitialNonce = (() => {
-    if (!deleteMode) return null;
-    const parsed = Number(deleteTargetNonce ?? '');
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  })();
+  // Delete-mode pins the form's nonce to the target proposal's nonce; the
+  // form derives its own default nonce in every other case based on the
+  // active txType's nonce space (LOCAL vs REMOTE).
   const initialNonce = deleteMode
-    ? deleteTargetInitialNonce
-    : nextAvailableNonce(currentNonce, proposals);
-
-  const takenNonces = useMemo(
-    () =>
-      new Set(
-        proposals
-          .filter((p) => p.status === 'pending')
-          .map((p) => Number(p.nonce))
-          .filter((n) => Number.isFinite(n)),
-      ),
-    [proposals],
-  );
+    ? (() => {
+        const parsed = Number(deleteTargetNonce ?? '');
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+      })()
+    : null;
 
   useEffect(() => {
     setTxType(initialType);
@@ -219,7 +208,7 @@ function NewTransactionPageInner() {
                 children={children}
                 initialNonce={initialNonce}
                 currentNonce={currentNonce}
-                takenNonces={takenNonces}
+                proposals={proposals}
                 nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
                 deleteMode={deleteMode}
                 deleteTargetHash={deleteTargetHash}
