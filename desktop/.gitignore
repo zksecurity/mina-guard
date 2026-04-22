@@ -1,4 +1,5 @@
 dist/
 assets/schema.sql
 packaging-stage/
+ui-standalone/
 release/

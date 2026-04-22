@@ -8,8 +8,8 @@
     "prepare:backend": "cd ../backend && bun run prisma:generate:sqlite",
     "prepare:schema-sql": "mkdir -p assets && cd ../backend && node scripts/check-schema-sync.mjs && DATABASE_URL=file:/tmp/mg-schema-dummy.db bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.sqlite.prisma --script > ../desktop/assets/schema.sql",
     "prepare:assets": "bun run prepare:schema-sql && mkdir -p dist/assets && cp assets/schema.sql dist/assets/schema.sql",
-    "stage": "rm -rf packaging-stage && mkdir -p packaging-stage/ui packaging-stage/generated/prisma && cp -R ../ui/.next packaging-stage/ui/.next && ([ -d ../ui/public ] && cp -R ../ui/public packaging-stage/ui/public || true) && cp -R ../backend/src/generated/prisma/. packaging-stage/generated/prisma/ && node scripts/bundle-backend.mjs",
-    "build:ui": "NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050 bash -c 'cd ../ui && next build'",
+    "stage": "rm -rf packaging-stage ui-standalone && mkdir -p ui-standalone/mina-guard/ui/.next packaging-stage/generated/prisma && cp -R ../ui/.next/standalone/. ui-standalone/ && cp -R ../ui/.next/static ui-standalone/mina-guard/ui/.next/static && ([ -d ../ui/public ] && cp -R ../ui/public ui-standalone/mina-guard/ui/public || true) && cp -R ../backend/src/generated/prisma/. packaging-stage/generated/prisma/ && node scripts/bundle-backend.mjs",
+    "build:ui": "NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050 NEXT_PUBLIC_INDEXER_MODE=lite bash -c 'cd ../ui && next build'",
     "build:electron": "tsc -p tsconfig.json && cp src/preload.js dist/ && mkdir -p dist/auro && cp src/auro/page.html dist/auro/",
     "build": "bun run prepare:backend && bun run prepare:assets && bun run build:ui && bun run stage && bun run build:electron",
     "dev": "bun run prepare:backend && bun run prepare:assets && bun run stage && bun run build:electron && electron --no-sandbox .",
@@ -19,7 +19,6 @@
     "@prisma/client": "6.12.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "next": "^14.2.0",
     "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
     "zod": "^3.25"
   },
@@ -29,6 +28,7 @@
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.24.0",
+    "next": "^14.2.0",
     "typescript": "^5.8.2"
   },
   "build": {
@@ -37,10 +37,14 @@
     "directories": {
       "output": "release"
     },
+    "electronLanguages": ["en-US"],
     "files": [
       "dist/**",
       "packaging-stage/**",
       "package.json"
+    ],
+    "extraResources": [
+      { "from": "ui-standalone", "to": "ui-standalone" }
     ],
     "asarUnpack": [
       "packaging-stage/generated/prisma/*.node",
