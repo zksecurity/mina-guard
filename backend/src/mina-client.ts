@@ -164,35 +164,61 @@ export async function fetchOnChainState(
   }
 }
 
-/** Polls the archive for a submitted zkApp tx and classifies it as still-pending,
- *  included-successfully, or failed (with the failure reason if any). */
+/** Number of most-recent best-chain blocks scanned when looking up a submitted
+ *  zkApp tx by hash. Window is bounded so each indexer tick stays cheap; a
+ *  failed tx that falls out of the window before the indexer catches it stays
+ *  reported as 'pending' (acceptable first-cut; upgrade to block-bounded scan
+ *  if misses become an issue). */
+const TX_STATUS_SCAN_BLOCKS = 20;
+
+/** Looks up a submitted zkApp tx by hash on the Mina daemon (`minaEndpoint`) and
+ *  classifies it as still-pending, included-successfully, or failed.
+ *
+ *  Uses the daemon rather than the archive because only the daemon's
+ *  `ZkappCommandResult.failureReason: [{index, failures: [String]}]` exposes
+ *  structured failure reasons; archive-node-api has no per-hash lookup. */
 export async function fetchZkappTxStatus(
   config: BackendConfig,
   txHash: string
 ): Promise<{ status: 'pending' | 'included' | 'failed'; reason?: string }> {
-  const query = `query TxStatus($hash: String!) {
-    zkapps(query: { hash: $hash }, limit: 1) {
-      hash
-      failureReason { failures }
+  const query = `query TxStatus($maxLength: Int!) {
+    bestChain(maxLength: $maxLength) {
+      transactions {
+        zkappCommands {
+          hash
+          failureReason {
+            failures
+          }
+        }
+      }
     }
   }`;
 
   try {
     const data = await graphqlRequest<{
-      zkapps?: Array<{
-        hash: string;
-        failureReason?: { failures?: string[] } | null;
+      bestChain?: Array<{
+        transactions?: {
+          zkappCommands?: Array<{
+            hash: string;
+            failureReason?: Array<{ failures?: string[] | null } | null> | null;
+          }>;
+        };
       }>;
-    }>(query, config.archiveEndpoint, config.archiveFallbackEndpoint, { hash: txHash });
+    }>(query, config.minaEndpoint, config.minaFallbackEndpoint, { maxLength: TX_STATUS_SCAN_BLOCKS });
 
-    const row = data.zkapps?.[0];
-    if (!row) return { status: 'pending' };
-
-    const failures = row.failureReason?.failures ?? [];
-    if (failures.length > 0) {
-      return { status: 'failed', reason: failures.join('; ') };
+    for (const block of data.bestChain ?? []) {
+      for (const cmd of block.transactions?.zkappCommands ?? []) {
+        if (cmd.hash !== txHash) continue;
+        const failures = (cmd.failureReason ?? [])
+          .flatMap((r) => r?.failures ?? [])
+          .filter((s): s is string => typeof s === 'string' && s.length > 0);
+        if (failures.length > 0) {
+          return { status: 'failed', reason: failures.join('; ') };
+        }
+        return { status: 'included' };
+      }
     }
-    return { status: 'included' };
+    return { status: 'pending' };
   } catch (err) {
     console.warn('[mina-client] fetchZkappTxStatus failed', txHash, err);
     return { status: 'pending' };
