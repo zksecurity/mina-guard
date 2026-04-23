@@ -5,7 +5,7 @@ import { PublicKey, fetchAccount } from 'o1js';
 import { prisma } from './db.js';
 import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
-import { fetchLatestBlockHeight } from './mina-client.js';
+import { fetchLatestBlockHeight, fetchVerificationKeyHash } from './mina-client.js';
 import { serializeProposalRecord } from './proposal-record.js';
 import {
   acquireLightnetAccount,
@@ -446,11 +446,16 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
    * Body: { address: string, fromBlock?: number }
    *   - fromBlock, when supplied, sets discoveredAtBlock directly. Use
    *     this for historical subscribes (e.g. fromBlock: 0 for full
-   *     history).
+   *     history). When supplied, the address MUST already resolve to a
+   *     deployed zkApp on-chain — this path is the manual "add existing
+   *     account" flow, where a typo or wrong-network address would
+   *     otherwise silently backfill an empty address forever.
    *   - When omitted, discoveredAtBlock defaults to
    *     `latestHeight - SUBSCRIBE_MARGIN` so a block landing between
    *     submitTx and this handler doesn't push the lower bound past the
-   *     deploy.
+   *     deploy. The zkApp existence check is intentionally skipped here:
+   *     the auto-subscribe after a fresh deploy races the tx landing
+   *     on-chain.
    */
   router.post('/api/subscribe', safe(async (req, res) => {
     if (config?.indexerMode !== 'lite') {
@@ -491,6 +496,14 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     if (existing) {
       res.json(existing);
       return;
+    }
+
+    if (fromBlockNum !== null) {
+      const verificationKeyHash = await fetchVerificationKeyHash(address);
+      if (!verificationKeyHash) {
+        res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
+        return;
+      }
     }
 
     // Safety margin on the default path: the UI calls subscribe right

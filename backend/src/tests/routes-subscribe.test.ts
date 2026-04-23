@@ -68,10 +68,13 @@ function startServer(cfg: BackendConfig): Promise<{ server: Server; baseUrl: str
 
 beforeAll(async () => {
   await clearDatabase();
-  // Mock fetchLatestBlockHeight everywhere so subscribe doesn't hit a real node.
+  // Mock network-touching helpers everywhere so subscribe doesn't hit a real node.
+  // Default VK mock returns a hash so fromBlock-path tests treat the address as a zkApp;
+  // the "not a zkApp" test overrides this to null.
   mock.module('../mina-client.js', () => ({
     ...minaClient,
     fetchLatestBlockHeight: async () => 0,
+    fetchVerificationKeyHash: async () => 'vk-hash-stub',
   }));
 
   ({ server, baseUrl } = await startServer(liteConfig));
@@ -85,6 +88,7 @@ afterEach(async () => {
   mock.module('../mina-client.js', () => ({
     ...minaClient,
     fetchLatestBlockHeight: async () => 0,
+    fetchVerificationKeyHash: async () => 'vk-hash-stub',
   }));
 });
 
@@ -154,6 +158,7 @@ describe('POST /api/subscribe', () => {
         fetchLatestCalls += 1;
         return 9999;
       },
+      fetchVerificationKeyHash: async () => 'vk-hash-stub',
     }));
 
     const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 0 });
@@ -163,6 +168,42 @@ describe('POST /api/subscribe', () => {
     expect(stored?.discoveredAtBlock).toBe(0);
     // fromBlock takes precedence, so we should not have fetched the tip.
     expect(fetchLatestCalls).toBe(0);
+  });
+
+  test('rejects explicit fromBlock when address is not a deployed zkApp (manual add-existing path)', async () => {
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => 0,
+      fetchVerificationKeyHash: async () => null,
+    }));
+
+    const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 0 });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('Account not found on-chain or not a zkApp');
+
+    // No row created on the failure path.
+    const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
+    expect(stored).toBeNull();
+  });
+
+  test('does NOT require the address to be on-chain when fromBlock is omitted (auto-sub after deploy)', async () => {
+    let vkCalls = 0;
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchLatestBlockHeight: async () => 0,
+      fetchVerificationKeyHash: async () => {
+        vkCalls += 1;
+        return null;
+      },
+    }));
+
+    const res = await post('/api/subscribe', { address: subscribedAddress });
+    expect(res.status).toBe(200);
+    expect(vkCalls).toBe(0);
+
+    const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
+    expect(stored).not.toBeNull();
   });
 
   test('accepts a non-zero fromBlock verbatim', async () => {
