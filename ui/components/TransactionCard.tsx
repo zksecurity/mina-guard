@@ -34,6 +34,11 @@ export default function TransactionCard({
   const label = isDeleteProposal(proposal)
     ? 'Delete proposal'
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
+  const attemptError =
+    proposal.status === 'pending'
+      ? proposal.lastExecuteError ?? proposal.lastApproveError
+      : null;
+  const attemptErrorKind = proposal.lastExecuteError ? 'Execute' : 'Approve';
 
   return (
     <Link href={`/transactions/${proposal.proposalHash}`}>
@@ -49,6 +54,14 @@ export default function TransactionCard({
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${statusColors[proposal.status]}`}>
                   {proposal.status}
                 </span>
+                {attemptError && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full text-red-300 bg-red-400/10 border border-red-400/30"
+                    title={`${attemptErrorKind}: ${attemptError}`}
+                  >
+                    last attempt failed
+                  </span>
+                )}
               </div>
               {proposal.txType === 'transfer' && !isDeleteProposal(proposal) && (
                 <p className="text-xs text-safe-text mt-0.5">
