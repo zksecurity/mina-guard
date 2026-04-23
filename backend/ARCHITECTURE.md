@@ -29,7 +29,7 @@ If any step throws, the cursor is **not** advanced, so the next tick retries the
 
 ## 3. Reorg handling
 
-Mina has probabilistic finality (~290 blocks). The indexer treats anything within that window as potentially reorg-able.
+Mina has probabilistic finality (~290 blocks). The indexer handles any reorg that forks at or above the last 290 bestChain headers; reorgs that fork deeper than the detection window are logged and left for operator intervention (see §7 Failure semantics).
 
 **Detection** (`detectAndRollbackReorg`):
 - Fetch the last `REORG_DETECTION_WINDOW` (290) bestChain headers.

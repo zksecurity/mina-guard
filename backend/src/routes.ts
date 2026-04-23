@@ -6,7 +6,7 @@ import { prisma } from './db.js';
 import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
 import { fetchLatestBlockHeight, fetchVerificationKeyHash } from './mina-client.js';
-import { serializeProposalRecord } from './proposal-record.js';
+import { serializeProposalRecord, type ContractState } from './proposal-record.js';
 import {
   acquireLightnetAccount,
   computeFundingAmount,
@@ -187,9 +187,9 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const latestHeight = indexer.getStatus().latestChainHeight;
 
-      // Status is derived from ProposalExecution existence + expiry vs
-      // latestHeight, so filtering happens in Prisma via relation filters
-      // where possible, and in memory for the expiry-based cases.
+      // Status is derived at read time from ProposalExecution existence +
+      // expiry + nonce/config staleness vs current ContractConfig. The status
+      // filter passes through to in-memory filtering after serialization.
       const dbFilter = buildProposalStatusWhere(status);
 
       const proposals = await prisma.proposal.findMany({
@@ -208,7 +208,17 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         skip: needsInMemoryStatusFilter(status) ? undefined : offset,
       });
 
-      const serialized = proposals.map((p) => serializeProposalRecord(p, latestHeight));
+      const parentState = toContractState(await latestContractConfig(contract.id));
+      const childStateByAddress = await buildChildStateMap(proposals);
+
+      const serialized = proposals.map((p) =>
+        serializeProposalRecord(
+          p,
+          latestHeight,
+          parentState,
+          p.childAccount ? childStateByAddress.get(p.childAccount) ?? null : null,
+        ),
+      );
       const filtered = status
         ? serialized.filter((s) => s.status === status)
         : serialized;
@@ -257,7 +267,13 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       }
 
       const latestHeight = indexer.getStatus().latestChainHeight;
-      res.json(serializeProposalRecord(proposal, latestHeight));
+      const parentState = toContractState(await latestContractConfig(contract.id));
+      const childState =
+        proposal.destination === 'remote' && proposal.txType !== '5' && proposal.childAccount
+          ? await resolveChildState(proposal.childAccount)
+          : null;
+
+      res.json(serializeProposalRecord(proposal, latestHeight, parentState, childState));
     })
   );
 
@@ -634,6 +650,69 @@ async function latestContractConfig(contractId: number) {
   });
 }
 
+/** Projects a ContractConfig row (or null) to the slim shape the proposal
+ *  invalidation check consumes. */
+function toContractState(
+  config: Awaited<ReturnType<typeof latestContractConfig>>,
+): ContractState | null {
+  if (!config) return null;
+  return {
+    nonce: config.nonce,
+    parentNonce: config.parentNonce,
+    configNonce: config.configNonce,
+  };
+}
+
+/** One-shot lookup of a child's current state by address, used by the
+ *  single-proposal route. */
+async function resolveChildState(address: string): Promise<ContractState | null> {
+  const child = await prisma.contract.findUnique({
+    where: { address },
+    select: { id: true },
+  });
+  if (!child) return null;
+  return toContractState(await latestContractConfig(child.id));
+}
+
+/** Batches child-state lookups for a list of proposals. Only REMOTE
+ *  non-CREATE_CHILD proposals target a child guard; the rest map to null. */
+async function buildChildStateMap(
+  proposals: ReadonlyArray<{ destination: string | null; txType: string | null; childAccount: string | null }>,
+): Promise<Map<string, ContractState>> {
+  const childAddresses = [
+    ...new Set(
+      proposals
+        .filter((p) => p.destination === 'remote' && p.txType !== '5' && p.childAccount)
+        .map((p) => p.childAccount as string),
+    ),
+  ];
+  if (childAddresses.length === 0) return new Map();
+
+  const childContracts = await prisma.contract.findMany({
+    where: { address: { in: childAddresses } },
+    select: { id: true, address: true },
+  });
+  if (childContracts.length === 0) return new Map();
+
+  const configs = await prisma.contractConfig.findMany({
+    where: { contractId: { in: childContracts.map((c) => c.id) } },
+    orderBy: [{ validFromBlock: 'desc' }, { eventOrder: 'desc' }],
+  });
+
+  // Pick the first (latest) row per contract — configs is already sorted desc.
+  const latestByContractId = new Map<number, typeof configs[number]>();
+  for (const row of configs) {
+    if (!latestByContractId.has(row.contractId)) latestByContractId.set(row.contractId, row);
+  }
+
+  const result = new Map<string, ContractState>();
+  for (const child of childContracts) {
+    const state = toContractState(latestByContractId.get(child.id) ?? null);
+    if (state) result.set(child.address, state);
+  }
+  return result;
+}
+
 /** Returns the count of currently-active owners for a contract. */
 async function currentOwnerCount(contractId: number): Promise<number> {
   const owners = await listOwners(contractId, true);
@@ -653,6 +732,8 @@ function decorateContract<T extends ContractRow & { _count?: Record<string, numb
     ...rest,
     threshold: config?.threshold ?? null,
     numOwners: config?.numOwners ?? null,
+    nonce: config?.nonce ?? null,
+    parentNonce: config?.parentNonce ?? null,
     configNonce: config?.configNonce ?? null,
     delegate: config?.delegate ?? null,
     childMultiSigEnabled: config?.childMultiSigEnabled ?? null,
@@ -707,8 +788,9 @@ async function listOwners(contractId: number, active?: boolean) {
 
 /**
  * Maps a status filter to a Prisma `where` fragment where possible. Only
- * `executed` is expressible directly via the `executions` relation; `pending`
- * and `expired` require an additional in-memory pass using `latestHeight`.
+ * `executed` is expressible directly via the `executions` relation; `pending`,
+ * `expired`, and `invalidated` require an additional in-memory pass (they
+ * depend on `latestHeight` and the latest ContractConfig snapshot).
  */
 function buildProposalStatusWhere(status: string | undefined) {
   if (status === 'executed') return { executions: { some: {} } };
@@ -716,5 +798,5 @@ function buildProposalStatusWhere(status: string | undefined) {
 }
 
 function needsInMemoryStatusFilter(status: string | undefined): boolean {
-  return status === 'pending' || status === 'expired';
+  return status === 'pending' || status === 'expired' || status === 'invalidated';
 }
