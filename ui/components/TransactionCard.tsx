@@ -39,15 +39,20 @@ export default function TransactionCard({
       : null;
   const attemptErrorKind = proposal.lastExecuteError ? 'Execute' : 'Approve';
   const isRemote = proposal.destination === 'remote';
+  const isDelete = isDeleteProposal(proposal);
   const nonceLabel = proposal.nonce != null ? `#${proposal.nonce}` : '#?';
   const badgeClass = isRemote
     ? 'bg-indigo-500/15 border-indigo-400/40 text-indigo-300'
     : 'bg-safe-gray border-safe-border text-safe-text';
-  const execTarget = isRemote
-    ? proposal.childAccount
-      ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
-      : 'Executes on subaccount'
-    : 'Executes on this account';
+  const secondaryLine = isDelete
+    ? proposal.nonce != null
+      ? `Invalidates proposal with nonce #${proposal.nonce}`
+      : 'Invalidates another proposal'
+    : isRemote
+      ? proposal.childAccount
+        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on subaccount'
+      : 'Executes on this account';
 
   return (
     <Link href={`/transactions/${proposal.proposalHash}`}>
@@ -72,8 +77,8 @@ export default function TransactionCard({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-safe-text mt-0.5">{execTarget}</p>
-              {proposal.txType === 'transfer' && !isDeleteProposal(proposal) && (
+              <p className="text-xs text-safe-text mt-0.5">{secondaryLine}</p>
+              {proposal.txType === 'transfer' && !isDelete && (
                 <p className="text-xs text-safe-text mt-0.5">
                   {proposal.recipientCount} recipients · {formatMina(proposal.totalAmount)} MINA
                 </p>

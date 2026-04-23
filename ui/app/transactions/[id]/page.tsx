@@ -239,11 +239,16 @@ export default function TransactionDetailPage() {
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
   const isRemote = proposal.destination === 'remote';
-  const execTarget = isRemote
-    ? proposal.childAccount
-      ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
-      : 'Executes on subaccount'
-    : 'Executes on this account';
+  const isDelete = isDeleteProposal(proposal);
+  const headerSubline = isDelete
+    ? proposal.nonce != null
+      ? `Invalidates proposal with nonce #${proposal.nonce}`
+      : 'Invalidates another proposal'
+    : isRemote
+      ? proposal.childAccount
+        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on subaccount'
+      : 'Executes on this account';
 
   return (
     <div>
@@ -257,7 +262,7 @@ export default function TransactionDetailPage() {
               </span>
             )}
           </div>
-          <p className="text-xs opacity-75 mt-1">{execTarget}</p>
+          <p className="text-xs opacity-75 mt-1">{headerSubline}</p>
         </div>
 
         {isConfigStale && (
