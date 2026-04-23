@@ -41,6 +41,7 @@ import {
   type NewProposalInput,
   type Proposal,
   normalizeTxType,
+  EMPTY_PUBKEY_B58,
 } from '@/lib/types';
 import {
   fetchAllEvents,
@@ -115,7 +116,7 @@ interface ContractState {
   ownersCommitment: string;
   threshold: number;
   numOwners: number;
-  proposalCounter: number;
+  nonce: number;
   voteNullifierRoot: string;
   approvalRoot: string;
   configNonce: number;
@@ -140,8 +141,11 @@ async function compileContract(): Promise<boolean> {
 
   if (!compilePromise) {
     compilePromise = (async () => {
+      console.log('[MultisigWorker] MinaGuard.compile() starting');
+      const t0 = performance.now();
       await configureNetwork();
       await MinaGuard.compile();
+      console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
     })();
   }
 
@@ -168,7 +172,7 @@ async function fetchContractState(
       ownersCommitment: zkApp.ownersCommitment.get().toString(),
       threshold: Number(zkApp.threshold.get().toString()),
       numOwners: Number(zkApp.numOwners.get().toString()),
-      proposalCounter: Number(zkApp.proposalCounter.get().toString()),
+      nonce: Number(zkApp.nonce.get().toString()),
       voteNullifierRoot: zkApp.voteNullifierRoot.get().toString(),
       approvalRoot: zkApp.approvalRoot.get().toString(),
       configNonce: Number(zkApp.configNonce.get().toString()),
@@ -214,12 +218,13 @@ async function signAndSend(
     ? (result.hash as () => string)()
     : result.hash;
 
-  // Log send errors if any
-  if ((result as any).errors?.length) {
-    console.error('[MultisigWorker] Transaction send errors:', (result as any).errors);
+  const errors = (result as any).errors as Array<{ message?: string }> | undefined;
+  if (errors?.length) {
+    const message = errors.map((e) => e?.message ?? 'Unknown error').join('; ');
+    throw new Error(`Transaction rejected by node: ${message}`);
   }
   if ((result as any).status === 'rejected') {
-    console.error('[MultisigWorker] Transaction was rejected by the node');
+    throw new Error('Transaction was rejected by the node');
   }
 
   console.log('[MultisigWorker] Transaction sent:', hash);
@@ -335,6 +340,61 @@ async function rebuildStoresFromBackend(contractAddress: string) {
 }
 
 /**
+ * Dumps on-chain vs locally-rebuilt values side-by-side so a failed
+ * propose() tx.prove() can be narrowed to the specific mismatched constraint
+ * (owner commitment, nullifier/approval root, configNonce, networkId, nonce).
+ */
+function logProposeDiagnostics(args: {
+  contract: InstanceType<typeof MinaGuard>;
+  contractAddress: InstanceType<typeof PublicKey>;
+  proposer: InstanceType<typeof PublicKey>;
+  proposal: InstanceType<typeof TransactionProposal>;
+  proposalHash: InstanceType<typeof Field>;
+  signature: InstanceType<typeof Signature>;
+  ownerStore: InstanceType<typeof OwnerStore>;
+  approvalStore: InstanceType<typeof ApprovalStore>;
+  nullifierStore: InstanceType<typeof VoteNullifierStore>;
+}) {
+  const {
+    contract, contractAddress, proposer, proposal, proposalHash, signature,
+    ownerStore, approvalStore, nullifierStore,
+  } = args;
+  const dump = {
+    contractAddress: contractAddress.toBase58(),
+    proposer: proposer.toBase58(),
+    proposalHash: proposalHash.toString(),
+    signatureVerifies: signature.verify(proposer, [proposalHash]).toBoolean(),
+    proposalGuardAddress: proposal.guardAddress.toBase58(),
+    proposalChildAccount: proposal.childAccount.toBase58(),
+    proposalDestination: proposal.destination.toString(),
+    proposalTxType: proposal.txType.toString(),
+    proposalData: proposal.data.toString(),
+    proposalExpiryBlock: proposal.expiryBlock.toString(),
+    proposalReceiver0: proposal.receivers[0].address.toBase58(),
+    onchainOwnersCommitment: contract.ownersCommitment.get().toString(),
+    storeOwnersCommitment: ownerStore.getCommitment().toString(),
+    onchainNonce: contract.nonce.get().toString(),
+    proposalNonce: proposal.nonce.toString(),
+    onchainConfigNonce: contract.configNonce.get().toString(),
+    proposalConfigNonce: proposal.configNonce.toString(),
+    onchainNetworkId: contract.networkId.get().toString(),
+    proposalNetworkId: proposal.networkId.toString(),
+    onchainVoteNullifierRoot: contract.voteNullifierRoot.get().toString(),
+    storeVoteNullifierRoot: nullifierStore.getRoot().toString(),
+    onchainApprovalRoot: contract.approvalRoot.get().toString(),
+    storeApprovalRoot: approvalStore.getRoot().toString(),
+    onchainParent: contract.parent.get().toBase58(),
+    onchainChildMultiSigEnabled: contract.childMultiSigEnabled.get().toString(),
+    proposerIsOwner: ownerStore.isOwner(proposer),
+    ownerCount: ownerStore.length,
+  };
+  // Logged as a JSON string so each field stays inline-copyable even when
+  // devtools can't clone/serialize the object form (observed with Chrome
+  // freezing on worker-side o1js objects).
+  console.log('[propose debug]\n' + JSON.stringify(dump, null, 2));
+}
+
+/**
  * Rebuilds the child's `childExecutionRoot` MerkleMap from indexed events.
  *
  * The child writes EXECUTED_MARKER at proposalHash on each lifecycle method
@@ -431,7 +491,13 @@ function buildTransferReceivers(
   receivers: Array<{ address: string; amount: string }>
 ): InstanceType<typeof Receiver>[] {
   const normalized = receivers.map((receiver) => new Receiver({
-    address: PublicKey.fromBase58(receiver.address),
+    // PublicKey.empty() produces a sentinel at (x=0, isOdd=false) — a point
+    // that ISN'T on the curve, so PublicKey.fromBase58 rejects its own
+    // toBase58() output with "not a valid group element". Use the sentinel
+    // directly for the delete-flow empty receiver.
+    address: receiver.address === EMPTY_PUBKEY_B58
+      ? PublicKey.empty()
+      : PublicKey.fromBase58(receiver.address),
     amount: UInt64.from(receiver.amount),
   }));
 
@@ -445,7 +511,7 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'uid' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'nonce' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
@@ -459,7 +525,7 @@ function buildProposalStruct(
     tokenId: Field(proposal.tokenId ?? '0'),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
-    uid: Field(proposal.uid ?? '0'),
+    nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
@@ -520,10 +586,14 @@ async function broadcastWithLedgerSig(
 
   const [response, error] = await sendZkapp(JSON.stringify(parsed));
   if (error) {
-    console.error('[MultisigWorker] sendZkapp error:', error);
-    return null;
+    const message = typeof error === 'string'
+      ? error
+      : (error as { message?: string })?.message ?? JSON.stringify(error);
+    throw new Error(`Transaction rejected by node: ${message}`);
   }
-  return response?.data?.sendZkapp?.zkapp?.hash ?? null;
+  const hash = response?.data?.sendZkapp?.zkapp?.hash;
+  if (!hash) throw new Error('sendZkapp returned no tx hash');
+  return hash;
 }
 
 /** Dispatches transaction submission to test mode, Ledger, or Auro. */
@@ -584,11 +654,6 @@ const workerApi = {
     skipProofs = skip;
   },
 
-  generateKeypair(): { privateKey: string; publicKey: string } {
-    const key = PrivateKey.random();
-    return { privateKey: key.toBase58(), publicKey: key.toPublicKey().toBase58() };
-  },
-
   async deployContract(
     params: { feePayerAddress: string; zkAppPrivateKeyBase58: string },
     sendFn: SendTxFn | null,
@@ -637,6 +702,7 @@ const workerApi = {
     progressFn: ProgressFn,
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
+    console.log('[MultisigWorker] deployAndSetupContract entered');
     progressFn('Compiling contract...');
     const ok = await compileContract();
     if (!ok) return null;
@@ -756,19 +822,19 @@ const workerApi = {
     const receivers = buildReceiversForProposal(params.input);
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input);
-    const uid = Field.random();
 
     const isRemote =
       params.input.txType === 'createChild' ||
       params.input.txType === 'reclaimChild' ||
       params.input.txType === 'destroyChild' ||
       params.input.txType === 'enableChildMultiSig';
+
     const proposal = new TransactionProposal({
       receivers,
       tokenId: Field(0),
       txType,
       data,
-      uid,
+      nonce: Field(params.input.nonce),
       configNonce: Field(params.configNonce),
       expiryBlock: Field(params.input.expiryBlock ?? 0),
       networkId: Field(params.networkId),
@@ -795,8 +861,29 @@ const workerApi = {
     const approvalWitness = approvalStore.getWitness(proposalHash);
 
     progressFn('Building transaction...');
-    const contract = new MinaGuard(PublicKey.fromBase58(params.contractAddress));
-    await fetchAccount({ publicKey: proposer });
+    const contractAddress = PublicKey.fromBase58(params.contractAddress);
+    const contract = new MinaGuard(contractAddress);
+    // The circuit reads ownersCommitment / voteNullifierRoot / approvalRoot /
+    // configNonce / networkId / nonce via getAndRequireEquals(); without a
+    // fresh fetch of the zkApp account, o1js sees Field(0) and the circuit
+    // traps with a WASM `unreachable` during prove.
+    await Promise.all([
+      fetchAccount({ publicKey: proposer }),
+      fetchAccount({ publicKey: contractAddress }),
+    ]);
+
+    logProposeDiagnostics({
+      contract,
+      contractAddress,
+      proposer,
+      proposal,
+      proposalHash,
+      signature,
+      ownerStore,
+      approvalStore,
+      nullifierStore,
+    });
+
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(proposer), async () => {
       await contract.propose(
@@ -808,6 +895,17 @@ const workerApi = {
         approvalWitness
       );
     });
+
+    // Rayon's thread pool inside o1js requires SharedArrayBuffer, which is
+    // only available when the worker scope is cross-origin isolated. If
+    // isolation is broken (e.g. missing CORP header on _next/static/*),
+    // prove() traps with WASM `unreachable` during pool startup. Logging
+    // this makes header regressions obvious.
+    console.log('[prove env] ' + JSON.stringify({
+      crossOriginIsolated: (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated ?? null,
+      sharedArrayBuffer: typeof SharedArrayBuffer,
+      hardwareConcurrency: self.navigator?.hardwareConcurrency ?? null,
+    }));
 
     progressFn('Generating proof...');
     await tx.prove();
@@ -933,8 +1031,26 @@ const workerApi = {
     const executor = PublicKey.fromBase58(params.executorAddress);
 
     await fetchAccount({ publicKey: executor });
+
+    // For fund-moving executes, every recipient that doesn't yet exist on
+    // chain costs 1 MINA of account-creation fee. Without an explicit
+    // AccountUpdate.fundNewAccount(executor, N) inside the tx, the node
+    // rejects with Invalid_fee_excess.
+    let newAccountCount = 0;
+    if (txType === 'transfer' || txType === 'allocateChild') {
+      for (const r of params.proposal.receivers ?? []) {
+        if (!r.address || r.address === EMPTY_PUBKEY_B58) continue;
+        const { account } = await fetchAccount({ publicKey: PublicKey.fromBase58(r.address) });
+        if (!account) newAccountCount += 1;
+      }
+    }
+
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(executor), async () => {
+      if (newAccountCount > 0) {
+        AccountUpdate.fundNewAccount(executor, newAccountCount);
+      }
+
       if (txType === 'transfer') {
         await contract.executeTransfer(proposalStruct, approvalWitness, approvalCount);
         return;
@@ -1191,7 +1307,8 @@ const workerApi = {
 
 export type WorkerApi = typeof workerApi;
 
+console.log('[MultisigWorker] worker module loaded, exposing API');
+Comlink.expose(workerApi);
+
 // Eagerly start compilation as soon as the worker loads
 compileContract().catch(() => { });
-
-Comlink.expose(workerApi);

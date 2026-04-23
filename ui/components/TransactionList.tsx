@@ -40,11 +40,10 @@ export default function TransactionList({
 
   return (
     <div className="space-y-2">
-      {proposals.map((proposal, index) => (
+      {proposals.map((proposal) => (
         <TransactionCard
           key={proposal.proposalHash}
           proposal={proposal}
-          index={index + 1}
           threshold={threshold}
           owners={owners}
         />

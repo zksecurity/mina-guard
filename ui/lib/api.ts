@@ -139,6 +139,36 @@ export async function subscribeAddress(
   }
 }
 
+/** Pulls the tx hash out of the worker's "Transaction submitted: HASH" /
+ *  "Approval submitted: HASH" success message. Returns null if absent. */
+export function extractTxHash(message: string | null): string | null {
+  if (!message) return null;
+  const match = message.match(/(?:Transaction|Approval|Deploy)\s+submitted:\s*(\S+)/);
+  return match ? match[1] : null;
+}
+
+/** Best-effort: tells the backend about a freshly-submitted approve/execute tx
+ *  so its indexer can poll for on-chain failure and surface the reason. */
+export async function recordSubmission(
+  contractAddress: string,
+  proposalHash: string,
+  action: 'approve' | 'execute',
+  txHash: string,
+): Promise<void> {
+  try {
+    await fetch(
+      `${API_BASE}/api/contracts/${contractAddress}/proposals/${proposalHash}/submissions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, txHash }),
+      },
+    );
+  } catch (err) {
+    console.warn('[api] recordSubmission failed', err);
+  }
+}
+
 /** Generic JSON fetch helper with null-on-error semantics for resilient polling. */
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -162,11 +192,12 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
     ownersCommitment: asNullableString(input.ownersCommitment),
     threshold: asNullableNumber(input.threshold),
     numOwners: asNullableNumber(input.numOwners),
-    proposalCounter: asNullableNumber(input.proposalCounter),
+    nonce: asNullableNumber(input.nonce) ?? asNullableNumber(input.proposalCounter),
     configNonce: asNullableNumber(input.configNonce),
-    delegate: asNullableString(input.delegate),
     parent: asNullableString(input.parent),
+    parentNonce: asNullableNumber(input.parentNonce),
     childMultiSigEnabled: asNullableBoolean(input.childMultiSigEnabled),
+    delegate: asNullableString(input.delegate),
     discoveredAt: asString(input.discoveredAt) ?? new Date(0).toISOString(),
     lastSyncedAt: asNullableString(input.lastSyncedAt),
   };
@@ -186,7 +217,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     tokenId: asNullableString(input.tokenId),
     txType: normalizeTxType(asNullableString(input.txType)),
     data: asNullableString(input.data),
-    uid: asNullableString(input.uid),
+    nonce: asNullableString(input.nonce) ?? asNullableString(input.uid),
     configNonce: asNullableString(input.configNonce),
     expiryBlock: asNullableString(input.expiryBlock),
     networkId: asNullableString(input.networkId),
@@ -194,9 +225,12 @@ function toProposal(input: Record<string, unknown>): Proposal {
     destination: normalizeDestination(asNullableString(input.destination)),
     childAccount: asNullableString(input.childAccount),
     status: asProposalStatus(input.status),
+    invalidReason: asNullableString(input.invalidReason),
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
+    lastApproveError: asNullableString(input.lastApproveError),
+    lastExecuteError: asNullableString(input.lastExecuteError),
     createdAt: asString(input.createdAt) ?? new Date(0).toISOString(),
     updatedAt: asString(input.updatedAt) ?? new Date(0).toISOString(),
     receivers,
@@ -260,7 +294,7 @@ function asNullableString(value: unknown): string | null {
 /** Converts status text to one of the allowed proposal status values. */
 function asProposalStatus(value: unknown): Proposal['status'] {
   const text = asString(value);
-  if (text === 'executed' || text === 'expired') return text;
+  if (text === 'executed' || text === 'expired' || text === 'invalidated') return text;
   return 'pending';
 }
 

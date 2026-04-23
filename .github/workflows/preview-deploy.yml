@@ -38,10 +38,18 @@ jobs:
           submodules: recursive
 
       - name: Deploy preview
+        # `down` first wipes volumes + lightnet chain so every commit to the
+        # PR gets a clean DB and fresh genesis. Without this, preview.sh up
+        # only rebuilds the app containers — the existing postgres volume
+        # (indexer cursor, contracts, events) and lightnet image (chain state)
+        # survive, so stale rows from previous iterations of the PR can make
+        # the new backend hit inconsistent state. `down` is idempotent and
+        # safe on the first open/reopen when nothing is running.
         env:
           PR_NUMBER: ${{ github.event.number }}
         run: |
           chmod +x preview-env/preview.sh
+          ./preview-env/preview.sh down $PR_NUMBER
           ./preview-env/preview.sh up $PR_NUMBER
 
       - name: Wait for services

@@ -5,12 +5,13 @@ import {
   Proposal,
   TX_TYPE_LABELS,
   formatMina,
+  isDeleteProposal,
+  truncateAddress,
 } from '@/lib/types';
 import ApprovalProgress from './ApprovalProgress';
 
 interface TransactionCardProps {
   proposal: Proposal;
-  index: number;
   threshold: number;
   owners: string[];
 }
@@ -19,25 +20,47 @@ const statusColors = {
   pending: 'text-yellow-400 bg-yellow-400/10',
   executed: 'text-safe-green bg-safe-green/10',
   expired: 'text-red-400 bg-red-400/10',
+  invalidated: 'text-orange-400 bg-orange-400/10',
 };
 
 /** Compact proposal list card used on dashboard and transactions pages. */
 export default function TransactionCard({
   proposal,
-  index,
   threshold,
   owners,
 }: TransactionCardProps) {
   const timeAgo = getTimeAgo(new Date(proposal.createdAt).getTime());
-  const label = proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
+  const label = isDeleteProposal(proposal)
+    ? 'Delete proposal'
+    : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
+  const attemptError =
+    proposal.status === 'pending'
+      ? proposal.lastExecuteError ?? proposal.lastApproveError
+      : null;
+  const attemptErrorKind = proposal.lastExecuteError ? 'Execute' : 'Approve';
+  const isRemote = proposal.destination === 'remote';
+  const isDelete = isDeleteProposal(proposal);
+  const nonceLabel = proposal.nonce != null ? `#${proposal.nonce}` : '#?';
+  const badgeClass = isRemote
+    ? 'bg-indigo-500/15 border-indigo-400/40 text-indigo-300'
+    : 'bg-safe-gray border-safe-border text-safe-text';
+  const secondaryLine = isDelete
+    ? proposal.nonce != null
+      ? `Invalidates proposal with nonce #${proposal.nonce}`
+      : 'Invalidates another proposal'
+    : isRemote
+      ? proposal.childAccount
+        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on subaccount'
+      : 'Executes on this account';
 
   return (
     <Link href={`/transactions/${proposal.proposalHash}`}>
       <div className="border border-safe-border rounded-lg p-4 card-hover cursor-pointer">
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-lg bg-safe-gray border border-safe-border flex items-center justify-center text-safe-text">
-              <span className="text-xs font-mono">#{index}</span>
+            <div className={`w-10 h-10 rounded-lg border flex items-center justify-center ${badgeClass}`}>
+              <span className="text-xs font-mono">{nonceLabel}</span>
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -45,8 +68,17 @@ export default function TransactionCard({
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${statusColors[proposal.status]}`}>
                   {proposal.status}
                 </span>
+                {attemptError && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full text-red-300 bg-red-400/10 border border-red-400/30"
+                    title={`${attemptErrorKind}: ${attemptError}`}
+                  >
+                    last attempt failed
+                  </span>
+                )}
               </div>
-              {proposal.txType === 'transfer' && (
+              <p className="text-xs text-safe-text mt-0.5">{secondaryLine}</p>
+              {proposal.txType === 'transfer' && !isDelete && (
                 <p className="text-xs text-safe-text mt-0.5">
                   {proposal.recipientCount} recipients · {formatMina(proposal.totalAmount)} MINA
                 </p>

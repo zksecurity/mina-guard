@@ -3,8 +3,9 @@
 #
 # Usage:
 #   ./deploy.sh up      — deploy main branch (force-recreates containers for fresh lightnet chain)
-#   ./deploy.sh reset   — wipe volumes and redeploy (used by the 3-day bloat-cleanup cron)
-#   ./deploy.sh down    — teardown deployment
+#   ./deploy.sh down    — teardown deployment (wipes volumes)
+#
+# To reset the stack fully, run `down` followed by `up`.
 #
 # Expects to be run from the repo root directory.
 
@@ -80,11 +81,6 @@ remove_caddy_route() {
 }
 
 case "$COMMAND" in
-    reset)
-        echo "Wiping volumes for bloat cleanup..."
-        docker compose -f deploy/docker-compose.yml -p minaguard down -v --remove-orphans 2>/dev/null || true
-        remove_caddy_route 2>/dev/null || true
-        ;&
     up)
         echo "Deploying main branch on port ${PORT}..."
         # TODO(devnet): replace force-recreate with zero-downtime strategy (e.g., blue/green via caddy route swap) — current approach briefly drops requests during container swap.
@@ -109,7 +105,7 @@ case "$COMMAND" in
         ;;
 
     *)
-        echo "Usage: $0 {up|reset|down}"
+        echo "Usage: $0 {up|down}"
         exit 1
         ;;
 esac

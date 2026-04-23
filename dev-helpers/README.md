@@ -79,6 +79,61 @@ Validation output:
 - valid key: `valid=true` and `publicKey=<B62...>`
 - invalid key: `valid=false` (exit code `1`)
 
+### Lightnet Funding
+
+Fund all public keys listed in `dev-helpers/.env` via the lightnet account manager:
+
+```bash
+bun run dev-helpers/cli.ts lightnet-fund
+```
+
+This is useful for local preview or e2e setups where you already have fixed test accounts.
+
+### Lightnet Fixture
+
+Deploy a set of real on-chain fixture contracts to the local preview lightnet:
+
+```bash
+bun run dev-helpers/cli.ts lightnet-fixture --main-address B62...
+```
+
+The default scenario is `minimal`, which is optimized for quick manual UI testing.
+
+Optional scenario and custom preview base URL:
+
+```bash
+bun run dev-helpers/cli.ts lightnet-fixture \
+  --main-address B62... \
+  --scenario minimal \
+  --preview-base-url https://localhost:10001/preview/1
+```
+
+What it does:
+
+- acquires one funded lightnet deployer account
+- generates two extra local signer accounts for fixture activity
+- includes your `--main-address` as owner `#0` on every deployed contract
+- deploys real MinaGuard contracts and submits real propose / approve / execute transactions
+- waits for the preview backend indexer to ingest the resulting events
+- prints a JSON summary of the created contract addresses and seeded scenarios
+
+Available scenarios:
+
+- `minimal`:
+- 2 vaults
+- 2 executed proposals per vault
+- each vault ends with your main address as the lone owner with threshold 1
+- best when you want to connect one wallet and test quickly
+
+- `full`:
+- `Transfers`: one executed proposal, one approved-and-ready proposal, one pending proposal
+- `Add Owner`: one approved-and-ready proposal
+- `Remove Owner`: one approved-and-ready proposal
+- `Threshold`: one approved-and-ready proposal
+- `Delegate`: one approved-and-ready proposal
+
+This command is meant for proofs-disabled preview/lightnet flows. It creates real on-chain state, so the backend and UI stay consistent without DB-only mocking.
+
 ## Failure Modes
 
 - Unknown command: prints help and exits `1`.

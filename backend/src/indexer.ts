@@ -9,6 +9,7 @@ import {
   fetchLatestBlockHeight,
   fetchOnChainState,
   fetchVerificationKeyHash,
+  fetchZkappTxStatus,
   type ChainEvent,
 } from './mina-client.js';
 
@@ -32,6 +33,8 @@ export interface IndexerStatus {
 type ContractConfigFields = {
   threshold: number | null;
   numOwners: number | null;
+  nonce: number | null;
+  parentNonce: number | null;
   configNonce: number | null;
   delegate: string | null;
   childMultiSigEnabled: boolean | null;
@@ -138,6 +141,10 @@ export class MinaGuardIndexer {
         await this.setIndexedHeight(toHeight);
         this.status.indexedHeight = toHeight;
       }
+
+      // Check in-flight approve/execute submissions and surface any on-chain
+      // failures (e.g. insufficient fee-payer balance, account update errors).
+      await this.pollPendingSubmissions();
 
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
@@ -366,6 +373,20 @@ export class MinaGuardIndexer {
         await this.applyExecutionEvent(contractId, chainEvent, eventOrder);
         return;
       }
+      case 'createChild': {
+        // Informational only; Contract row populated by applySetupEvent and
+        // parent's CREATE_CHILD Proposal marked executed by applyExecutionEvent.
+        return;
+      }
+      case 'reclaimChild': {
+        // Informational only; MINA flowed child→parent on chain. Parent's
+        // Proposal is marked executed by the sibling ExecutionEvent.
+        return;
+      }
+      case 'enableChildMultiSig': {
+        await this.applyEnableChildMultiSigEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        return;
+      }
       case 'receiver': {
         await this.applyReceiverEvent(contractId, chainEvent.event);
         return;
@@ -380,20 +401,6 @@ export class MinaGuardIndexer {
       }
       case 'delegate': {
         await this.applyDelegateEvent(contractId, chainEvent, eventOrder, sourceEventId);
-        return;
-      }
-      case 'createChild': {
-        // Informational only; Contract row populated by applySetupEvent and
-        // parent's CREATE_CHILD Proposal marked executed by applyExecutionEvent.
-        return;
-      }
-      case 'reclaimChild': {
-        // Informational only; MINA flowed child→parent on chain. Parent's
-        // Proposal is marked executed by the sibling ExecutionEvent.
-        return;
-      }
-      case 'enableChildMultiSig': {
-        await this.applyEnableChildMultiSigEvent(contractId, chainEvent, eventOrder, sourceEventId);
         return;
       }
       default:
@@ -430,6 +437,8 @@ export class MinaGuardIndexer {
         sourceEventId,
         threshold:            changes.threshold            ?? latest?.threshold            ?? null,
         numOwners:            changes.numOwners            ?? latest?.numOwners            ?? null,
+        nonce:                changes.nonce                ?? latest?.nonce                ?? null,
+        parentNonce:          changes.parentNonce          ?? latest?.parentNonce          ?? null,
         configNonce:          changes.configNonce          ?? latest?.configNonce          ?? null,
         delegate:             changes.delegate             ?? latest?.delegate             ?? null,
         childMultiSigEnabled: changes.childMultiSigEnabled ?? latest?.childMultiSigEnabled ?? null,
@@ -463,6 +472,8 @@ export class MinaGuardIndexer {
       {
         threshold: asNumber(event.threshold),
         numOwners: asNumber(event.numOwners),
+        nonce: 0,
+        parentNonce: 0,
         configNonce: 0,
         networkId: asString(event.networkId),
         ownersCommitment: asString(event.ownersCommitment),
@@ -550,7 +561,7 @@ export class MinaGuardIndexer {
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
-        uid: asString(event.uid),
+        nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
@@ -563,7 +574,7 @@ export class MinaGuardIndexer {
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
-        uid: asString(event.uid),
+        nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expiryBlock: asString(event.expiryBlock),
         networkId: asString(event.networkId),
@@ -704,6 +715,15 @@ export class MinaGuardIndexer {
         eventOrder,
       },
     });
+
+    // Clear in-flight approve tracking when the arriving event matches the
+    // hash the frontend last submitted for this proposal.
+    if (chainEvent.txHash !== null && proposal.lastApproveTxHash === chainEvent.txHash) {
+      await prisma.proposal.update({
+        where: { id: proposal.id },
+        data: { lastApproveTxHash: null, lastApproveError: null },
+      });
+    }
   }
 
   /**
@@ -730,10 +750,26 @@ export class MinaGuardIndexer {
 
     const local = await prisma.proposal.findUnique({
       where: { contractId_proposalHash: { contractId, proposalHash } },
-      select: { id: true },
+      select: { id: true, nonce: true, lastExecuteTxHash: true },
     });
     if (local) {
       await this.upsertProposalExecution(local.id, blockHeight, txHash, eventOrder);
+      const localNonce = local.nonce === null ? null : Number(local.nonce);
+      if (localNonce !== null && Number.isFinite(localNonce)) {
+        await this.appendContractConfigSnapshot(
+          contractId,
+          blockHeight,
+          eventOrder,
+          null,
+          { nonce: localNonce },
+        );
+      }
+      if (txHash !== null && local.lastExecuteTxHash === txHash) {
+        await prisma.proposal.update({
+          where: { id: local.id },
+          data: { lastExecuteTxHash: null, lastExecuteError: null },
+        });
+      }
       return;
     }
 
@@ -751,11 +787,27 @@ export class MinaGuardIndexer {
 
     const remote = await prisma.proposal.findUnique({
       where: { contractId_proposalHash: { contractId: parent.id, proposalHash } },
-      select: { id: true },
+      select: { id: true, nonce: true, lastExecuteTxHash: true },
     });
     if (!remote) return;
 
     await this.upsertProposalExecution(remote.id, blockHeight, txHash, eventOrder);
+    const remoteNonce = remote.nonce === null ? null : Number(remote.nonce);
+    if (remoteNonce !== null && Number.isFinite(remoteNonce)) {
+      await this.appendContractConfigSnapshot(
+        contractId,
+        blockHeight,
+        eventOrder,
+        null,
+        { parentNonce: remoteNonce },
+      );
+    }
+    if (txHash !== null && remote.lastExecuteTxHash === txHash) {
+      await prisma.proposal.update({
+        where: { id: remote.id },
+        data: { lastExecuteTxHash: null, lastExecuteError: null },
+      });
+    }
   }
 
   private async upsertProposalExecution(
@@ -879,6 +931,54 @@ export class MinaGuardIndexer {
       sourceEventId,
       { childMultiSigEnabled: enabled === 1 },
     );
+  }
+
+  /** Polls each in-flight approve/execute submission's tx status and records
+   *  failures. Successful txs clear via matching Approval/Execution events in
+   *  applyApprovalEvent / applyExecutionEvent, so nothing to do here on success.
+   *
+   *  Execute tracking uses `executions: { none: {} }` as the equivalent of
+   *  "not executed" (this branch uses the normalized ProposalExecution table
+   *  instead of a denormalized status column). */
+  private async pollPendingSubmissions(): Promise<void> {
+    const proposals = await prisma.proposal.findMany({
+      where: {
+        OR: [
+          { AND: [{ lastExecuteTxHash: { not: null } }, { lastExecuteError: null }, { executions: { none: {} } }] },
+          { AND: [{ lastApproveTxHash: { not: null } }, { lastApproveError: null }] },
+        ],
+      },
+      select: {
+        id: true,
+        lastApproveTxHash: true,
+        lastApproveError: true,
+        lastExecuteTxHash: true,
+        lastExecuteError: true,
+        executions: { select: { blockHeight: true }, take: 1 },
+      },
+    });
+
+    for (const proposal of proposals) {
+      const alreadyExecuted = proposal.executions.length > 0;
+      if (proposal.lastExecuteTxHash && !proposal.lastExecuteError && !alreadyExecuted) {
+        const result = await fetchZkappTxStatus(this.config, proposal.lastExecuteTxHash);
+        if (result.status === 'failed') {
+          await prisma.proposal.update({
+            where: { id: proposal.id },
+            data: { lastExecuteError: result.reason ?? 'Execution transaction failed on-chain' },
+          });
+        }
+      }
+      if (proposal.lastApproveTxHash && !proposal.lastApproveError) {
+        const result = await fetchZkappTxStatus(this.config, proposal.lastApproveTxHash);
+        if (result.status === 'failed') {
+          await prisma.proposal.update({
+            where: { id: proposal.id },
+            data: { lastApproveError: result.reason ?? 'Approval transaction failed on-chain' },
+          });
+        }
+      }
+    }
   }
 
   /** Returns current indexed block height cursor from DB or configured default start. */

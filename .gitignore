@@ -12,6 +12,9 @@ ui/out/
 .env.local
 e2e/.env.devnet
 
+# local mkcert certs for preview-env
+# preview-env/*.pem
+
 # editor / OS
 .DS_Store
 *.swp

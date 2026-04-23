@@ -51,6 +51,8 @@ model ContractConfig {
   eventOrder           Int      @default(0)
   threshold            Int?
   numOwners            Int?
+  nonce                Int?
+  parentNonce          Int?
   configNonce          Int?
   delegate             String?
   childMultiSigEnabled Boolean?
@@ -85,24 +87,28 @@ model OwnerMembership {
 }
 
 model Proposal {
-  id             Int      @id @default(autoincrement())
-  contractId     Int
-  proposalHash   String
-  proposer       String?
-  toAddress      String?
-  tokenId        String?
-  txType         String?
-  data           String?
-  uid            String?
-  configNonce    String?
-  expiryBlock    String?
-  networkId      String?
-  guardAddress   String?
-  destination    String?
-  childAccount   String?
-  createdAtBlock Int
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                Int      @id @default(autoincrement())
+  contractId        Int
+  proposalHash      String
+  proposer          String?
+  toAddress         String?
+  tokenId           String?
+  txType            String?
+  data              String?
+  nonce             String?
+  configNonce       String?
+  expiryBlock       String?
+  networkId         String?
+  guardAddress      String?
+  destination       String?
+  childAccount      String?
+  lastApproveTxHash String?
+  lastApproveError  String?
+  lastExecuteTxHash String?
+  lastExecuteError  String?
+  createdAtBlock    Int
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   contract   Contract            @relation(fields: [contractId], references: [id], onDelete: Cascade)
   approvals  Approval[]

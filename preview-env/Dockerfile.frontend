@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM oven/bun:1 AS base
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -14,8 +16,10 @@ COPY e2e/package.json e2e/
 # Copy o1js submodule (needed by ui postinstall to build mina-signer)
 COPY ui/deps/ ui/deps/
 
-# Install dependencies
-RUN bun install --frozen-lockfile
+# Install dependencies. Cache Bun's package store so repeated preview builds
+# don't need to re-download and unpack the full workspace dependency tree.
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
 
 # Copy source
 COPY contracts/ contracts/
@@ -31,20 +35,26 @@ ARG NEXT_PUBLIC_MINA_ENDPOINT
 ARG NEXT_PUBLIC_ARCHIVE_ENDPOINT
 ARG NEXT_PUBLIC_MINA_NETWORK
 ARG NEXT_PUBLIC_BLOCK_EXPLORER_URL
+ARG ENABLE_SOURCE_MAPS=true
 
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 ENV NEXT_PUBLIC_MINA_ENDPOINT=$NEXT_PUBLIC_MINA_ENDPOINT
 ENV NEXT_PUBLIC_ARCHIVE_ENDPOINT=$NEXT_PUBLIC_ARCHIVE_ENDPOINT
 ENV NEXT_PUBLIC_MINA_NETWORK=$NEXT_PUBLIC_MINA_NETWORK
 ENV NEXT_PUBLIC_BLOCK_EXPLORER_URL=$NEXT_PUBLIC_BLOCK_EXPLORER_URL
+ENV ENABLE_SOURCE_MAPS=$ENABLE_SOURCE_MAPS
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # Inject basePath into next.config.mjs for preview environments
 RUN if [ -n "$NEXT_PUBLIC_BASE_PATH" ]; then \
       sed -i "s|const nextConfig = {|const nextConfig = {\n  basePath: '${NEXT_PUBLIC_BASE_PATH}',|" ui/next.config.mjs; \
     fi
 
-# Build frontend
-RUN cd ui && bun run build
+# Build frontend. Cache Next's build artifacts so the heavy o1js worker bundle
+# doesn't need a full cold compile on every local preview rebuild.
+RUN --mount=type=cache,target=/app/ui/.next/cache \
+    cd ui && bun run build
 
 EXPOSE 3000
 CMD ["bun", "run", "--cwd", "ui", "start"]

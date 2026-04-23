@@ -72,19 +72,25 @@ export async function sendTransaction(
   memo?: string
 ): Promise<string | null> {
   if (!isAuroInstalled()) return null;
+  // Only include feePayer when fee or memo are explicitly provided.
+  // Passing { fee: undefined } causes Auro to override the fee embedded in
+  // the transaction JSON, which changes the commitment and invalidates any
+  // pre-existing signatures (e.g. the zkApp key signature on deploy).
+  const params: Parameters<MinaProvider['sendTransaction']>[0] = { transaction };
+  if (fee !== undefined || memo !== undefined) {
+    params.feePayer = { fee, memo };
+  }
   try {
-    // Only include feePayer when fee or memo are explicitly provided.
-    // Passing { fee: undefined } causes Auro to override the fee embedded in
-    // the transaction JSON, which changes the commitment and invalidates any
-    // pre-existing signatures (e.g. the zkApp key signature on deploy).
-    const params: Parameters<MinaProvider['sendTransaction']>[0] = { transaction };
-    if (fee !== undefined || memo !== undefined) {
-      params.feePayer = { fee, memo };
-    }
     const result = await window.mina!.sendTransaction(params);
     return result.hash;
-  } catch {
-    return null;
+  } catch (err) {
+    // User cancellation in Auro reports as { code: 1002, message: 'User rejected' }.
+    // Treat cancellation as a benign null (no banner); re-throw other failures so
+    // the submit-rejection banner surfaces the real reason.
+    const code = (err as { code?: number } | null)?.code;
+    if (code === 1002) return null;
+    const message = (err as { message?: string } | null)?.message;
+    throw new Error(message ? `Wallet rejected transaction: ${message}` : 'Wallet rejected transaction');
   }
 }
 

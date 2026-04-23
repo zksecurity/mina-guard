@@ -15,23 +15,24 @@ All execution uses a **multi-step on-chain flow** (propose → approve → execu
 | `utils.ts` | `ownerKey()` helper (`Poseidon.hash(owner.toFields())`) |
 | `index.ts` | Public exports |
 
-## On-Chain State (11 Fields)
+## On-Chain State (12 Fields)
 
-MinaGuard uses 11 state slots (requires the Mesa 32-slot branch of o1js):
+MinaGuard uses 12 state slots (requires the Mesa 32-slot branch of o1js):
 
 | Slot | Field | Purpose |
 | ---- | ----- | ------- |
 | 0 | `ownersCommitment` | Chain hash of the ordered owner list |
 | 1 | `threshold` | Minimum approvals required to execute any proposal |
 | 2 | `numOwners` | Current owner count |
-| 3 | `proposalCounter` | Monotonic counter; each proposal gets a unique ID |
+| 3 | `nonce` | Last executed LOCAL nonce on this guard |
 | 4 | `voteNullifierRoot` | MerkleMap root preventing double-voting |
 | 5 | `approvalRoot` | MerkleMap root of approval counts (`proposalHash → count`) |
 | 6 | `configNonce` | Incremented on governance changes; invalidates stale proposals |
 | 7 | `networkId` | Network identifier; prevents cross-network replay |
 | 8 | `parent` | Parent guard address (`PublicKey.empty()` for a root guard) |
-| 9 | `childExecutionRoot` | MerkleMap root marking REMOTE proposals executed on this child |
-| 10 | `childMultiSigEnabled` | `Field(1)` if this child accepts its own propose/approve/execute ops, `Field(0)` otherwise |
+| 9 | `parentNonce` | Last executed REMOTE nonce on this child (`0` on root guards) |
+| 10 | `childExecutionRoot` | MerkleMap root marking REMOTE proposals executed on this child |
+| 11 | `childMultiSigEnabled` | `Field(1)` if this child accepts its own propose/approve/execute ops, `Field(0)` otherwise |
 
 ## Owner Storage Model
 
@@ -99,7 +100,7 @@ class TransactionProposal extends Struct({
   tokenId:      Field,       // Token ID (Field(0) for MINA)
   txType:       Field,       // TxType value
   data:         Field,       // Context-dependent payload (see below)
-  uid:          Field,       // Unique ID from proposalCounter
+  nonce:        Field,       // Ordered execution nonce (LOCAL or child-REMOTE domain)
   configNonce:  Field,       // Must match on-chain configNonce
   expiryBlock:  Field,       // Block height deadline (0 = no expiry)
   networkId:    Field,       // Must match on-chain networkId
@@ -113,9 +114,15 @@ Unused receiver slots use `Receiver.empty()` (`PublicKey.empty()` + `UInt64(0)`)
 
 `hash()` returns `Poseidon(all fields)`. This hash is the universal key for approval counts, vote nullifiers, and signatures. Because `guardAddress`, `destination`, and `childAccount` are all inside the hash, a proposal is cryptographically bound to a specific (parent, child) pair — cross-child reuse produces a different hash.
 
-### Why hash-keyed instead of nonce-keyed
+### Hash-keyed approvals with ordered execution nonces
 
-A sequential nonce would allow **proposal substitution**: an attacker could craft a different proposal with the same nonce and collect approvals for an unintended transaction. Keying by content hash ensures approvals are cryptographically bound to the exact proposal fields.
+Approvals remain keyed by the full proposal hash, not by nonce. That preserves content binding: owners approve an exact proposal payload, not just a nonce slot. The `nonce` field now serves a different purpose: it orders execution and lets a later approved proposal invalidate an earlier unexecuted proposal that shares the same nonce.
+
+Execution domains:
+
+- **LOCAL proposals** use the guard's `nonce`.
+- **REMOTE proposals** use the target child's `parentNonce`.
+- **`CREATE_CHILD`** is a special REMOTE case: its `nonce` must be `0`, and `executeSetupChild` initializes the child with `nonce = 1` and `parentNonce = 1`.
 
 ### LOCAL vs REMOTE proposals
 
@@ -147,6 +154,10 @@ Propose-time rules enforced in `propose()`:
 - Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, or `ENABLE_CHILD_MULTI_SIG`.
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
+- `nonce` must be fresh for the relevant execution domain:
+  - LOCAL propose/approve requires `proposal.nonce > this.nonce`
+  - REMOTE propose/approve requires `proposal.nonce > child.parentNonce`
+  - `CREATE_CHILD` requires `proposal.nonce == 0`
 
 ## Constants
 
@@ -173,7 +184,7 @@ Defined in `constants.ts`:
 
 - Guard: `ownersCommitment == Field(0)` (not yet initialized)
 - Validates: `threshold > 0`, `numOwners >= threshold`, `numOwners <= MAX_OWNERS`
-- Initializes all state fields; `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` set to `EMPTY_MERKLE_MAP_ROOT`; `parent = PublicKey.empty()`; `childMultiSigEnabled = Field(1)`
+- Initializes all state fields; `nonce = 0`, `parentNonce = 0`, `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` set to `EMPTY_MERKLE_MAP_ROOT`; `parent = PublicKey.empty()`; `childMultiSigEnabled = Field(1)`
 - Emits `SetupEvent` + one `SetupOwnerEvent` per `MAX_OWNERS` slot
 - Trust model: clients should independently compute the expected commitment and verify it matches
 
@@ -187,8 +198,8 @@ There is only one propose method and it **always auto-approves** as the proposer
 2. Verify proposer is an owner (chain hash witness)
 3. Assert `configNonce`, `networkId`, `guardAddress` match on-chain values
 4. Assert `destination` and `childAccount` are consistent
-5. Enforce per-txType propose rules (see TxType table)
-6. Increment `proposalCounter`
+5. Assert proposal nonce freshness for the relevant domain (`nonce` or `parentNonce`; `CREATE_CHILD` requires `0`)
+6. Enforce per-txType propose rules (see TxType table)
 7. Verify proposer's signature over `[proposalHash]`
 8. Check and set vote nullifier (prevents re-proposal)
 9. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`
@@ -201,11 +212,12 @@ There is only one propose method and it **always auto-approves** as the proposer
 1. Assert `childMultiSigEnabled == 1` if this is a child guard
 2. Verify approver is an owner
 3. Assert `configNonce`, `networkId`, `guardAddress` match
-4. Verify signature over `[proposalHash]`
-5. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed
-6. Check and set vote nullifier
-7. Increment approval count in the approval map
-8. Emit `ApprovalEvent`
+4. Assert proposal nonce freshness for the relevant domain
+5. Verify signature over `[proposalHash]`
+6. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed
+7. Check and set vote nullifier
+8. Increment approval count in the approval map
+9. Emit `ApprovalEvent`
 
 ### Execute — LOCAL methods
 
@@ -215,13 +227,14 @@ All LOCAL execute methods share these checks:
 - `childMultiSigEnabled == 1` if this is a child guard
 - `txType` matches the method, `destination == LOCAL`
 - `configNonce`, `networkId`, `guardAddress` match on-chain
+- `proposal.nonce == this.nonce + 1`
 - Proposal not expired (if `expiryBlock != 0`, asserts `blockchainLength <= expiryBlock`)
 - Not executed, exists, and threshold satisfied
 - Approval witness verified against `approvalRoot`
 
-After execution the approval count is overwritten with `EXECUTED_MARKER`, permanently preventing re-execution or further approvals. Execution is **permissionless** — anyone can trigger it once the threshold is met.
+After execution the contract increments `nonce` and overwrites the approval count with `EXECUTED_MARKER`, permanently preventing re-execution or further approvals. Execution is **permissionless** — anyone can trigger it once the threshold is met.
 
-- **`executeTransfer`** — Loops through all receiver slots, sending to each non-empty one. Empty slots get their amount zeroed via `Provable.if`. Emits `ExecutionEvent`.
+- **`executeTransfer`** — Loops through all receiver slots, sending to each non-empty one. Empty slots are converted into zero-value self-sends so they have no effect on balances. Emits `ExecutionEvent`.
 - **`executeAllocateToChildren`** — Same structure as `executeTransfer` but asserts `txType == ALLOCATE_CHILD`. Typically sends MINA from a parent to its children. Emits `ExecutionEvent { txType: ALLOCATE_CHILD }`. The indexer distinguishes allocations from generic transfers by txType.
 - **`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. The owner pubkey is read from `receivers[0]`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits and selects the correct result based on `txType`. Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
 - **`executeThresholdChange`** — Validates `proposal.data == newThreshold`, `newThreshold > 0`, `numOwners >= newThreshold`. Updates `threshold`. Increments `configNonce`. Emits `ExecutionEvent` + `ThresholdChangeEvent`.
@@ -260,10 +273,10 @@ Cross-child safety: because `proposalHash` includes `childAccount`, a REMOTE pro
 
 All four child-lifecycle `@method`s run on the child, take parent-approval inputs `(parentApprovalWitness, parentApprovalCount)`, and emit `ExecutionEvent` alongside their specific event.
 
-- **`executeSetupChild(ownersCommitment, threshold, numOwners, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Must be batched into the **same Mina transaction** as the child's `deploy()`. Between deploy and setup, the child sits with `ownersCommitment == 0`, and any account in the mempool could call `executeSetupChild` with a proposal bound to an attacker-controlled "parent", permanently binding the child to a hostile parent. Asserts `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, and `proposal.data == Poseidon([ownersCommitment, threshold, numOwners])`. Verifies the parent approval state inline (since `this.parent` isn't persisted yet, the parent address comes from `proposal.guardAddress`). Uses `proposal.networkId` as the child's `networkId` — `assertParentApprovalState` pins the parent's `networkId` as an AccountUpdate precondition, so `proposal.networkId` is the parent-approved value and an attacker can't supply a mismatched id via this path. Initializes all state, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
-- **`executeReclaimToParent(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, amount)`** — Sends `amount` MINA back to `this.parent`. Asserts `proposal.data == amount.value`. Marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `ReclaimChildEvent { proposalHash, parentAddress, amount }`. Does **not** check `childMultiSigEnabled` — this is a deliberate recovery path that works even on a destroyed child.
-- **`executeDestroy(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness)`** — Sends the full child balance to the parent, sets `childMultiSigEnabled = 0`, and marks the proposal in `childExecutionRoot`. After destruction the child is inert: its own propose/approve/LOCAL execute methods are blocked by `assertChildMultiSigEnabledIfChild`, but parent-authorized REMOTE methods remain callable. Reuses `ReclaimChildEvent` (same "MINA flowed child → parent" semantics — `ExecutionEvent.txType == DESTROY_CHILD` disambiguates from a partial reclaim).
-- **`executeEnableChildMultiSig(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, enabled)`** — Asserts `proposal.data == enabled` and `enabled ∈ {0, 1}`. Sets `childMultiSigEnabled` and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `EnableChildMultiSigEvent { proposalHash, parentAddress, enabled }`.
+- **`executeSetupChild(ownersCommitment, threshold, numOwners, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Must be batched into the **same Mina transaction** as the child's `deploy()`. Between deploy and setup, the child sits with `ownersCommitment == 0`, and any account in the mempool could call `executeSetupChild` with a proposal bound to an attacker-controlled "parent", permanently binding the child to a hostile parent. Asserts `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, `proposal.nonce == 0`, and `proposal.data == Poseidon([ownersCommitment, threshold, numOwners])`. Verifies the parent approval state inline (since `this.parent` isn't persisted yet, the parent address comes from `proposal.guardAddress`). Uses `proposal.networkId` as the child's `networkId` — `assertParentApprovalState` pins the parent's `networkId` as an AccountUpdate precondition, so `proposal.networkId` is the parent-approved value and an attacker can't supply a mismatched id via this path. Initializes all state with `nonce = 1` and `parentNonce = 1`, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
+- **`executeReclaimToParent(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, amount)`** — Sends `amount` MINA back to `this.parent`. Asserts `proposal.data == amount.value`, `proposal.nonce == this.parentNonce + 1`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `ReclaimChildEvent { proposalHash, parentAddress, amount }`. Does **not** check `childMultiSigEnabled` — this is a deliberate recovery path that works even when the child is disabled.
+- **`executeDestroy(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness)`** — Sends the full child balance to the parent, sets `childMultiSigEnabled = 0`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. The child can later be re-enabled by `executeEnableChildMultiSig`; nonce state is preserved across disable/enable cycles. Reuses `ReclaimChildEvent` (same "MINA flowed child → parent" semantics — `ExecutionEvent.txType == DESTROY_CHILD` disambiguates from a partial reclaim).
+- **`executeEnableChildMultiSig(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, enabled)`** — Asserts `proposal.data == enabled`, `enabled ∈ {0, 1}`, and `proposal.nonce == this.parentNonce + 1`. Sets `childMultiSigEnabled`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `EnableChildMultiSigEvent { proposalHash, parentAddress, enabled }`.
 
 ## Events
 
@@ -274,7 +287,7 @@ All event structs are defined in `MinaGuard.ts` and registered on `this.events`.
 | `DeployEvent` | `guardAddress` | `deploy` |
 | `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId, parent` | `setup`, `executeSetupChild` |
 | `SetupOwnerEvent` | `owner, index` | `setup`, `executeSetupChild` (one per `MAX_OWNERS` slot) |
-| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, uid, configNonce, expiryBlock, networkId, guardAddress, destination, childAccount` | `propose` |
+| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, nonce, configNonce, expiryBlock, networkId, guardAddress, destination, childAccount` | `propose` |
 | `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
 | `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
 | `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |

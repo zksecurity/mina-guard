@@ -3,6 +3,7 @@
 "use client";
 
 import * as Comlink from 'comlink';
+import Client from 'mina-signer';
 import type { WorkerApi } from './multisigClient.worker';
 import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
@@ -44,9 +45,16 @@ let api: Comlink.Remote<WorkerApi> | null = null;
 /** Lazily creates the shared worker instance. */
 function getWorkerApi(): Comlink.Remote<WorkerApi> {
   if (!api) {
+    console.log('[multisigClient] creating Worker');
     worker = new Worker(
       new URL('./multisigClient.worker.ts', import.meta.url)
     );
+    worker.addEventListener('error', (e) => {
+      console.error('[multisigClient] worker error:', e.message, e.filename, e.lineno);
+    });
+    worker.addEventListener('messageerror', (e) => {
+      console.error('[multisigClient] worker messageerror:', e);
+    });
     api = Comlink.wrap<WorkerApi>(worker);
     // Push endpoints into the worker before it tries to compile or network.
     // The worker gates configureNetwork() on this call, so no race.
@@ -129,9 +137,16 @@ if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_E2E_TEST === 'true'
   };
 }
 
-/** Generates a random zkApp keypair in the worker (where o1js is loaded). */
+// Generated on the main thread via mina-signer: the worker eagerly runs
+// MinaGuard.compile(), whose long synchronous WASM calls block Comlink message
+// handling and made this step hang behind compilation.
+const keygenClient = new Client({
+  network: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
+});
+
+/** Generates a random zkApp keypair using mina-signer. */
 export async function generateKeypair(): Promise<{ privateKey: string; publicKey: string }> {
-  return getWorkerApi().generateKeypair();
+  return keygenClient.genKeys();
 }
 
 

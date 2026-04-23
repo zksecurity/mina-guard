@@ -13,6 +13,11 @@ const contractAddress = PrivateKey.random().toPublicKey().toBase58();
 const otherContractAddress = PrivateKey.random().toPublicKey().toBase58();
 const childOneAddress = PrivateKey.random().toPublicKey().toBase58();
 const childTwoAddress = PrivateKey.random().toPublicKey().toBase58();
+// Dedicated contract (and child) for invalidation-state tests — kept
+// isolated from the main test contract so its fixed proposal counts aren't
+// disturbed.
+const invalidStateContractAddress = PrivateKey.random().toPublicKey().toBase58();
+const invalidStateChildAddress = PrivateKey.random().toPublicKey().toBase58();
 const ownerA = PrivateKey.random().toPublicKey().toBase58();
 const ownerB = PrivateKey.random().toPublicKey().toBase58();
 const ownerC = PrivateKey.random().toPublicKey().toBase58();
@@ -23,6 +28,17 @@ const proposalHashC = '303';
 const otherProposalHash = '404';
 // REMOTE child-lifecycle proposal targeting childOne — exercises destination/childAccount.
 const remoteProposalHash = '505';
+// Proposals on invalidStateContract used to validate status=invalidated:
+//   configStaleHash — configNonce behind contract (should be config_nonce_stale)
+//   localStaleHash  — nonce behind parent.nonce (should be proposal_nonce_stale)
+//   remoteStaleHash — REMOTE w/ nonce behind child.parentNonce
+//   createChildHash — CREATE_CHILD (txType=5) nonce=0; always pending
+//   freshHash       — config+nonce fresh, stays pending
+const configStaleHash = '601';
+const localStaleHash = '602';
+const remoteStaleHash = '603';
+const createChildHash = '604';
+const freshHash = '605';
 
 function get(path: string) {
   return fetch(`${baseUrl}${path}`);
@@ -48,6 +64,8 @@ async function seedDatabase() {
       // (e.g. after a destroy) so the API exposes both states.
       { address: childOneAddress, parent: contractAddress, ready: true },
       { address: childTwoAddress, parent: contractAddress, ready: true },
+      { address: invalidStateContractAddress, ready: true },
+      { address: invalidStateChildAddress, parent: invalidStateContractAddress, ready: true },
     ],
   });
 
@@ -64,12 +82,17 @@ async function seedDatabase() {
     where: { address: childTwoAddress },
   });
 
+  // Seed explicit nonces so tests asserting proposal status are robust
+  // against future changes to null-handling in deriveInvalidReason.
+  // `contract` (parent): nonce=0 (no local proposals executed yet),
+  // configNonce=0. Children's `parentNonce=0` means a REMOTE proposal with
+  // nonce>0 is not parent-nonce-stale.
   await prisma.contractConfig.createMany({
     data: [
-      { contractId: contract.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true },
-      { contractId: otherContract.id, validFromBlock: 25, networkId: '1', childMultiSigEnabled: true },
-      { contractId: childOne.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true },
-      { contractId: childTwo.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: false },
+      { contractId: contract.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true, nonce: 0, parentNonce: 0, configNonce: 0 },
+      { contractId: otherContract.id, validFromBlock: 25, networkId: '1', childMultiSigEnabled: true, nonce: 0, parentNonce: 0, configNonce: 0 },
+      { contractId: childOne.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true, nonce: 0, parentNonce: 0, configNonce: 0 },
+      { contractId: childTwo.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: false, nonce: 0, parentNonce: 0, configNonce: 0 },
     ],
   });
 
@@ -124,6 +147,94 @@ async function seedDatabase() {
   });
   await prisma.proposalExecution.create({
     data: { proposalId: executedProposal.id, blockHeight: 22 },
+  });
+
+  // --- Invalidation fixtures ------------------------------------------------
+  // A separate contract with nonce=5, configNonce=3 so proposals behind those
+  // values show as invalidated. Its child has parentNonce=4, so REMOTE
+  // proposals with nonce<=4 are parent-nonce-stale.
+  const invalidContract = await prisma.contract.findUniqueOrThrow({
+    where: { address: invalidStateContractAddress },
+  });
+  const invalidChild = await prisma.contract.findUniqueOrThrow({
+    where: { address: invalidStateChildAddress },
+  });
+
+  await prisma.contractConfig.createMany({
+    data: [
+      {
+        contractId: invalidContract.id,
+        validFromBlock: 100,
+        networkId: '1',
+        childMultiSigEnabled: true,
+        nonce: 5,
+        parentNonce: 0,
+        configNonce: 3,
+      },
+      {
+        contractId: invalidChild.id,
+        validFromBlock: 100,
+        networkId: '1',
+        childMultiSigEnabled: true,
+        nonce: 0,
+        parentNonce: 4,
+        configNonce: 0,
+      },
+    ],
+  });
+
+  await prisma.proposal.createMany({
+    data: [
+      // config_nonce_stale: proposal.configNonce=1 < parent.configNonce=3
+      {
+        contractId: invalidContract.id,
+        proposalHash: configStaleHash,
+        createdAtBlock: 110,
+        configNonce: '1',
+        nonce: '10', // fresh enough on its own; config check wins
+        destination: 'local',
+      },
+      // proposal_nonce_stale (LOCAL): nonce=5 <= parent.nonce=5
+      {
+        contractId: invalidContract.id,
+        proposalHash: localStaleHash,
+        createdAtBlock: 111,
+        configNonce: '3',
+        nonce: '5',
+        destination: 'local',
+      },
+      // proposal_nonce_stale (REMOTE non-CREATE_CHILD): nonce=2 <= child.parentNonce=4
+      {
+        contractId: invalidContract.id,
+        proposalHash: remoteStaleHash,
+        createdAtBlock: 112,
+        configNonce: '3',
+        nonce: '2',
+        destination: 'remote',
+        childAccount: invalidStateChildAddress,
+        txType: '7', // RECLAIM_CHILD
+      },
+      // CREATE_CHILD (txType=5): nonce=0 always, never nonce-stale
+      {
+        contractId: invalidContract.id,
+        proposalHash: createChildHash,
+        createdAtBlock: 113,
+        configNonce: '3',
+        nonce: '0',
+        destination: 'remote',
+        childAccount: invalidStateChildAddress,
+        txType: '5',
+      },
+      // Fresh: nonce=6 > parent.nonce=5, configNonce=3 == parent.configNonce
+      {
+        contractId: invalidContract.id,
+        proposalHash: freshHash,
+        createdAtBlock: 114,
+        configNonce: '3',
+        nonce: '6',
+        destination: 'local',
+      },
+    ],
   });
 
   await prisma.eventRaw.createMany({
@@ -386,5 +497,99 @@ describe('GET /api/contracts/:address/events', () => {
     const body = await res.json();
     expect(body).toHaveLength(1);
     expect(body[0].blockHeight).toBe(10);
+  });
+});
+
+describe('proposal invalidation derivation', () => {
+  type ProposalRow = {
+    proposalHash: string;
+    status: string;
+    invalidReason: string | null;
+  };
+
+  async function getProposalsByContract(address: string): Promise<ProposalRow[]> {
+    const res = await get(`/api/contracts/${address}/proposals`);
+    expect(res.status).toBe(200);
+    return res.json();
+  }
+
+  async function getProposalByHash(address: string, hash: string): Promise<ProposalRow> {
+    const res = await get(`/api/contracts/${address}/proposals/${hash}`);
+    expect(res.status).toBe(200);
+    return res.json();
+  }
+
+  test('list endpoint marks config_nonce_stale proposal as invalidated', async () => {
+    const body = await getProposalsByContract(invalidStateContractAddress);
+    const configStale = body.find((p) => p.proposalHash === configStaleHash);
+    expect(configStale).toBeDefined();
+    expect(configStale?.status).toBe('invalidated');
+    expect(configStale?.invalidReason).toBe('config_nonce_stale');
+  });
+
+  test('list endpoint marks LOCAL nonce-stale proposal as invalidated', async () => {
+    const body = await getProposalsByContract(invalidStateContractAddress);
+    const localStale = body.find((p) => p.proposalHash === localStaleHash);
+    expect(localStale?.status).toBe('invalidated');
+    expect(localStale?.invalidReason).toBe('proposal_nonce_stale');
+  });
+
+  test('list endpoint marks REMOTE parent-nonce-stale proposal as invalidated', async () => {
+    const body = await getProposalsByContract(invalidStateContractAddress);
+    const remoteStale = body.find((p) => p.proposalHash === remoteStaleHash);
+    expect(remoteStale?.status).toBe('invalidated');
+    expect(remoteStale?.invalidReason).toBe('proposal_nonce_stale');
+  });
+
+  test('CREATE_CHILD proposal stays pending even with nonce=0 (bypasses nonce check)', async () => {
+    const body = await getProposalsByContract(invalidStateContractAddress);
+    const createChild = body.find((p) => p.proposalHash === createChildHash);
+    expect(createChild?.status).toBe('pending');
+    expect(createChild?.invalidReason).toBeNull();
+  });
+
+  test('fresh proposal stays pending', async () => {
+    const body = await getProposalsByContract(invalidStateContractAddress);
+    const fresh = body.find((p) => p.proposalHash === freshHash);
+    expect(fresh?.status).toBe('pending');
+    expect(fresh?.invalidReason).toBeNull();
+  });
+
+  test('single-proposal endpoint reports invalidated status + reason', async () => {
+    const body = await getProposalByHash(invalidStateContractAddress, configStaleHash);
+    expect(body.status).toBe('invalidated');
+    expect(body.invalidReason).toBe('config_nonce_stale');
+  });
+
+  test('?status=invalidated filter returns only invalidated proposals', async () => {
+    const res = await get(
+      `/api/contracts/${invalidStateContractAddress}/proposals?status=invalidated`
+    );
+    expect(res.status).toBe(200);
+    const body: ProposalRow[] = await res.json();
+    const hashes = body.map((p) => p.proposalHash).sort();
+    expect(hashes).toEqual([configStaleHash, localStaleHash, remoteStaleHash].sort());
+    expect(body.every((p) => p.status === 'invalidated')).toBe(true);
+  });
+});
+
+describe('decorateContract exposes nonce + parentNonce', () => {
+  test('GET /api/contracts/:address includes nonce and parentNonce from latest ContractConfig', async () => {
+    const res = await get(`/api/contracts/${invalidStateContractAddress}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.nonce).toBe(5);
+    expect(body.parentNonce).toBe(0);
+    expect(body.configNonce).toBe(3);
+  });
+
+  test('GET /api/contracts exposes nonce + parentNonce on each contract in the list', async () => {
+    const res = await get(`/api/contracts`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const entry = body.find((c: { address: string }) => c.address === invalidStateContractAddress);
+    expect(entry).toBeDefined();
+    expect(entry.nonce).toBe(5);
+    expect(entry.parentNonce).toBe(0);
   });
 });

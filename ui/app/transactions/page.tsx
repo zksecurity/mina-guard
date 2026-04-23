@@ -5,7 +5,7 @@ import { useAppContext } from '@/lib/app-context';
 import TransactionList from '@/components/TransactionList';
 import Link from 'next/link';
 
-type Tab = 'all' | 'pending' | 'executed' | 'expired';
+type Tab = 'all' | 'pending' | 'executed' | 'expired' | 'invalidated';
 
 /** Full proposal table page with lifecycle-status filtering tabs. */
 export default function TransactionsPage() {
@@ -27,6 +27,7 @@ export default function TransactionsPage() {
     { key: 'pending', label: 'Pending', count: proposals.filter((p) => p.status === 'pending').length },
     { key: 'executed', label: 'Executed', count: proposals.filter((p) => p.status === 'executed').length },
     { key: 'expired', label: 'Expired', count: proposals.filter((p) => p.status === 'expired').length },
+    { key: 'invalidated', label: 'Invalidated', count: proposals.filter((p) => p.status === 'invalidated').length },
   ];
 
   return (

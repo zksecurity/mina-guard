@@ -170,7 +170,7 @@ export async function deployAndSetup(
 /** Builds a transfer proposal payload. Pads receivers to MAX_RECEIVERS. */
 export function createTransferProposal(
   receivers: Receiver[],
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -187,7 +187,7 @@ export function createTransferProposal(
     tokenId: Field(0),
     txType: TxType.TRANSFER,
     data: Field(0),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -210,7 +210,7 @@ function singleReceiverArray(address: PublicKey): Receiver[] {
 /** Builds an add-owner governance proposal payload. */
 export function createAddOwnerProposal(
   newOwner: PublicKey,
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -223,7 +223,7 @@ export function createAddOwnerProposal(
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
     data: Field(0),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -236,7 +236,7 @@ export function createAddOwnerProposal(
 /** Builds a remove-owner governance proposal payload. */
 export function createRemoveOwnerProposal(
   ownerToRemove: PublicKey,
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -249,7 +249,7 @@ export function createRemoveOwnerProposal(
     tokenId: Field(0),
     txType: TxType.REMOVE_OWNER,
     data: Field(0),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -262,7 +262,7 @@ export function createRemoveOwnerProposal(
 /** Builds a threshold-change governance proposal payload. */
 export function createThresholdProposal(
   newThreshold: Field,
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -275,7 +275,7 @@ export function createThresholdProposal(
     tokenId: Field(0),
     txType: TxType.CHANGE_THRESHOLD,
     data: newThreshold,
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -288,7 +288,7 @@ export function createThresholdProposal(
 /** Builds a delegate proposal payload. */
 export function createDelegateProposal(
   delegate: PublicKey,
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -301,7 +301,7 @@ export function createDelegateProposal(
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -313,7 +313,7 @@ export function createDelegateProposal(
 
 /** Builds an un-delegate proposal payload (empty receivers[0]). */
 export function createUndelegateProposal(
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -326,13 +326,42 @@ export function createUndelegateProposal(
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
     guardAddress,
     destination,
     childAccount,
+  });
+}
+
+/**
+ * Builds a LOCAL zero-value transfer used by the delete flow — receivers[0]
+ * is (PublicKey.empty(), 0), the rest are empty. Same nonce as the target
+ * proposal: whichever executes first burns the slot and invalidates the other.
+ */
+export function createDeleteProposal(
+  nonce: Field,
+  configNonce: Field,
+  guardAddress: PublicKey,
+  expiryBlock = Field(0),
+  networkId = Field(1),
+): TransactionProposal {
+  const receivers = emptyReceivers();
+  receivers[0] = new Receiver({ address: PublicKey.empty(), amount: UInt64.zero });
+  return new TransactionProposal({
+    receivers,
+    tokenId: Field(0),
+    txType: TxType.TRANSFER,
+    data: Field(0),
+    nonce,
+    configNonce,
+    expiryBlock,
+    networkId,
+    guardAddress,
+    destination: Destination.LOCAL,
+    childAccount: PublicKey.empty(),
   });
 }
 
@@ -348,7 +377,7 @@ export function createCreateChildProposal(
   ownersCommitment: Field,
   threshold: Field,
   numOwners: Field,
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -359,7 +388,7 @@ export function createCreateChildProposal(
     tokenId: Field(0),
     txType: TxType.CREATE_CHILD,
     data: Poseidon.hash([ownersCommitment, threshold, numOwners]),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -375,7 +404,7 @@ export function createCreateChildProposal(
  */
 export function createAllocateChildProposal(
   receivers: Receiver[],
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -390,7 +419,7 @@ export function createAllocateChildProposal(
     tokenId: Field(0),
     txType: TxType.ALLOCATE_CHILD,
     data: Field(0),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -406,7 +435,7 @@ export function createAllocateChildProposal(
  */
 export function createReclaimChildProposal(
   amount: UInt64,
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -418,7 +447,7 @@ export function createReclaimChildProposal(
     tokenId: Field(0),
     txType: TxType.RECLAIM_CHILD,
     data: amount.value,
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -430,7 +459,7 @@ export function createReclaimChildProposal(
 
 /** Builds a DESTROY_CHILD proposal — REMOTE, proposed on the parent. */
 export function createDestroyChildProposal(
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -442,7 +471,7 @@ export function createDestroyChildProposal(
     tokenId: Field(0),
     txType: TxType.DESTROY_CHILD,
     data: Field(0),
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -455,7 +484,7 @@ export function createDestroyChildProposal(
 /** Builds an ENABLE_CHILD_MULTI_SIG proposal — REMOTE, data encodes the flag. */
 export function createEnableChildMultiSigProposal(
   enabled: Field,
-  uid: Field,
+  nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
   expiryBlock = Field(0),
@@ -467,7 +496,7 @@ export function createEnableChildMultiSigProposal(
     tokenId: Field(0),
     txType: TxType.ENABLE_CHILD_MULTI_SIG,
     data: enabled,
-    uid,
+    nonce,
     configNonce,
     expiryBlock,
     networkId,
@@ -601,7 +630,7 @@ export async function deployAndSetupChildGuard(
   childOwners: PublicKey[],
   childThreshold: number,
   signerIndices: number[],
-  uid = Field(0),
+  nonce = Field(0),
 ): Promise<{ proposalHash: Field }> {
   const { deployerAccount, deployerKey, networkId } = parentCtx;
 
@@ -614,7 +643,7 @@ export async function deployAndSetupChildGuard(
     ownersCommitment,
     thresholdField,
     numOwnersField,
-    uid,
+    nonce,
     Field(0), // parent's configNonce at time of propose
     parentAddress,
     Field(0),

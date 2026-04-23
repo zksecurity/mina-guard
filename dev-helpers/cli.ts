@@ -8,6 +8,7 @@ import {
 } from './commands/vk-hash-address.ts';
 import { runVkHashCompile } from './commands/vk-hash-compile.ts';
 import { runFundAccounts } from './commands/fund-accounts.ts';
+import { runLightnetFixture } from './commands/lightnet-fixture.ts';
 
 /** Dispatches `vk-hash <mode>` CLI invocations to the right handler. */
 async function handleVkHashCommand(
@@ -99,7 +100,34 @@ async function main(): Promise<void> {
       await runFundAccounts();
     });
 
+  program
+    .command('lightnet-fixture')
+    .description('Deploy real on-chain fixture contracts to the local preview lightnet')
+    .requiredOption('--main-address <address>', 'Main wallet address to include as an owner on all fixture contracts')
+    .option(
+      '--scenario <scenario>',
+      'Fixture scenario to seed: minimal | full',
+      'minimal'
+    )
+    .option(
+      '--preview-base-url <url>',
+      'Preview base URL that exposes /graphql, /archive, /accounts, and /api',
+      'https://localhost:10001/preview/1'
+    )
+    .action(async (options: { mainAddress: string; previewBaseUrl: string; scenario: 'minimal' | 'full' }) => {
+      await runLightnetFixture({
+        mainAddress: options.mainAddress,
+        previewBaseUrl: options.previewBaseUrl,
+        scenario: options.scenario,
+      });
+    });
+
   await program.parseAsync(process.argv);
 }
 
-main();
+try {
+  await main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}

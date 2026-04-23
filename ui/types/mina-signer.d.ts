@@ -3,6 +3,7 @@
 declare module 'mina-signer' {
   export default class Client {
     constructor(options: { network: 'mainnet' | 'testnet' | 'devnet' });
+    genKeys(): { privateKey: string; publicKey: string };
     getZkappCommandCommitmentsNoCheck(command: {
       feePayer: unknown;
       zkappCommand: unknown;
