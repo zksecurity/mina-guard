@@ -32,13 +32,30 @@ export interface SerializedProposalRecord {
   totalAmount: string | null;
 }
 
-type ProposalWithReceivers = Proposal & {
+export type ProposalWithDerived = Proposal & {
   receivers: ProposalReceiver[];
+  executions: { blockHeight: number; txHash: string | null }[];
+  _count: { approvals: number };
 };
+
+/**
+ * Derives proposal status from the append-only schema.
+ *
+ * `executed` iff a ProposalExecution row exists. Else `expired` iff the chain
+ * has moved past `expiryBlock`. Else `pending`. `latestHeight` is the current
+ * chain tip reported by the indexer.
+ */
+function deriveStatus(proposal: Proposal, executed: boolean, latestHeight: number): string {
+  if (executed) return 'executed';
+  const expiry = Number(proposal.expiryBlock ?? '0');
+  if (Number.isFinite(expiry) && expiry > 0 && latestHeight > expiry) return 'expired';
+  return 'pending';
+}
 
 /** Converts Prisma proposal rows into the API shape expected by the UI. */
 export function serializeProposalRecord(
-  proposal: ProposalWithReceivers
+  proposal: ProposalWithDerived,
+  latestHeight: number,
 ): SerializedProposalRecord {
   const receivers = proposal.receivers
     .slice()
@@ -52,6 +69,9 @@ export function serializeProposalRecord(
   const totalAmount = receivers.length > 0
     ? receivers.reduce((sum: bigint, receiver: ProposalReceiverRecord) => sum + BigInt(receiver.amount), 0n).toString()
     : null;
+
+  const execution = proposal.executions[0] ?? null;
+  const status = deriveStatus(proposal, execution !== null, latestHeight);
 
   return {
     proposalHash: proposal.proposalHash,
@@ -67,11 +87,11 @@ export function serializeProposalRecord(
     guardAddress: proposal.guardAddress,
     destination: proposal.destination,
     childAccount: proposal.childAccount,
-    status: proposal.status,
-    invalidReason: proposal.invalidReason,
-    approvalCount: proposal.approvalCount,
+    status,
+    invalidReason: null, // TODO: add it back to schema?
+    approvalCount: proposal._count.approvals,
     createdAtBlock: proposal.createdAtBlock,
-    executedAtBlock: proposal.executedAtBlock,
+    executedAtBlock: execution?.blockHeight ?? null,
     createdAt: proposal.createdAt,
     updatedAt: proposal.updatedAt,
     receivers,

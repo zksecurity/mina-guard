@@ -9,7 +9,16 @@ export interface ChainEvent {
   type: string;
   event: Record<string, unknown>;
   blockHeight: number;
+  blockHash: string;
+  parentHash: string;
   txHash: string | null;
+}
+
+/** Block identity row returned by the daemon's bestChain query. */
+export interface BestChainHeader {
+  height: number;
+  blockHash: string;
+  parentHash: string;
 }
 
 /** Configures o1js network endpoints once at process start. */
@@ -23,6 +32,55 @@ export function configureNetwork(config: BackendConfig): void {
         : {}),
     })
   );
+}
+
+/**
+ * Fetches block identities for the daemon's current bestChain, ordered ascending by height.
+ * Used by the reorg-detection path to compare stored BlockHeader hashes against the
+ * node's authoritative canonical view.
+ */
+export async function fetchBestChainHeaders(
+  config: BackendConfig,
+  maxLength: number,
+): Promise<BestChainHeader[]> {
+  const query = `{
+    bestChain(maxLength: ${maxLength}) {
+      stateHash
+      protocolState {
+        previousStateHash
+        consensusState { blockHeight }
+      }
+    }
+  }`;
+
+  type Response = {
+    bestChain?: Array<{
+      stateHash?: string;
+      protocolState?: {
+        previousStateHash?: string;
+        consensusState?: { blockHeight?: string | number };
+      };
+    }>;
+  };
+
+  const data = await graphqlRequest<Response>(
+    query,
+    config.minaEndpoint,
+    config.minaFallbackEndpoint,
+  );
+
+  const headers: BestChainHeader[] = [];
+  for (const block of data.bestChain ?? []) {
+    const stateHash = block.stateHash;
+    const parentHash = block.protocolState?.previousStateHash;
+    const heightRaw = block.protocolState?.consensusState?.blockHeight;
+    if (!stateHash || !parentHash || heightRaw === undefined) continue;
+    const height = Number(heightRaw);
+    if (!Number.isFinite(height)) continue;
+    headers.push({ height, blockHash: stateHash, parentHash });
+  }
+  headers.sort((a, b) => a.height - b.height);
+  return headers;
 }
 
 /** Fetches latest block height from archive node to stay aligned with event availability. */
@@ -178,6 +236,8 @@ export async function fetchDecodedContractEvents(
     type: entry.type,
     event: toSerializableObject((entry.event as any).data),
     blockHeight: Number(entry.blockHeight.toString()),
+    blockHash: (entry as any).blockHash as string,
+    parentHash: (entry as any).parentBlockHash as string,
     txHash: ((entry.event as any).transactionInfo?.transactionHash as string | undefined) ?? null,
   }));
 }

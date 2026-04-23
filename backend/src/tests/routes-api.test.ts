@@ -30,21 +30,24 @@ function get(path: string) {
 
 async function clearDatabase() {
   await prisma.approval.deleteMany();
+  await prisma.proposalExecution.deleteMany();
+  await prisma.proposalReceiver.deleteMany();
   await prisma.eventRaw.deleteMany();
   await prisma.proposal.deleteMany();
-  await prisma.owner.deleteMany();
+  await prisma.ownerMembership.deleteMany();
+  await prisma.contractConfig.deleteMany();
   await prisma.contract.deleteMany();
 }
 
 async function seedDatabase() {
   await prisma.contract.createMany({
     data: [
-      { address: contractAddress, networkId: '1' },
-      { address: otherContractAddress, networkId: '1' },
+      { address: contractAddress, ready: true },
+      { address: otherContractAddress, ready: true },
       // Two subaccounts of `contractAddress`. childTwo has multi-sig disabled
       // (e.g. after a destroy) so the API exposes both states.
-      { address: childOneAddress, networkId: '1', parent: contractAddress, childMultiSigEnabled: true },
-      { address: childTwoAddress, networkId: '1', parent: contractAddress, childMultiSigEnabled: false },
+      { address: childOneAddress, parent: contractAddress, ready: true },
+      { address: childTwoAddress, parent: contractAddress, ready: true },
     ],
   });
 
@@ -54,12 +57,30 @@ async function seedDatabase() {
   const otherContract = await prisma.contract.findUniqueOrThrow({
     where: { address: otherContractAddress },
   });
+  const childOne = await prisma.contract.findUniqueOrThrow({
+    where: { address: childOneAddress },
+  });
+  const childTwo = await prisma.contract.findUniqueOrThrow({
+    where: { address: childTwoAddress },
+  });
 
-  await prisma.owner.createMany({
+  await prisma.contractConfig.createMany({
     data: [
-      { contractId: contract.id, address: ownerA, index: 0, active: true },
-      { contractId: contract.id, address: ownerB, index: 1, active: false },
-      { contractId: otherContract.id, address: ownerC, index: 0, active: true },
+      { contractId: contract.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true },
+      { contractId: otherContract.id, validFromBlock: 25, networkId: '1', childMultiSigEnabled: true },
+      { contractId: childOne.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true },
+      { contractId: childTwo.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: false },
+    ],
+  });
+
+  // OwnerMembership history: ownerA added, ownerB added then removed. Latest
+  // action per address determines current active state.
+  await prisma.ownerMembership.createMany({
+    data: [
+      { contractId: contract.id, address: ownerA, action: 'added', index: 0, validFromBlock: 5 },
+      { contractId: contract.id, address: ownerB, action: 'added', index: 1, validFromBlock: 5 },
+      { contractId: contract.id, address: ownerB, action: 'removed', index: 1, validFromBlock: 7, eventOrder: 1 },
+      { contractId: otherContract.id, address: ownerC, action: 'added', index: 0, validFromBlock: 25 },
     ],
   });
 
@@ -68,38 +89,41 @@ async function seedDatabase() {
       {
         contractId: contract.id,
         proposalHash: proposalHashA,
-        status: 'pending',
         createdAtBlock: 10,
       },
       {
         contractId: contract.id,
         proposalHash: proposalHashB,
-        status: 'executed',
         createdAtBlock: 20,
       },
       {
         contractId: contract.id,
         proposalHash: proposalHashC,
-        status: 'pending',
         createdAtBlock: 30,
       },
       {
         contractId: otherContract.id,
         proposalHash: otherProposalHash,
-        status: 'pending',
         createdAtBlock: 40,
       },
       // REMOTE child-lifecycle proposal on the parent, targeting childOne.
       {
         contractId: contract.id,
         proposalHash: remoteProposalHash,
-        status: 'pending',
         createdAtBlock: 50,
         destination: 'remote',
         childAccount: childOneAddress,
         txType: '7', // RECLAIM_CHILD
       },
     ],
+  });
+
+  const executedProposal = await prisma.proposal.findUniqueOrThrow({
+    where: { contractId_proposalHash: { contractId: contract.id, proposalHash: proposalHashB } },
+    select: { id: true },
+  });
+  await prisma.proposalExecution.create({
+    data: { proposalId: executedProposal.id, blockHeight: 22 },
   });
 
   await prisma.eventRaw.createMany({
