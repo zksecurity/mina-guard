@@ -222,6 +222,67 @@ export async function fetchOnChainState(
   }
 }
 
+/** Number of most-recent best-chain blocks scanned when looking up a submitted
+ *  zkApp tx by hash. Window is bounded so each indexer tick stays cheap; a
+ *  failed tx that falls out of the window before the indexer catches it stays
+ *  reported as 'pending' (acceptable first-cut; upgrade to block-bounded scan
+ *  if misses become an issue). */
+const TX_STATUS_SCAN_BLOCKS = 20;
+
+/** Looks up a submitted zkApp tx by hash on the Mina daemon (`minaEndpoint`) and
+ *  classifies it as still-pending, included-successfully, or failed.
+ *
+ *  Uses the daemon rather than the archive because only the daemon's
+ *  `ZkappCommandResult.failureReason: [{index, failures: [String]}]` exposes
+ *  structured failure reasons; archive-node-api has no per-hash lookup. */
+export async function fetchZkappTxStatus(
+  config: BackendConfig,
+  txHash: string
+): Promise<{ status: 'pending' | 'included' | 'failed'; reason?: string }> {
+  const query = `query TxStatus($maxLength: Int!) {
+    bestChain(maxLength: $maxLength) {
+      transactions {
+        zkappCommands {
+          hash
+          failureReason {
+            failures
+          }
+        }
+      }
+    }
+  }`;
+
+  try {
+    const data = await graphqlRequest<{
+      bestChain?: Array<{
+        transactions?: {
+          zkappCommands?: Array<{
+            hash: string;
+            failureReason?: Array<{ failures?: string[] | null } | null> | null;
+          }>;
+        };
+      }>;
+    }>(query, config.minaEndpoint, config.minaFallbackEndpoint, { maxLength: TX_STATUS_SCAN_BLOCKS });
+
+    for (const block of data.bestChain ?? []) {
+      for (const cmd of block.transactions?.zkappCommands ?? []) {
+        if (cmd.hash !== txHash) continue;
+        const failures = (cmd.failureReason ?? [])
+          .flatMap((r) => r?.failures ?? [])
+          .filter((s): s is string => typeof s === 'string' && s.length > 0);
+        if (failures.length > 0) {
+          return { status: 'failed', reason: failures.join('; ') };
+        }
+        return { status: 'included' };
+      }
+    }
+    return { status: 'pending' };
+  } catch (err) {
+    console.warn('[mina-client] fetchZkappTxStatus failed', txHash, err);
+    return { status: 'pending' };
+  }
+}
+
 /** Fetches decoded MinaGuard events for a contract within a block range. */
 export async function fetchDecodedContractEvents(
   address: string,
@@ -246,13 +307,14 @@ export async function fetchDecodedContractEvents(
 async function graphqlRequest<T>(
   query: string,
   endpoint: string,
-  fallbackEndpoint: string | null
+  fallbackEndpoint: string | null,
+  variables?: Record<string, unknown>,
 ): Promise<T> {
-  const primary = await runGraphqlQuery<T>(endpoint, query);
+  const primary = await runGraphqlQuery<T>(endpoint, query, variables);
   if (primary.ok) return primary.data;
 
   if (fallbackEndpoint) {
-    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query);
+    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query, variables);
     if (fallback.ok) return fallback.data;
   }
 
@@ -262,13 +324,14 @@ async function graphqlRequest<T>(
 /** Executes a single GraphQL POST request and returns typed payload/error. */
 async function runGraphqlQuery<T>(
   endpoint: string,
-  query: string
+  query: string,
+  variables?: Record<string, unknown>,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify(variables ? { query, variables } : { query }),
     });
     if (!response.ok) {
       return { ok: false, error: `${response.status} ${response.statusText}` };

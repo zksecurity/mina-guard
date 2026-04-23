@@ -46,6 +46,8 @@ export interface Proposal {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  lastApproveError: string | null;
+  lastExecuteError: string | null;
   createdAt: string;
   updatedAt: string;
   receivers: ProposalReceiver[];
@@ -263,8 +265,9 @@ export function isDeleteProposal(
 ): boolean {
   if (!proposal) return false;
   if (proposal.txType === 'transfer' && proposal.destination === 'local') {
-    const r0 = proposal.receivers?.[0];
-    return !!r0 && r0.amount === '0' && r0.address === EMPTY_PUBKEY_B58;
+    // Indexer drops (PublicKey.empty(), 0) receivers, so a local transfer
+    // surfaces as zero receivers iff it was minted via the delete flow.
+    return (proposal.receivers?.length ?? 0) === 0;
   }
   if (proposal.txType === 'reclaimChild' && proposal.destination === 'remote') {
     return proposal.data === '0';

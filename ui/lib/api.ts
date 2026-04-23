@@ -102,6 +102,36 @@ export async function fetchBalance(address: string): Promise<string | null> {
   return data?.balance ?? null;
 }
 
+/** Pulls the tx hash out of the worker's "Transaction submitted: HASH" /
+ *  "Approval submitted: HASH" success message. Returns null if absent. */
+export function extractTxHash(message: string | null): string | null {
+  if (!message) return null;
+  const match = message.match(/(?:Transaction|Approval|Deploy)\s+submitted:\s*(\S+)/);
+  return match ? match[1] : null;
+}
+
+/** Best-effort: tells the backend about a freshly-submitted approve/execute tx
+ *  so its indexer can poll for on-chain failure and surface the reason. */
+export async function recordSubmission(
+  contractAddress: string,
+  proposalHash: string,
+  action: 'approve' | 'execute',
+  txHash: string,
+): Promise<void> {
+  try {
+    await fetch(
+      `${API_BASE}/api/contracts/${contractAddress}/proposals/${proposalHash}/submissions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, txHash }),
+      },
+    );
+  } catch (err) {
+    console.warn('[api] recordSubmission failed', err);
+  }
+}
+
 /** Generic JSON fetch helper with null-on-error semantics for resilient polling. */
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -162,6 +192,8 @@ function toProposal(input: Record<string, unknown>): Proposal {
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
+    lastApproveError: asNullableString(input.lastApproveError),
+    lastExecuteError: asNullableString(input.lastExecuteError),
     createdAt: asString(input.createdAt) ?? new Date(0).toISOString(),
     updatedAt: asString(input.updatedAt) ?? new Date(0).toISOString(),
     receivers,

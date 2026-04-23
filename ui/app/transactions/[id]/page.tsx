@@ -8,8 +8,9 @@ import {
   TX_TYPE_LABELS,
   formatMina,
   isDeleteProposal,
+  truncateAddress,
 } from '@/lib/types';
-import { fetchApprovals } from '@/lib/api';
+import { fetchApprovals, extractTxHash, recordSubmission } from '@/lib/api';
 import {
   approveProposalOnchain,
   executeProposalOnchain,
@@ -111,6 +112,10 @@ export default function TransactionDetailPage() {
         approverAddress: captured.approverAddress,
         proposal: captured.proposal,
       }, onProgress, signer);
+      const txHash = extractTxHash(result);
+      if (txHash) {
+        await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'approve', txHash);
+      }
       if (result) success = true;
       return result;
     });
@@ -148,6 +153,10 @@ export default function TransactionDetailPage() {
           executorAddress: captured.executorAddress,
           proposal: captured.proposal,
         }, onProgress, signer);
+        const txHash = extractTxHash(result);
+        if (txHash) {
+          await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
+        }
         if (result) success = true;
         return result;
       }
@@ -161,6 +170,10 @@ export default function TransactionDetailPage() {
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
       }, onProgress, signer);
+      const txHash = extractTxHash(result);
+      if (txHash) {
+        await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
+      }
       if (result) success = true;
       return result;
     });
@@ -225,6 +238,18 @@ export default function TransactionDetailPage() {
     ? 'Delete proposal'
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
+  const isRemote = proposal.destination === 'remote';
+  const isDelete = isDeleteProposal(proposal);
+  const headerSubline = isDelete
+    ? proposal.nonce != null
+      ? `Invalidates proposal with nonce #${proposal.nonce}`
+      : 'Invalidates another proposal'
+    : isRemote
+      ? proposal.childAccount
+        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on subaccount'
+      : 'Executes on this account';
+
   return (
     <div>
       <div className="p-6 max-w-3xl space-y-6">
@@ -237,6 +262,7 @@ export default function TransactionDetailPage() {
               </span>
             )}
           </div>
+          <p className="text-xs opacity-75 mt-1">{headerSubline}</p>
         </div>
 
         {isConfigStale && (
@@ -328,6 +354,19 @@ export default function TransactionDetailPage() {
             status={proposal.status}
           />
         </div>
+
+        {proposal.status === 'pending' && (proposal.lastExecuteError || proposal.lastApproveError) && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-300 text-sm space-y-1">
+            <p className="font-semibold">Last attempt failed</p>
+            {proposal.lastExecuteError && (
+              <p className="opacity-90 break-words">Execute: {proposal.lastExecuteError}</p>
+            )}
+            {proposal.lastApproveError && (
+              <p className="opacity-90 break-words">Approve: {proposal.lastApproveError}</p>
+            )}
+            <p className="opacity-75 text-xs pt-1">Use the button below to retry.</p>
+          </div>
+        )}
 
         {proposal.status === 'pending' && (
           <div className="flex gap-3 flex-wrap">
