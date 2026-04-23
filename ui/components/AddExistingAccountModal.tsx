@@ -34,11 +34,11 @@ export default function AddExistingAccountModal({
     setError(null);
     setSubmitting(true);
     const trimmed = address.trim();
-    const ok = await subscribeAddress(trimmed, 0);
-    if (ok) {
+    const result = await subscribeAddress(trimmed, 0);
+    if (result.ok) {
       onSubmitted(trimmed);
     } else {
-      setError('Failed to subscribe. Try again.');
+      setError(result.error ?? 'Failed to subscribe. Try again.');
       setSubmitting(false);
     }
   };

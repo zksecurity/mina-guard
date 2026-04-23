@@ -102,11 +102,15 @@ export async function fetchBalance(address: string): Promise<string | null> {
   return data?.balance ?? null;
 }
 
-/** Subscribes the lite-mode indexer to a contract address. Idempotent server-side; soft-fails. */
+export type SubscribeResult =
+  | { ok: true }
+  | { ok: false; status: number | null; error: string | null };
+
+/** Subscribes the lite-mode indexer to a contract address. Idempotent server-side. */
 export async function subscribeAddress(
   address: string,
   fromBlock?: number,
-): Promise<boolean> {
+): Promise<SubscribeResult> {
   try {
     const response = await fetch(`${API_BASE}/api/subscribe`, {
       method: 'POST',
@@ -117,13 +121,21 @@ export async function subscribeAddress(
       ),
     });
     if (!response.ok) {
-      console.error(`[api] subscribeAddress(${address}) returned ${response.status}:`, await response.text());
-      return false;
+      const text = await response.text();
+      console.error(`[api] subscribeAddress(${address}) returned ${response.status}:`, text);
+      let error: string | null = null;
+      try {
+        const parsed = JSON.parse(text) as { error?: unknown };
+        if (typeof parsed.error === 'string') error = parsed.error;
+      } catch {
+        // non-JSON body; leave error as null
+      }
+      return { ok: false, status: response.status, error };
     }
-    return true;
+    return { ok: true };
   } catch (err) {
     console.error(`[api] subscribeAddress(${address}) failed:`, err);
-    return false;
+    return { ok: false, status: null, error: null };
   }
 }
 

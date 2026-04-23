@@ -12,7 +12,7 @@
     "build:ui": "env $(grep -v '^#' .env | grep -v '^$' | xargs) NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050 NEXT_PUBLIC_INDEXER_MODE=lite bash -c 'cd ../ui && next build'",
     "build:electron": "tsc -p tsconfig.json && cp src/preload.js dist/ && mkdir -p dist/auro && cp src/auro/page.html dist/auro/",
     "build": "bun run prepare:backend && bun run prepare:assets && bun run build:ui && bun run stage && bun run build:electron",
-    "dev": "bun run prepare:backend && bun run prepare:assets && bun run stage && bun run build:electron && env $(grep -v '^#' .env | grep -v '^$' | xargs) electron --no-sandbox .",
+    "dev": "bun run prepare:backend && bun run prepare:assets && bun run build:ui && bun run stage && bun run build:electron && env $(grep -v '^#' .env | grep -v '^$' | xargs) electron --no-sandbox .",
     "package": "bun run build && electron-builder --dir"
   },
   "dependencies": {
