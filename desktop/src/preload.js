@@ -2,6 +2,19 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const listeners = new Map();
 
+// Synchronous IPC at preload time is intentional: the config is already loaded
+// in the main process before the window opens, so this returns immediately and
+// guarantees the values are available to any script in the renderer.
+const initialConfig = ipcRenderer.sendSync('config:get-endpoints-sync');
+
+contextBridge.exposeInMainWorld('__minaGuardConfig', initialConfig);
+
+contextBridge.exposeInMainWorld('minaGuardConfig', {
+  setEndpoints(cfg) {
+    return ipcRenderer.invoke('config:set-endpoints', cfg);
+  },
+});
+
 contextBridge.exposeInMainWorld('mina', {
   requestAccounts() {
     return ipcRenderer.invoke('auro:request-accounts');

@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { getMinaGuardConfig } from '@/lib/endpoints';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
-const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? '';
 const FAUCET_URL = 'https://faucet.minaprotocol.com';
 const LOW_BALANCE_THRESHOLD = 5e9; // 5 MINA in nanomina
 
@@ -14,9 +14,10 @@ interface TestnetFundButtonProps {
 }
 
 async function fetchBalance(address: string): Promise<number | null> {
-  if (!MINA_ENDPOINT) return null;
+  const { minaEndpoint } = getMinaGuardConfig();
+  if (!minaEndpoint) return null;
   try {
-    const res = await fetch(MINA_ENDPOINT, {
+    const res = await fetch(minaEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -3,14 +3,25 @@ import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
+import { registerConfigIpc } from './config-ipc.js';
 import { handleAuroRoute } from './auro/router.js';
 import { buildPickerScript } from './hid-picker.js';
 import { startEmbeddedBackend, type EmbeddedBackendHandle } from './backend-embed.js';
+import {
+  deleteDatabase,
+  deriveNetworkId,
+  dbPath,
+  readConfig,
+  writeConfig,
+  type UserConfig,
+} from './config-store.js';
 
 const PORT = 5050;
 const NEXT_PORT = 5051;
 
-// Mainnet defaults; a future settings UI can override per user.
+// Defaults used only to pre-fill the first-run setup form. The app never runs
+// against these silently — the user must confirm (or override) them on first
+// launch, and the result is persisted to config.json.
 const DEFAULT_MINA_ENDPOINT = 'https://api.minascan.io/node/mainnet/v1/graphql';
 const DEFAULT_ARCHIVE_ENDPOINT = 'https://api.minascan.io/archive/mainnet/v1/graphql';
 
@@ -21,20 +32,18 @@ const DEFAULT_ARCHIVE_ENDPOINT = 'https://api.minascan.io/archive/mainnet/v1/gra
 // its own appDir without cross-boundary file mappings.
 const stageDir = join(import.meta.dirname, '..', 'packaging-stage');
 const backendBundlePath = join(stageDir, 'backend-bundle.js');
-// Next `output: 'standalone'` with outputFileTracingRoot at the repo root
-// produces standalone/<repo-basename>/<package-dir>/server.js. The standalone
-// tree ships as a sibling of the asar (via electron-builder `extraResources`)
-// because electron-builder's `files` pipeline strips nested `node_modules`
-// directories — the traced runtime deps (next, react, …) would be lost if we
-// routed the tree through `files`/asar.
 const standaloneRoot = app.isPackaged
   ? join(process.resourcesPath, 'ui-standalone')
   : join(import.meta.dirname, '..', 'ui-standalone');
 const nextServerEntry = join(standaloneRoot, 'mina-guard', 'ui', 'server.js');
 const schemaSqlPath = join(import.meta.dirname, 'assets', 'schema.sql');
+const setupHtmlPath = join(import.meta.dirname, 'assets', 'setup.html');
+const preloadPath = join(import.meta.dirname, 'preload.js');
+const setupPreloadPath = join(import.meta.dirname, 'preload-setup.js');
 
 let backend: EmbeddedBackendHandle | null = null;
 let nextChild: ChildProcess | null = null;
+let currentConfig: UserConfig | null = null;
 
 function startNextStandalone(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -107,13 +116,126 @@ async function startHttpServer(
   });
 }
 
+/** Runs the first-run setup flow. Resolves with the saved config and a
+ *  `close()` callback the caller invokes after the main window is ready, or
+ *  null if the user cancelled (in which case the window is already closed). */
+function runFirstRunFlow(): Promise<{ config: UserConfig; close: () => void } | null> {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 640,
+      height: 560,
+      resizable: false,
+      title: 'MinaGuard Setup',
+      webPreferences: { preload: setupPreloadPath },
+    });
+
+    let settled = false;
+    const settle = (value: { config: UserConfig; close: () => void } | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    firstRunResolvers = {
+      save: (cfg) => {
+        const full: UserConfig = {
+          ...cfg,
+          networkId: deriveNetworkId(cfg.minaEndpoint),
+        };
+        writeConfig(full);
+        // Hide the setup window but keep it alive until the main window is
+        // ready. Closing it here would briefly leave zero windows open,
+        // tripping the `window-all-closed` → `app.quit()` handler while the
+        // backend is still starting.
+        win.hide();
+        settle({
+          config: full,
+          close: () => {
+            if (!win.isDestroyed()) win.destroy();
+          },
+        });
+      },
+      cancel: () => {
+        settle(null);
+        win.close();
+      },
+    };
+
+    win.on('closed', () => {
+      firstRunResolvers = null;
+      settle(null);
+    });
+
+    void win.loadFile(setupHtmlPath);
+  });
+}
+
+let firstRunResolvers: {
+  save: (cfg: { minaEndpoint: string; archiveEndpoint: string }) => void;
+  cancel: () => void;
+} | null = null;
+
+async function stopRunningServices(): Promise<void> {
+  const handle = backend;
+  backend = null;
+  const child = nextChild;
+  nextChild = null;
+  try {
+    if (handle) await handle.stop();
+  } catch (err) {
+    console.error('[desktop] backend shutdown failed', err);
+  }
+  if (child && !child.killed) child.kill();
+}
+
+async function changeEndpointsAndRelaunch(cfg: {
+  minaEndpoint: string;
+  archiveEndpoint: string;
+}): Promise<void> {
+  const next: UserConfig = {
+    ...cfg,
+    networkId: deriveNetworkId(cfg.minaEndpoint),
+  };
+  writeConfig(next);
+  await stopRunningServices();
+  deleteDatabase();
+  app.relaunch();
+  app.exit(0);
+}
+
 app.whenReady().then(async () => {
   registerIpcHandlers();
+  registerConfigIpc({
+    getConfig: () => currentConfig,
+    getDefaults: () => ({
+      minaEndpoint: DEFAULT_MINA_ENDPOINT,
+      archiveEndpoint: DEFAULT_ARCHIVE_ENDPOINT,
+    }),
+    onFirstRunSave: async (cfg) => {
+      firstRunResolvers?.save(cfg);
+    },
+    onFirstRunCancel: () => {
+      firstRunResolvers?.cancel();
+    },
+    onChangeEndpoints: changeEndpointsAndRelaunch,
+  });
+
+  currentConfig = readConfig();
+  let closeSetupWindow: (() => void) | null = null;
+  if (!currentConfig) {
+    const result = await runFirstRunFlow();
+    if (!result) {
+      app.quit();
+      return;
+    }
+    currentConfig = result.config;
+    closeSetupWindow = result.close;
+  }
 
   backend = await startEmbeddedBackend({
-    dbPath: join(app.getPath('userData'), 'minaguard.db'),
-    minaEndpoint: process.env.MINA_ENDPOINT ?? DEFAULT_MINA_ENDPOINT,
-    archiveEndpoint: process.env.ARCHIVE_ENDPOINT ?? DEFAULT_ARCHIVE_ENDPOINT,
+    dbPath: dbPath(),
+    minaEndpoint: currentConfig.minaEndpoint,
+    archiveEndpoint: currentConfig.archiveEndpoint,
     schemaSqlPath,
     backendBundlePath,
   });
@@ -124,9 +246,19 @@ app.whenReady().then(async () => {
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: join(import.meta.dirname, 'preload.js'),
+      preload: preloadPath,
     },
   });
+
+  // Keep setup window alive until the main window has a content to show, then
+  // close it. `did-finish-load` fires after the initial navigation completes.
+  if (closeSetupWindow) {
+    const close = closeSetupWindow;
+    win.webContents.once('did-finish-load', close);
+    // Defensive: if the first navigation fails for any reason, still release
+    // the setup window so the user isn't left staring at an empty shell.
+    win.webContents.once('did-fail-load', close);
+  }
 
   let selectedHidDevice: Electron.HIDDevice | null = null;
 
@@ -165,17 +297,6 @@ app.on('window-all-closed', () => {
 app.on('will-quit', async (event) => {
   if (!backend && !nextChild) return;
   event.preventDefault();
-  const handle = backend;
-  backend = null;
-  const child = nextChild;
-  nextChild = null;
-  try {
-    if (handle) await handle.stop();
-  } catch (error) {
-    console.error('[desktop] backend shutdown failed', error);
-  }
-  if (child && !child.killed) {
-    child.kill();
-  }
+  await stopRunningServices();
   app.quit();
 });
