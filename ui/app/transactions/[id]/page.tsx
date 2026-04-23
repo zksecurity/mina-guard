@@ -8,6 +8,7 @@ import {
   TX_TYPE_LABELS,
   formatMina,
   isDeleteProposal,
+  truncateAddress,
 } from '@/lib/types';
 import { fetchApprovals, extractTxHash, recordSubmission } from '@/lib/api';
 import {
@@ -237,6 +238,13 @@ export default function TransactionDetailPage() {
     ? 'Delete proposal'
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
+  const isRemote = proposal.destination === 'remote';
+  const execTarget = isRemote
+    ? proposal.childAccount
+      ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
+      : 'Executes on subaccount'
+    : 'Executes on this account';
+
   return (
     <div>
       <div className="p-6 max-w-3xl space-y-6">
@@ -249,6 +257,7 @@ export default function TransactionDetailPage() {
               </span>
             )}
           </div>
+          <p className="text-xs opacity-75 mt-1">{execTarget}</p>
         </div>
 
         {isConfigStale && (

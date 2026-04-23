@@ -322,7 +322,6 @@ export default function ProposalForm({
             <div className="space-y-2">
               <TransactionCard
                 proposal={deleteTargetProposal}
-                index={Number(deleteTargetProposal.nonce) || 0}
                 threshold={currentThreshold}
                 owners={owners}
               />

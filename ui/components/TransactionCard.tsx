@@ -6,12 +6,12 @@ import {
   TX_TYPE_LABELS,
   formatMina,
   isDeleteProposal,
+  truncateAddress,
 } from '@/lib/types';
 import ApprovalProgress from './ApprovalProgress';
 
 interface TransactionCardProps {
   proposal: Proposal;
-  index: number;
   threshold: number;
   owners: string[];
 }
@@ -26,7 +26,6 @@ const statusColors = {
 /** Compact proposal list card used on dashboard and transactions pages. */
 export default function TransactionCard({
   proposal,
-  index,
   threshold,
   owners,
 }: TransactionCardProps) {
@@ -39,14 +38,24 @@ export default function TransactionCard({
       ? proposal.lastExecuteError ?? proposal.lastApproveError
       : null;
   const attemptErrorKind = proposal.lastExecuteError ? 'Execute' : 'Approve';
+  const isRemote = proposal.destination === 'remote';
+  const nonceLabel = proposal.nonce != null ? `#${proposal.nonce}` : '#?';
+  const badgeClass = isRemote
+    ? 'bg-indigo-500/15 border-indigo-400/40 text-indigo-300'
+    : 'bg-safe-gray border-safe-border text-safe-text';
+  const execTarget = isRemote
+    ? proposal.childAccount
+      ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
+      : 'Executes on subaccount'
+    : 'Executes on this account';
 
   return (
     <Link href={`/transactions/${proposal.proposalHash}`}>
       <div className="border border-safe-border rounded-lg p-4 card-hover cursor-pointer">
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-lg bg-safe-gray border border-safe-border flex items-center justify-center text-safe-text">
-              <span className="text-xs font-mono">#{index}</span>
+            <div className={`w-10 h-10 rounded-lg border flex items-center justify-center ${badgeClass}`}>
+              <span className="text-xs font-mono">{nonceLabel}</span>
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -63,6 +72,7 @@ export default function TransactionCard({
                   </span>
                 )}
               </div>
+              <p className="text-xs text-safe-text mt-0.5">{execTarget}</p>
               {proposal.txType === 'transfer' && !isDeleteProposal(proposal) && (
                 <p className="text-xs text-safe-text mt-0.5">
                   {proposal.recipientCount} recipients · {formatMina(proposal.totalAmount)} MINA
