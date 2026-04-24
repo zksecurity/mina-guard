@@ -155,6 +155,7 @@ export async function waitForIndexer(
   log(`Waiting: ${description}`);
   const start = Date.now();
   let dots = 0;
+  let lastError: string | null = null;
   while (Date.now() - start < timeoutMs) {
     const ok = await check();
     if (ok) {
@@ -163,10 +164,18 @@ export async function waitForIndexer(
     }
     dots++;
     if (dots % 5 === 0) {
-      log(`  Still waiting... (${((Date.now() - start) / 1000).toFixed(0)}s)`);
+      const status = await getIndexerStatus();
+      const err = status?.lastError;
+      if (err && err !== lastError) {
+        log(`  ⚠ Indexer error: ${err}`);
+        lastError = err;
+      }
+      log(`  Still waiting... (${((Date.now() - start) / 1000).toFixed(0)}s) [height=${status?.indexedHeight ?? '?'}]`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
+  const finalStatus = await getIndexerStatus();
+  log(`  Indexer status at timeout: ${JSON.stringify(finalStatus)}`);
   throw new Error(
     `Timed out after ${(timeoutMs / 1000).toFixed(0)}s waiting: ${description}`
   );

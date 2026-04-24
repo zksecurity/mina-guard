@@ -1,14 +1,32 @@
 'use client';
 
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import OwnerList from '@/components/OwnerList';
 import ThresholdBadge from '@/components/ThresholdBadge';
+import { clearCompileCache, getCompileCacheSize } from '@/lib/idb-compile-cache';
 
 /** Settings page for owner set and threshold governance proposal shortcuts. */
 export default function SettingsPage() {
   const router = useRouter();
   const { wallet, multisig, owners } = useAppContext();
+  const [cacheSize, setCacheSize] = useState<{ entries: number; bytes: number } | null>(null);
+  const [clearing, setClearing] = useState(false);
+
+  useEffect(() => {
+    getCompileCacheSize().then(setCacheSize);
+  }, []);
+
+  const handleClearCache = useCallback(async () => {
+    setClearing(true);
+    try {
+      await clearCompileCache();
+      setCacheSize({ entries: 0, bytes: 0 });
+    } finally {
+      setClearing(false);
+    }
+  }, []);
 
   const activeOwners = owners.map((owner) => owner.address);
 
@@ -69,6 +87,23 @@ export default function SettingsPage() {
                 <InfoRow label="Config Nonce" value={String(multisig.configNonce ?? '-')} mono />
               </div>
             </div>
+
+            {cacheSize && cacheSize.entries > 0 && (
+              <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
+                <h3 className="text-sm font-semibold mb-2">Compile Cache</h3>
+                <p className="text-xs text-safe-text mb-4">
+                  Cached prover keys speed up contract compilation after page reloads.
+                  Currently using {(cacheSize.bytes / 1024 / 1024).toFixed(0)}MB ({cacheSize.entries} entries).
+                </p>
+                <button
+                  onClick={handleClearCache}
+                  disabled={clearing}
+                  className="w-full p-2.5 border border-safe-border rounded-lg text-sm text-safe-text hover:text-red-400 hover:border-red-400 transition-colors disabled:opacity-50"
+                >
+                  {clearing ? 'Clearing...' : 'Clear Compile Cache'}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

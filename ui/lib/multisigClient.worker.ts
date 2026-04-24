@@ -17,6 +17,8 @@ import {
   Bool,
   MerkleMap,
   Poseidon,
+  Proof,
+  Void,
 } from 'o1js';
 
 import Client from 'mina-signer';
@@ -76,6 +78,34 @@ let compilePromise: Promise<void> | null = null;
 let testPrivateKey: InstanceType<typeof PrivateKey> | null = null;
 let skipProofs = false;
 
+class DummyProof extends Proof<void, void> {
+  static publicInputType = Void;
+  static publicOutputType = Void;
+}
+
+let _dummyProofBase64: string | null = null;
+
+async function getDummyProofBase64(): Promise<string> {
+  if (_dummyProofBase64) return _dummyProofBase64;
+  const p = await DummyProof.dummy(undefined, undefined, 2);
+  _dummyProofBase64 = p.toJSON().proof;
+  return _dummyProofBase64;
+}
+
+async function maybeProve(tx: Awaited<ReturnType<typeof Mina.transaction>>) {
+  if (!skipProofs) {
+    await tx.prove();
+    return;
+  }
+  const dummyProof = await getDummyProofBase64();
+  for (const au of (tx as any).transaction.accountUpdates) {
+    if (au.lazyAuthorization?.kind === 'lazy-proof') {
+      au.authorization = { proof: dummyProof };
+      au.lazyAuthorization = undefined;
+    }
+  }
+}
+
 /** Returns Mina.transaction sender arg — includes fee since we always set it explicitly. */
 function txSender(pub: InstanceType<typeof PublicKey>) {
   return { sender: pub, fee: ZKAPP_TX_FEE };
@@ -132,7 +162,9 @@ async function compileContract(): Promise<boolean> {
       console.log('[MultisigWorker] MinaGuard.compile() starting');
       const t0 = performance.now();
       configureNetwork();
-      await MinaGuard.compile();
+      const { createIndexedDBCache } = await import('./idb-compile-cache');
+      const cache = await createIndexedDBCache();
+      await MinaGuard.compile({ cache });
       console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
     })();
   }
@@ -654,7 +686,7 @@ const workerApi = {
     console.log('mina transaction constructed');
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     console.log('proof done');
 
@@ -681,6 +713,7 @@ const workerApi = {
     const ok = await compileContract();
     if (!ok) return null;
 
+    configureNetwork();
     progressFn('Building transaction...');
     const feePayer = PublicKey.fromBase58(params.feePayerAddress);
     const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
@@ -711,7 +744,7 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
@@ -763,7 +796,7 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn);
@@ -882,7 +915,7 @@ const workerApi = {
     }));
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn);
@@ -954,7 +987,7 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn);
@@ -1064,7 +1097,7 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const executeHash = await submitTx(tx, sendFn, signFeePayerFn);
@@ -1145,7 +1178,7 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn, [childKey]);
@@ -1243,7 +1276,7 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn);

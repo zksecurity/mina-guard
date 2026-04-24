@@ -57,6 +57,7 @@ ENV NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
 ENV NEXT_PUBLIC_MINA_ENDPOINT=http://lightnet:8080/graphql
 ENV NEXT_PUBLIC_ARCHIVE_ENDPOINT=http://lightnet:8282
 ENV NEXT_PUBLIC_E2E_TEST=true
+ENV NEXT_PUBLIC_POLL_INTERVAL_MS=3000
 RUN cd ui && bun run build
 
 # Prisma client must be generated in-image; `bun run --filter backend dev`

@@ -6,8 +6,7 @@
     "test": "node node_modules/@playwright/test/cli.js test"
   },
   "dependencies": {
-    "contracts": "workspace:*",
-    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701"
+    "contracts": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",

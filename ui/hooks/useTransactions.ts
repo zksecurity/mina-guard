@@ -41,7 +41,7 @@ export function useTransactions(multisigAddress: string | null) {
     void refresh();
     const interval = setInterval(() => {
       void refresh();
-    }, 10_000);
+    }, Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS) || 10_000);
 
     return () => clearInterval(interval);
   }, [refresh]);

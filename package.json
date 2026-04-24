@@ -18,7 +18,7 @@
     "typecheck": "bun run --filter contracts typecheck && bun run --filter backend build"
   },
   "dependencies": {
-    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701"
+    "o1js": "github:mellowcroc/o1js#mesa-srs-fix"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
