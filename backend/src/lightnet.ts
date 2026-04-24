@@ -125,10 +125,11 @@ export async function sendSignedLightnetPayment(params: {
   privateKey: string;
 }): Promise<string> {
   const { createRequire } = await import('module');
+  const { dirname, join } = await import('path');
   const require = createRequire(import.meta.url);
-  const { default: MinaSignerClient } = require(
-    'o1js/dist/node/mina-signer/mina-signer.js'
-  );
+  const o1jsMain = require.resolve('o1js');
+  const signerPath = join(dirname(o1jsMain), 'mina-signer', 'mina-signer.js');
+  const { default: MinaSignerClient } = await import(signerPath);
 
   const client = new MinaSignerClient({ network: 'testnet' });
   const signed = client.signPayment(
