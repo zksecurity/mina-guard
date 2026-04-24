@@ -6,6 +6,17 @@ export interface ProposalReceiverRecord {
   amount: string;
 }
 
+export type InvalidReason = 'config_nonce_stale' | 'proposal_nonce_stale';
+
+/** Snapshot of a contract's current on-chain counters, derived from the latest
+ *  ContractConfig row. Used to compute per-proposal `invalidReason` at read
+ *  time — no persistence, no rollback bookkeeping. */
+export type ContractState = {
+  nonce: number | null;
+  parentNonce: number | null;
+  configNonce: number | null;
+};
+
 export interface SerializedProposalRecord {
   proposalHash: string;
   proposer: string | null;
@@ -21,7 +32,7 @@ export interface SerializedProposalRecord {
   destination: string | null;
   childAccount: string | null;
   status: string;
-  invalidReason: string | null;
+  invalidReason: InvalidReason | null;
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
@@ -34,13 +45,79 @@ export interface SerializedProposalRecord {
   totalAmount: string | null;
 }
 
-type ProposalWithReceivers = Proposal & {
+export type ProposalWithDerived = Proposal & {
   receivers: ProposalReceiver[];
+  executions: { blockHeight: number; txHash: string | null }[];
+  _count: { approvals: number };
 };
+
+type ProposalInvalidInput = Pick<Proposal, 'nonce' | 'configNonce' | 'destination' | 'txType'>;
+
+/**
+ * Pure check: is this proposal invalidated by the current contract state?
+ *
+ * Config-stale takes precedence over nonce-stale (matches on-chain assert
+ * ordering and prior indexer logic). CREATE_CHILD (txType='5') bypasses
+ * nonce-stale entirely — its nonce is structural (always 0), not sequential.
+ */
+export function deriveInvalidReason(
+  proposal: ProposalInvalidInput,
+  parent: ContractState | null,
+  child: ContractState | null,
+): InvalidReason | null {
+  if (parent?.configNonce != null && proposal.configNonce != null) {
+    const parsedConfig = Number(proposal.configNonce);
+    if (Number.isFinite(parsedConfig) && parsedConfig < parent.configNonce) {
+      return 'config_nonce_stale';
+    }
+  }
+
+  if (proposal.txType === '5') return null;
+
+  if (proposal.nonce == null) return null;
+  const parsedNonce = Number(proposal.nonce);
+  if (!Number.isFinite(parsedNonce)) return null;
+
+  const isRemote = proposal.destination === 'remote';
+  if (!isRemote) {
+    if (parent?.nonce != null && parsedNonce <= parent.nonce) {
+      return 'proposal_nonce_stale';
+    }
+    return null;
+  }
+
+  if (child?.parentNonce != null && parsedNonce <= child.parentNonce) {
+    return 'proposal_nonce_stale';
+  }
+  return null;
+}
+
+/**
+ * Derives proposal status from the append-only schema plus read-time checks.
+ *
+ * Precedence: `executed` (ProposalExecution row) > `invalidated`
+ * (deriveInvalidReason returned non-null) > `expired` (latestHeight past
+ * expiryBlock) > `pending`.
+ */
+function deriveStatus(
+  proposal: Proposal,
+  executed: boolean,
+  latestHeight: number,
+  invalidReason: InvalidReason | null,
+): string {
+  if (executed) return 'executed';
+  if (invalidReason !== null) return 'invalidated';
+  const expiry = Number(proposal.expiryBlock ?? '0');
+  if (Number.isFinite(expiry) && expiry > 0 && latestHeight > expiry) return 'expired';
+  return 'pending';
+}
 
 /** Converts Prisma proposal rows into the API shape expected by the UI. */
 export function serializeProposalRecord(
-  proposal: ProposalWithReceivers
+  proposal: ProposalWithDerived,
+  latestHeight: number,
+  parentState: ContractState | null = null,
+  childState: ContractState | null = null,
 ): SerializedProposalRecord {
   const receivers = proposal.receivers
     .slice()
@@ -54,6 +131,10 @@ export function serializeProposalRecord(
   const totalAmount = receivers.length > 0
     ? receivers.reduce((sum: bigint, receiver: ProposalReceiverRecord) => sum + BigInt(receiver.amount), 0n).toString()
     : null;
+
+  const execution = proposal.executions[0] ?? null;
+  const invalidReason = deriveInvalidReason(proposal, parentState, childState);
+  const status = deriveStatus(proposal, execution !== null, latestHeight, invalidReason);
 
   return {
     proposalHash: proposal.proposalHash,
@@ -69,11 +150,11 @@ export function serializeProposalRecord(
     guardAddress: proposal.guardAddress,
     destination: proposal.destination,
     childAccount: proposal.childAccount,
-    status: proposal.status,
-    invalidReason: proposal.invalidReason,
-    approvalCount: proposal.approvalCount,
+    status,
+    invalidReason,
+    approvalCount: proposal._count.approvals,
     createdAtBlock: proposal.createdAtBlock,
-    executedAtBlock: proposal.executedAtBlock,
+    executedAtBlock: execution?.blockHeight ?? null,
     lastApproveError: proposal.lastApproveError,
     lastExecuteError: proposal.lastExecuteError,
     createdAt: proposal.createdAt,

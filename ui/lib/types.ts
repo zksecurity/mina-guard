@@ -109,6 +109,7 @@ export interface IndexerStatus {
   indexedHeight: number;
   lastError: string | null;
   discoveredContracts: number;
+  indexerMode: 'full' | 'lite';
 }
 
 /** User input payload used by proposal creation forms. */
