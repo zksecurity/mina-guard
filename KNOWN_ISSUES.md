@@ -61,3 +61,35 @@ Instead of refreshing immediately after tx submission, `startOperation` should:
 2. Then call `refreshState`.
 
 The backend already exposes `GET /indexer/status` (returns `lastIndexedBlock`) which could be polled for this purpose. The main missing piece is knowing which block the submitted transaction landed in, which requires a separate on-chain query or waiting for tx confirmation before refreshing.
+
+---
+
+## [Resolved] WASM GC corruption causes second prove to hang when using IDB compile cache
+
+**Symptom:** "Generating proof..." hangs on the second transaction without a page refresh. Only happens when caching is enabled; works every time without cache.
+
+**Root cause:** o1js registers a `FinalizationRegistry` (`kimchi_bindings/js/bindings/util.js`) that auto-frees WASM heap memory when JS wrapper objects are garbage-collected. When `compile({ cache })` deserializes prover keys from IDB via `decodeProverKey`, intermediate JS wrappers are created that share underlying WASM pointers with the final key objects. For example, `verifierIndexFromRust(vkWasm)` converts `vkWasm` into a nested-array format — both reference the same WASM heap data. After the conversion, `vkWasm` goes out of scope and becomes GC-eligible.
+
+After the first `prove()`, V8 GC collects these intermediate wrappers. The `FinalizationRegistry` fires and calls `.free()` on their WASM pointers — but the prover still references those pointers through the converted structures. The second `prove()` hits dangling WASM memory and silently hangs.
+
+Without cache, keys are created through Pickles' Rust compilation path which manages WASM object lifetimes internally — no shared pointers, no premature finalization.
+
+```
+compile({ cache })
+    ↓
+decodeProverKey(bytes) → wasm.caml_pasta_fp_plonk_index_decode(bytes, srs)
+    ↓
+JS wrapper A (__wbg_ptr: 42) → registered with FinalizationRegistry
+    ↓
+verifierIndexFromRust(A) → nested array structure (still references ptr 42)
+    ↓
+wrapper A goes out of scope, only nested array is kept
+    ↓
+first prove() works fine
+    ↓
+GC collects wrapper A → finalizer calls .free() on ptr 42
+    ↓
+second prove() → prover reads freed memory at ptr 42 → hang
+```
+
+**Fix:** `ui/lib/disable-wasm-finalizers.ts` overrides `globalThis.FinalizationRegistry` with a no-op class before o1js loads. WASM objects are never auto-freed; memory is reclaimed when the worker is torn down on page refresh. This is imported as the first line of the worker (`import './disable-wasm-finalizers'`) so it runs before o1js's module initialization creates its registry.
