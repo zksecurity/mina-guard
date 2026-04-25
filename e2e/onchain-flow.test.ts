@@ -152,7 +152,7 @@ test.afterEach(async ({}, testInfo) => {
     await dumpState(contractAddress);
   }
 
-  if (txCount >= RECYCLE_EVERY_N_TXS) {
+  if (RECYCLE_EVERY_N_TXS > 0 && txCount >= RECYCLE_EVERY_N_TXS) {
     log(`${txCount} txs since last recycle — recycling page`);
     txCount = 0;
     await recyclePage();
