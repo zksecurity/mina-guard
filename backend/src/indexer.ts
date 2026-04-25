@@ -464,6 +464,8 @@ export class MinaGuardIndexer {
       data: { parent: isRoot ? null : parent },
     });
 
+    console.log(`[indexer][diag] applySetupEvent contractId=${contractId} isRoot=${isRoot} parent=${parent} nonce=${isRoot ? 0 : 1} parentNonce=${isRoot ? 0 : 1}`);
+
     await this.appendContractConfigSnapshot(
       contractId,
       chainEvent.blockHeight,
@@ -480,6 +482,10 @@ export class MinaGuardIndexer {
         childMultiSigEnabled: true,
       },
     );
+
+    // Verify what was actually written
+    const verifyConfig = await this.getLatestConfig(contractId);
+    console.log(`[indexer][diag] after setup snapshot: contractId=${contractId} nonce=${verifyConfig?.nonce} parentNonce=${verifyConfig?.parentNonce}`);
   }
 
   /** Inserts an OwnerMembership row for a setup owner and backfills config from on-chain if needed. */
@@ -750,11 +756,12 @@ export class MinaGuardIndexer {
 
     const local = await prisma.proposal.findUnique({
       where: { contractId_proposalHash: { contractId, proposalHash } },
-      select: { id: true, nonce: true, lastExecuteTxHash: true },
+      select: { id: true, nonce: true, lastExecuteTxHash: true, txType: true },
     });
     if (local) {
       await this.upsertProposalExecution(local.id, blockHeight, txHash, eventOrder);
       const localNonce = local.nonce === null ? null : Number(local.nonce);
+      console.log(`[indexer][diag] execution LOCAL contractId=${contractId} txType=${local.txType} localNonce=${localNonce} proposalHash=${proposalHash?.slice(0, 12)}`);
       if (localNonce !== null && Number.isFinite(localNonce)) {
         await this.appendContractConfigSnapshot(
           contractId,
@@ -793,6 +800,7 @@ export class MinaGuardIndexer {
 
     await this.upsertProposalExecution(remote.id, blockHeight, txHash, eventOrder);
     const remoteNonce = remote.nonce === null ? null : Number(remote.nonce);
+    console.log(`[indexer][diag] execution REMOTE contractId=${contractId} remoteNonce=${remoteNonce} proposalHash=${proposalHash?.slice(0, 12)}`);
     if (remoteNonce !== null && Number.isFinite(remoteNonce)) {
       await this.appendContractConfigSnapshot(
         contractId,
