@@ -897,10 +897,18 @@ const workerApi = {
     // configNonce / networkId / nonce via getAndRequireEquals(); without a
     // fresh fetch of the zkApp account, o1js sees Field(0) and the circuit
     // traps with a WASM `unreachable` during prove.
-    await Promise.all([
+    const fetches: Promise<any>[] = [
       fetchAccount({ publicKey: proposer }),
       fetchAccount({ publicKey: contractAddress }),
-    ]);
+    ];
+    // REMOTE proposals read child state (parentNonce, ownersCommitment, parent)
+    // via getAndRequireEquals() inside propose(). Without a prefetch, o1js
+    // auto-fetches inside Mina.transaction() which hangs in the worker.
+    const childAccount = proposal.childAccount;
+    if (!childAccount.equals(PublicKey.empty()).toBoolean()) {
+      fetches.push(fetchAccount({ publicKey: childAccount }));
+    }
+    await Promise.all(fetches);
 
     logProposeDiagnostics({
       contract,
