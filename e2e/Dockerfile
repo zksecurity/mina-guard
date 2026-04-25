@@ -46,6 +46,9 @@ COPY dev-helpers/ dev-helpers/
 # Contracts is a workspace dep for backend, ui, and e2e — build once here.
 RUN cd contracts && bun run build
 
+# Compile contract circuit and extract verification key hash
+RUN bun run dev-helpers/cli.ts vk-hash compile 2>&1 | awk '/^vkHash:/{print $2}' > /app/.vk-hash
+
 # Production build of the frontend. `next start` serves the pre-built bundle,
 # which starts ~30× faster than `next dev` and matches how real users hit the
 # app. NEXT_PUBLIC_* are inlined into the browser bundle at build time;

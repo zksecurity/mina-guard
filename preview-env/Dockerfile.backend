@@ -17,9 +17,13 @@ RUN bun install --frozen-lockfile
 # Copy source
 COPY contracts/ contracts/
 COPY backend/ backend/
+COPY dev-helpers/ dev-helpers/
 
 # Build contracts first (workspace dependency)
 RUN cd contracts && bun run build
+
+# Compile contract circuit and extract verification key hash
+RUN bun run dev-helpers/cli.ts vk-hash compile 2>&1 | awk '/^vkHash:/{print $2}' > /app/.vk-hash
 
 # Generate Prisma client
 RUN cd backend && bunx prisma generate
@@ -27,5 +31,8 @@ RUN cd backend && bunx prisma generate
 # Build backend
 RUN cd backend && bun run build
 
+COPY preview-env/entrypoint-backend.sh /app/entrypoint.sh
+
 EXPOSE 4000
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["bun", "run", "--cwd", "backend", "start"]
