@@ -17,6 +17,7 @@ import {
   checkTxStatus,
   fundContract,
   getIndexerStatus,
+  getChildren,
   dumpState,
   type TestAccount,
 } from './helpers';
@@ -1439,6 +1440,13 @@ test('31. Execute ALLOCATE_CHILD', async () => { const page = sharedPage;
 
 test('32. Propose RECLAIM_CHILD', async () => { const page = sharedPage;
   log('=== Step 32: Propose RECLAIM_CHILD ===');
+
+  // Diagnostic: fetch child contract from backend to check parentNonce
+  const children = await getChildren(contractAddress);
+  const child = children.find((c: any) => c.address === childAddress);
+  log(`[diag] Backend child parentNonce=${child?.parentNonce}, nonce=${child?.nonce}, address=${childAddress?.slice(0, 12)}...`);
+  log(`[diag] All children: ${JSON.stringify(children.map((c: any) => ({ addr: c.address?.slice(0, 12), parentNonce: c.parentNonce, nonce: c.nonce })))}`);
+
   await gotoWithWallet('/transactions/new?type=reclaimChild', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
@@ -1446,6 +1454,9 @@ test('32. Propose RECLAIM_CHILD', async () => { const page = sharedPage;
   const childLabel = page.locator(`label:has-text("${childAddress.slice(0, 10)}")`);
   await childLabel.waitFor({ state: 'visible', timeout: 10_000 });
   await childLabel.click();
+
+  // Wait for nonce field to update after child selection
+  await page.waitForTimeout(1_000);
 
   // Fill reclaim amount
   const amountInput = page.locator('input[placeholder="1.0"]');
@@ -1455,6 +1466,16 @@ test('32. Propose RECLAIM_CHILD', async () => { const page = sharedPage;
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
     await expiryInput.first().fill('0');
+  }
+
+  // Diagnostic: read the nonce input value before submitting
+  const nonceValue = await page.locator('div:has(> label:text-is("Nonce")) input').inputValue().catch(() => 'N/A');
+  log(`[diag] Nonce input value before submit: ${nonceValue}`);
+
+  // Check for validation errors
+  const validationError = await page.locator('text=/Nonce must be greater/').textContent().catch(() => null);
+  if (validationError) {
+    log(`[diag] Validation error visible: ${validationError}`);
   }
 
   log('Submitting reclaim proposal...');
