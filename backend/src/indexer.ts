@@ -472,8 +472,8 @@ export class MinaGuardIndexer {
       {
         threshold: asNumber(event.threshold),
         numOwners: asNumber(event.numOwners),
-        nonce: 0,
-        parentNonce: 0,
+        nonce: isRoot ? 0 : 1,
+        parentNonce: isRoot ? 0 : 1,
         configNonce: 0,
         networkId: asString(event.networkId),
         ownersCommitment: asString(event.ownersCommitment),
