@@ -173,6 +173,7 @@ function configureNetwork() {
 }
 
 let compileSucceeded = false;
+let idbCache: Awaited<ReturnType<typeof import('./idb-compile-cache').createIndexedDBCache>> | null = null;
 
 async function compileContract(): Promise<boolean> {
   if (compileSucceeded) return true;
@@ -182,9 +183,11 @@ async function compileContract(): Promise<boolean> {
       console.log('[MultisigWorker] MinaGuard.compile() starting');
       const t0 = performance.now();
       configureNetwork();
-      const { createIndexedDBCache } = await import('./idb-compile-cache');
-      const cache = await createIndexedDBCache();
-      await MinaGuard.compile({ cache });
+      if (!idbCache) {
+        const { createIndexedDBCache } = await import('./idb-compile-cache');
+        idbCache = await createIndexedDBCache();
+      }
+      await MinaGuard.compile({ cache: idbCache });
       const { getCompileCacheSize } = await import('./idb-compile-cache');
       const size = await getCompileCacheSize();
       console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s — cache: ${(size.bytes / 1024 / 1024).toFixed(0)}MB (${size.entries} entries)`);
