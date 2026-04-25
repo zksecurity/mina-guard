@@ -187,7 +187,7 @@ case "$COMMAND" in
         fi
 
         echo "Tearing down PR #${PR_NUMBER} preview..."
-        docker compose -p "pr-${PR_NUMBER}" down -v --remove-orphans --rmi local
+        docker compose -p "pr-${PR_NUMBER}" down -v --remove-orphans --rmi local 2>&1 || true
 
         # Remove route from main Caddy
         remove_caddy_route "$PR_NUMBER"
