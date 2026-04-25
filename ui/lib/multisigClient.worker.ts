@@ -165,7 +165,9 @@ async function compileContract(): Promise<boolean> {
       const { createIndexedDBCache } = await import('./idb-compile-cache');
       const cache = await createIndexedDBCache();
       await MinaGuard.compile({ cache });
-      console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+      const { getCompileCacheSize } = await import('./idb-compile-cache');
+      const size = await getCompileCacheSize();
+      console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s — cache: ${(size.bytes / 1024 / 1024).toFixed(0)}MB (${size.entries} entries)`);
     })();
   }
 

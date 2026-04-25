@@ -64,6 +64,11 @@ RUN cd ui && bun run build
 # shells into `db:push` which expects the client to exist.
 RUN cd backend && bunx prisma generate
 
+# Chromium calculates IDB quota from the partition hosting its profile dir.
+# Default /tmp is often a small tmpfs — point it to the working directory.
+ENV TMPDIR=/app/.tmp
+RUN mkdir -p /app/.tmp
+
 COPY e2e/ e2e/
 
 ENTRYPOINT ["/app/e2e/entrypoint.sh"]

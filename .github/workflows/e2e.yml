@@ -8,7 +8,7 @@ on:
 jobs:
   e2e:
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, e2e]
 
     services:
       postgres:
@@ -121,6 +121,7 @@ jobs:
         run: cd e2e && node node_modules/@playwright/test/cli.js test
         env:
           CI: true
+          TMPDIR: ${{ github.workspace }}/.tmp
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

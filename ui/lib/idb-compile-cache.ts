@@ -3,7 +3,7 @@ import type { Cache } from 'o1js';
 const DB_NAME = 'o1js-compile-cache';
 const STORE_NAME = 'keys';
 const DB_VERSION = 1;
-const MIN_QUOTA_BYTES = 2 * 1024 * 1024 * 1024; // 2GB free required to enable writes
+const MIN_QUOTA_BYTES = 1.8 * 1024 * 1024 * 1024; // 1.8GB free required to enable writes
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

@@ -203,7 +203,7 @@ The frontend caches o1js prover/verifier keys in IndexedDB so that page reloads 
 
 **Size**: ~1.7GB across ~24 entries. This is large but within the storage budgets of major browsers — Google Docs offline, Figma, VS Code for Web, Unity WebGL games, and mapping apps all store hundreds of MB to multi-GB in IndexedDB.
 
-**Storage limits**: Chrome allows each origin up to ~6% of total disk (e.g. ~15GB on a 256GB drive). Firefox and Safari have smaller budgets. The cache checks `navigator.storage.estimate()` before writing and disables writes if less than 2GB is available.
+**Storage limits**: Chrome allows each origin up to ~6% of total disk (e.g. ~15GB on a 256GB drive). Firefox and Safari have smaller budgets. The cache checks `navigator.storage.estimate()` before writing and disables writes if less than 1.8GB is available.
 
 **Eviction**: browsers may evict "best-effort" storage when disk pressure is high, prioritizing least-recently-used origins. Users can also clear the cache manually via Settings → Compile Cache → "Clear Compile Cache", or through browser DevTools (Application → IndexedDB → `o1js-compile-cache`).
 

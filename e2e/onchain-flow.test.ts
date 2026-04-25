@@ -6,7 +6,7 @@ import {
   activateTestKey,
   switchAccount,
   navigateTo,
-  waitForBanner,
+  waitForBanner as _waitForBanner,
   waitForIndexer,
   getContracts,
   getContract,
@@ -25,6 +25,22 @@ import { getNetworkConfig } from './network-config';
 const netConfig = getNetworkConfig();
 const SETTLE_WAIT = netConfig.settlementWaitMs;
 const SHORT_WAIT = netConfig.mode === 'devnet' ? 10_000 : 3_000;
+
+import { V8_HEAP_MB } from './playwright.config';
+
+// Each tx accumulates ~40MB of WASM state. Recycle before hitting ~50% of heap.
+// On machines with >=16GB heap (i.e. >=21GB RAM), recycling is unnecessary.
+const RECYCLE_EVERY_N_TXS = V8_HEAP_MB >= 16384 ? 0 : 15;
+let txCount = 0;
+
+log(`V8 heap: ${V8_HEAP_MB}MB — page recycling ${RECYCLE_EVERY_N_TXS ? `every ${RECYCLE_EVERY_N_TXS} txs` : 'disabled'}`);
+
+
+async function waitForBanner(...args: Parameters<typeof _waitForBanner>) {
+  const result = await _waitForBanner(...args);
+  if (args[1] !== 'error') txCount++;
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Shared state across sequential tests
@@ -126,7 +142,6 @@ async function recyclePage(): Promise<void> {
   log('Page recycled');
 }
 
-// On failure, dump backend state for debugging
 test.afterEach(async ({}, testInfo) => {
   if (testInfo.status !== 'passed') {
     log(`TEST FAILED: ${testInfo.title}`);
@@ -135,6 +150,12 @@ test.afterEach(async ({}, testInfo) => {
       log(`Stack:\n${testInfo.error.stack}`);
     }
     await dumpState(contractAddress);
+  }
+
+  if (txCount >= RECYCLE_EVERY_N_TXS) {
+    log(`${txCount} txs since last recycle — recycling page`);
+    txCount = 0;
+    await recyclePage();
   }
 });
 
@@ -978,7 +999,6 @@ test('20. Verify delegate card shows delegate', async () => { const page = share
   log('Dashboard shows delegate address');
 });
 
-test('20.5. Recycle page', async () => { await recyclePage(); });
 
 // ---------------------------------------------------------------------------
 // 21. Propose undelegate
@@ -1490,8 +1510,6 @@ test('33. Execute RECLAIM_CHILD', async () => { const page = sharedPage;
   expect(proposal.status).toBe('executed');
   log(`RECLAIM_CHILD executed`);
 });
-
-test('33.5. Recycle page', async () => { await recyclePage(); });
 
 // ---------------------------------------------------------------------------
 // 34. Propose ENABLE_CHILD_MULTI_SIG (disable)
