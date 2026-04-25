@@ -115,7 +115,6 @@ async function maybeProve(tx: Awaited<ReturnType<typeof Mina.transaction>>) {
     // (~15s, not minutes), producing fresh WASM objects.
     compileSucceeded = false;
     compilePromise = null;
-    compileContract().catch(() => {});
     return;
   }
   const dummyProof = await getDummyProofBase64();
