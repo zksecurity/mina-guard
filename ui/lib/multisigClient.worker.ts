@@ -1,6 +1,7 @@
 // -- Multisig Contract Worker ------------------------------------------
 // Runs o1js compilation and proof generation off the main thread.
 
+import './disable-wasm-finalizers';
 import * as Comlink from 'comlink';
 
 import {
@@ -95,26 +96,6 @@ async function getDummyProofBase64(): Promise<string> {
 async function maybeProve(tx: Awaited<ReturnType<typeof Mina.transaction>>) {
   if (!skipProofs) {
     await tx.prove();
-    // o1js registers a FinalizationRegistry (kimchi_bindings/js/bindings/util.js)
-    // that calls .free() on WASM objects (prover keys, verifier indices) when
-    // their JS wrappers are GC'd, releasing the Rust-side WASM heap memory.
-    //
-    // When compile() deserializes keys from our IDB cache (via decodeProverKey →
-    // wasm.caml_pasta_fp_plonk_index_decode), the resulting WASM wrapper objects
-    // have different reference-rooting than freshly-compiled ones. After the
-    // first prove(), V8 GC collects an intermediate wrapper and the finalizer
-    // frees the underlying pointer — but the prover still holds a reference to
-    // that same pointer. The second prove() then hits dangling WASM memory
-    // (observed as "unaligned accesses" / WasmFpPlonkVerifierIndexFinalization
-    // errors, or a silent hang).
-    //
-    // Without cache, keys are created through Pickles' Rust compilation path
-    // which roots WASM objects differently — no premature finalization.
-    //
-    // Fix: reset compile state so the next tx recompiles from warm IDB cache
-    // (~15s, not minutes), producing fresh WASM objects.
-    compileSucceeded = false;
-    compilePromise = null;
     return;
   }
   const dummyProof = await getDummyProofBase64();
