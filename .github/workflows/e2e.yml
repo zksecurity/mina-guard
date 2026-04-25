@@ -90,7 +90,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
 
       - name: Start backend
-        run: bun run --filter backend dev &
+        run: bun run --filter backend dev > /tmp/backend.log 2>&1 &
         env:
           PORT: '4000'
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard

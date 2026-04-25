@@ -1446,6 +1446,11 @@ test('32. Propose RECLAIM_CHILD', async () => { const page = sharedPage;
   const child = children.find((c: any) => c.address === childAddress);
   log(`[diag] Backend child parentNonce=${child?.parentNonce}, nonce=${child?.nonce}, address=${childAddress?.slice(0, 12)}...`);
   log(`[diag] All children: ${JSON.stringify(children.map((c: any) => ({ addr: c.address?.slice(0, 12), parentNonce: c.parentNonce, nonce: c.nonce })))}`);
+  // Also fetch the child contract directly and the parent for comparison
+  const childDirect = await getContract(childAddress);
+  const parentDirect = await getContract(contractAddress);
+  log(`[diag] Child direct: ${JSON.stringify({ parentNonce: childDirect?.parentNonce, nonce: childDirect?.nonce, parent: childDirect?.parent?.slice(0, 12) })}`);
+  log(`[diag] Parent direct: ${JSON.stringify({ parentNonce: parentDirect?.parentNonce, nonce: parentDirect?.nonce, parent: parentDirect?.parent })}`);
 
   await gotoWithWallet('/transactions/new?type=reclaimChild', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
