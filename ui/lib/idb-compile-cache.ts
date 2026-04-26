@@ -25,17 +25,23 @@ function idbGet(db: IDBDatabase, key: string): Promise<unknown> {
   });
 }
 
-async function hasStorageQuota(): Promise<boolean> {
+async function canWriteToIDB(userEnabled = true): Promise<boolean> {
+  if (!userEnabled) {
+    console.log('[idb-cache] writes disabled by user preference');
+    return false;
+  }
   if (!navigator.storage?.estimate) return true;
   try {
     const { usage = 0, quota = 0 } = await navigator.storage.estimate();
     const remaining = quota - usage;
+    const remainingMB = (remaining / 1024 / 1024).toFixed(0);
     if (remaining < MIN_QUOTA_BYTES) {
       console.log(
-        `[idb-cache] skipping writes — only ${(remaining / 1024 / 1024).toFixed(0)}MB free (need ${(MIN_QUOTA_BYTES / 1024 / 1024).toFixed(0)}MB)`
+        `[idb-cache] skipping writes — only ${remainingMB}MB free (need ${(MIN_QUOTA_BYTES / 1024 / 1024).toFixed(0)}MB)`
       );
       return false;
     }
+    console.log(`[idb-cache] writes enabled — ${remainingMB}MB available`);
     return true;
   } catch {
     return true;
@@ -43,11 +49,13 @@ async function hasStorageQuota(): Promise<boolean> {
 }
 
 export async function clearCompileCache(): Promise<void> {
-  return new Promise((resolve, reject) => {
+  const enabled = await isCompileCacheEnabledIDB();
+  await new Promise<void>((resolve, reject) => {
     const req = indexedDB.deleteDatabase(DB_NAME);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
+  if (!enabled) await setCompileCacheEnabledIDB(false);
 }
 
 export async function getCompileCacheSize(): Promise<{
@@ -76,6 +84,27 @@ export async function getCompileCacheSize(): Promise<{
   } catch {
     return { entries: 0, bytes: 0 };
   }
+}
+
+export async function isCompileCacheEnabledIDB(): Promise<boolean> {
+  try {
+    const db = await openDB();
+    const val = await idbGet(db, '__cache_enabled__');
+    db.close();
+    return val !== false;
+  } catch {
+    return true;
+  }
+}
+
+export async function setCompileCacheEnabledIDB(enabled: boolean): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(enabled, '__cache_enabled__');
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
 }
 
 export async function createIndexedDBCache(): Promise<Cache> {
@@ -113,7 +142,8 @@ export async function createIndexedDBCache(): Promise<Cache> {
     `[idb-cache] preloaded ${map.size} entries (${(totalBytes / 1024 / 1024).toFixed(1)}MB) in ${((performance.now() - t0) / 1000).toFixed(1)}s`
   );
 
-  const writable = await hasStorageQuota();
+  const cacheEnabled = (await idbGet(db, '__cache_enabled__')) !== false;
+  const writable = await canWriteToIDB(cacheEnabled);
 
   return {
     read(header) {
