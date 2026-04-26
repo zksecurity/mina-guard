@@ -9,7 +9,6 @@ import {
   formatMina,
   isDeleteProposal,
   truncateAddress,
-  txExplorerUrl,
 } from '@/lib/types';
 import { fetchApprovals, extractTxHash, recordSubmission } from '@/lib/api';
 import {
@@ -338,7 +337,7 @@ export default function TransactionDetailPage() {
             title="Submitted — awaiting inclusion"
             description="Your proposal was broadcast to the network. It should appear here once the next block is produced (~3 min)."
             txHash={localPendingCreateTxHash ?? null}
-            networkId={multisig?.networkId ?? null}
+            network={wallet.network ?? null}
           />
         )}
 
@@ -348,7 +347,7 @@ export default function TransactionDetailPage() {
             title="Execution in progress"
             description="Another signer broadcast an execute transaction. New executes will fail on-chain until it lands or fails — buttons are disabled."
             txHash={proposal.lastExecuteTxHash}
-            networkId={multisig?.networkId ?? null}
+            network={wallet.network ?? null}
           />
         )}
 
@@ -358,7 +357,7 @@ export default function TransactionDetailPage() {
             title="Your approval is in flight"
             description="Waiting for the network to include your approval transaction."
             txHash={myPendingApprove.txHash}
-            networkId={multisig?.networkId ?? null}
+            network={wallet.network ?? null}
           />
         )}
 
@@ -511,41 +510,46 @@ export default function TransactionDetailPage() {
 }
 
 /** Inline banner for a tx that's been broadcast but not yet on-chain.
- *  Three tones map to the three pending kinds; all link to Minascan. */
+ *  The tx hash links to NEXT_PUBLIC_BLOCK_EXPLORER_URL — same pattern used
+ *  by the global "Transaction submitted" toast in `app/layout.tsx`. */
 function PendingTxBanner({
   tone,
   title,
   description,
   txHash,
-  networkId,
+  network,
 }: {
   tone: 'creation' | 'approval' | 'execution';
   title: string;
   description: string;
   txHash: string | null;
-  networkId: string | null;
+  network: string | null;
 }) {
   const palette = tone === 'execution'
     ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
     : tone === 'approval'
       ? 'border-sky-400/30 bg-sky-400/10 text-sky-200'
       : 'border-yellow-400/30 bg-yellow-400/10 text-yellow-200';
+  const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
+  const truncated = txHash ? truncateAddress(txHash, 8) : null;
   return (
     <div className={`rounded-xl border p-4 text-sm space-y-1 ${palette}`}>
       <p className="font-semibold">{title}</p>
       <p className="opacity-90">{description}</p>
-      {txHash && (
-        <p className="text-xs opacity-90 pt-1">
-          <span className="font-mono">{truncateAddress(txHash, 8)}</span>
-          {' · '}
-          <a
-            href={txExplorerUrl(txHash, networkId)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline hover:opacity-100"
-          >
-            View on Minascan
-          </a>
+      {txHash && truncated && (
+        <p className="text-xs opacity-90 pt-1 font-mono">
+          {explorerUrl ? (
+            <a
+              href={`${explorerUrl}/tx/${txHash}?network=${network ?? ''}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:opacity-100"
+            >
+              {truncated}
+            </a>
+          ) : (
+            truncated
+          )}
         </p>
       )}
     </div>

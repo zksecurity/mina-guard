@@ -172,12 +172,6 @@ export const CHILD_TX_TYPES: TxTypeOption[] = [
   { value: 'enableChildMultiSig', label: 'Toggle Subaccount Multi-sig', icon: 'toggle' },
 ];
 
-/** Builds a Minascan tx URL. networkId === '1' is mainnet; everything else is devnet. */
-export function txExplorerUrl(txHash: string, networkId: string | null | undefined): string {
-  const network = networkId === '1' ? 'mainnet' : 'devnet';
-  return `https://minascan.io/${network}/tx/${txHash}`;
-}
-
 /** Truncates long addresses for compact UI chips and labels. */
 export function truncateAddress(addr: string, chars: number = 6): string {
   if (addr.length <= chars * 2 + 3) return addr;
