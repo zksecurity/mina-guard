@@ -110,6 +110,25 @@ export function extractTxHash(message: string | null): string | null {
   return match ? match[1] : null;
 }
 
+/** Looks up a submitted zkApp tx hash on the daemon's bestChain. Used by the
+ *  reconciliation observer to detect failed/dropped CREATE submissions, which
+ *  have no Proposal row to attach the failure to server-side. */
+export async function fetchTxStatus(
+  txHash: string,
+): Promise<{ status: 'pending' | 'included' | 'failed'; reason?: string } | null> {
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/tx-status?hash=${encodeURIComponent(txHash)}`,
+      { cache: 'no-store' },
+    );
+    if (!response.ok) return null;
+    return (await response.json()) as { status: 'pending' | 'included' | 'failed'; reason?: string };
+  } catch (err) {
+    console.warn('[api] fetchTxStatus failed', err);
+    return null;
+  }
+}
+
 /** Best-effort: tells the backend about a freshly-submitted approve/execute tx
  *  so its indexer can poll for on-chain failure and surface the reason. */
 export async function recordSubmission(
@@ -192,6 +211,8 @@ function toProposal(input: Record<string, unknown>): Proposal {
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
+    lastApproveTxHash: asNullableString(input.lastApproveTxHash),
+    lastExecuteTxHash: asNullableString(input.lastExecuteTxHash),
     lastApproveError: asNullableString(input.lastApproveError),
     lastExecuteError: asNullableString(input.lastExecuteError),
     createdAt: asString(input.createdAt) ?? new Date(0).toISOString(),

@@ -182,14 +182,15 @@ export async function deployAndSetupContract(params: {
   return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
-/** Creates an on-chain proposal via zkApp.propose(). Returns the proposalHash on success. */
+/** Creates an on-chain proposal via zkApp.propose(). Returns the proposalHash and
+ *  the broadcast Mina tx hash on success so callers can persist a pending-create entry. */
 export async function createOnchainProposal(params: {
   contractAddress: string;
   proposerAddress: string;
   input: NewProposalInput;
   configNonce: number;
   networkId: string;
-}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<{ proposalHash: string; txHash: string } | null> {
   await assertLedgerReady(signer);
   return getWorkerApi().createOnchainProposal(
     params,

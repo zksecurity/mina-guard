@@ -812,7 +812,8 @@ const workerApi = {
 
   /**
    * Creates an on-chain proposal via zkApp.propose(). Auto-approves the proposer.
-   * Returns the proposalHash on success so the UI can route to the detail page.
+   * Returns both proposalHash and the broadcast tx hash so the UI can route to
+   * the detail page AND persist a pending-create entry for the in-flight tx.
    */
   async createOnchainProposal(
     params: {
@@ -826,7 +827,7 @@ const workerApi = {
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
     signFeePayerFn?: SignFeePayerFn
-  ): Promise<string | null> {
+  ): Promise<{ proposalHash: string; txHash: string } | null> {
     progressFn('Compiling contract...');
     configureNetwork();
     const ok = await compileContract();
@@ -934,7 +935,7 @@ const workerApi = {
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn);
     if (!txHash) return null;
-    return hashStr;
+    return { proposalHash: hashStr, txHash };
   },
 
   /**

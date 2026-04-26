@@ -12,7 +12,7 @@ import {
   deployAndSetupContract,
   generateKeypair,
 } from '@/lib/multisigClient';
-import { saveAccountName, savePendingSubaccount } from '@/lib/storage';
+import { saveAccountName, savePendingTx } from '@/lib/storage';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', networkId: '0', enabled: true },
@@ -163,7 +163,7 @@ function CreateAccountWizard() {
         childThreshold,
       });
 
-      const proposalHash = await createOnchainProposal({
+      const result = await createOnchainProposal({
         contractAddress: parentAddress,
         proposerAddress: wallet.address!,
         configNonce: parentContract.configNonce!,
@@ -179,20 +179,35 @@ function CreateAccountWizard() {
         },
       }, onProgress, signer);
 
-      if (!proposalHash) return null;
+      if (!result) return null;
+      const { proposalHash, txHash } = result;
 
       if (name.trim()) saveAccountName(childAddress, name);
 
-      savePendingSubaccount({
-        parentAddress,
-        childAddress,
-        childPrivateKey,
-        childOwners: parsedOwners,
-        childThreshold,
-        childName: name.trim(),
+      savePendingTx({
+        kind: 'create',
+        contractAddress: parentAddress,
         proposalHash,
-        expiryBlock: null,
+        txHash,
+        signerPubkey: wallet.address!,
         createdAt: new Date().toISOString(),
+        summary: {
+          txType: 'createChild',
+          nonce: '0',
+          configNonce: String(parentContract.configNonce!),
+          expiryBlock: null,
+          destination: 'remote',
+          childAccount: childAddress,
+          receivers: [],
+        },
+        childAccount: {
+          childAddress,
+          childPrivateKey,
+          childOwners: parsedOwners,
+          childThreshold,
+          childName: name.trim(),
+          expiryBlock: null,
+        },
       });
 
       return `Subaccount proposal submitted. Approve on the parent, then return to finalize deployment.`;

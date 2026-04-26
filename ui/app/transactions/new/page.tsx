@@ -14,6 +14,7 @@ import {
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOnchainProposal } from '@/lib/multisigClient';
 import { fetchChildren, fetchContract } from '@/lib/api';
+import { savePendingTx } from '@/lib/storage';
 
 export default function NewTransactionPage() {
   return (
@@ -140,19 +141,42 @@ function NewTransactionPageInner() {
     await startOperation('Submitting proposal on-chain...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      const proposalHash = await createOnchainProposal({
+      const result = await createOnchainProposal({
         contractAddress,
         proposerAddress,
         input: data,
         configNonce,
         networkId,
       }, onProgress, signer);
-      createdHash = proposalHash;
-      if (!proposalHash) return null;
+      if (!result) return null;
+      createdHash = result.proposalHash;
 
-      return `Proposal created: ${proposalHash}`;
+      const isRemote =
+        data.txType === 'createChild' ||
+        data.txType === 'reclaimChild' ||
+        data.txType === 'destroyChild' ||
+        data.txType === 'enableChildMultiSig';
+      savePendingTx({
+        kind: 'create',
+        contractAddress,
+        proposalHash: result.proposalHash,
+        txHash: result.txHash,
+        signerPubkey: proposerAddress,
+        createdAt: new Date().toISOString(),
+        summary: {
+          txType: data.txType,
+          nonce: String(data.nonce),
+          configNonce: String(configNonce),
+          expiryBlock: data.expiryBlock != null ? String(data.expiryBlock) : null,
+          destination: isRemote ? 'remote' : 'local',
+          childAccount: data.childAccount ?? null,
+          receivers: data.receivers ?? [],
+        },
+      });
+
+      return `Proposal created: ${result.proposalHash}`;
     });
-    router.push(createdHash ? `/transactions/${createdHash}?pending=1` : '/transactions');
+    router.push(createdHash ? `/transactions/${createdHash}` : '/transactions');
   };
 
   return (

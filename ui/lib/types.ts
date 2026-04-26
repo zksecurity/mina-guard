@@ -46,6 +46,8 @@ export interface Proposal {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  lastApproveTxHash: string | null;
+  lastExecuteTxHash: string | null;
   lastApproveError: string | null;
   lastExecuteError: string | null;
   createdAt: string;
@@ -53,6 +55,10 @@ export interface Proposal {
   receivers: ProposalReceiver[];
   recipientCount: number;
   totalAmount: string | null;
+  /** True when this row was synthesized from a local PendingTx record before
+   *  the indexer surfaced the proposal. UI can use it to differentiate the
+   *  "submitted, awaiting inclusion" state from a real on-chain proposal. */
+  _localPending?: boolean;
 }
 
 /** Indexed owner membership record for one MinaGuard contract. */
@@ -165,6 +171,12 @@ export const CHILD_TX_TYPES: TxTypeOption[] = [
   { value: 'destroyChild', label: 'Destroy Subaccount', icon: 'trash' },
   { value: 'enableChildMultiSig', label: 'Toggle Subaccount Multi-sig', icon: 'toggle' },
 ];
+
+/** Builds a Minascan tx URL. networkId === '1' is mainnet; everything else is devnet. */
+export function txExplorerUrl(txHash: string, networkId: string | null | undefined): string {
+  const network = networkId === '1' ? 'mainnet' : 'devnet';
+  return `https://minascan.io/${network}/tx/${txHash}`;
+}
 
 /** Truncates long addresses for compact UI chips and labels. */
 export function truncateAddress(addr: string, chars: number = 6): string {

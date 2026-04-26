@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ApprovalProgress from '@/components/ApprovalProgress';
 import {
@@ -9,6 +9,7 @@ import {
   formatMina,
   isDeleteProposal,
   truncateAddress,
+  txExplorerUrl,
 } from '@/lib/types';
 import { fetchApprovals, extractTxHash, recordSubmission } from '@/lib/api';
 import {
@@ -17,15 +18,16 @@ import {
   executeChildLifecycleOnchain,
   assertLedgerReady,
 } from '@/lib/multisigClient';
+import {
+  PENDING_TXS_CHANGED,
+  getPendingTx,
+  savePendingTx,
+} from '@/lib/storage';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const searchParams = useSearchParams();
-  // Set by the new-proposal page right after tx submission, to differentiate
-  // "indexer hasn't caught up yet" from "no such proposal".
-  const isPendingIndex = searchParams.get('pending') === '1';
   const {
     wallet,
     multisig,
@@ -41,6 +43,30 @@ export default function TransactionDetailPage() {
 
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
 
+  // Per-signer approve self-disable: did *this* wallet submit an approval
+  // that's still in flight for this proposal? Watched via PENDING_TXS_CHANGED
+  // so the button toggles the moment the user clicks Approve.
+  const [myPendingApprove, setMyPendingApprove] = useState<{ txHash: string } | null>(null);
+  const refreshMyPendingApprove = useCallback(() => {
+    if (!multisig || !wallet.address) {
+      setMyPendingApprove(null);
+      return;
+    }
+    const pt = getPendingTx(multisig.address, proposalHash, 'approve', wallet.address);
+    setMyPendingApprove(pt ? { txHash: pt.txHash } : null);
+  }, [multisig, wallet.address, proposalHash]);
+
+  useEffect(() => {
+    refreshMyPendingApprove();
+    const handler = () => refreshMyPendingApprove();
+    window.addEventListener(PENDING_TXS_CHANGED, handler);
+    window.addEventListener('storage', handler);
+    return () => {
+      window.removeEventListener(PENDING_TXS_CHANGED, handler);
+      window.removeEventListener('storage', handler);
+    };
+  }, [refreshMyPendingApprove]);
+
   // If the selected contract changes, leave the detail page immediately
   useEffect(() => {
     if (!multisig) return;
@@ -53,6 +79,7 @@ export default function TransactionDetailPage() {
 
   useEffect(() => {
     if (!multisig || !proposal) return;
+    if (proposal._localPending) return;
     // Don't fetch until proposals have been loaded for the current contract
     if (proposalsAddress !== multisig.address) return;
     let cancelled = false;
@@ -79,10 +106,35 @@ export default function TransactionDetailPage() {
     proposal.configNonce != null &&
     multisig?.configNonce != null &&
     proposal.configNonce !== String(multisig.configNonce);
-  const canApprove = !!proposal && proposal.status === 'pending' && isOwner && !hasApproved && !isConfigStale;
-  const canExecute = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= threshold && !isConfigStale;
+  const isLocalPending = proposal?._localPending === true;
+  // Cross-signer execute lock: while ANY signer's execute tx is in flight
+  // (server's lastExecuteTxHash is set and no failure has been recorded), the
+  // Execute button is disabled for everyone — re-executing now would just
+  // burn fee on a guaranteed on-chain failure.
+  const executeInFlight =
+    !!proposal &&
+    !proposal._localPending &&
+    proposal.status === 'pending' &&
+    proposal.lastExecuteTxHash != null &&
+    proposal.lastExecuteError == null;
+  const canApprove =
+    !!proposal &&
+    !isLocalPending &&
+    proposal.status === 'pending' &&
+    isOwner &&
+    !hasApproved &&
+    !isConfigStale &&
+    !myPendingApprove;
+  const canExecute =
+    !!proposal &&
+    !isLocalPending &&
+    proposal.status === 'pending' &&
+    proposal.approvalCount >= threshold &&
+    !isConfigStale &&
+    !executeInFlight;
   const canDelete =
     !!proposal &&
+    !isLocalPending &&
     proposal.status === 'pending' &&
     isOwner &&
     proposal.nonce !== null &&
@@ -115,6 +167,14 @@ export default function TransactionDetailPage() {
       const txHash = extractTxHash(result);
       if (txHash) {
         await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'approve', txHash);
+        savePendingTx({
+          kind: 'approve',
+          contractAddress: captured.contractAddress,
+          proposalHash: captured.proposal.proposalHash,
+          txHash,
+          signerPubkey: captured.approverAddress,
+          createdAt: new Date().toISOString(),
+        });
       }
       if (result) success = true;
       return result;
@@ -146,6 +206,23 @@ export default function TransactionDetailPage() {
           captured.proposal.txType === 'destroyChild' ||
           captured.proposal.txType === 'enableChildMultiSig');
 
+      const finalize = (result: string | null) => {
+        const txHash = extractTxHash(result);
+        if (txHash) {
+          void recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
+          savePendingTx({
+            kind: 'execute',
+            contractAddress: captured.contractAddress,
+            proposalHash: captured.proposal.proposalHash,
+            txHash,
+            signerPubkey: captured.executorAddress,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        if (result) success = true;
+        return result;
+      };
+
       if (isRemoteLifecycle) {
         const result = await executeChildLifecycleOnchain({
           childAddress: captured.proposal.childAccount!,
@@ -153,12 +230,7 @@ export default function TransactionDetailPage() {
           executorAddress: captured.executorAddress,
           proposal: captured.proposal,
         }, onProgress, signer);
-        const txHash = extractTxHash(result);
-        if (txHash) {
-          await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
-        }
-        if (result) success = true;
-        return result;
+        return finalize(result);
       }
 
       if (captured.proposal.txType === 'createChild') {
@@ -170,12 +242,7 @@ export default function TransactionDetailPage() {
         executorAddress: captured.executorAddress,
         proposal: captured.proposal,
       }, onProgress, signer);
-      const txHash = extractTxHash(result);
-      if (txHash) {
-        await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
-      }
-      if (result) success = true;
-      return result;
+      return finalize(result);
     });
     if (success) router.push(`/accounts/${captured.contractAddress}`);
   };
@@ -209,19 +276,13 @@ export default function TransactionDetailPage() {
     return (
       <div>
         <div className="p-6 text-center py-20">
-          {isPendingIndex ? (
-            <p className="text-safe-text">Your proposal will appear here shortly…</p>
-          ) : (
-            <>
-              <p className="text-safe-text">Proposal not found</p>
-              <button
-                onClick={() => router.push('/transactions')}
-                className="mt-4 text-sm text-safe-green hover:underline"
-              >
-                Back to proposals
-              </button>
-            </>
-          )}
+          <p className="text-safe-text">Proposal not found</p>
+          <button
+            onClick={() => router.push('/transactions')}
+            className="mt-4 text-sm text-safe-green hover:underline"
+          >
+            Back to proposals
+          </button>
         </div>
       </div>
     );
@@ -250,13 +311,19 @@ export default function TransactionDetailPage() {
         : 'Executes on subaccount'
       : 'Executes on this account';
 
+  // Pull the pending-create entry directly so we can show its tx hash even
+  // before the synthesized row carries it via `proposal.lastExecuteTxHash`.
+  const localPendingCreateTxHash = isLocalPending
+    ? getPendingTx(multisig.address, proposalHash, 'create')?.txHash
+    : null;
+
   return (
     <div>
       <div className="p-6 max-w-3xl space-y-6">
         <div className={`rounded-xl border p-4 ${statusColors[proposal.status]}`}>
           <div className="flex items-center gap-2">
             <span className="font-semibold capitalize">{proposal.status}</span>
-            {proposal.status === 'pending' && !isConfigStale && threshold > proposal.approvalCount && (
+            {proposal.status === 'pending' && !isConfigStale && !isLocalPending && threshold > proposal.approvalCount && (
               <span className="text-sm opacity-75 ml-2">
                 Needs {threshold - proposal.approvalCount} more approvals
               </span>
@@ -264,6 +331,36 @@ export default function TransactionDetailPage() {
           </div>
           <p className="text-xs opacity-75 mt-1">{headerSubline}</p>
         </div>
+
+        {isLocalPending && (
+          <PendingTxBanner
+            tone="creation"
+            title="Submitted — awaiting inclusion"
+            description="Your proposal was broadcast to the network. It should appear here once the next block is produced (~3 min)."
+            txHash={localPendingCreateTxHash ?? null}
+            networkId={multisig?.networkId ?? null}
+          />
+        )}
+
+        {executeInFlight && proposal.lastExecuteTxHash && (
+          <PendingTxBanner
+            tone="execution"
+            title="Execution in progress"
+            description="Another signer broadcast an execute transaction. New executes will fail on-chain until it lands or fails — buttons are disabled."
+            txHash={proposal.lastExecuteTxHash}
+            networkId={multisig?.networkId ?? null}
+          />
+        )}
+
+        {myPendingApprove && (
+          <PendingTxBanner
+            tone="approval"
+            title="Your approval is in flight"
+            description="Waiting for the network to include your approval transaction."
+            txHash={myPendingApprove.txHash}
+            networkId={multisig?.networkId ?? null}
+          />
+        )}
 
         {isConfigStale && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
@@ -322,7 +419,7 @@ export default function TransactionDetailPage() {
           </div>
         </div>
 
-        {proposal.txType === 'transfer' && (
+        {proposal.txType === 'transfer' && proposal.receivers.length > 0 && (
           <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
             <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Recipients</h3>
             <div className="space-y-2">
@@ -344,16 +441,18 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
-          <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Confirmations</h3>
-          <ApprovalProgress
-            approvalCount={proposal.approvalCount}
-            threshold={threshold}
-            owners={owners.map((owner) => owner.address)}
-            approvalAddresses={approvalAddresses}
-            status={proposal.status}
-          />
-        </div>
+        {!isLocalPending && (
+          <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
+            <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Confirmations</h3>
+            <ApprovalProgress
+              approvalCount={proposal.approvalCount}
+              threshold={threshold}
+              owners={owners.map((owner) => owner.address)}
+              approvalAddresses={approvalAddresses}
+              status={proposal.status}
+            />
+          </div>
+        )}
 
         {proposal.status === 'pending' && (proposal.lastExecuteError || proposal.lastApproveError) && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-300 text-sm space-y-1">
@@ -368,7 +467,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {proposal.status === 'pending' && (
+        {proposal.status === 'pending' && !isLocalPending && (
           <div className="flex gap-3 flex-wrap">
             {canApprove && (
               <button
@@ -407,6 +506,48 @@ export default function TransactionDetailPage() {
           &larr; Back to proposals
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Inline banner for a tx that's been broadcast but not yet on-chain.
+ *  Three tones map to the three pending kinds; all link to Minascan. */
+function PendingTxBanner({
+  tone,
+  title,
+  description,
+  txHash,
+  networkId,
+}: {
+  tone: 'creation' | 'approval' | 'execution';
+  title: string;
+  description: string;
+  txHash: string | null;
+  networkId: string | null;
+}) {
+  const palette = tone === 'execution'
+    ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+    : tone === 'approval'
+      ? 'border-sky-400/30 bg-sky-400/10 text-sky-200'
+      : 'border-yellow-400/30 bg-yellow-400/10 text-yellow-200';
+  return (
+    <div className={`rounded-xl border p-4 text-sm space-y-1 ${palette}`}>
+      <p className="font-semibold">{title}</p>
+      <p className="opacity-90">{description}</p>
+      {txHash && (
+        <p className="text-xs opacity-90 pt-1">
+          <span className="font-mono">{truncateAddress(txHash, 8)}</span>
+          {' · '}
+          <a
+            href={txExplorerUrl(txHash, networkId)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:opacity-100"
+          >
+            View on Minascan
+          </a>
+        </p>
+      )}
     </div>
   );
 }
