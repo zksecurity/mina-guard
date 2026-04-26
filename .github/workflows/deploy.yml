@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: self-hosted
+    runs-on: [self-hosted, deploy]
     steps:
       - name: Verify branch is main
         run: |
