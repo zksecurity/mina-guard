@@ -477,6 +477,11 @@ function PendingSubaccountsBanner({
 }) {
   const { wallet, indexerStatus, contracts, proposals, multisig, startOperation, isOperating } = useAppContext();
   const [pending, setPending] = useState<PendingSubaccount[]>([]);
+  // Tracks the *specific* child whose finalize is in flight so only that
+  // row's button shows "Finalizing…". The global `isOperating` flag still
+  // disables every other Finalize button (one operation at a time), but
+  // they keep their default label.
+  const [finalizingChild, setFinalizingChild] = useState<string | null>(null);
   const parentThreshold = multisig?.address === parentAddress ? (multisig.threshold ?? 0) : 0;
 
   // Reload from localStorage when the parent changes, the indexer ticks, or
@@ -512,22 +517,27 @@ function PendingSubaccountsBanner({
   const handleFinalize = async (record: PendingSubaccount) => {
     if (!wallet.address) return;
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
-    void startOperation('Finalizing subaccount deployment…', async (onProgress) => {
-      onProgress('Fetching parent CREATE_CHILD proposal…');
-      const proposal = await fetchProposal(record.parentAddress, record.proposalHash);
-      if (!proposal) {
-        throw new Error('Parent proposal not found in indexer yet — try again in a moment.');
-      }
-      const result = await deployAndSetupChildOnchain({
-        parentAddress: record.parentAddress,
-        childPrivateKeyBase58: record.childPrivateKey,
-        feePayerAddress: wallet.address!,
-        childOwners: record.childOwners,
-        childThreshold: record.childThreshold,
-        proposal,
-      }, onProgress, signer);
-      return result;
-    });
+    setFinalizingChild(record.childAddress);
+    try {
+      await startOperation('Finalizing subaccount deployment…', async (onProgress) => {
+        onProgress('Fetching parent CREATE_CHILD proposal…');
+        const proposal = await fetchProposal(record.parentAddress, record.proposalHash);
+        if (!proposal) {
+          throw new Error('Parent proposal not found in indexer yet — try again in a moment.');
+        }
+        const result = await deployAndSetupChildOnchain({
+          parentAddress: record.parentAddress,
+          childPrivateKeyBase58: record.childPrivateKey,
+          feePayerAddress: wallet.address!,
+          childOwners: record.childOwners,
+          childThreshold: record.childThreshold,
+          proposal,
+        }, onProgress, signer);
+        return result;
+      });
+    } finally {
+      setFinalizingChild(null);
+    }
   };
 
   return (
@@ -577,7 +587,7 @@ function PendingSubaccountsBanner({
                     ? 'Runs executeSetupChild on the new child address.'
                     : 'Waiting for the parent CREATE_CHILD proposal to reach threshold.'}
                 >
-                  {isOperating ? 'Finalizing…' : 'Finalize deployment'}
+                  {finalizingChild === record.childAddress ? 'Finalizing…' : 'Finalize deployment'}
                 </button>
               )}
             </li>
