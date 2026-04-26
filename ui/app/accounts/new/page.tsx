@@ -12,7 +12,7 @@ import {
   deployAndSetupContract,
   generateKeypair,
 } from '@/lib/multisigClient';
-import { saveAccountName, savePendingTx } from '@/lib/storage';
+import { clearPendingSubaccount, saveAccountName, savePendingTx } from '@/lib/storage';
 import { extractTxHash } from '@/lib/api';
 
 const NETWORKS = [
@@ -177,6 +177,12 @@ function CreateAccountWizard() {
     const childThreshold = Number(threshold);
     const childPrivateKey = keypair.privateKey;
     const childAddress = keypair.publicKey;
+
+    // If a prior attempt for the same (parent, child) left a pending entry,
+    // drop it before starting. If the new attempt fails (e.g. proof OOM),
+    // no entry exists and the banner stays clean. If it succeeds, the
+    // savePendingTx call below writes a fresh entry under the new proposalHash.
+    clearPendingSubaccount(parentAddress, childAddress);
 
     void startOperation('Preparing subaccount proposal…', async (onProgress) => {
       onProgress('Computing child config hash…');
