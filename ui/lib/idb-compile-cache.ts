@@ -49,13 +49,16 @@ async function canWriteToIDB(userEnabled = true): Promise<boolean> {
 }
 
 export async function clearCompileCache(): Promise<void> {
-  const enabled = await isCompileCacheEnabledIDB();
+  const db = await openDB();
+  const enabled = (await idbGet(db, '__cache_enabled__')) === false;
   await new Promise<void>((resolve, reject) => {
-    const req = indexedDB.deleteDatabase(DB_NAME);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
-  if (!enabled) await setCompileCacheEnabledIDB(false);
+  if (enabled) await setCompileCacheEnabledIDB(false);
+  db.close();
 }
 
 export async function getCompileCacheSize(): Promise<{
