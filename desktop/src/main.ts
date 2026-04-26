@@ -9,7 +9,7 @@ import { buildPickerScript } from './hid-picker.js';
 import { startEmbeddedBackend, type EmbeddedBackendHandle } from './backend-embed.js';
 import {
   deleteDatabase,
-  deriveNetworkId,
+  fetchNetworkId,
   dbPath,
   readConfig,
   writeConfig,
@@ -35,7 +35,7 @@ const backendBundlePath = join(stageDir, 'backend-bundle.js');
 const standaloneRoot = app.isPackaged
   ? join(process.resourcesPath, 'ui-standalone')
   : join(import.meta.dirname, '..', 'ui-standalone');
-const nextServerEntry = join(standaloneRoot, 'mina-guard', 'ui', 'server.js');
+const nextServerEntry = join(standaloneRoot, 'ui', 'server.js');
 const schemaSqlPath = join(import.meta.dirname, 'assets', 'schema.sql');
 const setupHtmlPath = join(import.meta.dirname, 'assets', 'setup.html');
 const preloadPath = join(import.meta.dirname, 'preload.js');
@@ -137,11 +137,9 @@ function runFirstRunFlow(): Promise<{ config: UserConfig; close: () => void } | 
     };
 
     firstRunResolvers = {
-      save: (cfg) => {
-        const full: UserConfig = {
-          ...cfg,
-          networkId: deriveNetworkId(cfg.minaEndpoint),
-        };
+      save: async (cfg) => {
+        const networkId = await fetchNetworkId(cfg.minaEndpoint);
+        const full: UserConfig = { ...cfg, networkId };
         writeConfig(full);
         // Hide the setup window but keep it alive until the main window is
         // ready. Closing it here would briefly leave zero windows open,
@@ -192,10 +190,8 @@ async function changeEndpointsAndRelaunch(cfg: {
   minaEndpoint: string;
   archiveEndpoint: string;
 }): Promise<void> {
-  const next: UserConfig = {
-    ...cfg,
-    networkId: deriveNetworkId(cfg.minaEndpoint),
-  };
+  const networkId = await fetchNetworkId(cfg.minaEndpoint);
+  const next: UserConfig = { ...cfg, networkId };
   writeConfig(next);
   await stopRunningServices();
   deleteDatabase();
