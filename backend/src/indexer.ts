@@ -472,8 +472,8 @@ export class MinaGuardIndexer {
       {
         threshold: asNumber(event.threshold),
         numOwners: asNumber(event.numOwners),
-        nonce: isRoot ? 0 : 1,
-        parentNonce: isRoot ? 0 : 1,
+        nonce: 0,
+        parentNonce: 0,
         configNonce: 0,
         networkId: asString(event.networkId),
         ownersCommitment: asString(event.ownersCommitment),
@@ -787,15 +787,9 @@ export class MinaGuardIndexer {
 
     const remote = await prisma.proposal.findUnique({
       where: { contractId_proposalHash: { contractId: parent.id, proposalHash } },
-      select: { id: true, nonce: true, txType: true, lastExecuteTxHash: true },
+      select: { id: true, nonce: true, lastExecuteTxHash: true },
     });
     if (!remote) return;
-
-    // executeSetupChild emits an execution event on the child contract.
-    // The parent's local path already marks the CREATE_CHILD proposal as
-    // executed — skip here to avoid overwriting the child's parentNonce
-    // (set to 1 by applySetupEvent) with the sentinel nonce 0.
-    if (remote.txType === '5') return;
 
     await this.upsertProposalExecution(remote.id, blockHeight, txHash, eventOrder);
     const remoteNonce = remote.nonce === null ? null : Number(remote.nonce);

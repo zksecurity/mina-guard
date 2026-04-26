@@ -753,8 +753,8 @@ export class MinaGuard extends SmartContract {
       numOwners,
       proposal.networkId,
       parentAddress,
-      Field(1),
-      Field(1),
+      Field(0),
+      Field(0),
       initialOwners,
     );
 
