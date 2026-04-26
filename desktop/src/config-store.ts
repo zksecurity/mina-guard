@@ -18,8 +18,22 @@ export function dbPath(): string {
   return join(app.getPath('userData'), 'minaguard.db');
 }
 
-/** Derives a networkId from the node endpoint URL by matching common host/path patterns. */
-export function deriveNetworkId(minaEndpoint: string): NetworkId {
+/** Queries the Mina node for its network ID, falling back to URL heuristics. */
+export async function fetchNetworkId(minaEndpoint: string): Promise<NetworkId> {
+  try {
+    const res = await fetch(minaEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '{ networkID }' }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const json = await res.json() as { data?: { networkID?: string } };
+    const raw = json.data?.networkID?.toLowerCase() ?? '';
+    if (raw.includes('mainnet')) return 'mainnet';
+    if (raw.includes('devnet')) return 'devnet';
+    if (raw.includes('testnet')) return 'testnet';
+  } catch { /* node unreachable, fall through */ }
+  // Fallback: guess from the URL
   const lower = minaEndpoint.toLowerCase();
   if (lower.includes('devnet')) return 'devnet';
   if (lower.includes('testnet') || lower.includes('lightnet') || lower.includes('localhost') || lower.includes('127.0.0.1')) {
@@ -39,7 +53,7 @@ export function readConfig(): UserConfig | null {
     }
     const networkId: NetworkId = parsed.networkId === 'mainnet' || parsed.networkId === 'devnet' || parsed.networkId === 'testnet'
       ? parsed.networkId
-      : deriveNetworkId(parsed.minaEndpoint);
+      : 'testnet';
     return {
       minaEndpoint: parsed.minaEndpoint,
       archiveEndpoint: parsed.archiveEndpoint,

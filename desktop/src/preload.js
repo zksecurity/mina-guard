@@ -26,8 +26,8 @@ contextBridge.exposeInMainWorld('mina', {
   },
 
   requestNetwork() {
-    console.log('[mina] requestNetwork (stub)');
-    return Promise.resolve({ networkID: 'mina:testnet' });
+    const id = initialConfig?.networkId ?? 'testnet';
+    return Promise.resolve({ networkID: `mina:${id}` });
   },
 
   sendTransaction(params) {
