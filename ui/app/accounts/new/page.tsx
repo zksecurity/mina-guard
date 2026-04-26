@@ -129,7 +129,11 @@ function CreateAccountWizard() {
     }
     if (name.trim()) saveAccountName(keypair.publicKey, name);
     const deployedAddress = keypair.publicKey;
-    void startOperation('Building deploy transaction...', async (onProgress) => {
+    let broadcasted = false;
+    // Await: don't redirect while the worker is still compiling/proving/signing.
+    // The user stays on the form and watches the global operation banner until
+    // the tx is broadcast — at which point we save the pending entry and route.
+    await startOperation('Building deploy transaction...', async (onProgress) => {
       const result = await deployAndSetupContract(captured, onProgress, signer);
       const txHash = extractTxHash(result);
       if (txHash) {
@@ -144,10 +148,11 @@ function CreateAccountWizard() {
           signerPubkey: wallet.address!,
           createdAt: new Date().toISOString(),
         });
+        broadcasted = true;
       }
       return result;
     });
-    router.push(`/accounts/${deployedAddress}`);
+    if (broadcasted) router.push(`/accounts/${deployedAddress}`);
   };
 
   /** Submits a CREATE_CHILD proposal on the parent and stashes deployment state for finalization. */

@@ -6,7 +6,12 @@ import { useAppContext } from '@/lib/app-context';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import { fetchBalance } from '@/lib/api';
 import { formatMina, truncateAddress, type ContractSummary } from '@/lib/types';
-import { getAccountName } from '@/lib/storage';
+import {
+  getAccountName,
+  getPendingTxs,
+  PENDING_TXS_CHANGED,
+  type PendingTx,
+} from '@/lib/storage';
 
 function networkLabel(networkId: string | null): string {
   if (networkId == null) return 'Network unknown';
@@ -96,6 +101,35 @@ export default function AccountsListPage() {
     ).length;
   }, [contracts, allContractOwners, wallet.address]);
 
+  // Pending deploys for the connected wallet — shown above the indexed list
+  // so the user can navigate back to a deploying account before it indexes.
+  const [pendingDeploys, setPendingDeploys] = useState<PendingTx[]>([]);
+  useEffect(() => {
+    const reload = () => {
+      if (!wallet.address) {
+        setPendingDeploys([]);
+        return;
+      }
+      const indexed = new Set(contracts.map((c) => c.address));
+      const next = getPendingTxs().filter(
+        (pt) =>
+          pt.kind === 'deploy' &&
+          pt.signerPubkey === wallet.address &&
+          !indexed.has(pt.contractAddress),
+      );
+      setPendingDeploys(next);
+    };
+    reload();
+    window.addEventListener(PENDING_TXS_CHANGED, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(PENDING_TXS_CHANGED, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, [wallet.address, contracts]);
+
+  const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
+
   const q = query.trim().toLowerCase();
   const matches = (c: ContractSummary): boolean => {
     if (!q) return true;
@@ -136,6 +170,19 @@ export default function AccountsListPage() {
             + Create account
           </Link>
         </div>
+
+        {pendingDeploys.length > 0 && (
+          <ul className="bg-safe-gray border border-yellow-400/30 rounded-xl divide-y divide-safe-border mb-4 overflow-hidden">
+            {pendingDeploys.map((pt) => (
+              <PendingDeployRow
+                key={pt.contractAddress}
+                pendingTx={pt}
+                explorerUrl={explorerUrl}
+                network={wallet.network}
+              />
+            ))}
+          </ul>
+        )}
 
         <div className="bg-safe-gray border border-safe-border rounded-xl">
           <div className="p-4 border-b border-safe-border">
@@ -245,6 +292,67 @@ function collectSubtree(
     return true;
   }
   return false;
+}
+
+/** Top-of-list row for an account whose deploy tx is broadcast but not yet
+ *  indexed. Links to /accounts/<address> so the user can return to the
+ *  pending detail page; auto-disappears once the indexer surfaces the
+ *  contract (cleanup happens on the detail page). */
+function PendingDeployRow({
+  pendingTx,
+  explorerUrl,
+  network,
+}: {
+  pendingTx: PendingTx;
+  explorerUrl: string;
+  network: string | null;
+}) {
+  const name = getAccountName(pendingTx.contractAddress);
+  return (
+    <li>
+      <Link
+        href={`/accounts/${pendingTx.contractAddress}`}
+        className="flex items-center gap-3 px-4 py-3 hover:bg-safe-hover transition-colors"
+      >
+        <div className="w-10 h-10 rounded-full bg-yellow-400/15 border border-yellow-400/40 flex items-center justify-center shrink-0">
+          <span className="text-yellow-300 font-bold text-xs">
+            {pendingTx.contractAddress.slice(3, 5).toUpperCase()}
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {name && <p className="text-sm font-semibold truncate">{name}</p>}
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-400/10 border border-yellow-400/30 text-yellow-200 shrink-0">
+              Deploying
+            </span>
+          </div>
+          <p className={`font-mono truncate ${name ? 'text-xs text-safe-text' : 'text-sm'}`}>
+            {truncateAddress(pendingTx.contractAddress, 10)}
+          </p>
+          <p className="text-xs text-safe-text mt-0.5 font-mono">
+            {explorerUrl ? (
+              <a
+                href={`${explorerUrl}/tx/${pendingTx.txHash}?network=${network ?? ''}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="underline hover:opacity-70"
+              >
+                {truncateAddress(pendingTx.txHash, 8)}
+              </a>
+            ) : (
+              truncateAddress(pendingTx.txHash, 8)
+            )}
+          </p>
+        </div>
+
+        <svg className="w-4 h-4 text-safe-text shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </Link>
+    </li>
+  );
 }
 
 interface AccountRowProps {
