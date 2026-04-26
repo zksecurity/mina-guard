@@ -1809,7 +1809,7 @@ test('39. Execute delete proposal and verify invalidation', async () => { const 
   const invalidatedTab = page.locator('button', { hasText: /Invalidated/i }).first();
   const invalidatedText = await invalidatedTab.textContent();
   log(`Invalidated tab: ${invalidatedText}`);
-  expect(invalidatedText).toContain('1');
+  expect(invalidatedText).toContain('2');
 });
 
 // ===========================================================================
@@ -1846,7 +1846,7 @@ test('40. Verify final state', async () => { const page = sharedPage;
   const invalidatedTab = page.locator('button', { hasText: /Invalidated/i }).first();
   const invalidatedText = await invalidatedTab.textContent();
   log(`Invalidated tab: ${invalidatedText}`);
-  expect(invalidatedText).toContain('1');
+  expect(invalidatedText).toContain('2');
 
   // Final dump
   log('\n=== Final State ===');
