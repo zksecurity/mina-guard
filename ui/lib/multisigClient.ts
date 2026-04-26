@@ -8,6 +8,7 @@ import type { WorkerApi } from './multisigClient.worker';
 import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
 import { signFields as ledgerSignFields, signFeePayer, checkLedgerReady } from '@/lib/ledgerWallet';
+import { getMinaGuardConfig } from '@/lib/endpoints';
 
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
@@ -55,6 +56,9 @@ function getWorkerApi(): Comlink.Remote<WorkerApi> {
       console.error('[multisigClient] worker messageerror:', e);
     });
     api = Comlink.wrap<WorkerApi>(worker);
+    // Push endpoints into the worker before it tries to compile or network.
+    // The worker gates configureNetwork() on this call, so no race.
+    void api.setConfig(getMinaGuardConfig());
   }
   return api;
 }

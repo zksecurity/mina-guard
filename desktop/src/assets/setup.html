@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MinaGuard — First-time setup</title>
+  <style>
+    :root {
+      --bg: #121312;
+      --gray: #1b1c1b;
+      --border: #303033;
+      --text: #A1A3A7;
+      --green: #12FF80;
+      --red: #ff4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: #fff;
+      padding: 2rem;
+    }
+    .card {
+      background: var(--gray);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 560px;
+    }
+    h1 { margin: 0 0 0.25rem; font-size: 1.25rem; font-weight: 600; }
+    .subtitle { color: var(--text); font-size: 0.875rem; margin: 0 0 1.5rem; }
+    label {
+      display: block;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      margin: 1rem 0 0.375rem;
+    }
+    .hint { color: var(--text); font-size: 0.75rem; margin: 0 0 0.5rem; }
+    input[type="text"] {
+      width: 100%;
+      padding: 0.625rem 0.75rem;
+      background: var(--bg);
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8125rem;
+    }
+    input[type="text"]:focus { outline: none; border-color: var(--green); }
+    .presets { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .preset {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.375rem 0.625rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .preset:hover { color: #fff; border-color: var(--green); }
+    .error { color: var(--red); font-size: 0.8125rem; min-height: 1.25rem; margin-top: 1rem; }
+    .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+    button.primary {
+      flex: 1;
+      background: var(--green);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+    }
+    button.secondary:hover { color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Connect to a Mina node</h1>
+    <p class="subtitle">Choose the Mina node and archive endpoints MinaGuard should use. You can change these later in Settings.</p>
+
+    <label for="mina">Mina node GraphQL URL</label>
+    <input type="text" id="mina" spellcheck="false" autocomplete="off" />
+
+    <label for="archive">Archive node GraphQL URL</label>
+    <input type="text" id="archive" spellcheck="false" autocomplete="off" />
+
+    <div class="presets">
+      <button class="preset" data-preset="mainnet">Mainnet (minascan.io)</button>
+      <button class="preset" data-preset="devnet">Devnet (minascan.io)</button>
+    </div>
+
+    <div class="error" id="error"></div>
+
+    <div class="actions">
+      <button class="secondary" id="cancel">Cancel</button>
+      <button class="primary" id="save">Save and continue</button>
+    </div>
+  </div>
+
+  <script>
+    const PRESETS = {
+      mainnet: {
+        mina: 'https://api.minascan.io/node/mainnet/v1/graphql',
+        archive: 'https://api.minascan.io/archive/mainnet/v1/graphql',
+      },
+      devnet: {
+        mina: 'https://api.minascan.io/node/devnet/v1/graphql',
+        archive: 'https://api.minascan.io/archive/devnet/v1/graphql',
+      },
+    };
+
+    const minaInput = document.getElementById('mina');
+    const archiveInput = document.getElementById('archive');
+    const errorEl = document.getElementById('error');
+    const saveBtn = document.getElementById('save');
+    const cancelBtn = document.getElementById('cancel');
+
+    const defaults = window.setup.getDefaults();
+    minaInput.value = defaults.minaEndpoint;
+    archiveInput.value = defaults.archiveEndpoint;
+
+    document.querySelectorAll('.preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const preset = PRESETS[btn.dataset.preset];
+        if (preset) {
+          minaInput.value = preset.mina;
+          archiveInput.value = preset.archive;
+        }
+      });
+    });
+
+    function validateUrl(value) {
+      try {
+        const u = new URL(value);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'URL must use http or https';
+        return null;
+      } catch {
+        return 'Not a valid URL';
+      }
+    }
+
+    saveBtn.addEventListener('click', async () => {
+      errorEl.textContent = '';
+      const mina = minaInput.value.trim();
+      const archive = archiveInput.value.trim();
+
+      const minaErr = validateUrl(mina);
+      if (minaErr) { errorEl.textContent = `Mina endpoint: ${minaErr}`; return; }
+      const archiveErr = validateUrl(archive);
+      if (archiveErr) { errorEl.textContent = `Archive endpoint: ${archiveErr}`; return; }
+
+      saveBtn.disabled = true;
+      try {
+        await window.setup.save({ minaEndpoint: mina, archiveEndpoint: archive });
+      } catch (err) {
+        errorEl.textContent = err?.message || String(err);
+        saveBtn.disabled = false;
+      }
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      window.setup.cancel();
+    });
+  </script>
+</body>
+</html>

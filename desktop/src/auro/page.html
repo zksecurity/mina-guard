@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MinaGuard — Auro Signing</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #121312;
+      color: #fff;
+    }
+    #status { font-size: 1.25rem; font-weight: 500; }
+    #detail { color: #A1A3A7; font-size: 0.875rem; }
+    .spinner {
+      width: 32px; height: 32px;
+      margin-bottom: 1.5rem;
+      border: 3px solid #303033;
+      border-top-color: #12FF80;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .done { color: #12FF80; }
+    .error { color: #ff4444; }
+  </style>
+</head>
+<body>
+  <div id="spinner" class="spinner"></div>
+  <h2 id="status">Waiting for Auro wallet...</h2>
+  <p id="detail"></p>
+  <script>
+    (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get('id');
+      const method = window.location.pathname.split('/auro/')[1];
+
+      const payloadRes = await fetch('/auro/payload?id=' + encodeURIComponent(id));
+      const payload = await payloadRes.json();
+
+      const statusEl = document.getElementById('status');
+      const detailEl = document.getElementById('detail');
+
+      // Wait for Auro to inject window.mina — the extension loads asynchronously.
+      function waitForAuro(timeoutMs) {
+        return new Promise((resolve) => {
+          if (window.mina) return resolve(true);
+
+          const onInit = () => { cleanup(); resolve(true); };
+          window.addEventListener('mina#initialized', onInit);
+
+          const poll = setInterval(() => {
+            if (window.mina) { cleanup(); resolve(true); }
+          }, 200);
+
+          const timeout = setTimeout(() => { cleanup(); resolve(false); }, timeoutMs);
+
+          function cleanup() {
+            window.removeEventListener('mina#initialized', onInit);
+            clearInterval(poll);
+            clearTimeout(timeout);
+          }
+        });
+      }
+
+      const spinnerEl = document.getElementById('spinner');
+
+      const found = await waitForAuro(5000);
+      if (!found) {
+        spinnerEl.style.display = 'none';
+        statusEl.className = 'error';
+        statusEl.textContent = 'Auro wallet not found';
+        detailEl.textContent = 'Please install the Auro extension in this browser.';
+        await fetch('/auro/callback', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, error: 'Auro wallet not installed' }),
+        });
+        return;
+      }
+
+      statusEl.textContent = 'Connecting to Auro...';
+      detailEl.textContent = method;
+
+      try {
+        // Re-establish connection before any call — Auro requires an active
+        // connection per page session even if the origin is already approved.
+        if (method !== 'requestAccounts') {
+          await window.mina.requestAccounts();
+        }
+
+        statusEl.textContent = 'Waiting for approval in Auro...';
+
+        let result;
+        switch (method) {
+          case 'requestAccounts':
+            result = await window.mina.requestAccounts();
+            break;
+          case 'signFields':
+            result = await window.mina.signFields(payload);
+            break;
+          case 'signMessage':
+            result = await window.mina.signMessage(payload);
+            break;
+          case 'sendTransaction':
+            result = await window.mina.sendTransaction(payload);
+            break;
+          default:
+            throw new Error('Unknown method: ' + method);
+        }
+
+        await fetch('/auro/callback', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, result }),
+        });
+
+        spinnerEl.style.display = 'none';
+        statusEl.className = 'done';
+        statusEl.textContent = 'Done — you can close this tab.';
+        detailEl.textContent = '';
+      } catch (err) {
+        spinnerEl.style.display = 'none';
+        statusEl.className = 'error';
+        statusEl.textContent = 'Auro request failed';
+        detailEl.textContent = err.message || String(err);
+
+        await fetch('/auro/callback', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, error: err.message || String(err) }),
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

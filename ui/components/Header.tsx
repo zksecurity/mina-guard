@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import WalletConnect from './WalletConnect';
 import TestnetFundButton from './TestnetFundButton';
+import NodeEndpointsChip from './NodeEndpointsChip';
 import type { WalletType } from '@/lib/types';
 
 interface HeaderProps {
@@ -36,16 +37,19 @@ export default function Header({
 }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-6 py-4 border-b border-safe-border">
-      <Link
-        href="/"
-        className="flex items-center gap-2 hover:opacity-80 transition-opacity shrink-0"
-        title="Back to accounts"
-      >
-        <div className="w-8 h-8 bg-safe-green rounded-full flex items-center justify-center">
-          <span className="text-safe-dark font-bold text-sm">M</span>
-        </div>
-        <span className="text-sm font-semibold hidden sm:inline">MinaGuard</span>
-      </Link>
+      <div className="flex items-center gap-3 shrink-0">
+        <Link
+          href="/"
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+          title="Back to accounts"
+        >
+          <div className="w-8 h-8 bg-safe-green rounded-full flex items-center justify-center">
+            <span className="text-safe-dark font-bold text-sm">M</span>
+          </div>
+          <span className="text-sm font-semibold hidden sm:inline">MinaGuard</span>
+        </Link>
+        <NodeEndpointsChip />
+      </div>
       <div className="flex items-center gap-3">
         {network && network !== 'mainnet' && connected && walletAddress && (
           <TestnetFundButton

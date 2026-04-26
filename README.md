@@ -69,6 +69,8 @@ Then restart lightnet (`./dev-helpers/lightnet-up.sh`) and the backend.
 
 ### Running
 
+To run in browser:
+
 ```bash
 # Run UI (from ui/ directory)
 cd ui && bun run dev
@@ -78,6 +80,19 @@ cd backend && bun run dev
 
 # Run contract tests
 bun run --filter contracts test
+```
+
+To run the Electron app:
+
+```bash
+# Build UI (from ui/ directory)
+cd ui && bun run build
+
+# Run backend API/indexer (from backend/ directory)
+cd backend && bun run dev
+
+# Run the Electron desktop app
+cd desktop && bun run dev
 ```
 
 ## E2E Testing

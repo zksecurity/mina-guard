@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "db:push": "prisma db push --skip-generate",
-    "dev": "bun run db:push && bun --env-file=.env --watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev": "bun run prisma:generate && bun run db:push && bun --env-file=.env --watch src/server.ts",
+    "build": "bun run prisma:generate && tsc -p tsconfig.json && cp -R src/generated dist/generated",
     "start": "bun run db:push && bun dist/server.js",
     "prisma:generate": "prisma generate",
+    "prisma:generate:sqlite": "node scripts/check-schema-sync.mjs && prisma generate --schema=prisma/schema.sqlite.prisma",
+    "prisma:schema-sql": "node scripts/check-schema-sync.mjs && DATABASE_URL=file:/tmp/mg-schema-dummy.db prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.sqlite.prisma --script",
+    "prisma:check-schema-sync": "node scripts/check-schema-sync.mjs",
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push"
   },

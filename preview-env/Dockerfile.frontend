@@ -11,6 +11,7 @@ COPY contracts/package.json contracts/
 COPY ui/package.json ui/
 COPY backend/package.json backend/
 COPY dev-helpers/package.json dev-helpers/
+COPY desktop/package.json desktop/
 COPY e2e/package.json e2e/
 
 # Copy o1js submodule (needed by ui postinstall to build mina-signer)
