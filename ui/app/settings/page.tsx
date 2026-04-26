@@ -5,19 +5,19 @@ import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import OwnerList from '@/components/OwnerList';
 import ThresholdBadge from '@/components/ThresholdBadge';
-import { clearCompileCache, getCompileCacheSize, isCompileCacheEnabledIDB, setCompileCacheEnabledIDB } from '@/lib/idb-compile-cache';
+import { clearCompileCache, getCompileCacheSize, setCompileCacheEnabledIDB } from '@/lib/idb-compile-cache';
+import { isCompileCacheEnabled, setCompileCacheEnabled } from '@/lib/storage';
 
 /** Settings page for owner set and threshold governance proposal shortcuts. */
 export default function SettingsPage() {
   const router = useRouter();
   const { wallet, multisig, owners } = useAppContext();
   const [cacheSize, setCacheSize] = useState<{ entries: number; bytes: number } | null>(null);
-  const [cacheEnabled, setCacheEnabled] = useState(true);
+  const [cacheEnabled, setCacheEnabled] = useState(() => isCompileCacheEnabled());
   const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     getCompileCacheSize().then(setCacheSize);
-    isCompileCacheEnabledIDB().then(setCacheEnabled);
   }, []);
 
   const handleClearCache = useCallback(async () => {
@@ -35,11 +35,7 @@ export default function SettingsPage() {
   return (
     <div>
       <div className="p-6 max-w-2xl space-y-6">
-        {!wallet.connected || !multisig ? (
-          <div className="text-center py-20">
-            <p className="text-safe-text">Connect wallet to manage contract settings</p>
-          </div>
-        ) : (
+        {wallet.connected && multisig ? (
           <>
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
               <div className="flex items-center justify-between mb-4">
@@ -89,48 +85,53 @@ export default function SettingsPage() {
                 <InfoRow label="Config Nonce" value={String(multisig.configNonce ?? '-')} mono />
               </div>
             </div>
-
-            <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
-              <h3 className="text-sm font-semibold mb-2">Compile Cache</h3>
-              <p className="text-xs text-safe-text mb-4">
-                Cached prover keys speed up contract compilation after page reloads.
-                {cacheSize && cacheSize.entries > 0 && (
-                  <> Currently using {(cacheSize.bytes / 1024 / 1024).toFixed(0)}MB ({cacheSize.entries} entries).</>
-                )}
-              </p>
-              <label className="flex items-center justify-between py-2 mb-3 cursor-pointer">
-                <span className="text-sm">Enable compile caching</span>
-                <button
-                  role="switch"
-                  aria-checked={cacheEnabled}
-                  onClick={() => {
-                    const next = !cacheEnabled;
-                    setCacheEnabled(next);
-                    setCompileCacheEnabledIDB(next);
-                  }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    cacheEnabled ? 'bg-safe-green' : 'bg-safe-border'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                      cacheEnabled ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </label>
-              {cacheSize && cacheSize.entries > 0 && (
-                <button
-                  onClick={handleClearCache}
-                  disabled={clearing}
-                  className="w-full p-2.5 border border-safe-border rounded-lg text-sm text-safe-text hover:text-red-400 hover:border-red-400 transition-colors disabled:opacity-50"
-                >
-                  {clearing ? 'Clearing...' : 'Clear Compile Cache'}
-                </button>
-              )}
-            </div>
           </>
+        ) : (
+          <div className="text-center py-20">
+            <p className="text-safe-text">Connect wallet to manage contract settings</p>
+          </div>
         )}
+
+        <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
+          <h3 className="text-sm font-semibold mb-2">Compile Cache</h3>
+          <p className="text-xs text-safe-text mb-4">
+            Cached prover keys speed up contract compilation after page reloads.
+            {cacheSize && cacheSize.entries > 0 && (
+              <> Currently using {(cacheSize.bytes / 1024 / 1024).toFixed(0)}MB ({cacheSize.entries} entries).</>
+            )}
+          </p>
+          <label className="flex items-center justify-between py-2 mb-3 cursor-pointer">
+            <span className="text-sm">Enable compile caching</span>
+            <button
+              role="switch"
+              aria-checked={cacheEnabled}
+              onClick={() => {
+                const next = !cacheEnabled;
+                setCacheEnabled(next);
+                setCompileCacheEnabled(next);
+                setCompileCacheEnabledIDB(next);
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                cacheEnabled ? 'bg-safe-green' : 'bg-safe-border'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                  cacheEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </label>
+          {cacheSize && cacheSize.entries > 0 && (
+            <button
+              onClick={handleClearCache}
+              disabled={clearing}
+              className="w-full p-2.5 border border-safe-border rounded-lg text-sm text-safe-text hover:text-red-400 hover:border-red-400 transition-colors disabled:opacity-50"
+            >
+              {clearing ? 'Clearing...' : 'Clear Compile Cache'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

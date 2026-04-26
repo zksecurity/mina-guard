@@ -25,6 +25,18 @@ export function clearUiStorage(): void {
   localStorage.removeItem(getKey('selected-contract'));
 }
 
+/** Returns whether compile caching is enabled (default: true). */
+export function isCompileCacheEnabled(): boolean {
+  if (typeof window === 'undefined') return true;
+  return localStorage.getItem(getKey('compile-cache-enabled')) !== 'false';
+}
+
+/** Persists the compile cache enabled/disabled preference. */
+export function setCompileCacheEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(getKey('compile-cache-enabled'), String(enabled));
+}
+
 /** Saves a user-assigned display name for a contract address. */
 export function saveAccountName(address: string, name: string): void {
   if (typeof window === 'undefined') return;
