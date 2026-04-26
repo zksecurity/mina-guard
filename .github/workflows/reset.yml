@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   reset:
-    runs-on: self-hosted
+    runs-on: [self-hosted, deploy]
     steps:
       - uses: actions/checkout@v4
         with:

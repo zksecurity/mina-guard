@@ -31,7 +31,7 @@ jobs:
   deploy:
     # Only run on PRs from the same repo (not forks) to prevent arbitrary code execution on the server
     if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: [self-hosted, deploy]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -113,7 +113,7 @@ jobs:
 
   teardown:
     if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: [self-hosted, deploy]
     steps:
       - uses: actions/checkout@v4
 
