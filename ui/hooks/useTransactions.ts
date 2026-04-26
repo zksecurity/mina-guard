@@ -63,6 +63,14 @@ export function useTransactions(multisigAddress: string | null) {
       const indexed = indexedByHash.get(pt.proposalHash);
 
       if (pt.kind === 'create') {
+        // CREATE_CHILD entries need to live until the child *contract* is
+        // indexed (Finalize deployment runs the child deploy + setup). The
+        // parent's CREATE_CHILD proposal getting indexed is just step 1 — if
+        // we cleared here, the Finalize button on PendingSubaccountsBanner
+        // would vanish before the user could click it. PendingSubaccountsBanner
+        // owns the cleanup for those entries (keyed off the contracts list).
+        if (pt.childAccount) continue;
+
         if (indexed) {
           clearPendingTx(pt.contractAddress, pt.proposalHash, 'create', pt.signerPubkey);
           dirty = true;
