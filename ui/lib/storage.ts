@@ -63,7 +63,10 @@ export function getAccountName(address: string): string | null {
 // a thin compat layer so the CREATE_CHILD wizard's "Finalize deployment"
 // flow keeps working.
 
-export type PendingTxKind = 'create' | 'approve' | 'execute';
+/** `deploy` covers the brand-new top-level contract deployment flow
+ *  (`deployAndSetupContract`). It has no proposalHash — the contract address
+ *  itself is the unique identity, stored in `proposalHash` as a sentinel. */
+export type PendingTxKind = 'create' | 'approve' | 'execute' | 'deploy';
 
 /** Snapshot of proposal data captured at creation time so the detail page
  *  can render a meaningful card before the indexer catches up. Only set on

@@ -13,6 +13,7 @@ import {
   generateKeypair,
 } from '@/lib/multisigClient';
 import { saveAccountName, savePendingTx } from '@/lib/storage';
+import { extractTxHash } from '@/lib/api';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', networkId: '0', enabled: true },
@@ -127,10 +128,26 @@ function CreateAccountWizard() {
       return;
     }
     if (name.trim()) saveAccountName(keypair.publicKey, name);
+    const deployedAddress = keypair.publicKey;
     void startOperation('Building deploy transaction...', async (onProgress) => {
-      return await deployAndSetupContract(captured, onProgress, signer);
+      const result = await deployAndSetupContract(captured, onProgress, signer);
+      const txHash = extractTxHash(result);
+      if (txHash) {
+        // Persist a deploy-pending entry so /accounts/<address> can show
+        // "submitted, awaiting inclusion" with the explorer link until the
+        // indexer surfaces the contract.
+        savePendingTx({
+          kind: 'deploy',
+          contractAddress: deployedAddress,
+          proposalHash: deployedAddress,
+          txHash,
+          signerPubkey: wallet.address!,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      return result;
     });
-    router.push(`/accounts/${keypair.publicKey}?pending=1`);
+    router.push(`/accounts/${deployedAddress}`);
   };
 
   /** Submits a CREATE_CHILD proposal on the parent and stashes deployment state for finalization. */

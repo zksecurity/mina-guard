@@ -21,8 +21,11 @@ import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
 import {
   clearPendingSubaccount,
+  clearPendingTx,
   getPendingSubaccountsForParent,
+  getPendingTx,
   PENDING_SUBACCOUNTS_CHANGED,
+  PENDING_TXS_CHANGED,
   type PendingSubaccount,
 } from '@/lib/storage';
 
@@ -93,6 +96,37 @@ export default function AccountPage() {
     });
     return () => { cancelled = true; };
   }, [multisig?.address, indexerStatus?.lastSuccessfulRunAt]);
+
+  // Pending deploy: localStorage entry written by accounts/new/page.tsx after
+  // the deploy tx is broadcast. Drives the "submitted, awaiting inclusion"
+  // banner until the indexer surfaces the contract.
+  const [pendingDeployTxHash, setPendingDeployTxHash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!urlAddress) {
+      setPendingDeployTxHash(null);
+      return;
+    }
+    const reload = () => {
+      const pt = getPendingTx(urlAddress, urlAddress, 'deploy');
+      setPendingDeployTxHash(pt ? pt.txHash : null);
+    };
+    reload();
+    window.addEventListener(PENDING_TXS_CHANGED, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(PENDING_TXS_CHANGED, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, [urlAddress]);
+  // Clear the deploy-pending entry once the contract has been indexed.
+  useEffect(() => {
+    if (!urlAddress || !pendingDeployTxHash) return;
+    if (contracts.some((c) => c.address === urlAddress)) {
+      clearPendingTx(urlAddress, urlAddress, 'deploy');
+    }
+  }, [urlAddress, contracts, pendingDeployTxHash]);
+
+  const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
 
   return (
     <div>
@@ -230,9 +264,28 @@ export default function AccountPage() {
             </div>
           </div>
         ) : urlAddress && !contracts.some((c) => c.address === urlAddress) ? (
-          isPendingIndex ? (
-            <div className="text-center py-20">
-              <p className="text-safe-text">Your account will appear here shortly…</p>
+          pendingDeployTxHash || isPendingIndex ? (
+            <div className="rounded-xl border p-4 text-sm space-y-1 border-yellow-400/30 bg-yellow-400/10 text-yellow-200 max-w-2xl">
+              <p className="font-semibold">Deploying account — awaiting inclusion</p>
+              <p className="opacity-90">
+                Your contract was broadcast to the network. It should appear here once the next block is produced (~3 min).
+              </p>
+              {pendingDeployTxHash && (
+                <p className="text-xs opacity-90 pt-1 font-mono">
+                  {explorerUrl ? (
+                    <a
+                      href={`${explorerUrl}/tx/${pendingDeployTxHash}?network=${wallet.network ?? ''}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:opacity-100"
+                    >
+                      {truncateAddress(pendingDeployTxHash, 8)}
+                    </a>
+                  ) : (
+                    truncateAddress(pendingDeployTxHash, 8)
+                  )}
+                </p>
+              )}
             </div>
           ) : (
             <div className="text-center py-20">
