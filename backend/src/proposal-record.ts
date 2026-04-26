@@ -1,4 +1,4 @@
-import type { Proposal, ProposalReceiver } from '@prisma/client';
+import type { Proposal, ProposalReceiver } from './generated/prisma/index.js';
 
 export interface ProposalReceiverRecord {
   index: number;
