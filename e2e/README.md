@@ -137,7 +137,7 @@ This invokes Playwright directly and streams all `[e2e-setup]`, `[e2e]`, and `[e
 
 ## Test coverage
 
-55 serial tests in `onchain-flow.test.ts`, split into on-chain lifecycle tests and UI validation tests. All run in a single browser page with periodic page recycles to keep WASM memory under the V8 heap limit.
+53 serial tests in `onchain-flow.test.ts`, split into on-chain lifecycle tests and UI validation tests. All run in a single browser page with periodic page recycles to keep WASM memory under the V8 heap limit.
 
 ### Contract lifecycle (tests 1–11)
 
