@@ -136,6 +136,45 @@ build_services_sequentially() {
     done
 }
 
+# Compiles the MinaGuard zkApp circuit on the host once and exports the
+# verification key hash so the backend Dockerfile can skip its in-image
+# compile (which OOM-kills inside CI's Docker build). Honors a
+# pre-set MINAGUARD_VK_HASH env var to avoid recompiling between runs.
+ensure_vk_hash() {
+    if [ -n "${MINAGUARD_VK_HASH:-}" ]; then
+        echo "Using MINAGUARD_VK_HASH from environment: ${MINAGUARD_VK_HASH}"
+        export MINAGUARD_VK_HASH
+        return
+    fi
+
+    if ! command -v bun >/dev/null 2>&1; then
+        echo "ERROR: bun is not on PATH. Either install bun on the host, or" >&2
+        echo "       export MINAGUARD_VK_HASH=<hash> before running preview.sh." >&2
+        exit 1
+    fi
+
+    # vk-hash compile imports the built contracts package; without this the
+    # bun runner errors out before printing any vkHash: line.
+    echo "Building contracts package..."
+    bun run --filter contracts build
+
+    echo "Computing MinaGuard verification key hash on host (this can take several minutes)..."
+    local output hash
+    output=$(bun run dev-helpers/cli.ts vk-hash compile 2>&1) || {
+        echo "ERROR: vk-hash compile exited non-zero. Output:" >&2
+        echo "$output" >&2
+        exit 1
+    }
+    hash=$(echo "$output" | awk '/^vkHash:/{print $2}')
+    if [ -z "$hash" ]; then
+        echo "ERROR: vk-hash compile printed no 'vkHash:' line. Full output:" >&2
+        echo "$output" >&2
+        exit 1
+    fi
+    export MINAGUARD_VK_HASH="$hash"
+    echo "MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH}"
+}
+
 case "$COMMAND" in
     up)
         if [ -z "$PR_NUMBER" ]; then
@@ -156,6 +195,7 @@ case "$COMMAND" in
         echo "Deploying PR #${PR_NUMBER} preview on port ${PREVIEW_PORT}..."
 
         export PR_NUMBER PREVIEW_PORT
+        ensure_vk_hash
         build_services_sequentially \
             -f preview-env/docker-compose.preview.yml \
             -p "pr-${PR_NUMBER}"
@@ -187,10 +227,19 @@ case "$COMMAND" in
         fi
 
         echo "Tearing down PR #${PR_NUMBER} preview..."
-        docker compose -p "pr-${PR_NUMBER}" down -v --remove-orphans --rmi local 2>&1 || true
+        # Only invoke `docker compose down` when there's actually a project to
+        # tear down. Older runs got away with running it unconditionally; some
+        # docker compose versions return non-zero on "no resource found" and
+        # `set -e` would then abort `preview.sh up`'s clean-slate down step.
+        if docker compose ls --all --format json 2>/dev/null \
+                | grep -q "\"Name\":\"pr-${PR_NUMBER}\""; then
+            docker compose -p "pr-${PR_NUMBER}" down -v --remove-orphans --rmi local 2>&1 || true
+        else
+            echo "No compose project pr-${PR_NUMBER} — skipping docker compose down."
+        fi
 
-        # Remove route from main Caddy
-        remove_caddy_route "$PR_NUMBER"
+        # Remove route from main Caddy (idempotent: 404 is fine)
+        remove_caddy_route "$PR_NUMBER" || true
 
         echo "Done."
         ;;

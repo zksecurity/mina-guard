@@ -44,6 +44,12 @@ services:
     build:
       context: ..
       dockerfile: preview-env/Dockerfile.backend
+      args:
+        # When set, the Dockerfile skips the in-image circuit compile and
+        # writes this value to /app/.vk-hash. preview.sh computes it once on
+        # the host before invoking compose build to avoid OOM kills inside
+        # the Docker build.
+        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-}
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
