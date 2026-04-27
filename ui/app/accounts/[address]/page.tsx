@@ -15,7 +15,7 @@ import {
   type TxTypeOption,
 } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
-import { fetchBalance, fetchChildren, fetchProposal } from '@/lib/api';
+import { extractTxHash, fetchBalance, fetchChildren, fetchProposal, fetchTxStatus } from '@/lib/api';
 import { deployAndSetupChildOnchain } from '@/lib/multisigClient';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
@@ -24,9 +24,12 @@ import {
   clearPendingTx,
   getPendingSubaccountsForParent,
   getPendingTx,
+  getPendingTxs,
   PENDING_SUBACCOUNTS_CHANGED,
   PENDING_TXS_CHANGED,
+  savePendingTx,
   type PendingSubaccount,
+  type PendingTx,
 } from '@/lib/storage';
 
 /** Account detail page — reads address from URL, syncs AppContext selection. */
@@ -482,7 +485,13 @@ function PendingSubaccountsBanner({
   // disables every other Finalize button (one operation at a time), but
   // they keep their default label.
   const [finalizingChild, setFinalizingChild] = useState<string | null>(null);
+  // Per-child deploy-pending entries (kind='deploy', keyed by childAddress).
+  // Drives the "Finalizing… awaiting inclusion" state from broadcast through
+  // child-contract indexing — separate from `finalizingChild` which only
+  // covers the wallet/proof phase.
+  const [pendingDeployByChild, setPendingDeployByChild] = useState<Map<string, PendingTx>>(new Map());
   const parentThreshold = multisig?.address === parentAddress ? (multisig.threshold ?? 0) : 0;
+  const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
 
   // Reload from localStorage when the parent changes, the indexer ticks, or
   // savePendingSubaccount/clearPendingSubaccount fires its custom event (so
@@ -494,23 +503,77 @@ function PendingSubaccountsBanner({
     return () => window.removeEventListener(PENDING_SUBACCOUNTS_CHANGED, reload);
   }, [parentAddress, indexerStatus?.lastSuccessfulRunAt]);
 
+  // Track every kind='deploy' entry that targets a child of this parent.
+  // PENDING_TXS_CHANGED fires within the tab on save/clear; storage covers
+  // cross-tab updates.
+  useEffect(() => {
+    const reload = () => {
+      const childAddresses = new Set(
+        getPendingSubaccountsForParent(parentAddress).map((r) => r.childAddress),
+      );
+      const next = new Map<string, PendingTx>();
+      for (const pt of getPendingTxs()) {
+        if (pt.kind !== 'deploy') continue;
+        if (!childAddresses.has(pt.contractAddress)) continue;
+        next.set(pt.contractAddress, pt);
+      }
+      setPendingDeployByChild(next);
+    };
+    reload();
+    window.addEventListener(PENDING_TXS_CHANGED, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(PENDING_TXS_CHANGED, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, [parentAddress, indexerStatus?.lastSuccessfulRunAt]);
+
   // Hide entries whose child has already been indexed.
   const visible = useMemo(() => {
     const indexedAddresses = new Set(contracts.map((c) => c.address));
     return pending.filter((p) => !indexedAddresses.has(p.childAddress));
   }, [pending, contracts]);
 
-  // Auto-clean records for already-indexed children.
+  // Auto-clean records for already-indexed children. Drops both the
+  // CREATE_CHILD wizard entry and any deploy-pending entry tied to that
+  // child — both lifecycles end the same moment the child contract is
+  // surfaced by the indexer.
   useEffect(() => {
     const indexedAddresses = new Set(contracts.map((c) => c.address));
     const stale = pending.filter((p) => indexedAddresses.has(p.childAddress));
     for (const p of stale) {
       clearPendingSubaccount(p.parentAddress, p.childAddress);
+      clearPendingTx(p.childAddress, p.childAddress, 'deploy');
     }
     if (stale.length > 0) {
       setPending(getPendingSubaccountsForParent(parentAddress));
     }
   }, [pending, contracts, parentAddress]);
+
+  // Daemon-probe failure path: for each in-flight finalize tx older than
+  // 30 s, ask the daemon for its inclusion status. If 'failed', drop the
+  // entry so the row re-enables Finalize for retry. Cadence is bounded by
+  // the indexerStatus tick (~10 s) so we never busy-poll.
+  useEffect(() => {
+    const stale: PendingTx[] = [];
+    for (const pt of pendingDeployByChild.values()) {
+      if (!pt.txHash) continue;
+      const ageMs = Date.now() - new Date(pt.createdAt).getTime();
+      if (ageMs >= 30_000) stale.push(pt);
+    }
+    if (stale.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const pt of stale) {
+        const status = await fetchTxStatus(pt.txHash);
+        if (cancelled) return;
+        if (status?.status === 'failed') {
+          clearPendingTx(pt.contractAddress, pt.proposalHash, 'deploy', pt.signerPubkey);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pendingDeployByChild, indexerStatus?.lastSuccessfulRunAt]);
 
   if (visible.length === 0) return null;
 
@@ -533,6 +596,22 @@ function PendingSubaccountsBanner({
           childThreshold: record.childThreshold,
           proposal,
         }, onProgress, signer);
+        // Persist a deploy-pending entry so the row stays disabled with
+        // "Finalizing… awaiting inclusion" until the child contract is
+        // indexed (auto-cleanup below) — same lifecycle as a top-level
+        // deploy. Without this, finalizingChild is cleared the moment the
+        // tx is broadcast and the user could re-click and waste a fee.
+        const txHash = extractTxHash(result);
+        if (txHash) {
+          savePendingTx({
+            kind: 'deploy',
+            contractAddress: record.childAddress,
+            proposalHash: record.childAddress,
+            txHash,
+            signerPubkey: wallet.address!,
+            createdAt: new Date().toISOString(),
+          });
+        }
         return result;
       });
     } finally {
@@ -551,14 +630,22 @@ function PendingSubaccountsBanner({
           // Proposal must be indexed, still pending, and at or above the
           // parent's threshold before executeSetupChild can succeed.
           const thresholdMet = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= parentThreshold;
-          const canFinalize = thresholdMet;
-          const statusHint = !proposal
-            ? 'Waiting for indexer…'
-            : proposal.status !== 'pending'
-              ? `Proposal ${proposal.status}`
-              : proposal.approvalCount < parentThreshold
-                ? `${proposal.approvalCount}/${parentThreshold} approvals`
-                : null;
+          const finalizeInFlight = pendingDeployByChild.get(record.childAddress);
+          const canFinalize = thresholdMet && !finalizeInFlight;
+          const buttonLabel = finalizingChild === record.childAddress
+            ? 'Finalizing…'
+            : finalizeInFlight
+              ? 'Finalizing… awaiting inclusion'
+              : 'Finalize deployment';
+          const statusHint = finalizeInFlight
+            ? 'Awaiting inclusion'
+            : !proposal
+              ? 'Waiting for indexer…'
+              : proposal.status !== 'pending'
+                ? `Proposal ${proposal.status}`
+                : proposal.approvalCount < parentThreshold
+                  ? `${proposal.approvalCount}/${parentThreshold} approvals`
+                  : null;
           return (
             <li
               key={`${record.parentAddress}:${record.childAddress}`}
@@ -576,6 +663,18 @@ function PendingSubaccountsBanner({
                   {record.childThreshold}/{record.childOwners.length} owners
                   {statusHint && <> · <span className="text-amber-300">{statusHint}</span></>}
                 </p>
+                {finalizeInFlight && explorerUrl && (
+                  <p className="text-[10px] text-safe-text mt-0.5 font-mono">
+                    <a
+                      href={`${explorerUrl}/tx/${finalizeInFlight.txHash}?network=${wallet.network ?? ''}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:opacity-70"
+                    >
+                      {truncateAddress(finalizeInFlight.txHash, 8)}
+                    </a>
+                  </p>
+                )}
               </div>
               {isOwner && (
                 <button
@@ -585,9 +684,11 @@ function PendingSubaccountsBanner({
                   className="bg-safe-green text-safe-dark text-xs font-semibold rounded-lg px-3 py-1.5 hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   title={canFinalize
                     ? 'Runs executeSetupChild on the new child address.'
-                    : 'Waiting for the parent CREATE_CHILD proposal to reach threshold.'}
+                    : finalizeInFlight
+                      ? 'Finalize tx broadcast — waiting for the child contract to land on-chain.'
+                      : 'Waiting for the parent CREATE_CHILD proposal to reach threshold.'}
                 >
-                  {finalizingChild === record.childAddress ? 'Finalizing…' : 'Finalize deployment'}
+                  {buttonLabel}
                 </button>
               )}
             </li>
