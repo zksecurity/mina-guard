@@ -1367,7 +1367,7 @@ test('25c. Propose and execute with memo mismatch', async () => { const page = s
   // worker sees memo=null and doesn't set a transaction memo. memoHash is
   // preserved so the struct hash is still correct and the circuit accepts.
   const stripMemo = (obj: any) => { if (obj && obj.proposalHash === mismatchHash) obj.memo = null; };
-  await page.route('**/proposals**', async (route: Route) => {
+  const memoInterceptHandler = async (route: Route) => {
     const response = await route.fetch();
     const body = await response.json();
     if (Array.isArray(body)) body.forEach(stripMemo);
@@ -1377,7 +1377,10 @@ test('25c. Propose and execute with memo mismatch', async () => { const page = s
       body: JSON.stringify(body),
       headers: { ...response.headers(), 'content-type': 'application/json' },
     });
-  });
+  };
+  // Intercept both the single-proposal and proposals-list endpoints
+  await page.route(`**/proposals/${mismatchHash}`, memoInterceptHandler);
+  await page.route(/\/proposals(\?|$)/, memoInterceptHandler);
 
   await gotoWithWallet(`/transactions/${mismatchHash}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
@@ -1390,8 +1393,9 @@ test('25c. Propose and execute with memo mismatch', async () => { const page = s
   log('Waiting for execute transaction...');
   await waitForBanner(page, 'success');
 
-  // Remove intercept before verifying
-  await page.unroute('**/proposals**');
+  // Remove intercepts before verifying
+  await page.unroute(`**/proposals/${mismatchHash}`);
+  await page.unroute(/\/proposals(\?|$)/);
 
   await waitForIndexer(
     'indexer processes mismatch execution',
