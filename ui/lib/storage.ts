@@ -56,16 +56,15 @@ export function getAccountName(address: string): string | null {
 
 // -- Pending in-flight transactions ------------------------------------
 //
-// One generic store covers three flavors of "tx is broadcast, awaiting
-// inclusion": create, approve, execute. The `useTransactions` hook
+// One generic store covers four flavors of "tx is broadcast, awaiting
+// inclusion": create, approve, execute, deploy. The `useTransactions` hook
 // reconciles these against the indexer each tick and clears them once the
-// on-chain reality matches. The legacy `PendingSubaccount` API is kept as
-// a thin compat layer so the CREATE_CHILD wizard's "Finalize deployment"
-// flow keeps working.
+// on-chain reality matches.
 
 /** `deploy` covers the brand-new top-level contract deployment flow
- *  (`deployAndSetupContract`). It has no proposalHash — the contract address
- *  itself is the unique identity, stored in `proposalHash` as a sentinel. */
+ *  (`deployAndSetupContract`) and the CREATE_CHILD wizard's "Finalize
+ *  deployment" step. It has no proposalHash — the contract address itself
+ *  is the unique identity, stored in `proposalHash` as a sentinel. */
 export type PendingTxKind = 'create' | 'approve' | 'execute' | 'deploy';
 
 /** Snapshot of proposal data captured at creation time so the detail page
@@ -96,10 +95,9 @@ export interface PendingTx {
   kind: PendingTxKind;
   contractAddress: string;
   proposalHash: string;
-  /** Mina tx hash returned by the daemon. May be empty when imported from
-   *  the legacy PendingSubaccount store, which never recorded it. */
+  /** Mina tx hash returned by the daemon. */
   txHash: string;
-  /** Submitting wallet's base58 pubkey. Empty for legacy-imported records. */
+  /** Submitting wallet's base58 pubkey. */
   signerPubkey: string;
   createdAt: string;
   summary?: PendingTxSummary;
@@ -107,21 +105,16 @@ export interface PendingTx {
 }
 
 const PENDING_TXS_KEY = getKey('pending-txs');
-const LEGACY_PENDING_SUBACCOUNTS_KEY = getKey('pending-subaccounts');
-/** 24h prune window — survives long-lived sessions and matches the prior
- *  PendingSubaccount cadence. */
+/** 24h prune window — survives long-lived sessions. */
 const PENDING_TX_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Custom event dispatched on save/clear so banners can refresh in the same tab.
  *  The native `storage` event only fires across tabs, so we use a custom event. */
 export const PENDING_TXS_CHANGED = 'mina-guard-pending-txs-changed';
-/** Legacy event preserved so existing PendingSubaccountsBanner listeners still trigger. */
-export const PENDING_SUBACCOUNTS_CHANGED = 'mina-guard-pending-subaccounts-changed';
 
 function notifyPendingTxsChanged(): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(PENDING_TXS_CHANGED));
-  window.dispatchEvent(new CustomEvent(PENDING_SUBACCOUNTS_CHANGED));
 }
 
 function pruneStale(records: PendingTx[]): PendingTx[] {
@@ -133,61 +126,17 @@ function pruneStale(records: PendingTx[]): PendingTx[] {
   });
 }
 
-function migrateLegacyPendingSubaccounts(): PendingTx[] {
-  if (typeof window === 'undefined') return [];
-  const legacy = localStorage.getItem(LEGACY_PENDING_SUBACCOUNTS_KEY);
-  if (!legacy) return [];
-  try {
-    const parsed = JSON.parse(legacy);
-    if (!Array.isArray(parsed)) {
-      localStorage.removeItem(LEGACY_PENDING_SUBACCOUNTS_KEY);
-      return [];
-    }
-    const migrated: PendingTx[] = parsed.map((r: Record<string, unknown>) => ({
-      kind: 'create',
-      contractAddress: String(r.parentAddress ?? ''),
-      proposalHash: String(r.proposalHash ?? ''),
-      txHash: '',
-      signerPubkey: '',
-      createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
-      childAccount: {
-        childAddress: String(r.childAddress ?? ''),
-        childPrivateKey: String(r.childPrivateKey ?? ''),
-        childOwners: Array.isArray(r.childOwners) ? (r.childOwners as string[]) : [],
-        childThreshold: typeof r.childThreshold === 'number' ? r.childThreshold : 0,
-        childName: typeof r.childName === 'string' ? r.childName : '',
-        expiryBlock:
-          typeof r.expiryBlock === 'number' || r.expiryBlock === null
-            ? (r.expiryBlock as number | null)
-            : null,
-      },
-    }));
-    localStorage.removeItem(LEGACY_PENDING_SUBACCOUNTS_KEY);
-    return migrated;
-  } catch {
-    localStorage.removeItem(LEGACY_PENDING_SUBACCOUNTS_KEY);
-    return [];
-  }
-}
-
 function readPendingTxsRaw(): PendingTx[] {
   if (typeof window === 'undefined') return [];
   const raw = localStorage.getItem(PENDING_TXS_KEY);
-  let records: PendingTx[] = [];
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) records = parsed as PendingTx[];
-    } catch {
-      // Bad JSON — drop and rewrite below.
-    }
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as PendingTx[];
+  } catch {
+    // Bad JSON — fall through and return empty.
   }
-  const migrated = migrateLegacyPendingSubaccounts();
-  if (migrated.length > 0) {
-    records = [...records, ...migrated];
-    writePendingTxs(records);
-  }
-  return records;
+  return [];
 }
 
 function writePendingTxs(records: PendingTx[]): void {
@@ -255,75 +204,10 @@ export function clearPendingTx(
   notifyPendingTxsChanged();
 }
 
-// -- Legacy PendingSubaccount compat layer -----------------------------
-//
-// The CREATE_CHILD wizard wrote/read a separate localStorage entry and
-// listened on `PENDING_SUBACCOUNTS_CHANGED`. Those callers stay untouched;
-// we just route them through the generic store under `kind='create'`.
-
-/** Pending subaccount deployment record persisted between the wizard's
- *  "submit CREATE_CHILD proposal" step and the later "Finalize deployment"
- *  step that runs `executeSetupChild` on the new child. */
-export interface PendingSubaccount {
-  parentAddress: string;
-  childAddress: string;
-  childPrivateKey: string;
-  childOwners: string[];
-  childThreshold: number;
-  childName: string;
-  proposalHash: string;
-  expiryBlock: number | null;
-  createdAt: string;
-}
-
-/** Reads all pending subaccount records (across all parents) from localStorage. */
-export function getPendingSubaccounts(): PendingSubaccount[] {
-  return getPendingTxs()
-    .filter((r) => r.kind === 'create' && r.childAccount)
-    .map((r) => ({
-      parentAddress: r.contractAddress,
-      childAddress: r.childAccount!.childAddress,
-      childPrivateKey: r.childAccount!.childPrivateKey,
-      childOwners: r.childAccount!.childOwners,
-      childThreshold: r.childAccount!.childThreshold,
-      childName: r.childAccount!.childName,
-      proposalHash: r.proposalHash,
-      expiryBlock: r.childAccount!.expiryBlock,
-      createdAt: r.createdAt,
-    }));
-}
-
-/** Lists pending subaccount records for a single parent address. */
-export function getPendingSubaccountsForParent(parentAddress: string): PendingSubaccount[] {
-  return getPendingSubaccounts().filter((r) => r.parentAddress === parentAddress);
-}
-
-/** Inserts or replaces a pending subaccount record keyed by (parent, child).
- *  Preserves any existing tx hash / signer info already on the matching
- *  PendingTx record (set by `savePendingTx` from the create flow). */
-export function savePendingSubaccount(record: PendingSubaccount): void {
-  const existing = getPendingTx(record.parentAddress, record.proposalHash, 'create');
-  savePendingTx({
-    kind: 'create',
-    contractAddress: record.parentAddress,
-    proposalHash: record.proposalHash,
-    txHash: existing?.txHash ?? '',
-    signerPubkey: existing?.signerPubkey ?? '',
-    createdAt: record.createdAt,
-    summary: existing?.summary,
-    childAccount: {
-      childAddress: record.childAddress,
-      childPrivateKey: record.childPrivateKey,
-      childOwners: record.childOwners,
-      childThreshold: record.childThreshold,
-      childName: record.childName,
-      expiryBlock: record.expiryBlock,
-    },
-  });
-}
-
-/** Removes any pending subaccount records matching the given parent+child pair. */
-export function clearPendingSubaccount(parentAddress: string, childAddress: string): void {
+/** Drops the kind='create' pending entry that targets a specific child of a
+ *  parent guard. Both the CREATE_CHILD wizard's "retry" path and the banner's
+ *  dead-entry cleanup need this; neither knows the proposalHash up front. */
+export function clearPendingCreateChild(parentAddress: string, childAddress: string): void {
   const matches = getPendingTxsForContract(parentAddress).filter(
     (r) => r.kind === 'create' && r.childAccount?.childAddress === childAddress,
   );

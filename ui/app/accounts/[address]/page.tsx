@@ -20,15 +20,13 @@ import { deployAndSetupChildOnchain } from '@/lib/multisigClient';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
 import {
-  clearPendingSubaccount,
+  clearPendingCreateChild,
   clearPendingTx,
-  getPendingSubaccountsForParent,
   getPendingTx,
   getPendingTxs,
-  PENDING_SUBACCOUNTS_CHANGED,
+  getPendingTxsForContract,
   PENDING_TXS_CHANGED,
   savePendingTx,
-  type PendingSubaccount,
   type PendingTx,
 } from '@/lib/storage';
 
@@ -479,7 +477,7 @@ function PendingSubaccountsBanner({
   isOwner: boolean;
 }) {
   const { wallet, indexerStatus, contracts, proposals, multisig, startOperation, isOperating } = useAppContext();
-  const [pending, setPending] = useState<PendingSubaccount[]>([]);
+  const [pending, setPending] = useState<PendingTx[]>([]);
   // Tracks the *specific* child whose finalize is in flight so only that
   // row's button shows "Finalizing…". The global `isOperating` flag still
   // disables every other Finalize button (one operation at a time), but
@@ -493,23 +491,35 @@ function PendingSubaccountsBanner({
   const parentThreshold = multisig?.address === parentAddress ? (multisig.threshold ?? 0) : 0;
   const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
 
+  const loadPendingCreateChild = useCallback(
+    () =>
+      getPendingTxsForContract(parentAddress).filter(
+        (r) => r.kind === 'create' && !!r.childAccount,
+      ),
+    [parentAddress],
+  );
+
   // Reload from localStorage when the parent changes, the indexer ticks, or
-  // savePendingSubaccount/clearPendingSubaccount fires its custom event (so
-  // the banner refreshes immediately after the wizard's background save).
+  // any PendingTx is saved/cleared (so the banner refreshes immediately after
+  // the wizard's background save).
   useEffect(() => {
-    const reload = () => setPending(getPendingSubaccountsForParent(parentAddress));
+    const reload = () => setPending(loadPendingCreateChild());
     reload();
-    window.addEventListener(PENDING_SUBACCOUNTS_CHANGED, reload);
-    return () => window.removeEventListener(PENDING_SUBACCOUNTS_CHANGED, reload);
-  }, [parentAddress, indexerStatus?.lastSuccessfulRunAt]);
+    window.addEventListener(PENDING_TXS_CHANGED, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(PENDING_TXS_CHANGED, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, [loadPendingCreateChild, indexerStatus?.lastSuccessfulRunAt]);
 
   // Track every kind='deploy' entry that targets a child of this parent.
-  // PENDING_TXS_CHANGED fires within the tab on save/clear; storage covers
-  // cross-tab updates.
   useEffect(() => {
     const reload = () => {
       const childAddresses = new Set(
-        getPendingSubaccountsForParent(parentAddress).map((r) => r.childAddress),
+        loadPendingCreateChild()
+          .map((r) => r.childAccount?.childAddress)
+          .filter((a): a is string => !!a),
       );
       const next = new Map<string, PendingTx>();
       for (const pt of getPendingTxs()) {
@@ -526,7 +536,7 @@ function PendingSubaccountsBanner({
       window.removeEventListener(PENDING_TXS_CHANGED, reload);
       window.removeEventListener('storage', reload);
     };
-  }, [parentAddress, indexerStatus?.lastSuccessfulRunAt]);
+  }, [loadPendingCreateChild, indexerStatus?.lastSuccessfulRunAt]);
 
   // A pending entry is "dead" when there's no path to finalize:
   //   - the child contract is already indexed (the happy path), OR
@@ -534,8 +544,9 @@ function PendingSubaccountsBanner({
   //     (e.g. configNonce moved past it). Either way, the keypair + Finalize
   //     state are useless and the row would just confuse the user.
   const isDeadEntry = useCallback(
-    (p: PendingSubaccount, indexedAddresses: Set<string>, proposalByHash: Map<string, Proposal>) => {
-      if (indexedAddresses.has(p.childAddress)) return true;
+    (p: PendingTx, indexedAddresses: Set<string>, proposalByHash: Map<string, Proposal>) => {
+      const childAddress = p.childAccount?.childAddress;
+      if (childAddress && indexedAddresses.has(childAddress)) return true;
       const proposal = proposalByHash.get(p.proposalHash);
       if (proposal && (proposal.status === 'invalidated' || proposal.status === 'expired')) return true;
       return false;
@@ -558,13 +569,15 @@ function PendingSubaccountsBanner({
     const proposalByHash = new Map(proposals.map((p) => [p.proposalHash, p]));
     const stale = pending.filter((p) => isDeadEntry(p, indexedAddresses, proposalByHash));
     for (const p of stale) {
-      clearPendingSubaccount(p.parentAddress, p.childAddress);
-      clearPendingTx(p.childAddress, p.childAddress, 'deploy');
+      const childAddress = p.childAccount?.childAddress;
+      if (!childAddress) continue;
+      clearPendingCreateChild(p.contractAddress, childAddress);
+      clearPendingTx(childAddress, childAddress, 'deploy');
     }
     if (stale.length > 0) {
-      setPending(getPendingSubaccountsForParent(parentAddress));
+      setPending(loadPendingCreateChild());
     }
-  }, [pending, contracts, proposals, parentAddress, isDeadEntry]);
+  }, [pending, contracts, proposals, isDeadEntry, loadPendingCreateChild]);
 
   // Daemon-probe failure path: for each in-flight finalize tx older than
   // 30 s, ask the daemon for its inclusion status. If 'failed', drop the
@@ -593,23 +606,24 @@ function PendingSubaccountsBanner({
 
   if (visible.length === 0) return null;
 
-  const handleFinalize = async (record: PendingSubaccount) => {
-    if (!wallet.address) return;
+  const handleFinalize = async (record: PendingTx) => {
+    if (!wallet.address || !record.childAccount) return;
+    const child = record.childAccount;
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
-    setFinalizingChild(record.childAddress);
+    setFinalizingChild(child.childAddress);
     try {
       await startOperation('Finalizing subaccount deployment…', async (onProgress) => {
         onProgress('Fetching parent CREATE_CHILD proposal…');
-        const proposal = await fetchProposal(record.parentAddress, record.proposalHash);
+        const proposal = await fetchProposal(record.contractAddress, record.proposalHash);
         if (!proposal) {
           throw new Error('Parent proposal not found in indexer yet — try again in a moment.');
         }
         const result = await deployAndSetupChildOnchain({
-          parentAddress: record.parentAddress,
-          childPrivateKeyBase58: record.childPrivateKey,
+          parentAddress: record.contractAddress,
+          childPrivateKeyBase58: child.childPrivateKey,
           feePayerAddress: wallet.address!,
-          childOwners: record.childOwners,
-          childThreshold: record.childThreshold,
+          childOwners: child.childOwners,
+          childThreshold: child.childThreshold,
           proposal,
         }, onProgress, signer);
         // Persist a deploy-pending entry so the row stays disabled with
@@ -621,8 +635,8 @@ function PendingSubaccountsBanner({
         if (txHash) {
           savePendingTx({
             kind: 'deploy',
-            contractAddress: record.childAddress,
-            proposalHash: record.childAddress,
+            contractAddress: child.childAddress,
+            proposalHash: child.childAddress,
             txHash,
             signerPubkey: wallet.address!,
             createdAt: new Date().toISOString(),
@@ -642,13 +656,15 @@ function PendingSubaccountsBanner({
       </div>
       <ul className="space-y-2">
         {visible.map((record) => {
+          // Filtered upstream: every `visible` row has childAccount set.
+          const child = record.childAccount!;
           const proposal = proposals.find((p) => p.proposalHash === record.proposalHash);
           // Proposal must be indexed, still pending, and at or above the
           // parent's threshold before executeSetupChild can succeed.
           const thresholdMet = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= parentThreshold;
-          const finalizeInFlight = pendingDeployByChild.get(record.childAddress);
+          const finalizeInFlight = pendingDeployByChild.get(child.childAddress);
           const canFinalize = thresholdMet && !finalizeInFlight;
-          const buttonLabel = finalizingChild === record.childAddress
+          const buttonLabel = finalizingChild === child.childAddress
             ? 'Finalizing…'
             : finalizeInFlight
               ? 'Finalizing… awaiting inclusion'
@@ -664,19 +680,19 @@ function PendingSubaccountsBanner({
                   : null;
           return (
             <li
-              key={`${record.parentAddress}:${record.childAddress}`}
+              key={`${record.contractAddress}:${child.childAddress}`}
               className="bg-safe-dark border border-safe-border rounded-lg px-3 py-2 flex items-center gap-3"
             >
               <div className="flex-1 min-w-0">
-                {record.childName && (
-                  <p className="text-sm font-semibold truncate">{record.childName}</p>
+                {child.childName && (
+                  <p className="text-sm font-semibold truncate">{child.childName}</p>
                 )}
                 <p className="font-mono text-xs text-safe-text truncate">
-                  {truncateAddress(record.childAddress, 10)}
+                  {truncateAddress(child.childAddress, 10)}
                 </p>
                 <p className="text-[10px] text-safe-text mt-0.5">
                   Proposal {record.proposalHash.slice(0, 10)}… ·{' '}
-                  {record.childThreshold}/{record.childOwners.length} owners
+                  {child.childThreshold}/{child.childOwners.length} owners
                   {statusHint && <> · <span className="text-amber-300">{statusHint}</span></>}
                 </p>
                 {finalizeInFlight && explorerUrl && (

@@ -141,7 +141,11 @@ export default function TransactionDetailPage() {
     // CREATE_CHILD uses the reserved nonce=0 sentinel, which the current
     // delete mechanism (zero-value proposal at same nonce) can't replicate
     // safely.
-    proposal.txType !== 'createChild';
+    proposal.txType !== 'createChild' &&
+    // While an execute is in flight, the proposal is about to be invalidated
+    // either way (success → executed, failure → user retries). Surfacing
+    // Delete here just invites duplicate work / wasted fees.
+    !executeInFlight;
   const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
   /** Submits an on-chain approveProposal transaction. */
