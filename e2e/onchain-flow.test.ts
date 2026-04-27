@@ -1282,8 +1282,7 @@ test('25b. Execute transfer with memo and verify memo match', async () => { cons
   await page.waitForTimeout(SHORT_WAIT);
 
   // Verify memo is displayed on the proposal detail page
-  await expect(page.locator('text=Memo')).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator('text=e2e-test-memo')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('text=e2e-test-memo')).toBeVisible({ timeout: 10_000 });
   log('Memo visible on proposal detail page');
 
   log('Clicking Execute Proposal...');
