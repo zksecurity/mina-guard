@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import OwnerList from '@/components/OwnerList';
 import ThresholdBadge from '@/components/ThresholdBadge';
-import { clearCompileCache, getCompileCacheSize, setCompileCacheEnabledIDB } from '@/lib/idb-compile-cache';
+import { checkStorageAvailable, clearCompileCache, getCompileCacheSize, setCompileCacheEnabledIDB } from '@/lib/idb-compile-cache';
 import { isCompileCacheEnabled, setCompileCacheEnabled } from '@/lib/storage';
 
 /** Settings page for owner set and threshold governance proposal shortcuts. */
@@ -14,21 +14,35 @@ export default function SettingsPage() {
   const { wallet, multisig, owners } = useAppContext();
   const [cacheSize, setCacheSize] = useState<{ entries: number; bytes: number } | null>(null);
   const [cacheEnabled, setCacheEnabled] = useState(() => isCompileCacheEnabled());
-  const [clearing, setClearing] = useState(false);
+  const [storageOk, setStorageOk] = useState<boolean | null>(null);
+  const [storageMB, setStorageMB] = useState<number>(0);
+  const [toggling, setToggling] = useState(false);
 
   useEffect(() => {
     getCompileCacheSize().then(setCacheSize);
+    checkStorageAvailable().then(({ available, remainingMB }) => {
+      setStorageOk(available);
+      setStorageMB(remainingMB);
+    });
   }, []);
 
-  const handleClearCache = useCallback(async () => {
-    setClearing(true);
+  const handleToggle = useCallback(async () => {
+    const next = !cacheEnabled;
+    setToggling(true);
     try {
-      await clearCompileCache();
-      setCacheSize({ entries: 0, bytes: 0 });
+      setCacheEnabled(next);
+      setCompileCacheEnabled(next);
+      if (!next) {
+        await clearCompileCache();
+        await setCompileCacheEnabledIDB(false);
+        setCacheSize({ entries: 0, bytes: 0 });
+      } else {
+        await setCompileCacheEnabledIDB(true);
+      }
     } finally {
-      setClearing(false);
+      setToggling(false);
     }
-  }, []);
+  }, [cacheEnabled]);
 
   const activeOwners = owners.map((owner) => owner.address);
 
@@ -96,40 +110,54 @@ export default function SettingsPage() {
           <h3 className="text-sm font-semibold mb-2">Compile Cache</h3>
           <p className="text-xs text-safe-text mb-4">
             Cached prover keys speed up contract compilation after page reloads.
-            {cacheSize && cacheSize.entries > 0 && (
+            {cacheEnabled && cacheSize && cacheSize.entries > 0 && (
               <> Currently using {(cacheSize.bytes / 1024 / 1024).toFixed(0)}MB ({cacheSize.entries} entries).</>
             )}
           </p>
-          <label className="flex items-center justify-between py-2 mb-3 cursor-pointer">
-            <span className="text-sm">Enable compile caching</span>
-            <button
-              role="switch"
-              aria-checked={cacheEnabled}
-              onClick={() => {
-                const next = !cacheEnabled;
-                setCacheEnabled(next);
-                setCompileCacheEnabled(next);
-                setCompileCacheEnabledIDB(next);
-              }}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                cacheEnabled ? 'bg-safe-green' : 'bg-safe-border'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                  cacheEnabled ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </label>
-          {cacheSize && cacheSize.entries > 0 && (
-            <button
-              onClick={handleClearCache}
-              disabled={clearing}
-              className="w-full p-2.5 border border-safe-border rounded-lg text-sm text-safe-text hover:text-red-400 hover:border-red-400 transition-colors disabled:opacity-50"
-            >
-              {clearing ? 'Clearing...' : 'Clear Compile Cache'}
-            </button>
+          {storageOk === false && !cacheEnabled ? (
+            <div className="rounded-lg border border-safe-border bg-safe-bg p-3">
+              <p className="text-xs text-safe-text">
+                Not enough storage to enable compile caching. At least 1.8 GB of free space is required
+                ({storageMB < 1024
+                  ? `${storageMB} MB available`
+                  : `${(storageMB / 1024).toFixed(1)} GB available`}).
+              </p>
+              <label className="flex items-center justify-between py-2 mt-2 cursor-not-allowed opacity-50">
+                <span className="text-sm">Enable compile caching</span>
+                <button
+                  role="switch"
+                  aria-checked={false}
+                  disabled
+                  className="relative inline-flex h-6 w-11 items-center rounded-full bg-safe-border cursor-not-allowed"
+                >
+                  <span className="inline-block h-4 w-4 rounded-full bg-white translate-x-1" />
+                </button>
+              </label>
+            </div>
+          ) : (
+            <>
+              <label className="flex items-center justify-between py-2 cursor-pointer">
+                <span className="text-sm">Enable compile caching</span>
+                <button
+                  role="switch"
+                  aria-checked={cacheEnabled}
+                  disabled={toggling}
+                  onClick={handleToggle}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    cacheEnabled ? 'bg-safe-green' : 'bg-safe-border'
+                  } ${toggling ? 'opacity-50' : ''}`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                      cacheEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </label>
+              <p className="text-xs text-safe-text mt-1">
+                Disabling will remove any existing cached data.
+              </p>
+            </>
           )}
         </div>
       </div>

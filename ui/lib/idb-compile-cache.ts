@@ -50,15 +50,26 @@ async function canWriteToIDB(userEnabled = true): Promise<boolean> {
 
 export async function clearCompileCache(): Promise<void> {
   const db = await openDB();
-  const enabled = (await idbGet(db, '__cache_enabled__')) === false;
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-  if (enabled) await setCompileCacheEnabledIDB(false);
   db.close();
+}
+
+export async function checkStorageAvailable(): Promise<{ available: boolean; remainingMB: number }> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.estimate) {
+    return { available: true, remainingMB: Infinity };
+  }
+  try {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    const remaining = quota - usage;
+    return { available: remaining >= MIN_QUOTA_BYTES, remainingMB: Math.round(remaining / 1024 / 1024) };
+  } catch {
+    return { available: true, remainingMB: Infinity };
+  }
 }
 
 export async function getCompileCacheSize(): Promise<{
