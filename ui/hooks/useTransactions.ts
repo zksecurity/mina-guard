@@ -9,6 +9,7 @@ import {
   getPendingTxsForContract,
   type PendingTx,
 } from '@/lib/storage';
+import { useAdaptivePolling } from '@/hooks/useAdaptivePolling';
 
 /** Wait this long before asking the daemon whether a pending CREATE landed.
  *  Mina blocks are ~3 min, so anything sooner is guaranteed-pending. */
@@ -157,12 +158,12 @@ export function useTransactions(multisigAddress: string | null) {
     prevApprovalCountByHash.current = new Map();
     reloadPendingTxs();
     void refresh();
-    const interval = setInterval(() => {
-      void refresh();
-    }, Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS) || 10_000);
-
-    return () => clearInterval(interval);
   }, [refresh, reloadPendingTxs]);
+
+  // Adaptive polling: faster cadence while any PendingTx is in flight (user
+  // is actively waiting on a tx), idle cadence otherwise. Also refreshes on
+  // tab focus and network reconnect.
+  useAdaptivePolling(refresh, { busy: pendingTxs.length > 0 });
 
   // Cross-tab sync: localStorage `storage` events fire across tabs;
   // PENDING_TXS_CHANGED fires within the same tab on save/clear.
