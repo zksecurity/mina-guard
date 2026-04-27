@@ -37,9 +37,6 @@
     "ts-jest": "^29.2.4",
     "typescript": "^5.4.5"
   },
-  "peerDependencies": {
-    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701"
-  },
   "engines": {
     "node": ">=18.14.0"
   }

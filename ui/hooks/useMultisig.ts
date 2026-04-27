@@ -130,7 +130,7 @@ export function useMultisig(walletAddress: string | null) {
     void refreshState();
     const interval = setInterval(() => {
       void refreshState();
-    }, 15_000);
+    }, Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS) || 10_000);
 
     return () => clearInterval(interval);
   }, [refreshState]);

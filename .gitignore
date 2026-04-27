@@ -30,6 +30,7 @@ coverage/
 e2e/.e2e-state.json
 e2e/test-results/
 e2e/playwright-report/
+.tmp/
 
 # o1js compilation cache
 cache/

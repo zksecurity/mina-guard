@@ -95,9 +95,9 @@ export function deriveInvalidReason(
 /**
  * Derives proposal status from the append-only schema plus read-time checks.
  *
- * Precedence: `executed` (ProposalExecution row) > `invalidated`
- * (deriveInvalidReason returned non-null) > `expired` (latestHeight past
- * expiryBlock) > `pending`.
+ * Precedence: `executed` (ProposalExecution row) > `expired` (latestHeight
+ * past expiryBlock) > `invalidated` (deriveInvalidReason returned non-null)
+ * > `pending`.
  */
 function deriveStatus(
   proposal: Proposal,
@@ -106,9 +106,9 @@ function deriveStatus(
   invalidReason: InvalidReason | null,
 ): string {
   if (executed) return 'executed';
-  if (invalidReason !== null) return 'invalidated';
   const expiry = Number(proposal.expiryBlock ?? '0');
   if (Number.isFinite(expiry) && expiry > 0 && latestHeight > expiry) return 'expired';
+  if (invalidReason !== null) return 'invalidated';
   return 'pending';
 }
 

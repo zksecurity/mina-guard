@@ -414,7 +414,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const reclaimAmount = UInt64.from(1_000_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(reclaimAmount, Field(2));
+        await approveReclaim(reclaimAmount, Field(1));
 
       const parentBalanceBefore = getBalance(parentCtx.zkAppAddress);
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
@@ -441,7 +441,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const amount = UInt64.from(500_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(amount, Field(2));
+        await approveReclaim(amount, Field(1));
 
       // First execution succeeds.
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
@@ -481,7 +481,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const amount = UInt64.from(500_000_000);
       const proposal = createReclaimChildProposal(
         amount,
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -514,7 +514,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // Disable the child's multisig first.
       const disableProposal = createEnableChildMultiSigProposal(
         Field(0),
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -543,7 +543,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // Reclaim should still work — child-lifecycle methods bypass the flag.
       const amount = UInt64.from(1_000_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(amount, Field(3));
+        await approveReclaim(amount, Field(2));
 
       const parentBalanceBefore = getBalance(parentCtx.zkAppAddress);
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
@@ -570,7 +570,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const approvedAmount = UInt64.from(1_000_000_000);
       const wrongAmount = UInt64.from(2_000_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(approvedAmount, Field(2));
+        await approveReclaim(approvedAmount, Field(1));
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
 
@@ -597,7 +597,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -635,7 +635,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -676,7 +676,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -739,7 +739,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const proposal = createEnableChildMultiSigProposal(
         Field(0), // data = disable
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -770,7 +770,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const proposal = createEnableChildMultiSigProposal(
         Field(0),
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -816,7 +816,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       // Disable.
-      await runEnable(Field(0), Field(2));
+      await runEnable(Field(0), Field(1));
       expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(0));
 
       // assertChildMultiSigEnabledIfChild() is the first check in every gated
@@ -911,7 +911,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       }
 
       // Re-enable; every gated method must now reach past the disable check.
-      await runEnable(Field(1), Field(3));
+      await runEnable(Field(1), Field(2));
       expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(1));
 
       // Helper: calls `fn` and asserts any thrown error is NOT the gate error.
@@ -1016,7 +1016,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const amount = UInt64.from(1_000_000);
       const proposalForA = createReclaimChildProposal(
         amount,
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -1055,7 +1055,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const amount = UInt64.from(500_000_000);
       const reclaim = createReclaimChildProposal(
         amount,
-        Field(2),
+        Field(1),
         Field(0), // parent configNonce at time of propose
         parentCtx.zkAppAddress,
         Field(0),
@@ -1120,7 +1120,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // for ENABLE_CHILD_MULTI_SIG, so the proposal is accepted on the parent.
       const proposal = createEnableChildMultiSigProposal(
         Field(2),
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -1155,7 +1155,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const amount = UInt64.from(1_000_000_000);
       const reclaim = createReclaimChildProposal(
-        amount, Field(2), Field(0), parentCtx.zkAppAddress,
+        amount, Field(1), Field(0), parentCtx.zkAppAddress,
         Field(0), parentCtx.networkId, childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
@@ -1205,7 +1205,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2), Field(0), parentCtx.zkAppAddress,
+        Field(1), Field(0), parentCtx.zkAppAddress,
         Field(0), parentCtx.networkId, childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =

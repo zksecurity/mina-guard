@@ -15,12 +15,22 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with session-only zkApp private key usage.
 
+## o1js dependency
+
+The monorepo depends on a [fork of o1js](https://github.com/mellowcroc/o1js/tree/mesa-srs-fix) (`mesa-srs-fix` branch) rather than the upstream `3.0.0-mesa.0` release.
+
+The upstream `srs.ts` calls `caml_{fp,fq}_srs_get_lagrange_basis` to compute and cache the lagrange basis during compilation. This WASM function is not properly implemented for the web target — it throws an uncaught error that crashes the browser tab. The upstream code has a TODO acknowledging this but no guard around it. The issue only surfaces when a writable `Cache` is provided (which we now do via IndexedDB).
+
+The fork wraps both `getLagrangeBasis` call sites in try-catch. On the first site (cache miss with writable cache), the catch falls back to `lagrangeCommitment()` which computes the basis point-by-point without the broken WASM path. On the second site (post-computation cache write), the catch silently skips the cache write. Compilation succeeds either way — the lagrange basis is still computed, just not via the batch WASM function.
+
+The fix is baked into the fork's dist files so no postinstall patching is needed. Revert to upstream once this is fixed in a future o1js release.
+
 ## Development
 
 ### First-time setup
 
 ```bash
-# Fetch submodule (fork of o1js, for now)
+# Fetch submodule (o1js source, needed for mina-signer browser build)
 git submodule update --init
 
 bun install

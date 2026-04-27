@@ -183,7 +183,7 @@ export default async function globalSetup() {
       log('Starting lightnet (this may take 1-2 minutes)...');
       try {
         // --pull=false: use the digest pinned by dev-helpers/pin-lightnet.sh.
-        execSync('zk lightnet start --pull=false', {
+        execSync('zk lightnet start --pull=false --slot-time 3000', {
           cwd: ROOT,
           stdio: 'inherit',
           timeout: 300_000,
@@ -319,6 +319,7 @@ export default async function globalSetup() {
       NEXT_PUBLIC_MINA_ENDPOINT: config.minaEndpoint,
       NEXT_PUBLIC_ARCHIVE_ENDPOINT: config.archiveEndpoint,
       NEXT_PUBLIC_E2E_TEST: 'true',
+      NEXT_PUBLIC_POLL_INTERVAL_MS: '3000',
     };
     log('Starting frontend...');
     const frontendChild = spawnService(

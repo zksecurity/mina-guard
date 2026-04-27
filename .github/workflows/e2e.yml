@@ -7,14 +7,8 @@ on:
 
 jobs:
   e2e:
-    # TEMPORARY: job short-circuits to a no-op while the worker-recycle fix
-    # is in flight. Full subaccount suite silently hangs tx.prove() after
-    # ~20 proves in one worker (8 GB V8 bump isn't enough). Keeping the job
-    # name `e2e` so branch protection's required check still reports. Remove
-    # `if: false` once worker-recycling lands.
-    if: false
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, e2e]
 
     services:
       postgres:
@@ -113,6 +107,7 @@ jobs:
           NEXT_PUBLIC_MINA_ENDPOINT: http://localhost:8080/graphql
           NEXT_PUBLIC_ARCHIVE_ENDPOINT: http://localhost:8282
           NEXT_PUBLIC_E2E_TEST: 'true'
+          NEXT_PUBLIC_POLL_INTERVAL_MS: '3000'
 
       - name: Wait for services
         run: |
@@ -126,6 +121,7 @@ jobs:
         run: cd e2e && node node_modules/@playwright/test/cli.js test
         env:
           CI: true
+          TMPDIR: ${{ github.workspace }}/.tmp
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

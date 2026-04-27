@@ -1,25 +1,55 @@
 'use client';
 
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import OwnerList from '@/components/OwnerList';
 import ThresholdBadge from '@/components/ThresholdBadge';
+import { checkStorageAvailable, clearCompileCache, getCompileCacheSize, setCompileCacheEnabledIDB } from '@/lib/idb-compile-cache';
+import { isCompileCacheEnabled, setCompileCacheEnabled } from '@/lib/storage';
 
 /** Settings page for owner set and threshold governance proposal shortcuts. */
 export default function SettingsPage() {
   const router = useRouter();
   const { wallet, multisig, owners } = useAppContext();
+  const [cacheSize, setCacheSize] = useState<{ entries: number; bytes: number } | null>(null);
+  const [cacheEnabled, setCacheEnabled] = useState(() => isCompileCacheEnabled());
+  const [storageOk, setStorageOk] = useState<boolean | null>(null);
+  const [storageMB, setStorageMB] = useState<number>(0);
+  const [toggling, setToggling] = useState(false);
+
+  useEffect(() => {
+    getCompileCacheSize().then(setCacheSize);
+    checkStorageAvailable().then(({ available, remainingMB }) => {
+      setStorageOk(available);
+      setStorageMB(remainingMB);
+    });
+  }, []);
+
+  const handleToggle = useCallback(async () => {
+    const next = !cacheEnabled;
+    setToggling(true);
+    try {
+      setCacheEnabled(next);
+      setCompileCacheEnabled(next);
+      if (!next) {
+        await clearCompileCache();
+        await setCompileCacheEnabledIDB(false);
+        setCacheSize({ entries: 0, bytes: 0 });
+      } else {
+        await setCompileCacheEnabledIDB(true);
+      }
+    } finally {
+      setToggling(false);
+    }
+  }, [cacheEnabled]);
 
   const activeOwners = owners.map((owner) => owner.address);
 
   return (
     <div>
       <div className="p-6 max-w-2xl space-y-6">
-        {!wallet.connected || !multisig ? (
-          <div className="text-center py-20">
-            <p className="text-safe-text">Connect wallet to manage contract settings</p>
-          </div>
-        ) : (
+        {wallet.connected && multisig ? (
           <>
             <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
               <div className="flex items-center justify-between mb-4">
@@ -70,7 +100,66 @@ export default function SettingsPage() {
               </div>
             </div>
           </>
+        ) : (
+          <div className="text-center py-20">
+            <p className="text-safe-text">Connect wallet to manage contract settings</p>
+          </div>
         )}
+
+        <div className="bg-safe-gray border border-safe-border rounded-xl p-6">
+          <h3 className="text-sm font-semibold mb-2">Compile Cache</h3>
+          <p className="text-xs text-safe-text mb-4">
+            Cached prover keys speed up contract compilation after page reloads.
+            {cacheEnabled && cacheSize && cacheSize.entries > 0 && (
+              <> Currently using {(cacheSize.bytes / 1024 / 1024).toFixed(0)}MB ({cacheSize.entries} entries).</>
+            )}
+          </p>
+          {storageOk === false && !cacheEnabled ? (
+            <div className="rounded-lg border border-safe-border bg-safe-bg p-3">
+              <p className="text-xs text-safe-text">
+                Not enough storage to enable compile caching. At least 1.8 GB of free space is required
+                ({storageMB < 1024
+                  ? `${storageMB} MB available`
+                  : `${(storageMB / 1024).toFixed(1)} GB available`}).
+              </p>
+              <label className="flex items-center justify-between py-2 mt-2 cursor-not-allowed opacity-50">
+                <span className="text-sm">Enable compile caching</span>
+                <button
+                  role="switch"
+                  aria-checked={false}
+                  disabled
+                  className="relative inline-flex h-6 w-11 items-center rounded-full bg-safe-border cursor-not-allowed"
+                >
+                  <span className="inline-block h-4 w-4 rounded-full bg-white translate-x-1" />
+                </button>
+              </label>
+            </div>
+          ) : (
+            <>
+              <label className="flex items-center justify-between py-2 cursor-pointer">
+                <span className="text-sm">Enable compile caching</span>
+                <button
+                  role="switch"
+                  aria-checked={cacheEnabled}
+                  disabled={toggling}
+                  onClick={handleToggle}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    cacheEnabled ? 'bg-safe-green' : 'bg-safe-border'
+                  } ${toggling ? 'opacity-50' : ''}`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                      cacheEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </label>
+              <p className="text-xs text-safe-text mt-1">
+                Disabling will remove any existing cached data.
+              </p>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

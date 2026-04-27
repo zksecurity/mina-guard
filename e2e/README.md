@@ -135,6 +135,80 @@ NETWORK=devnet bun run test:e2e:verbose
 
 This invokes Playwright directly and streams all `[e2e-setup]`, `[e2e]`, and `[e2e-teardown]` logs to your terminal.
 
+## Test coverage
+
+53 serial tests in `onchain-flow.test.ts`, split into on-chain lifecycle tests and UI validation tests. All run in a single browser page with periodic page recycles to keep WASM memory under the V8 heap limit.
+
+### Contract lifecycle (tests 1–11)
+
+- Deploy MinaGuard contract and verify initial state (1 owner, threshold 1/1)
+- Add owner → propose, execute
+- Change threshold to 2/2 → propose, execute
+- Transfer MINA → propose, approve (2nd signer), execute
+- Verify Settings and Transactions pages
+
+### Owner & threshold management (tests 12–17)
+
+- Lower threshold back to 1/2 → propose, approve, execute
+- Remove owner → propose, execute
+- Verify state after removal
+
+### Delegation (tests 18–22)
+
+- Set delegate → propose, execute, verify delegate card
+- Undelegate → propose, execute
+
+### Proposal expiry (tests 23–25)
+
+- Propose transfer with near-future expiry block
+- Wait for expiry and verify execute button is hidden
+- State checkpoint before subaccount tests
+
+### Subaccount lifecycle (tests 26–37)
+
+- Create child → propose, finalize deployment, verify in UI tree
+- Fund contracts for allocation tests
+- Allocate (parent → child) → propose, execute
+- Reclaim (child → parent) → propose, execute
+- Disable child multi-sig → propose, execute
+- Destroy child → propose, execute
+
+### Delete proposal (tests 38–39)
+
+- Propose a transfer, then create a delete proposal targeting it
+- Execute delete and verify original proposal is invalidated
+
+### Final state (test 40)
+
+- Verify owner count, threshold, transaction counts across all tabs
+
+### Form validation (tests 41–53)
+
+UI-only tests — no on-chain transactions.
+
+- **Transfer**: invalid address, negative/zero amount, missing comma, duplicate recipients, extra commas/whitespace
+- **Add owner**: duplicate owner, invalid B62 address
+- **Threshold**: value exceeding owner count, same-as-current rejection
+- **Non-existent proposal**: 404 handling for invalid proposal hash
+- **Remove owner**: removing below threshold, removing non-owner
+- **Delegate**: empty/invalid address, undelegate toggle
+- **Destroy subaccount**: confirmation checkbox required
+- **Nonce**: zero, negative, decimal, non-numeric values
+- **Action buttons**: executed/invalidated proposals have no actions, expired proposals have no execute button
+- **Tab counts**: transaction list tab counts match API response
+
+## Compile cache (IndexedDB)
+
+The frontend caches o1js prover/verifier keys in IndexedDB so that page reloads skip the expensive key-generation WASM step. Cold compile takes ~280s; cached compile takes ~155s.
+
+**Size**: ~1.7GB across ~24 entries. This is large but within the storage budgets of major browsers — Google Docs offline, Figma, VS Code for Web, Unity WebGL games, and mapping apps all store hundreds of MB to multi-GB in IndexedDB.
+
+**Storage limits**: Chrome allows each origin up to ~6% of total disk (e.g. ~15GB on a 256GB drive). Firefox and Safari have smaller budgets. The cache checks `navigator.storage.estimate()` before writing and disables writes if less than 1.8GB is available.
+
+**Eviction**: browsers may evict "best-effort" storage when disk pressure is high, prioritizing least-recently-used origins. Users can also clear the cache manually via Settings → Compile Cache → "Clear Compile Cache", or through browser DevTools (Application → IndexedDB → `o1js-compile-cache`).
+
+**Page recycling**: on-chain e2e tests reload the page every ~15 transactions to release accumulated WASM memory (~30-40MB per transaction). The compile cache makes this viable — without it, each reload would require a full ~280s cold compile.
+
 ## Debugging
 
 - Playwright HTML report is generated at `e2e/playwright-report/` (run `bunx playwright show-report` to view)
