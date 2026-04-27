@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ApprovalProgress from '@/components/ApprovalProgress';
+import MemoWarningTooltip from '@/components/MemoWarningTooltip';
 import {
   TX_TYPE_LABELS,
   formatMina,
@@ -302,6 +303,14 @@ export default function TransactionDetailPage() {
     ? 'Delete proposal'
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
+  const hasMemo = proposal.memoHash != null && proposal.memoHash !== '0';
+  const memoAdornment: ReactNode | undefined = (() => {
+    if (!hasMemo) return undefined;
+    if (proposal.memoExecutionMatch === true) return <MemoWarningTooltip variant="match" />;
+    if (proposal.memoExecutionMatch === false) return <MemoWarningTooltip variant="mismatch" />;
+    return <MemoWarningTooltip />;
+  })();
+
   const isRemote = proposal.destination === 'remote';
   const isDelete = isDeleteProposal(proposal);
   const headerSubline = isDelete
@@ -418,6 +427,9 @@ export default function TransactionDetailPage() {
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
             <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
+            {hasMemo && (
+              <DetailRow label="Memo" value={proposal.memo ?? proposal.memoHash!} mono={!proposal.memo} labelAdornment={memoAdornment} />
+            )}
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>
         </div>
@@ -566,11 +578,13 @@ function DetailRow({
   value,
   mono = false,
   copyable = false,
+  labelAdornment,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   copyable?: boolean;
+  labelAdornment?: ReactNode;
 }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -586,7 +600,10 @@ function DetailRow({
 
   return (
     <div className="flex justify-between items-center py-2 border-b border-safe-border/50 last:border-0">
-      <span className="text-sm text-safe-text shrink-0">{label}</span>
+      <span className="flex items-center gap-1 text-sm text-safe-text shrink-0">
+        {label}
+        {labelAdornment}
+      </span>
       {copyable ? (
         <div className="relative ml-12 min-w-0">
           <button

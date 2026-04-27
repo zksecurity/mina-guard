@@ -1,6 +1,7 @@
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
 import { PublicKey } from 'o1js';
+import { memoToField, decodeTxMemo } from 'contracts';
 import {
   configureNetwork,
   discoverCandidateAddresses,
@@ -547,6 +548,15 @@ export class MinaGuardIndexer {
     const proposalHash = asString(event.proposalHash);
     if (!proposalHash) return;
 
+    let memo: string | null = null;
+    if (chainEvent.txMemo) {
+      try {
+        memo = decodeTxMemo(chainEvent.txMemo);
+      } catch {
+        memo = chainEvent.txMemo;
+      }
+    }
+
     await prisma.proposal.upsert({
       where: {
         contractId_proposalHash: {
@@ -561,6 +571,8 @@ export class MinaGuardIndexer {
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
+        memoHash: asString(event.memoHash),
+        memo,
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expiryBlock: asString(event.expiryBlock),
@@ -574,6 +586,8 @@ export class MinaGuardIndexer {
         tokenId: asString(event.tokenId),
         txType: asString(event.txType),
         data: asString(event.data),
+        memoHash: asString(event.memoHash),
+        memo,
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expiryBlock: asString(event.expiryBlock),
@@ -745,6 +759,16 @@ export class MinaGuardIndexer {
     const proposalHash = asString(chainEvent.event.proposalHash);
     if (!proposalHash) return;
 
+    let observedMemo = '';
+    if (chainEvent.txMemo) {
+      try {
+        observedMemo = decodeTxMemo(chainEvent.txMemo);
+      } catch {
+        observedMemo = chainEvent.txMemo;
+      }
+    }
+    const executionMemoHash = memoToField(observedMemo).toString();
+
     const blockHeight = chainEvent.blockHeight;
     const txHash = chainEvent.txHash;
 
@@ -754,6 +778,15 @@ export class MinaGuardIndexer {
     });
     if (local) {
       await this.upsertProposalExecution(local.id, blockHeight, txHash, eventOrder);
+      await prisma.proposal.update({
+        where: { id: local.id },
+        data: {
+          executionMemoHash,
+          ...(txHash !== null && local.lastExecuteTxHash === txHash
+            ? { lastExecuteTxHash: null, lastExecuteError: null }
+            : {}),
+        },
+      });
       const localNonce = local.nonce === null ? null : Number(local.nonce);
       if (localNonce !== null && Number.isFinite(localNonce)) {
         await this.appendContractConfigSnapshot(
@@ -763,12 +796,6 @@ export class MinaGuardIndexer {
           null,
           { nonce: localNonce },
         );
-      }
-      if (txHash !== null && local.lastExecuteTxHash === txHash) {
-        await prisma.proposal.update({
-          where: { id: local.id },
-          data: { lastExecuteTxHash: null, lastExecuteError: null },
-        });
       }
       return;
     }
@@ -792,6 +819,15 @@ export class MinaGuardIndexer {
     if (!remote) return;
 
     await this.upsertProposalExecution(remote.id, blockHeight, txHash, eventOrder);
+    await prisma.proposal.update({
+      where: { id: remote.id },
+      data: {
+        executionMemoHash,
+        ...(txHash !== null && remote.lastExecuteTxHash === txHash
+          ? { lastExecuteTxHash: null, lastExecuteError: null }
+          : {}),
+      },
+    });
     const remoteNonce = remote.nonce === null ? null : Number(remote.nonce);
     if (remoteNonce !== null && Number.isFinite(remoteNonce)) {
       await this.appendContractConfigSnapshot(
@@ -801,12 +837,6 @@ export class MinaGuardIndexer {
         null,
         { parentNonce: remoteNonce },
       );
-    }
-    if (txHash !== null && remote.lastExecuteTxHash === txHash) {
-      await prisma.proposal.update({
-        where: { id: remote.id },
-        data: { lastExecuteTxHash: null, lastExecuteError: null },
-      });
     }
   }
 

@@ -98,6 +98,9 @@ model Proposal {
   expiryBlock       String?
   networkId         String?
   guardAddress      String?
+  memo              String?
+  memoHash          String?
+  executionMemoHash String?
   destination       String?
   childAccount      String?
   lastApproveTxHash String?

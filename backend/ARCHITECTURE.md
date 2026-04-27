@@ -63,7 +63,7 @@ The `rescanUnreadyContracts` loop re-scans `[discoveredAtBlock, latestHeight]` e
 
 `syncSingleContract(contractId, address, from, to)`:
 
-1. **Fetch** decoded events via `fetchDecodedContractEvents` (archive GraphQL).
+1. **Fetch** decoded events via `fetchDecodedContractEvents` (archive GraphQL). Each event carries `txMemo` (the base58-encoded transaction memo from the archive).
 2. **Reverse per-tx groups** (`reverseEventsWithinEachTx`). o1js returns events within a single tx in newest-first order; the contract emits them oldest-first. Cross-tx ordering is preserved. This matters for multi-receiver proposals — reversed `receiver` indices break the off-chain proposal-hash recomputation on approve.
 3. **Stable sort by type** (`setup`/`setupOwner`/`proposal`/`approval`/`receiver`/`execution`/...). Ensures a `proposal` row exists before its `approval`/`receiver`/`execution` children are processed within the same batch.
 4. **Dedupe by fingerprint** (`address::type::blockHeight::txHash::payload`). `EventRaw.fingerprint` is unique; second writer is a no-op.
@@ -89,8 +89,18 @@ Every mutation gets a new row stamped with `validFromBlock` + `eventOrder`. Curr
 ### Identity / pointer
 
 - **`Contract`** — `(address, parent?, ready, discoveredAtBlock, ...)`. Identity + latest-synced metadata. `parent` set from `setup.parent` (null/EMPTY for root guards).
-- **`Proposal`** — `(contractId, proposalHash, ...)`. Identity + propose-time fields. `ProposalReceiver` child rows carry per-slot receivers from `receiver` events (padded empties skipped). For governance proposals (addOwner/removeOwner/setDelegate), slot 0 is mirrored onto `Proposal.toAddress`.
+- **`Proposal`** — `(contractId, proposalHash, ...)`. Identity + propose-time fields. `ProposalReceiver` child rows carry per-slot receivers from `receiver` events (padded empties skipped). For governance proposals (addOwner/removeOwner/setDelegate), slot 0 is mirrored onto `Proposal.toAddress`. `memoHash` is stored from the `ProposalEvent`; `memo` is decoded from `txMemo` on the proposal creation transaction. On execution, `executionMemoHash` is computed from the executor's `txMemo` and compared against `memoHash` to derive `memoExecutionMatch` at read time.
 - **`IndexerCursor`** — single row `key = 'indexed_height'`.
+
+### Memo lifecycle
+
+The on-chain `TransactionProposal` struct includes a `memoHash` field (Poseidon hash of the UTF-8 memo bytes). The plaintext memo is not stored on-chain — it travels as the Mina transaction memo set by the wallet.
+
+**Proposal creation**: the proposer sets the memo as the transaction memo. The indexer decodes `txMemo` (base58 → plaintext via `decodeTxMemo`) and stores it as `Proposal.memo`. The `memoHash` from the `ProposalEvent` is stored separately. If decoding fails, the raw base58 string is stored as a fallback (display-only; the authoritative hash is always `memoHash` from the event).
+
+**Execution**: the executor's wallet sets the same memo as the transaction memo. The indexer decodes `txMemo`, hashes it via `memoToField`, and stores the result as `Proposal.executionMemoHash`. At read time, `computeMemoExecutionMatch` compares `memoHash === executionMemoHash` → `true`/`false`/`null` (null when either side is missing).
+
+**No-memo proposals**: `memoToField('')` returns `Field(0)`, so `memoHash` is `"0"`. The UI treats `"0"` as absent and hides the memo row.
 
 ### Cross-contract execution (REMOTE path)
 
@@ -98,7 +108,7 @@ Child-lifecycle methods (`executeSetupChild`, `executeReclaim`, `executeDestroy`
 
 1. Try `(contractId, proposalHash)` local lookup.
 2. On miss, walk `child.parent` → parent contract → retry `(parent.id, proposalHash)`.
-3. Upsert `ProposalExecution` against whichever matched.
+3. Upsert `ProposalExecution` and `executionMemoHash` against whichever matched.
 
 In lite mode, a `proposal` event for `txType = 5` (CREATE_CHILD) eagerly inserts the child's `Contract` row so the parent's execution event can be matched later. Without this, the child address would never be tracked and the parent proposal would stay pending forever.
 

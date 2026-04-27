@@ -206,6 +206,9 @@ function toProposal(input: Record<string, unknown>): Proposal {
     expiryBlock: asNullableString(input.expiryBlock),
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
+    memo: asNullableString(input.memo),
+    memoHash: asNullableString(input.memoHash),
+    memoExecutionMatch: asMemoExecutionMatch(input.memoExecutionMatch),
     destination: normalizeDestination(asNullableString(input.destination)),
     childAccount: asNullableString(input.childAccount),
     status: asProposalStatus(input.status),
@@ -282,6 +285,11 @@ function asProposalStatus(value: unknown): Proposal['status'] {
   const text = asString(value);
   if (text === 'executed' || text === 'expired' || text === 'invalidated') return text;
   return 'pending';
+}
+
+function asMemoExecutionMatch(value: unknown): Proposal['memoExecutionMatch'] {
+  if (value === true || value === false) return value;
+  return null;
 }
 
 function asReceivers(value: unknown): ProposalReceiver[] {

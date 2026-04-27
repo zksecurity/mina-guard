@@ -38,6 +38,7 @@ import {
   ApprovalStore,
   PublicKeyOption,
   Destination,
+  memoToField,
 } from 'contracts';
 
 import {
@@ -51,7 +52,7 @@ import {
 } from './api';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
-type SendTxFn = (txJson: string) => Promise<string | null>;
+type SendTxFn = (txJson: string, memo?: string) => Promise<string | null>;
 
 /** Callback type for requesting a field signature from Auro or Ledger on the main thread.
  *  Auro returns a base58 signature string; Ledger returns {field, scalar} decimal strings. */
@@ -108,8 +109,10 @@ async function maybeProve(tx: Awaited<ReturnType<typeof Mina.transaction>>) {
 }
 
 /** Returns Mina.transaction sender arg — includes fee since we always set it explicitly. */
-function txSender(pub: InstanceType<typeof PublicKey>) {
-  return { sender: pub, fee: ZKAPP_TX_FEE };
+function txSender(pub: InstanceType<typeof PublicKey>, memo?: string) {
+  return memo !== undefined
+    ? { sender: pub, fee: ZKAPP_TX_FEE, memo }
+    : { sender: pub, fee: ZKAPP_TX_FEE };
 }
 
 /**
@@ -537,7 +540,7 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'nonce' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'memoHash' | 'nonce' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
@@ -551,6 +554,7 @@ function buildProposalStruct(
     tokenId: Field(proposal.tokenId ?? '0'),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
+    memoHash: Field(proposal.memoHash ?? '0'),
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expiryBlock: Field(proposal.expiryBlock ?? '0'),
@@ -621,7 +625,8 @@ async function submitTx(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
   sendFn: SendTxFn | null,
   signFeePayerFn?: SignFeePayerFn,
-  extraKeys: InstanceType<typeof PrivateKey>[] = []
+  extraKeys: InstanceType<typeof PrivateKey>[] = [],
+  memo?: string
 ): Promise<string | null> {
   // E2E test mode: sign and send directly
   if (testPrivateKey) {
@@ -638,7 +643,7 @@ async function submitTx(
   }
   // Auro path: send via Auro wallet
   if (sendFn) {
-    return sendFn(txJson);
+    return sendFn(txJson, memo);
   }
   return null;
 }
@@ -843,11 +848,14 @@ const workerApi = {
       params.input.txType === 'destroyChild' ||
       params.input.txType === 'enableChildMultiSig';
 
+    const memoHash = memoToField(params.input.memo ?? '');
+
     const proposal = new TransactionProposal({
       receivers,
       tokenId: Field(0),
       txType,
       data,
+      memoHash,
       nonce: Field(params.input.nonce),
       configNonce: Field(params.configNonce),
       expiryBlock: Field(params.input.expiryBlock ?? 0),
@@ -907,7 +915,8 @@ const workerApi = {
     });
 
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(proposer), async () => {
+    const proposalMemo = params.input.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(proposer, proposalMemo), async () => {
       await contract.propose(
         proposal,
         ownerWitness,
@@ -1068,7 +1077,8 @@ const workerApi = {
     }
 
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    const proposalMemo = params.proposal.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(executor, proposalMemo), async () => {
       if (newAccountCount > 0) {
         AccountUpdate.fundNewAccount(executor, newAccountCount);
       }
@@ -1115,7 +1125,7 @@ const workerApi = {
     await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const executeHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const executeHash = await submitTx(tx, sendFn, signFeePayerFn, [], proposalMemo);
     if (!executeHash) return null;
     return `Transaction submitted: ${executeHash}`;
   },
@@ -1258,7 +1268,8 @@ const workerApi = {
     await fetchAccount({ publicKey: PublicKey.fromBase58(params.childAddress) });
     await fetchAccount({ publicKey: PublicKey.fromBase58(params.parentAddress) });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    const childMemo = params.proposal.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(executor, childMemo), async () => {
       if (txType === 'reclaimChild') {
         const amount = UInt64.from(params.proposal.data ?? '0');
         await childZkApp.executeReclaimToParent(
@@ -1294,7 +1305,7 @@ const workerApi = {
     await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [], childMemo);
     if (!txHash) return null;
     return `Subaccount action submitted: ${txHash}`;
   },

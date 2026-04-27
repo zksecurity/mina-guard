@@ -39,6 +39,9 @@ export interface Proposal {
   expiryBlock: string | null;
   networkId: string | null;
   guardAddress: string | null;
+  memo: string | null;
+  memoHash: string | null;
+  memoExecutionMatch: boolean | null;
   destination: ProposalDestination | null;
   childAccount: string | null;
   status: ProposalStatus;
@@ -129,6 +132,7 @@ export interface NewProposalInput {
   delegate?: string;
   undelegate?: boolean;
   expiryBlock?: number;
+  memo?: string;
   /** Subaccount the proposal targets (REMOTE proposals or pre-known child for CREATE/ALLOCATE). */
   childAccount?: string;
   /** Reclaim amount (nanomina) for reclaimChild. */

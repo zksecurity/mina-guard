@@ -6,6 +6,8 @@ export interface ProposalReceiverRecord {
   amount: string;
 }
 
+export type MemoExecutionMatch = boolean | null;
+
 export type InvalidReason = 'config_nonce_stale' | 'proposal_nonce_stale';
 
 /** Snapshot of a contract's current on-chain counters, derived from the latest
@@ -29,6 +31,9 @@ export interface SerializedProposalRecord {
   expiryBlock: string | null;
   networkId: string | null;
   guardAddress: string | null;
+  memo: string | null;
+  memoHash: string | null;
+  memoExecutionMatch: MemoExecutionMatch;
   destination: string | null;
   childAccount: string | null;
   status: string;
@@ -114,6 +119,15 @@ function deriveStatus(
   return 'pending';
 }
 
+function computeMemoExecutionMatch(
+  memoHash: string | null,
+  executionMemoHash: string | null
+): MemoExecutionMatch {
+  if (executionMemoHash == null) return null;
+  if (memoHash == null) return null;
+  return memoHash === executionMemoHash;
+}
+
 /** Converts Prisma proposal rows into the API shape expected by the UI. */
 export function serializeProposalRecord(
   proposal: ProposalWithDerived,
@@ -150,6 +164,9 @@ export function serializeProposalRecord(
     expiryBlock: proposal.expiryBlock,
     networkId: proposal.networkId,
     guardAddress: proposal.guardAddress,
+    memo: proposal.memo,
+    memoHash: proposal.memoHash,
+    memoExecutionMatch: computeMemoExecutionMatch(proposal.memoHash, proposal.executionMemoHash),
     destination: proposal.destination,
     childAccount: proposal.childAccount,
     status,

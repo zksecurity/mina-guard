@@ -176,7 +176,8 @@ export function createTransferProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  destination = Destination.LOCAL
+  destination = Destination.LOCAL,
+  memoHash = Field(0),
 ): TransactionProposal {
   const padded = [...receivers];
   while (padded.length < MAX_RECEIVERS) {
@@ -187,6 +188,7 @@ export function createTransferProposal(
     tokenId: Field(0),
     txType: TxType.TRANSFER,
     data: Field(0),
+    memoHash,
     nonce,
     configNonce,
     expiryBlock,
@@ -216,13 +218,15 @@ export function createAddOwnerProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  destination = Destination.LOCAL
+  destination = Destination.LOCAL,
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(newOwner),
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
     data: Field(0),
+    memoHash,
     nonce,
     configNonce,
     expiryBlock,
@@ -242,13 +246,15 @@ export function createRemoveOwnerProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  destination = Destination.LOCAL
+  destination = Destination.LOCAL,
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(ownerToRemove),
     tokenId: Field(0),
     txType: TxType.REMOVE_OWNER,
     data: Field(0),
+    memoHash,
     nonce,
     configNonce,
     expiryBlock,
@@ -268,13 +274,15 @@ export function createThresholdProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  destination = Destination.LOCAL
+  destination = Destination.LOCAL,
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.CHANGE_THRESHOLD,
     data: newThreshold,
+    memoHash,
     nonce,
     configNonce,
     expiryBlock,
@@ -294,13 +302,15 @@ export function createDelegateProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  destination = Destination.LOCAL
+  destination = Destination.LOCAL,
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(delegate),
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
+    memoHash,
     nonce,
     configNonce,
     expiryBlock,
@@ -319,13 +329,15 @@ export function createUndelegateProposal(
   expiryBlock = Field(0),
   networkId = Field(1),
   childAccount = PublicKey.empty(),
-  destination = Destination.LOCAL
+  destination = Destination.LOCAL,
+  memoHash = Field(0),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
+    memoHash,
     nonce,
     configNonce,
     expiryBlock,
@@ -355,6 +367,7 @@ export function createDeleteProposal(
     tokenId: Field(0),
     txType: TxType.TRANSFER,
     data: Field(0),
+    memoHash: Field(0),
     nonce,
     configNonce,
     expiryBlock,
@@ -388,6 +401,7 @@ export function createCreateChildProposal(
     tokenId: Field(0),
     txType: TxType.CREATE_CHILD,
     data: Poseidon.hash([ownersCommitment, threshold, numOwners]),
+    memoHash: Field(0),
     nonce,
     configNonce,
     expiryBlock,
@@ -419,6 +433,7 @@ export function createAllocateChildProposal(
     tokenId: Field(0),
     txType: TxType.ALLOCATE_CHILD,
     data: Field(0),
+    memoHash: Field(0),
     nonce,
     configNonce,
     expiryBlock,
@@ -447,6 +462,7 @@ export function createReclaimChildProposal(
     tokenId: Field(0),
     txType: TxType.RECLAIM_CHILD,
     data: amount.value,
+    memoHash: Field(0),
     nonce,
     configNonce,
     expiryBlock,
@@ -471,6 +487,7 @@ export function createDestroyChildProposal(
     tokenId: Field(0),
     txType: TxType.DESTROY_CHILD,
     data: Field(0),
+    memoHash: Field(0),
     nonce,
     configNonce,
     expiryBlock,
@@ -496,6 +513,7 @@ export function createEnableChildMultiSigProposal(
     tokenId: Field(0),
     txType: TxType.ENABLE_CHILD_MULTI_SIG,
     data: enabled,
+    memoHash: Field(0),
     nonce,
     configNonce,
     expiryBlock,

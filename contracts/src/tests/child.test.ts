@@ -191,6 +191,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
         data: Field(99999), // wrong — should be Poseidon([ownersCommitment, threshold, numOwners])
+        memoHash: Field(0),
         nonce: Field(0),
         configNonce: Field(0),
         expiryBlock: Field(0),
