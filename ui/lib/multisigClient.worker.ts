@@ -942,7 +942,7 @@ const workerApi = {
     await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [], proposalMemo);
     if (!txHash) return null;
     return { proposalHash: hashStr, txHash };
   },
