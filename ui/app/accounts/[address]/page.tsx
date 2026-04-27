@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ThresholdBadge from '@/components/ThresholdBadge';
@@ -528,19 +528,35 @@ function PendingSubaccountsBanner({
     };
   }, [parentAddress, indexerStatus?.lastSuccessfulRunAt]);
 
-  // Hide entries whose child has already been indexed.
+  // A pending entry is "dead" when there's no path to finalize:
+  //   - the child contract is already indexed (the happy path), OR
+  //   - the parent's CREATE_CHILD proposal has been invalidated/expired
+  //     (e.g. configNonce moved past it). Either way, the keypair + Finalize
+  //     state are useless and the row would just confuse the user.
+  const isDeadEntry = useCallback(
+    (p: PendingSubaccount, indexedAddresses: Set<string>, proposalByHash: Map<string, Proposal>) => {
+      if (indexedAddresses.has(p.childAddress)) return true;
+      const proposal = proposalByHash.get(p.proposalHash);
+      if (proposal && (proposal.status === 'invalidated' || proposal.status === 'expired')) return true;
+      return false;
+    },
+    [],
+  );
+
+  // Hide dead entries from the banner before the cleanup effect runs to
+  // avoid a flash of the doomed row.
   const visible = useMemo(() => {
     const indexedAddresses = new Set(contracts.map((c) => c.address));
-    return pending.filter((p) => !indexedAddresses.has(p.childAddress));
-  }, [pending, contracts]);
+    const proposalByHash = new Map(proposals.map((p) => [p.proposalHash, p]));
+    return pending.filter((p) => !isDeadEntry(p, indexedAddresses, proposalByHash));
+  }, [pending, contracts, proposals, isDeadEntry]);
 
-  // Auto-clean records for already-indexed children. Drops both the
-  // CREATE_CHILD wizard entry and any deploy-pending entry tied to that
-  // child — both lifecycles end the same moment the child contract is
-  // surfaced by the indexer.
+  // Auto-clean dead entries. Drops both the CREATE_CHILD wizard entry and
+  // any deploy-pending entry tied to that child.
   useEffect(() => {
     const indexedAddresses = new Set(contracts.map((c) => c.address));
-    const stale = pending.filter((p) => indexedAddresses.has(p.childAddress));
+    const proposalByHash = new Map(proposals.map((p) => [p.proposalHash, p]));
+    const stale = pending.filter((p) => isDeadEntry(p, indexedAddresses, proposalByHash));
     for (const p of stale) {
       clearPendingSubaccount(p.parentAddress, p.childAddress);
       clearPendingTx(p.childAddress, p.childAddress, 'deploy');
@@ -548,7 +564,7 @@ function PendingSubaccountsBanner({
     if (stale.length > 0) {
       setPending(getPendingSubaccountsForParent(parentAddress));
     }
-  }, [pending, contracts, parentAddress]);
+  }, [pending, contracts, proposals, parentAddress, isDeadEntry]);
 
   // Daemon-probe failure path: for each in-flight finalize tx older than
   // 30 s, ask the daemon for its inclusion status. If 'failed', drop the
