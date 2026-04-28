@@ -38,9 +38,14 @@ function CreateAccountWizard() {
   const {
     wallet,
     contracts,
+    allContractOwners,
     startOperation,
     isOperating,
   } = useAppContext();
+  const parentOwners = useMemo(
+    () => (parentAddress ? allContractOwners.get(parentAddress) ?? [] : []),
+    [allContractOwners, parentAddress],
+  );
 
   const parentContract = useMemo(
     () => (parentAddress ? contracts.find((c) => c.address === parentAddress) ?? null : null),
@@ -61,11 +66,20 @@ function CreateAccountWizard() {
     if (match) setNetworkValue(match.value);
   }, [isSubaccount, parentContract?.networkId]);
 
-  // Step 2 fields
+  // Step 2 fields. Subaccount mode tries to prefill from the parent's owners
+  // + threshold so users start from a sensible "same governance as parent"
+  // baseline. Top-level creation keeps the connected-wallet-as-only-owner
+  // default. Lazy initializers run once at mount; the effect below upgrades
+  // the state when allContractOwners arrives later and the user hasn't typed
+  // anything yet.
   const [keypair, setKeypair] = useState<{ privateKey: string; publicKey: string } | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [ownerFields, setOwnerFields] = useState<string[]>(['']);
-  const [threshold, setThreshold] = useState('');
+  const [ownerFields, setOwnerFields] = useState<string[]>(() =>
+    isSubaccount && parentOwners.length > 0 ? parentOwners : [''],
+  );
+  const [threshold, setThreshold] = useState<string>(() =>
+    isSubaccount && parentContract?.threshold != null ? String(parentContract.threshold) : '',
+  );
   const [formError, setFormError] = useState<string | null>(null);
 
   const generate = useCallback(async () => {
@@ -85,8 +99,22 @@ function CreateAccountWizard() {
   }, [wallet.connected, keypair, generating, step, generate]);
 
   useEffect(() => {
+    if (isSubaccount) return;
     if (wallet.address) setOwnerFields((prev) => (prev[0] ? prev : [wallet.address!]));
-  }, [wallet.address]);
+  }, [wallet.address, isSubaccount]);
+
+  // Subaccount: when the parent's owners load (or arrive after mount), prefill
+  // the form — but only if the user hasn't started editing the defaults.
+  useEffect(() => {
+    if (!isSubaccount) return;
+    if (parentOwners.length === 0) return;
+    setOwnerFields((prev) => (prev.some((s) => s.trim()) ? prev : parentOwners));
+  }, [isSubaccount, parentOwners]);
+  useEffect(() => {
+    if (!isSubaccount) return;
+    if (parentContract?.threshold == null) return;
+    setThreshold((prev) => (prev.trim() ? prev : String(parentContract.threshold)));
+  }, [isSubaccount, parentContract?.threshold]);
 
   const parsedOwners = useMemo(
     () => ownerFields.map((s) => s.trim()).filter(Boolean),
