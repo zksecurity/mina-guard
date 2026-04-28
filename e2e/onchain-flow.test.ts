@@ -206,7 +206,7 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
 
   // Click deploy
   log('Clicking Deploy account...');
-  const deployBtn = page.getByRole('button', { name: /deploy account/i });
+  const deployBtn = page.getByRole('button', { name: /deploy vault/i });
   await deployBtn.click();
 
   // Wait for the operation to complete (success banner or redirect)
@@ -1464,7 +1464,7 @@ test('26. Propose CREATE_CHILD on parent', async () => { const page = sharedPage
   await page.locator('input[type="number"]').first().fill('1');
 
   log('Clicking Propose subaccount...');
-  await page.getByRole('button', { name: /propose subaccount/i }).click();
+  await page.getByRole('button', { name: /propose subvault/i }).click();
   await waitForBanner(page, 'success');
 
   await waitForIndexer(
@@ -1545,12 +1545,12 @@ test('28. Verify subaccount in UI tree', async () => { const page = sharedPage;
 
   await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-  await expect(page.locator('text=Subaccounts (1)')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('text=SubVaults (1)')).toBeVisible({ timeout: 10_000 });
   log('Subaccounts (1) card visible on parent dashboard');
 
   await gotoWithWallet(`/accounts/${childAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-  await expect(page.locator('text=Parent Account')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('text=Parent Vault')).toBeVisible({ timeout: 10_000 });
   log('Child detail renders with Parent card');
 });
 
