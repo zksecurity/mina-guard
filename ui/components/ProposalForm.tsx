@@ -222,7 +222,7 @@ export default function ProposalForm({
     // space (parent's localNonce for LOCAL, child's parentNonce for REMOTE).
     if (!deleteMode && effectiveNonceFloor !== null && parsedNonce <= effectiveNonceFloor) {
       const floorLabel = isRemoteSpaceTxType
-        ? `the selected subaccount's executed remote nonce (${effectiveNonceFloor})`
+        ? `the selected SubVault's executed remote nonce (${effectiveNonceFloor})`
         : `the current executed nonce (${effectiveNonceFloor})`;
       setValidationError(`Nonce must be greater than ${floorLabel}.`);
       return;
@@ -247,7 +247,7 @@ export default function ProposalForm({
       (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') &&
       !targetChild
     ) {
-      setValidationError('Pick a subaccount to target.');
+      setValidationError('Pick a SubVault to target.');
       return;
     }
     if (!deleteMode && txType === 'reclaimChild') {
@@ -257,12 +257,12 @@ export default function ProposalForm({
         return;
       }
       if (targetBalance !== null && BigInt(parsed.nanomina) > BigInt(targetBalance)) {
-        setValidationError(`Reclaim amount exceeds subaccount balance (${formatMina(targetBalance)} MINA).`);
+        setValidationError(`Reclaim amount exceeds SubVault balance (${formatMina(targetBalance)} MINA).`);
         return;
       }
     }
     if (!deleteMode && txType === 'destroyChild' && !destroyConfirm) {
-      setValidationError('Confirm the destroy action — this drains the subaccount and disables its multi-sig.');
+      setValidationError('Confirm the destroy action — this drains the SubVault and disables its multi-sig.');
       return;
     }
     if (effectiveTxType === 'addOwner' && owners.includes(newOwner.trim())) {
@@ -388,8 +388,8 @@ export default function ProposalForm({
         <p className="text-xs text-safe-text">
           {(() => {
             const floorLabel = isRemoteSpaceTxType
-              ? 'subaccount’s executed remote nonce'
-              : 'contract’s executed nonce';
+              ? 'SubVault’s executed remote nonce'
+              : 'Vault’s executed nonce';
             if (effectiveNonceFloor === null) {
               return `Use a nonce greater than the ${floorLabel}.`;
             }
@@ -403,7 +403,7 @@ export default function ProposalForm({
 
       {!deleteMode && (txType === 'transfer' || txType === 'allocateChild') && (
         <RecipientsBlock
-          label={txType === 'allocateChild' ? 'Subaccount allocations' : 'Recipients'}
+          label={txType === 'allocateChild' ? 'SubVault allocations' : 'Recipients'}
           recipients={recipients}
           setRecipients={setRecipients}
           recipientsMode={recipientsMode}
@@ -417,10 +417,10 @@ export default function ProposalForm({
 
       {!deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') && (
         <div>
-          <label className="block text-sm text-safe-text mb-2">Target Subaccount</label>
+          <label className="block text-sm text-safe-text mb-2">Target SubVault</label>
           {children.length === 0 ? (
             <p className="text-sm text-amber-400">
-              No indexed subaccounts to target. Create one first via the parent &rarr; Create Subaccount flow.
+              No indexed SubVaults to target. Create one first via the parent Vault &rarr; Create SubVault flow.
             </p>
           ) : (
             <div className="space-y-2">
@@ -501,8 +501,8 @@ export default function ProposalForm({
       {!deleteMode && txType === 'destroyChild' && (
         <div className="space-y-2 rounded-lg border border-red-400/40 bg-red-400/5 px-4 py-3">
           <p className="text-xs text-red-300">
-            Destroy drains the subaccount&apos;s full balance to the parent and disables its
-            multi-sig. The on-chain account remains but its lifecycle is permanently frozen.
+            Destroy drains the SubVault&apos;s full balance to the parent Vault and disables its
+            multi-sig. The on-chain Vault remains but its lifecycle is permanently frozen.
           </p>
           <label className="inline-flex items-center gap-2 text-sm text-safe-text">
             <input
@@ -510,7 +510,7 @@ export default function ProposalForm({
               checked={destroyConfirm}
               onChange={(e) => setDestroyConfirm(e.target.checked)}
             />
-            I understand and want to destroy this subaccount.
+            I understand and want to destroy this SubVault.
           </label>
         </div>
       )}
@@ -531,8 +531,8 @@ export default function ProposalForm({
           </div>
           <p className="text-xs text-safe-text pt-1">
             {currentMultiSigEnabled
-              ? 'Disabling blocks the subaccount from running its own LOCAL proposals (transfers, owner changes, etc.). Parent-authorized lifecycle actions remain available.'
-              : 'Enabling restores the subaccount\'s ability to run its own LOCAL proposals.'}
+              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.). Parent-Vault-authorized lifecycle actions remain available.'
+              : 'Enabling restores the SubVault\'s ability to run its own LOCAL proposals.'}
           </p>
         </div>
       )}
@@ -796,7 +796,7 @@ function RecipientsBlock({
                       onChange={(e) => updateRow(index, { address: e.target.value })}
                       className="flex-1 min-w-0 bg-safe-gray border border-safe-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-safe-green"
                     >
-                      <option value="">Select subaccount…</option>
+                      <option value="">Select SubVault…</option>
                       {children.map((c) => (
                         <option key={c.address} value={c.address}>
                           {c.address.slice(0, 12)}…{c.address.slice(-6)}
@@ -856,7 +856,7 @@ function RecipientsBlock({
         <div className="space-y-2">
           {children.length > 0 && (
             <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-3 py-2 text-xs space-y-1">
-              <p className="text-safe-text">Indexed subaccounts (click to append):</p>
+              <p className="text-safe-text">Indexed SubVaults (click to append):</p>
               <ul className="space-y-0.5">
                 {children.map((c) => (
                   <li key={c.address}>

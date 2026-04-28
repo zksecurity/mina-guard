@@ -152,7 +152,7 @@ function CreateAccountWizard() {
     try {
       await assertLedgerReady(signer);
     } catch (err) {
-      void startOperation('Create account', async () => { throw err; });
+      void startOperation('Create Vault', async () => { throw err; });
       return;
     }
     if (name.trim()) saveAccountName(keypair.publicKey, name);
@@ -198,7 +198,7 @@ function CreateAccountWizard() {
     try {
       await assertLedgerReady(signer);
     } catch (err) {
-      void startOperation('Propose subaccount', async () => { throw err; });
+      void startOperation('Propose SubVault', async () => { throw err; });
       return;
     }
 
@@ -212,7 +212,7 @@ function CreateAccountWizard() {
     // savePendingTx call below writes a fresh entry under the new proposalHash.
     clearPendingCreateChild(parentAddress, childAddress);
 
-    void startOperation('Preparing subaccount proposal…', async (onProgress) => {
+    void startOperation('Preparing SubVault proposal…', async (onProgress) => {
       onProgress('Computing child config hash…');
       const { configHash } = await computeCreateChildConfigHash({
         childOwners: parsedOwners,
@@ -266,7 +266,7 @@ function CreateAccountWizard() {
         },
       });
 
-      return `Subaccount proposal submitted. Approve on the parent, then return to finalize deployment.`;
+      return `SubVault proposal submitted. Approve on the parent Vault, then return to finalize deployment.`;
     });
 
     router.push(`/accounts/${parentAddress}`);
@@ -277,16 +277,16 @@ function CreateAccountWizard() {
       <div className="p-6 max-w-3xl mx-auto w-full">
         {!wallet.connected ? (
           <div className="text-center py-20">
-            <p className="text-safe-text">Connect a wallet to create an account.</p>
+            <p className="text-safe-text">Connect a wallet to create a Vault.</p>
           </div>
         ) : (
           <div>
             <h1 className="text-2xl font-bold mb-2">
-              {isSubaccount ? 'Create subaccount' : 'Create new account'}
+              {isSubaccount ? 'Create SubVault' : 'Create new Vault'}
             </h1>
             {isSubaccount && parentAddress && (
               <p className="text-xs text-safe-text mb-6">
-                Subaccount of{' '}
+                SubVault of{' '}
                 <Link
                   href={`/accounts/${parentAddress}`}
                   className="text-safe-green hover:underline font-mono"
@@ -317,7 +317,7 @@ function CreateAccountWizard() {
                     </h2>
                     <p className="text-xs text-safe-text">
                       {step === 1
-                        ? 'Give the account a local nickname and pick the network to deploy to.'
+                        ? 'Give the Vault a local nickname and pick the network to deploy to.'
                         : 'Add signer addresses and the minimum approvals needed to execute a proposal.'}
                     </p>
                   </div>
@@ -344,7 +344,7 @@ function CreateAccountWizard() {
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        placeholder="My MinaGuard Account"
+                        placeholder="My MinaGuard Vault"
                         className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green"
                       />
                     </label>
@@ -357,7 +357,7 @@ function CreateAccountWizard() {
                         className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green disabled:opacity-60"
                         title={
                           isSubaccount
-                            ? 'Subaccounts inherit the parent network.'
+                            ? 'SubVaults inherit the parent Vault network.'
                             : 'Devnet and Mainnet support is coming soon.'
                         }
                       >
@@ -369,7 +369,7 @@ function CreateAccountWizard() {
                       </select>
                       <span className="text-[10px] text-safe-text">
                         {isSubaccount
-                          ? 'Locked to the parent account network.'
+                          ? 'Locked to the parent Vault network.'
                           : 'Only Testnet is available right now.'}
                       </span>
                     </label>
@@ -484,7 +484,7 @@ function CreateAccountWizard() {
                     className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
                     title={!parentContract ? 'Loading parent contract…' : undefined}
                   >
-                    {isOperating ? 'Proposing…' : 'Propose subaccount'}
+                    {isOperating ? 'Proposing…' : 'Propose SubVault'}
                   </button>
                 ) : (
                   <button
@@ -492,7 +492,7 @@ function CreateAccountWizard() {
                     onClick={handleDeploy}
                     className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
                   >
-                    {isOperating ? 'Deploying…' : 'Deploy account'}
+                    {isOperating ? 'Deploying…' : 'Deploy Vault'}
                   </button>
                 )}
               </div>

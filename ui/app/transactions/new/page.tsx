@@ -281,9 +281,9 @@ interface TxTypePickerProps {
 function TxTypePicker({ localTypes, childTypes, selected, onSelect }: TxTypePickerProps) {
   return (
     <div className="space-y-3">
-      <PickerRow label="Account" types={localTypes} selected={selected} onSelect={onSelect} />
+      <PickerRow label="Vault" types={localTypes} selected={selected} onSelect={onSelect} />
       {childTypes.length > 0 && (
-        <PickerRow label="Subaccount" types={childTypes} selected={selected} onSelect={onSelect} />
+        <PickerRow label="SubVault" types={childTypes} selected={selected} onSelect={onSelect} />
       )}
     </div>
   );

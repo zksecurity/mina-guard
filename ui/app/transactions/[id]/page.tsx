@@ -246,7 +246,7 @@ export default function TransactionDetailPage() {
       }
 
       if (captured.proposal.txType === 'createChild') {
-        return 'CREATE_CHILD proposals finalize via the parent detail page → Pending Subaccounts → Finalize deployment.';
+        return 'CREATE_CHILD proposals finalize via the parent Vault detail page → Pending SubVaults → Finalize deployment.';
       }
 
       const result = await executeProposalOnchain({
@@ -332,9 +332,9 @@ export default function TransactionDetailPage() {
       : 'Invalidates another proposal'
     : isRemote
       ? proposal.childAccount
-        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
-        : 'Executes on subaccount'
-      : 'Executes on this account';
+        ? `Executes on SubVault ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on SubVault'
+      : 'Executes on this Vault';
 
   // Pull the pending-create entry directly so we can show its tx hash even
   // before the synthesized row carries it via `proposal.lastExecuteTxHash`.

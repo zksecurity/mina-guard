@@ -156,18 +156,18 @@ export default function AccountsListPage() {
       <div className="p-6 max-w-4xl mx-auto w-full">
         <div className="flex items-end justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Your accounts</h1>
+            <h1 className="text-2xl font-bold">Your Vaults</h1>
             <p className="text-sm text-safe-text mt-1">
               {!wallet.address
-                ? 'Connect a wallet to see your accounts.'
-                : `${ownedCount} ${ownedCount === 1 ? 'account' : 'accounts'}`}
+                ? 'Connect a wallet to see your Vaults.'
+                : `${ownedCount} ${ownedCount === 1 ? 'Vault' : 'Vaults'}`}
             </p>
           </div>
           <Link
             href="/accounts/new"
             className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all"
           >
-            + Create account
+            + Create Vault
           </Link>
         </div>
 
@@ -209,17 +209,17 @@ export default function AccountsListPage() {
             <div className="p-10 text-center">
               <p className="text-safe-text mb-4">
                 {!wallet.address
-                  ? 'Connect a wallet to see your accounts.'
+                  ? 'Connect a wallet to see your Vaults.'
                   : ownedCount === 0
-                    ? "You don't own any MinaGuard accounts yet."
-                    : 'No accounts match that search.'}
+                    ? "You don't own any MinaGuard Vaults yet."
+                    : 'No Vaults match that search.'}
               </p>
               {wallet.address && ownedCount === 0 && (
                 <Link
                   href="/accounts/new"
                   className="inline-block bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110"
                 >
-                  Create your first account
+                  Create your first Vault
                 </Link>
               )}
             </div>
@@ -439,7 +439,7 @@ function AccountRow({
             {name && <p className="text-sm font-semibold truncate">{name}</p>}
             {isChild && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-safe-border/40 text-safe-text shrink-0">
-                Subaccount
+                SubVault
               </span>
             )}
             {isChild && contract.childMultiSigEnabled === false && (

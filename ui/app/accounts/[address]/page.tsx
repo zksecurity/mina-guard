@@ -69,7 +69,7 @@ export default function AccountPage() {
   const localProposalsEnabled = isOwner && (isRoot || childMultiSigEnabled);
   const childActionsEnabled = isRoot && isOwner;
   const localDisabledReason = !isOwner
-    ? 'You are not an owner of this account'
+    ? 'You are not an owner of this Vault'
     : !childMultiSigEnabled
       ? 'Multi-sig disabled by parent'
       : null;
@@ -227,7 +227,7 @@ export default function AccountPage() {
               <p className="text-xs text-safe-text uppercase tracking-wider mb-3">New Proposal</p>
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0 w-20">Account</span>
+                  <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0 w-20">Vault</span>
                   <ProposalButtonRow
                     types={LOCAL_TX_TYPES}
                     enabled={localProposalsEnabled}
@@ -238,11 +238,11 @@ export default function AccountPage() {
                 </div>
                 {isRoot && (
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0 w-20">Subaccount</span>
+                    <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0 w-20">SubVault</span>
                     <ProposalButtonRow
                       types={CHILD_TX_TYPES}
                       enabled={childActionsEnabled}
-                      disabledReason={!isOwner ? 'You are not an owner of this account' : null}
+                      disabledReason={!isOwner ? 'You are not an owner of this Vault' : null}
                       hrefPrefix={`/transactions/new?account=${multisig.address}&type=`}
                       accountAddress={multisig.address}
                     />
@@ -269,7 +269,7 @@ export default function AccountPage() {
         ) : urlAddress && !contracts.some((c) => c.address === urlAddress) ? (
           pendingDeployTxHash || isPendingIndex ? (
             <div className="rounded-xl border p-4 text-sm space-y-1 border-yellow-400/30 bg-yellow-400/10 text-yellow-200 max-w-2xl">
-              <p className="font-semibold">Deploying account — awaiting inclusion</p>
+              <p className="font-semibold">Deploying Vault — awaiting inclusion</p>
               <p className="opacity-90">
                 Your contract was broadcast to the network. It should appear here once the next block is produced (~3 min).
               </p>
@@ -292,18 +292,18 @@ export default function AccountPage() {
             </div>
           ) : (
             <div className="text-center py-20">
-              <p className="text-safe-text mb-4">Account not found.</p>
+              <p className="text-safe-text mb-4">Vault not found.</p>
               <Link
                 href="/"
                 className="inline-block bg-safe-green text-safe-dark font-semibold rounded-lg px-6 py-3 text-sm hover:brightness-110 transition-all"
               >
-                Back to accounts
+                Back to Vaults
               </Link>
             </div>
           )
         ) : (
           <div className="text-center py-20">
-            <p className="text-safe-text">Loading account…</p>
+            <p className="text-safe-text">Loading Vault…</p>
           </div>
         )}
       </div>
@@ -445,7 +445,7 @@ function ParentCard({ parent, parentContract, childMultiSigEnabled }: ParentCard
     <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Parent Account</p>
+          <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Parent Vault</p>
           <Link
             href={`/accounts/${parent}`}
             className="text-sm font-mono text-safe-green hover:underline truncate block"
@@ -617,7 +617,7 @@ function PendingSubaccountsBanner({
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     setFinalizingChild(child.childAddress);
     try {
-      await startOperation('Finalizing subaccount deployment…', async (onProgress) => {
+      await startOperation('Finalizing SubVault deployment…', async (onProgress) => {
         onProgress('Fetching parent CREATE_CHILD proposal…');
         const proposal = await fetchProposal(record.contractAddress, record.proposalHash);
         if (!proposal) {
@@ -657,7 +657,7 @@ function PendingSubaccountsBanner({
   return (
     <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl p-5 space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-amber-200">Pending Subaccounts ({visible.length})</h3>
+        <h3 className="text-sm font-semibold text-amber-200">Pending SubVaults ({visible.length})</h3>
       </div>
       {contractLock.locked && (
         <p className="text-xs text-amber-200/90">
@@ -760,7 +760,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
   if (children === null) {
     return (
       <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-        <p className="text-xs text-safe-text uppercase tracking-wider mb-2">Subaccounts</p>
+        <p className="text-xs text-safe-text uppercase tracking-wider mb-2">SubVaults</p>
         <p className="text-sm text-safe-text">Loading…</p>
       </div>
     );
@@ -769,8 +769,8 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
   if (children.length === 0) {
     return (
       <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-        <p className="text-xs text-safe-text uppercase tracking-wider mb-2">Subaccounts</p>
-        <p className="text-sm text-safe-text">No subaccounts yet.</p>
+        <p className="text-xs text-safe-text uppercase tracking-wider mb-2">SubVaults</p>
+        <p className="text-sm text-safe-text">No SubVaults yet.</p>
       </div>
     );
   }
@@ -779,7 +779,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
     <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-safe-text uppercase tracking-wider">
-          Subaccounts ({children.length})
+          SubVaults ({children.length})
         </p>
       </div>
       <ul className="divide-y divide-safe-border">

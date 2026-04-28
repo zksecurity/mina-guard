@@ -150,11 +150,11 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
   removeOwner: 'Remove Owner',
   changeThreshold: 'Change Threshold',
   setDelegate: 'Set Delegate',
-  createChild: 'Create Subaccount',
-  allocateChild: 'Allocate to Subaccounts',
-  reclaimChild: 'Reclaim from Subaccount',
-  destroyChild: 'Destroy Subaccount',
-  enableChildMultiSig: 'Toggle Subaccount Multi-sig',
+  createChild: 'Create SubVault',
+  allocateChild: 'Allocate to SubVaults',
+  reclaimChild: 'Reclaim from SubVault',
+  destroyChild: 'Destroy SubVault',
+  enableChildMultiSig: 'Toggle SubVault Multi-sig',
 };
 
 export type TxTypeOption = { value: TxType; label: string; icon: string };
@@ -170,11 +170,11 @@ export const LOCAL_TX_TYPES: TxTypeOption[] = [
 
 /** Subaccount-management actions — only shown on root (parent) account detail pages. */
 export const CHILD_TX_TYPES: TxTypeOption[] = [
-  { value: 'createChild', label: 'Create Subaccount', icon: 'plus-circle' },
-  { value: 'allocateChild', label: 'Allocate to Subaccounts', icon: 'share' },
-  { value: 'reclaimChild', label: 'Reclaim from Subaccount', icon: 'arrow-down' },
-  { value: 'destroyChild', label: 'Destroy Subaccount', icon: 'trash' },
-  { value: 'enableChildMultiSig', label: 'Toggle Subaccount Multi-sig', icon: 'toggle' },
+  { value: 'createChild', label: 'Create SubVault', icon: 'plus-circle' },
+  { value: 'allocateChild', label: 'Allocate to SubVaults', icon: 'share' },
+  { value: 'reclaimChild', label: 'Reclaim from SubVault', icon: 'arrow-down' },
+  { value: 'destroyChild', label: 'Destroy SubVault', icon: 'trash' },
+  { value: 'enableChildMultiSig', label: 'Toggle SubVault Multi-sig', icon: 'toggle' },
 ];
 
 /** Truncates long addresses for compact UI chips and labels. */

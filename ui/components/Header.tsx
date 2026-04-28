@@ -39,7 +39,7 @@ export default function Header({
       <Link
         href="/"
         className="flex items-center gap-2 hover:opacity-80 transition-opacity shrink-0"
-        title="Back to accounts"
+        title="Back to Vaults"
       >
         <div className="w-8 h-8 bg-safe-green rounded-full flex items-center justify-center">
           <span className="text-safe-dark font-bold text-sm">M</span>

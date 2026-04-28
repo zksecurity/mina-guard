@@ -1208,7 +1208,7 @@ const workerApi = {
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn, [childKey]);
     if (!txHash) return null;
-    return `Subaccount deployed: ${txHash}`;
+    return `SubVault deployed: ${txHash}`;
   },
 
   /**
@@ -1307,7 +1307,7 @@ const workerApi = {
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn, [], childMemo);
     if (!txHash) return null;
-    return `Subaccount action submitted: ${txHash}`;
+    return `SubVault action submitted: ${txHash}`;
   },
 
   /**

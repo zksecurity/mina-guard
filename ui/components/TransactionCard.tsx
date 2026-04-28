@@ -56,9 +56,9 @@ export default function TransactionCard({
       : 'Invalidates another proposal'
     : isRemote
       ? proposal.childAccount
-        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
-        : 'Executes on subaccount'
-      : 'Executes on this account';
+        ? `Executes on SubVault ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on SubVault'
+      : 'Executes on this Vault';
 
   return (
     <Link href={`/transactions/${proposal.proposalHash}`}>
