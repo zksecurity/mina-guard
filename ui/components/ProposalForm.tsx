@@ -23,6 +23,10 @@ interface ProposalFormProps {
   numOwners: number;
   onSubmit: (data: NewProposalInput) => void;
   isSubmitting: boolean;
+  /** External reason to keep the submit button disabled (e.g. indexer-lag
+   *  contract lock). The form just disables; the calling page renders the
+   *  user-facing banner explaining why. */
+  submitDisabledReason?: string | null;
   txType: TxType;
   /** Indexed subaccounts of this guard, used as targets for CHILD_TX_TYPES. */
   children?: ContractSummary[];
@@ -49,6 +53,7 @@ export default function ProposalForm({
   numOwners,
   onSubmit,
   isSubmitting,
+  submitDisabledReason = null,
   txType,
   children = [],
   initialNonce,
@@ -684,8 +689,9 @@ export default function ProposalForm({
 
       <button
         type="submit"
-        disabled={isSubmitting}
-        className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50"
+        disabled={isSubmitting || !!submitDisabledReason}
+        title={submitDisabledReason ?? undefined}
+        className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isSubmitting ? 'Submitting Proposal...' : (deleteMode ? 'Create Delete Proposal' : 'Submit Proposal')}
       </button>

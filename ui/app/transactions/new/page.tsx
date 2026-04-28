@@ -14,6 +14,7 @@ import {
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOnchainProposal } from '@/lib/multisigClient';
 import { fetchChildren, fetchContract } from '@/lib/api';
+import { useContractTxLock } from '@/hooks/useContractTxLock';
 import { savePendingTx } from '@/lib/storage';
 
 export default function NewTransactionPage() {
@@ -37,6 +38,7 @@ function NewTransactionPageInner() {
   } = useAppContext();
 
   const isRoot = !!multisig && !multisig.parent;
+  const contractLock = useContractTxLock(multisig?.address ?? null, proposals);
 
   // Available tx types: LOCAL on every guard; subaccount actions only on roots.
   // CREATE_CHILD is shown on roots so the action is discoverable here, but it
@@ -237,12 +239,18 @@ function NewTransactionPageInner() {
                   There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
                 </div>
               )}
+              {contractLock.locked && (
+                <div className="rounded-lg px-4 py-3 text-xs bg-amber-500/10 text-amber-200 border border-amber-400/30">
+                  {contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).
+                </div>
+              )}
               <ProposalForm
                 owners={owners.map((owner) => owner.address)}
                 currentThreshold={multisig.threshold ?? 1}
                 numOwners={multisig.numOwners ?? owners.length}
                 onSubmit={handleSubmit}
                 isSubmitting={isOperating}
+                submitDisabledReason={contractLock.locked ? contractLock.reason : null}
                 txType={txType}
                 children={children}
                 initialNonce={initialNonce}

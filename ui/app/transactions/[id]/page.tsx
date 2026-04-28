@@ -23,6 +23,7 @@ import {
   getPendingTx,
   savePendingTx,
 } from '@/lib/storage';
+import { useContractTxLock } from '@/hooks/useContractTxLock';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -117,6 +118,10 @@ export default function TransactionDetailPage() {
     proposal.status === 'pending' &&
     proposal.lastExecuteTxHash != null &&
     proposal.lastExecuteError == null;
+  // Contract-wide indexer-lag lock. Any in-flight tx on this contract (own
+  // or cross-signer) makes rebuildStoresFromBackend stale; serialize until
+  // the indexer catches up.
+  const contractLock = useContractTxLock(multisig?.address ?? null, proposals);
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -124,14 +129,16 @@ export default function TransactionDetailPage() {
     isOwner &&
     !hasApproved &&
     !isConfigStale &&
-    !myPendingApprove;
+    !myPendingApprove &&
+    !contractLock.locked;
   const canExecute =
     !!proposal &&
     !isLocalPending &&
     proposal.status === 'pending' &&
     proposal.approvalCount >= threshold &&
     !isConfigStale &&
-    !executeInFlight;
+    !executeInFlight &&
+    !contractLock.locked;
   const canDelete =
     !!proposal &&
     !isLocalPending &&
@@ -146,7 +153,8 @@ export default function TransactionDetailPage() {
     // While an execute is in flight, the proposal is about to be invalidated
     // either way (success → executed, failure → user retries). Surfacing
     // Delete here just invites duplicate work / wasted fees.
-    !executeInFlight;
+    !executeInFlight &&
+    !contractLock.locked;
   const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
   /** Submits an on-chain approveProposal transaction. */
@@ -375,6 +383,16 @@ export default function TransactionDetailPage() {
             title="Your approval is in flight"
             description="Waiting for the network to include your approval transaction."
             txHash={myPendingApprove.txHash}
+            network={wallet.network ?? null}
+          />
+        )}
+
+        {contractLock.locked && !executeInFlight && !myPendingApprove && (
+          <PendingTxBanner
+            tone="approval"
+            title="Indexer catching up"
+            description={`${contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).`}
+            txHash={contractLock.txHash}
             network={wallet.network ?? null}
           />
         )}

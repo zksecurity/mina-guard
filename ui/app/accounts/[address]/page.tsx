@@ -30,6 +30,7 @@ import {
   type PendingTx,
 } from '@/lib/storage';
 import { CREATE_TX_STATUS_PROBE_MIN_AGE_MS } from '@/hooks/useTransactions';
+import { useContractTxLock } from '@/hooks/useContractTxLock';
 
 /** Account detail page — reads address from URL, syncs AppContext selection. */
 export default function AccountPage() {
@@ -491,6 +492,9 @@ function PendingSubaccountsBanner({
   const [pendingDeployByChild, setPendingDeployByChild] = useState<Map<string, PendingTx>>(new Map());
   const parentThreshold = multisig?.address === parentAddress ? (multisig.threshold ?? 0) : 0;
   const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
+  // Indexer-lag lock for the parent guard: any in-flight tx on the parent
+  // makes Finalize's parentApprovalWitness stale, so block until indexed.
+  const contractLock = useContractTxLock(parentAddress, proposals);
 
   const loadPendingCreateChild = useCallback(
     () =>
@@ -655,6 +659,11 @@ function PendingSubaccountsBanner({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-amber-200">Pending Subaccounts ({visible.length})</h3>
       </div>
+      {contractLock.locked && (
+        <p className="text-xs text-amber-200/90">
+          {contractLock.reason} Finalize is blocked until it lands (~3 min).
+        </p>
+      )}
       <ul className="space-y-2">
         {visible.map((record) => {
           // Filtered upstream: every `visible` row has childAccount set.
@@ -664,7 +673,7 @@ function PendingSubaccountsBanner({
           // parent's threshold before executeSetupChild can succeed.
           const thresholdMet = !!proposal && proposal.status === 'pending' && proposal.approvalCount >= parentThreshold;
           const finalizeInFlight = pendingDeployByChild.get(child.childAddress);
-          const canFinalize = thresholdMet && !finalizeInFlight;
+          const canFinalize = thresholdMet && !finalizeInFlight && !contractLock.locked;
           const buttonLabel = finalizingChild === child.childAddress
             ? 'Finalizing…'
             : finalizeInFlight
@@ -719,7 +728,9 @@ function PendingSubaccountsBanner({
                     ? 'Runs executeSetupChild on the new child address.'
                     : finalizeInFlight
                       ? 'Finalize tx broadcast — waiting for the child contract to land on-chain.'
-                      : 'Waiting for the parent CREATE_CHILD proposal to reach threshold.'}
+                      : contractLock.locked
+                        ? `${contractLock.reason} Try again once the indexer catches up.`
+                        : 'Waiting for the parent CREATE_CHILD proposal to reach threshold.'}
                 >
                   {buttonLabel}
                 </button>
