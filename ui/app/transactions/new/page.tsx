@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ProposalForm from '@/components/ProposalForm';
@@ -14,6 +14,7 @@ import {
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOnchainProposal } from '@/lib/multisigClient';
 import { fetchChildren, fetchContract } from '@/lib/api';
+import { savePendingTx } from '@/lib/storage';
 
 export default function NewTransactionPage() {
   return (
@@ -38,8 +39,12 @@ function NewTransactionPageInner() {
   const isRoot = !!multisig && !multisig.parent;
 
   // Available tx types: LOCAL on every guard; subaccount actions only on roots.
+  // CREATE_CHILD is shown on roots so the action is discoverable here, but it
+  // routes to the dedicated wizard at /accounts/new (see handleTxTypeSelect)
+  // because it needs to generate a child keypair and stash localStorage state
+  // that the generic ProposalForm can't produce.
   const availableTypes = useMemo(
-    () => (isRoot ? [...LOCAL_TX_TYPES, ...CHILD_TX_TYPES.filter((t) => t.value !== 'createChild')] : LOCAL_TX_TYPES),
+    () => (isRoot ? [...LOCAL_TX_TYPES, ...CHILD_TX_TYPES] : LOCAL_TX_TYPES),
     [isRoot],
   );
 
@@ -60,6 +65,17 @@ function NewTransactionPageInner() {
       router.replace(`/accounts/new?parent=${multisig.address}`);
     }
   }, [rawType, multisig, router, deleteMode]);
+
+  // Route the CREATE_CHILD chip to the wizard instead of selecting it as the
+  // active form txType (the form can't drive that flow). Other types behave
+  // like normal — they just toggle the picker.
+  const handleTxTypeSelect = useCallback((value: TxType) => {
+    if (value === 'createChild' && multisig) {
+      router.push(`/accounts/new?parent=${multisig.address}`);
+      return;
+    }
+    setTxType(value);
+  }, [multisig, router]);
 
   // In delete mode the form recomputes effectiveTxType from the target's
   // destination (LOCAL→transfer / REMOTE→reclaimChild), but we still seed a
@@ -140,19 +156,42 @@ function NewTransactionPageInner() {
     await startOperation('Submitting proposal on-chain...', async (onProgress) => {
       const fresh = await fetchContract(contractAddress);
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
-      const proposalHash = await createOnchainProposal({
+      const result = await createOnchainProposal({
         contractAddress,
         proposerAddress,
         input: data,
         configNonce,
         networkId,
       }, onProgress, signer);
-      createdHash = proposalHash;
-      if (!proposalHash) return null;
+      if (!result) return null;
+      createdHash = result.proposalHash;
 
-      return `Proposal created: ${proposalHash}`;
+      const isRemote =
+        data.txType === 'createChild' ||
+        data.txType === 'reclaimChild' ||
+        data.txType === 'destroyChild' ||
+        data.txType === 'enableChildMultiSig';
+      savePendingTx({
+        kind: 'create',
+        contractAddress,
+        proposalHash: result.proposalHash,
+        txHash: result.txHash,
+        signerPubkey: proposerAddress,
+        createdAt: new Date().toISOString(),
+        summary: {
+          txType: data.txType,
+          nonce: String(data.nonce),
+          configNonce: String(configNonce),
+          expiryBlock: data.expiryBlock != null ? String(data.expiryBlock) : null,
+          destination: isRemote ? 'remote' : 'local',
+          childAccount: data.childAccount ?? null,
+          receivers: data.receivers ?? [],
+        },
+      });
+
+      return `Proposal created: ${result.proposalHash}`;
     });
-    router.push(createdHash ? `/transactions/${createdHash}?pending=1` : '/transactions');
+    router.push(createdHash ? `/transactions/${createdHash}` : '/transactions');
   };
 
   return (
@@ -183,7 +222,7 @@ function NewTransactionPageInner() {
                 localTypes={availableTypes.filter((t) => LOCAL_TX_TYPES.some((l) => l.value === t.value))}
                 childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
                 selected={txType}
-                onSelect={setTxType}
+                onSelect={handleTxTypeSelect}
               />
             )}
 

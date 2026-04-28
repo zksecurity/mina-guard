@@ -22,8 +22,19 @@ COPY dev-helpers/ dev-helpers/
 # Build contracts first (workspace dependency)
 RUN cd contracts && bun run build
 
-# Compile contract circuit and extract verification key hash
-RUN bun run dev-helpers/cli.ts vk-hash compile 2>&1 | awk '/^vkHash:/{print $2}' > /app/.vk-hash
+# Compile contract circuit and extract verification key hash.
+# When MINAGUARD_VK_HASH is supplied as a build arg the compile is skipped —
+# the host runner is expected to have computed it once (full host memory)
+# and threaded it through. The o1js circuit compile peaks well above the
+# memory available inside a typical CI Docker build, OOM-killing the step.
+ARG MINAGUARD_VK_HASH=
+RUN if [ -n "$MINAGUARD_VK_HASH" ]; then \
+      echo "Using prebuilt MINAGUARD_VK_HASH: $MINAGUARD_VK_HASH"; \
+      echo "$MINAGUARD_VK_HASH" > /app/.vk-hash; \
+    else \
+      echo "MINAGUARD_VK_HASH build arg not set — compiling circuit (memory-heavy)..."; \
+      bun run dev-helpers/cli.ts vk-hash compile 2>&1 | awk '/^vkHash:/{print $2}' > /app/.vk-hash; \
+    fi
 
 # Generate Prisma client
 RUN cd backend && bunx prisma generate

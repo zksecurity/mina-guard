@@ -44,6 +44,12 @@ services:
     build:
       context: ..
       dockerfile: preview-env/Dockerfile.backend
+      args:
+        # When set, the Dockerfile skips the in-image circuit compile and
+        # writes this value to /app/.vk-hash. preview.sh computes it once on
+        # the host before invoking compose build to avoid OOM kills inside
+        # the Docker build.
+        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-}
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
@@ -51,6 +57,10 @@ services:
       - ARCHIVE_ENDPOINT=http://lightnet:8282
       - LIGHTNET_ACCOUNT_MANAGER=http://lightnet:8181
       - PORT=4000
+      # Lightnet's slot time is ~10s; default 15s indexer poll is wasteful here.
+      # Drop to 5s so the UI sees fresh events ~3x sooner. Backed by
+      # config.ts:56 (INDEX_POLL_INTERVAL_MS).
+      - INDEX_POLL_INTERVAL_MS=5000
     depends_on:
       lightnet:
         condition: service_healthy
@@ -68,6 +78,9 @@ services:
         - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/archive
         - NEXT_PUBLIC_MINA_NETWORK=testnet
         - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-nodes.duckdns.org/preview/${PR_NUMBER:-1}/explorer
+        # Idle poll cadence on the preview; adaptive polling drops to a faster
+        # interval automatically while a PendingTx is in flight.
+        - NEXT_PUBLIC_POLL_INTERVAL_MS=3000
     restart: unless-stopped
     depends_on:
       - backend

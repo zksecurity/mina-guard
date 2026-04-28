@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchContract, fetchContracts, fetchIndexerStatus, fetchOwners } from '@/lib/api';
 import { ContractSummary, IndexerStatus, OwnerRecord } from '@/lib/types';
-import { clearUiStorage, getSelectedContract, saveSelectedContract } from '@/lib/storage';
+import {
+  clearUiStorage,
+  getPendingTxs,
+  getSelectedContract,
+  PENDING_TXS_CHANGED,
+  saveSelectedContract,
+} from '@/lib/storage';
+import { useAdaptivePolling } from '@/hooks/useAdaptivePolling';
 
 /** Polls backend contract/indexer endpoints and manages selected contract state. */
 export function useMultisig(walletAddress: string | null) {
@@ -128,12 +135,24 @@ export function useMultisig(walletAddress: string | null) {
     const saved = getSelectedContract();
     if (saved) selectedAddressRef.current = saved;
     void refreshState();
-    const interval = setInterval(() => {
-      void refreshState();
-    }, Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS) || 10_000);
-
-    return () => clearInterval(interval);
   }, [refreshState]);
+
+  // Adaptive polling: kick to fast cadence while a deploy is in flight so the
+  // newly-indexed contract surfaces ASAP. Also refreshes on tab focus / online.
+  const [hasPendingDeploy, setHasPendingDeploy] = useState(false);
+  useEffect(() => {
+    const reload = () => {
+      setHasPendingDeploy(getPendingTxs().some((pt) => pt.kind === 'deploy'));
+    };
+    reload();
+    window.addEventListener(PENDING_TXS_CHANGED, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(PENDING_TXS_CHANGED, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
+  useAdaptivePolling(refreshState, { busy: hasPendingDeploy });
 
 
   return {

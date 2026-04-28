@@ -5,7 +5,7 @@ import { PublicKey, fetchAccount } from 'o1js';
 import { prisma } from './db.js';
 import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
-import { fetchLatestBlockHeight, fetchVerificationKeyHash } from './mina-client.js';
+import { fetchLatestBlockHeight, fetchVerificationKeyHash, fetchZkappTxStatus } from './mina-client.js';
 import { serializeProposalRecord, type ContractState } from './proposal-record.js';
 import {
   acquireLightnetAccount,
@@ -70,6 +70,23 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   /** Returns current polling indexer status and latest sync metadata. */
   router.get('/api/indexer/status', safe(async (_req, res) => {
     res.json({ ...indexer.getStatus(), indexerMode: config?.indexerMode ?? 'full' });
+  }));
+
+  /** Looks up a submitted zkApp tx hash on the daemon's bestChain. Used by the
+   *  UI to detect failed/dropped pending CREATE proposals (which have no
+   *  Proposal row yet, so `pollPendingSubmissions` can't surface their state). */
+  router.get('/api/tx-status', safe(async (req, res) => {
+    if (!config) {
+      res.status(503).json({ error: 'Backend config unavailable' });
+      return;
+    }
+    const hash = typeof req.query.hash === 'string' ? req.query.hash.trim() : '';
+    if (!hash) {
+      res.status(400).json({ error: 'Missing or empty hash query param' });
+      return;
+    }
+    const result = await fetchZkappTxStatus(config, hash);
+    res.json(result);
   }));
 
   /** Lists tracked contracts with derived config + aggregate counts. */

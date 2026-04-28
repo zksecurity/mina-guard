@@ -54,74 +54,164 @@ export function getAccountName(address: string): string | null {
   return localStorage.getItem(getKey(`name:${address}`));
 }
 
-/**
- * Pending subaccount deployment record persisted between the wizard's
- * "submit CREATE_CHILD proposal" step and the later "Finalize deployment"
- * step that runs `executeSetupChild` on the new child.
- */
-export interface PendingSubaccount {
-  parentAddress: string;
+// -- Pending in-flight transactions ------------------------------------
+//
+// One generic store covers four flavors of "tx is broadcast, awaiting
+// inclusion": create, approve, execute, deploy. The `useTransactions` hook
+// reconciles these against the indexer each tick and clears them once the
+// on-chain reality matches.
+
+/** `deploy` covers the brand-new top-level contract deployment flow
+ *  (`deployAndSetupContract`) and the CREATE_CHILD wizard's "Finalize
+ *  deployment" step. It has no proposalHash — the contract address itself
+ *  is the unique identity, stored in `proposalHash` as a sentinel. */
+export type PendingTxKind = 'create' | 'approve' | 'execute' | 'deploy';
+
+/** Snapshot of proposal data captured at creation time so the detail page
+ *  can render a meaningful card before the indexer catches up. Only set on
+ *  `kind='create'` records. */
+export interface PendingTxSummary {
+  txType: string | null;
+  nonce: string | null;
+  configNonce: string | null;
+  expiryBlock: string | null;
+  destination: 'local' | 'remote' | null;
+  childAccount: string | null;
+  receivers: { address: string; amount: string }[];
+}
+
+/** CREATE_CHILD wizard state needed to finalize the child deployment after
+ *  the parent proposal lands. Only set on CREATE_CHILD `kind='create'` records. */
+export interface PendingTxChildAccount {
   childAddress: string;
   childPrivateKey: string;
   childOwners: string[];
   childThreshold: number;
   childName: string;
-  proposalHash: string;
   expiryBlock: number | null;
-  createdAt: string;
 }
 
-const PENDING_SUBACCOUNTS_KEY = getKey('pending-subaccounts');
+export interface PendingTx {
+  kind: PendingTxKind;
+  contractAddress: string;
+  proposalHash: string;
+  /** Mina tx hash returned by the daemon. */
+  txHash: string;
+  /** Submitting wallet's base58 pubkey. */
+  signerPubkey: string;
+  createdAt: string;
+  summary?: PendingTxSummary;
+  childAccount?: PendingTxChildAccount;
+}
 
-/** Reads all pending subaccount records (across all parents) from localStorage. */
-export function getPendingSubaccounts(): PendingSubaccount[] {
+const PENDING_TXS_KEY = getKey('pending-txs');
+/** 24h prune window — survives long-lived sessions. */
+const PENDING_TX_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Custom event dispatched on save/clear so banners can refresh in the same tab.
+ *  The native `storage` event only fires across tabs, so we use a custom event. */
+export const PENDING_TXS_CHANGED = 'mina-guard-pending-txs-changed';
+
+function notifyPendingTxsChanged(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(PENDING_TXS_CHANGED));
+}
+
+function pruneStale(records: PendingTx[]): PendingTx[] {
+  const now = Date.now();
+  return records.filter((r) => {
+    const ts = new Date(r.createdAt).getTime();
+    if (!Number.isFinite(ts)) return false;
+    return now - ts < PENDING_TX_TTL_MS;
+  });
+}
+
+function readPendingTxsRaw(): PendingTx[] {
   if (typeof window === 'undefined') return [];
-  const raw = localStorage.getItem(PENDING_SUBACCOUNTS_KEY);
+  const raw = localStorage.getItem(PENDING_TXS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as PendingSubaccount[]) : [];
+    if (Array.isArray(parsed)) return parsed as PendingTx[];
   } catch {
-    return [];
+    // Bad JSON — fall through and return empty.
   }
+  return [];
 }
 
-/** Writes the full pending-subaccount list, replacing prior contents. */
-function writePendingSubaccounts(records: PendingSubaccount[]): void {
+function writePendingTxs(records: PendingTx[]): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(PENDING_SUBACCOUNTS_KEY, JSON.stringify(records));
+  localStorage.setItem(PENDING_TXS_KEY, JSON.stringify(records));
 }
 
-/** Custom event name dispatched on save/clear so banners can refresh in the same tab.
- *  The native `storage` event only fires across tabs, so we use a custom event. */
-export const PENDING_SUBACCOUNTS_CHANGED = 'mina-guard-pending-subaccounts-changed';
-
-function notifyPendingSubaccountsChanged(): void {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent(PENDING_SUBACCOUNTS_CHANGED));
+function pendingTxKey(r: PendingTx): string {
+  return `${r.contractAddress}::${r.proposalHash}::${r.kind}::${r.signerPubkey}`;
 }
 
-/** Inserts or replaces a pending subaccount record keyed by (parent, child). */
-export function savePendingSubaccount(record: PendingSubaccount): void {
-  const all = getPendingSubaccounts().filter(
+/** Returns all currently-tracked pending tx records (TTL-pruned). */
+export function getPendingTxs(): PendingTx[] {
+  const records = pruneStale(readPendingTxsRaw());
+  return records;
+}
+
+/** Lists pending tx records scoped to a single contract. */
+export function getPendingTxsForContract(contractAddress: string): PendingTx[] {
+  return getPendingTxs().filter((r) => r.contractAddress === contractAddress);
+}
+
+/** Looks up a single record. When `signerPubkey` is omitted, returns the
+ *  first match — useful for queries like "is there *any* in-flight execute?". */
+export function getPendingTx(
+  contractAddress: string,
+  proposalHash: string,
+  kind: PendingTxKind,
+  signerPubkey?: string,
+): PendingTx | undefined {
+  return getPendingTxs().find(
     (r) =>
-      !(r.parentAddress === record.parentAddress && r.childAddress === record.childAddress),
+      r.contractAddress === contractAddress &&
+      r.proposalHash === proposalHash &&
+      r.kind === kind &&
+      (signerPubkey === undefined || r.signerPubkey === signerPubkey),
   );
-  all.push(record);
-  writePendingSubaccounts(all);
-  notifyPendingSubaccountsChanged();
 }
 
-/** Removes any pending subaccount records matching the given parent+child pair. */
-export function clearPendingSubaccount(parentAddress: string, childAddress: string): void {
-  const all = getPendingSubaccounts().filter(
-    (r) => !(r.parentAddress === parentAddress && r.childAddress === childAddress),
-  );
-  writePendingSubaccounts(all);
-  notifyPendingSubaccountsChanged();
+/** Inserts or replaces a pending tx record keyed by (contract, proposal, kind, signer). */
+export function savePendingTx(record: PendingTx): void {
+  const next = readPendingTxsRaw().filter((r) => pendingTxKey(r) !== pendingTxKey(record));
+  next.push(record);
+  writePendingTxs(pruneStale(next));
+  notifyPendingTxsChanged();
 }
 
-/** Lists pending subaccount records for a single parent address. */
-export function getPendingSubaccountsForParent(parentAddress: string): PendingSubaccount[] {
-  return getPendingSubaccounts().filter((r) => r.parentAddress === parentAddress);
+/** Removes any record matching the (contract, proposal, kind[, signer]) key. */
+export function clearPendingTx(
+  contractAddress: string,
+  proposalHash: string,
+  kind: PendingTxKind,
+  signerPubkey?: string,
+): void {
+  const next = readPendingTxsRaw().filter(
+    (r) =>
+      !(
+        r.contractAddress === contractAddress &&
+        r.proposalHash === proposalHash &&
+        r.kind === kind &&
+        (signerPubkey === undefined || r.signerPubkey === signerPubkey)
+      ),
+  );
+  writePendingTxs(pruneStale(next));
+  notifyPendingTxsChanged();
+}
+
+/** Drops the kind='create' pending entry that targets a specific child of a
+ *  parent guard. Both the CREATE_CHILD wizard's "retry" path and the banner's
+ *  dead-entry cleanup need this; neither knows the proposalHash up front. */
+export function clearPendingCreateChild(parentAddress: string, childAddress: string): void {
+  const matches = getPendingTxsForContract(parentAddress).filter(
+    (r) => r.kind === 'create' && r.childAccount?.childAddress === childAddress,
+  );
+  for (const m of matches) {
+    clearPendingTx(m.contractAddress, m.proposalHash, m.kind, m.signerPubkey);
+  }
 }

@@ -12,7 +12,8 @@ import {
   deployAndSetupContract,
   generateKeypair,
 } from '@/lib/multisigClient';
-import { saveAccountName, savePendingSubaccount } from '@/lib/storage';
+import { clearPendingCreateChild, saveAccountName, savePendingTx } from '@/lib/storage';
+import { extractTxHash } from '@/lib/api';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', networkId: '0', enabled: true },
@@ -127,10 +128,31 @@ function CreateAccountWizard() {
       return;
     }
     if (name.trim()) saveAccountName(keypair.publicKey, name);
-    void startOperation('Building deploy transaction...', async (onProgress) => {
-      return await deployAndSetupContract(captured, onProgress, signer);
+    const deployedAddress = keypair.publicKey;
+    let broadcasted = false;
+    // Await: don't redirect while the worker is still compiling/proving/signing.
+    // The user stays on the form and watches the global operation banner until
+    // the tx is broadcast — at which point we save the pending entry and route.
+    await startOperation('Building deploy transaction...', async (onProgress) => {
+      const result = await deployAndSetupContract(captured, onProgress, signer);
+      const txHash = extractTxHash(result);
+      if (txHash) {
+        // Persist a deploy-pending entry so /accounts/<address> can show
+        // "submitted, awaiting inclusion" with the explorer link until the
+        // indexer surfaces the contract.
+        savePendingTx({
+          kind: 'deploy',
+          contractAddress: deployedAddress,
+          proposalHash: deployedAddress,
+          txHash,
+          signerPubkey: wallet.address!,
+          createdAt: new Date().toISOString(),
+        });
+        broadcasted = true;
+      }
+      return result;
     });
-    router.push(`/accounts/${keypair.publicKey}?pending=1`);
+    if (broadcasted) router.push(`/accounts/${deployedAddress}`);
   };
 
   /** Submits a CREATE_CHILD proposal on the parent and stashes deployment state for finalization. */
@@ -156,6 +178,12 @@ function CreateAccountWizard() {
     const childPrivateKey = keypair.privateKey;
     const childAddress = keypair.publicKey;
 
+    // If a prior attempt for the same (parent, child) left a pending entry,
+    // drop it before starting. If the new attempt fails (e.g. proof OOM),
+    // no entry exists and the banner stays clean. If it succeeds, the
+    // savePendingTx call below writes a fresh entry under the new proposalHash.
+    clearPendingCreateChild(parentAddress, childAddress);
+
     void startOperation('Preparing subaccount proposal…', async (onProgress) => {
       onProgress('Computing child config hash…');
       const { configHash } = await computeCreateChildConfigHash({
@@ -163,7 +191,7 @@ function CreateAccountWizard() {
         childThreshold,
       });
 
-      const proposalHash = await createOnchainProposal({
+      const result = await createOnchainProposal({
         contractAddress: parentAddress,
         proposerAddress: wallet.address!,
         configNonce: parentContract.configNonce!,
@@ -179,20 +207,35 @@ function CreateAccountWizard() {
         },
       }, onProgress, signer);
 
-      if (!proposalHash) return null;
+      if (!result) return null;
+      const { proposalHash, txHash } = result;
 
       if (name.trim()) saveAccountName(childAddress, name);
 
-      savePendingSubaccount({
-        parentAddress,
-        childAddress,
-        childPrivateKey,
-        childOwners: parsedOwners,
-        childThreshold,
-        childName: name.trim(),
+      savePendingTx({
+        kind: 'create',
+        contractAddress: parentAddress,
         proposalHash,
-        expiryBlock: null,
+        txHash,
+        signerPubkey: wallet.address!,
         createdAt: new Date().toISOString(),
+        summary: {
+          txType: 'createChild',
+          nonce: '0',
+          configNonce: String(parentContract.configNonce!),
+          expiryBlock: null,
+          destination: 'remote',
+          childAccount: childAddress,
+          receivers: [],
+        },
+        childAccount: {
+          childAddress,
+          childPrivateKey,
+          childOwners: parsedOwners,
+          childThreshold,
+          childName: name.trim(),
+          expiryBlock: null,
+        },
       });
 
       return `Subaccount proposal submitted. Approve on the parent, then return to finalize deployment.`;

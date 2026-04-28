@@ -37,6 +37,17 @@ jobs:
         with:
           submodules: recursive
 
+      # bun + workspace deps are needed on the host so preview.sh can compute
+      # the MinaGuard verification key hash before invoking docker compose
+      # build. Doing the o1js circuit compile inside the docker build OOM-kills
+      # on this runner — done on the host it has the full machine's memory.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1'
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
       - name: Deploy preview
         # `down` first wipes volumes + lightnet chain so every commit to the
         # PR gets a clean DB and fresh genesis. Without this, preview.sh up

@@ -46,6 +46,8 @@ export interface Proposal {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  lastApproveTxHash: string | null;
+  lastExecuteTxHash: string | null;
   lastApproveError: string | null;
   lastExecuteError: string | null;
   createdAt: string;
@@ -53,6 +55,10 @@ export interface Proposal {
   receivers: ProposalReceiver[];
   recipientCount: number;
   totalAmount: string | null;
+  /** True when this row was synthesized from a local PendingTx record before
+   *  the indexer surfaced the proposal. UI can use it to differentiate the
+   *  "submitted, awaiting inclusion" state from a real on-chain proposal. */
+  _localPending?: boolean;
 }
 
 /** Indexed owner membership record for one MinaGuard contract. */
