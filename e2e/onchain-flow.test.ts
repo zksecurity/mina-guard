@@ -1306,8 +1306,9 @@ test('25b. Execute transfer with memo and verify memo match', async () => { cons
   const proposal = await getProposal(contractAddress, proposalHash);
   expect(proposal.status).toBe('executed');
   expect(proposal.memo).toBe('e2e-test-memo');
+  expect(proposal.proposalMemoMatch).toBe(true);
   expect(proposal.memoExecutionMatch).toBe(true);
-  log(`Memo match verified: memo=${proposal.memo}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
+  log(`Memo match verified: proposalMemoMatch=${proposal.proposalMemoMatch}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
 
   // Verify the UI shows the match indicator
   await navigateTo(page, `/transactions/${proposalHash}`);
@@ -1411,8 +1412,9 @@ test('25c. Propose and execute with memo mismatch', async () => { const page = s
   const proposal = await getProposal(contractAddress, mismatchHash);
   expect(proposal.status).toBe('executed');
   expect(proposal.memo).toBe('e2e-mismatch');
+  expect(proposal.proposalMemoMatch).toBe(true);
   expect(proposal.memoExecutionMatch).toBe(false);
-  log(`Memo mismatch verified: memo=${proposal.memo}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
+  log(`Memo mismatch verified: proposalMemoMatch=${proposal.proposalMemoMatch}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
 
   // Verify the UI shows the mismatch indicator
   await navigateTo(page, `/transactions/${mismatchHash}`);
