@@ -10,8 +10,9 @@ import {
   formatMina,
   isDeleteProposal,
   truncateAddress,
+  type Proposal,
 } from '@/lib/types';
-import { fetchApprovals, extractTxHash, recordSubmission } from '@/lib/api';
+import { fetchApprovals, extractTxHash, fetchBalance, recordSubmission } from '@/lib/api';
 import {
   approveProposalOnchain,
   executeProposalOnchain,
@@ -35,6 +36,7 @@ export default function TransactionDetailPage() {
     owners,
     proposals,
     proposalsAddress,
+    indexerStatus,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -100,6 +102,45 @@ export default function TransactionDetailPage() {
     return approvalAddresses.includes(wallet.address);
   }, [approvalAddresses, wallet.address]);
 
+  // Source Vault/SubVault that funds the proposal's outgoing MINA. For
+  // transfer/allocateChild it's the Vault we're viewing; for reclaimChild it's
+  // the SubVault being drained.
+  const spendingTarget = useMemo(
+    () => (proposal && multisig ? getSpendingTarget(proposal, multisig.address) : null),
+    [proposal, multisig?.address],
+  );
+  const [sourceBalance, setSourceBalance] = useState<string | null>(null);
+  const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
+  useEffect(() => {
+    if (!spendingTarget) {
+      setSourceBalance(null);
+      setBalanceFetchFailed(false);
+      return;
+    }
+    let cancelled = false;
+    fetchBalance(spendingTarget.sourceAddress)
+      .then((b) => {
+        if (cancelled) return;
+        setSourceBalance(b);
+        setBalanceFetchFailed(b === null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSourceBalance(null);
+        setBalanceFetchFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [spendingTarget?.sourceAddress, indexerStatus?.lastSuccessfulRunAt]);
+  // Fail-open: only block when we've successfully fetched a balance below the
+  // proposal's send amount. Unknown/failed fetches let the chain decide.
+  const insufficientBalance =
+    spendingTarget != null &&
+    sourceBalance != null &&
+    !balanceFetchFailed &&
+    BigInt(sourceBalance) < spendingTarget.amount;
+
   const threshold = multisig?.threshold ?? 0;
   const isConfigStale =
     !!proposal &&
@@ -138,7 +179,8 @@ export default function TransactionDetailPage() {
     proposal.approvalCount >= threshold &&
     !isConfigStale &&
     !executeInFlight &&
-    !contractLock.locked;
+    !contractLock.locked &&
+    !insufficientBalance;
   const canDelete =
     !!proposal &&
     !isLocalPending &&
@@ -505,6 +547,18 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {insufficientBalance && proposal.approvalCount >= threshold && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-300 text-sm">
+            <p className="font-semibold mb-1">Insufficient balance</p>
+            <p className="opacity-90">
+              The {proposal.txType === 'reclaimChild' ? 'SubVault' : 'Vault'} holds{' '}
+              {formatMina(sourceBalance!)} MINA but this proposal sends{' '}
+              {formatMina(spendingTarget!.amount.toString())} MINA. Execute is blocked
+              until it is funded.
+            </p>
+          </div>
+        )}
+
         {proposal.status === 'pending' && !isLocalPending && (
           <div className="flex gap-3 flex-wrap">
             {canApprove && (
@@ -649,4 +703,21 @@ function DetailRow({
       )}
     </div>
   );
+}
+
+/** Returns the source Vault address and outgoing nanomina amount for proposals
+ *  that move MINA out of a Vault, or null if the proposal can't underfund. */
+function getSpendingTarget(
+  proposal: Proposal,
+  contractAddress: string,
+): { sourceAddress: string; amount: bigint } | null {
+  if (isDeleteProposal(proposal)) return null;
+  if (proposal.txType === 'transfer' || proposal.txType === 'allocateChild') {
+    if (!proposal.totalAmount) return null;
+    return { sourceAddress: contractAddress, amount: BigInt(proposal.totalAmount) };
+  }
+  if (proposal.txType === 'reclaimChild' && proposal.childAccount && proposal.data) {
+    return { sourceAddress: proposal.childAccount, amount: BigInt(proposal.data) };
+  }
+  return null;
 }
