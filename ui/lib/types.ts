@@ -41,6 +41,7 @@ export interface Proposal {
   guardAddress: string | null;
   memo: string | null;
   memoHash: string | null;
+  proposalMemoMatch: boolean | null;
   memoExecutionMatch: boolean | null;
   destination: ProposalDestination | null;
   childAccount: string | null;

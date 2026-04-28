@@ -1,4 +1,4 @@
-type Variant = 'warning' | 'match' | 'mismatch';
+type Variant = 'warning' | 'proposalMismatch' | 'match' | 'mismatch';
 
 const VARIANTS: Record<
   Variant,
@@ -8,19 +8,25 @@ const VARIANTS: Record<
     glyph: '⚠',
     color: 'text-yellow-400',
     border: 'border-yellow-400/40',
-    text: 'The final transaction memo on-chain is set by whoever executes the proposal and may differ.',
+    text: 'The memo shown was decoded from the transaction but does not match the on-chain hash. It may have been altered, or the wallet encoded it differently. The executor will still attach this memo — verify it before approving.',
+  },
+  proposalMismatch: {
+    glyph: '⚠',
+    color: 'text-yellow-400',
+    border: 'border-yellow-400/40',
+    text: 'The proposal memo does not match its on-chain hash. The proposer may have used a different memo than what was hashed into the proposal.',
   },
   match: {
     glyph: '✓',
     color: 'text-safe-green',
     border: 'border-safe-green/40',
-    text: 'Proposal memo matches on-chain execution memo.',
+    text: 'Memo verified: proposal memo, on-chain hash, and execution memo all match.',
   },
   mismatch: {
     glyph: '✗',
     color: 'text-red-400',
     border: 'border-red-400/40',
-    text: 'Memo mismatch: the executor committed a different memo on-chain.',
+    text: 'Memo error: the proposal memo, on-chain hash, or execution memo do not all match.',
   },
 };
 

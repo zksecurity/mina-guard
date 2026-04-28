@@ -208,7 +208,8 @@ function toProposal(input: Record<string, unknown>): Proposal {
     guardAddress: asNullableString(input.guardAddress),
     memo: asNullableString(input.memo),
     memoHash: asNullableString(input.memoHash),
-    memoExecutionMatch: asMemoExecutionMatch(input.memoExecutionMatch),
+    proposalMemoMatch: asMemoMatch(input.proposalMemoMatch),
+    memoExecutionMatch: asMemoMatch(input.memoExecutionMatch),
     destination: normalizeDestination(asNullableString(input.destination)),
     childAccount: asNullableString(input.childAccount),
     status: asProposalStatus(input.status),
@@ -287,7 +288,7 @@ function asProposalStatus(value: unknown): Proposal['status'] {
   return 'pending';
 }
 
-function asMemoExecutionMatch(value: unknown): Proposal['memoExecutionMatch'] {
+function asMemoMatch(value: unknown): boolean | null {
   if (value === true || value === false) return value;
   return null;
 }

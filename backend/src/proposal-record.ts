@@ -1,4 +1,5 @@
 import type { Proposal, ProposalReceiver } from '@prisma/client';
+import { memoToField } from 'contracts';
 
 export interface ProposalReceiverRecord {
   index: number;
@@ -6,7 +7,7 @@ export interface ProposalReceiverRecord {
   amount: string;
 }
 
-export type MemoExecutionMatch = boolean | null;
+export type MemoMatch = boolean | null;
 
 export type InvalidReason = 'config_nonce_stale' | 'proposal_nonce_stale';
 
@@ -33,7 +34,8 @@ export interface SerializedProposalRecord {
   guardAddress: string | null;
   memo: string | null;
   memoHash: string | null;
-  memoExecutionMatch: MemoExecutionMatch;
+  proposalMemoMatch: MemoMatch;
+  memoExecutionMatch: MemoMatch;
   destination: string | null;
   childAccount: string | null;
   status: string;
@@ -119,10 +121,19 @@ function deriveStatus(
   return 'pending';
 }
 
+function computeProposalMemoMatch(
+  memo: string | null,
+  memoHash: string | null,
+): MemoMatch {
+  if (memo == null || memoHash == null) return null;
+  if (memoHash === '0') return null;
+  return memoToField(memo).toString() === memoHash;
+}
+
 function computeMemoExecutionMatch(
   memoHash: string | null,
-  executionMemoHash: string | null
-): MemoExecutionMatch {
+  executionMemoHash: string | null,
+): MemoMatch {
   if (executionMemoHash == null) return null;
   if (memoHash == null) return null;
   return memoHash === executionMemoHash;
@@ -166,6 +177,7 @@ export function serializeProposalRecord(
     guardAddress: proposal.guardAddress,
     memo: proposal.memo,
     memoHash: proposal.memoHash,
+    proposalMemoMatch: computeProposalMemoMatch(proposal.memo, proposal.memoHash),
     memoExecutionMatch: computeMemoExecutionMatch(proposal.memoHash, proposal.executionMemoHash),
     destination: proposal.destination,
     childAccount: proposal.childAccount,

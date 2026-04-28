@@ -32,9 +32,11 @@ function base58Decode(input: string): Uint8Array {
   return new Uint8Array(bytes.reverse());
 }
 
+// Mina memo base58check layout: version (1B) + tag (1B) + length (1B) + content (32B) + checksum (4B)
+// Tag 0x01 = user memo. See MinaProtocol/mina signed_command_memo.ml L49-61.
 export function decodeTxMemo(base58Memo: string): string {
   const raw = base58Decode(base58Memo);
-  const payload = raw.slice(1, raw.length - 4);
+  const payload = raw.slice(1, raw.length - 4); // strip version byte + 4-byte base58check checksum
   if (payload.length !== 34) {
     throw new Error(`decodeTxMemo: expected 34-byte payload, got ${payload.length}`);
   }

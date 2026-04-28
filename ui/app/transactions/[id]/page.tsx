@@ -304,11 +304,16 @@ export default function TransactionDetailPage() {
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
   const hasMemo = proposal.memoHash != null && proposal.memoHash !== '0';
+  const isExecuted = proposal.status === 'executed';
   const memoAdornment: ReactNode | undefined = (() => {
     if (!hasMemo) return undefined;
-    if (proposal.memoExecutionMatch === true) return <MemoWarningTooltip variant="match" />;
-    if (proposal.memoExecutionMatch === false) return <MemoWarningTooltip variant="mismatch" />;
-    return <MemoWarningTooltip />;
+    if (isExecuted) {
+      const allMatch = proposal.proposalMemoMatch === true && proposal.memoExecutionMatch === true;
+      if (allMatch) return <MemoWarningTooltip variant="match" />;
+      return <MemoWarningTooltip variant="mismatch" />;
+    }
+    if (proposal.proposalMemoMatch === false) return <MemoWarningTooltip variant="proposalMismatch" />;
+    return undefined;
   })();
 
   const isRemote = proposal.destination === 'remote';
