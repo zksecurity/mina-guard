@@ -1,4 +1,4 @@
-import { test, expect, type Page, type BrowserContext } from '@playwright/test';
+import { test, expect, type Page, type BrowserContext, type Route } from '@playwright/test';
 import {
   log,
   loadState,
@@ -1214,6 +1214,213 @@ test('25. Verify state before subaccount tests', async () => { const page = shar
   expect(pendingText).toContain('0');
 
   log('State checkpoint passed');
+});
+
+// ===========================================================================
+// MEMO LIFECYCLE
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 25a. Propose transfer with memo
+// ---------------------------------------------------------------------------
+
+test('25a. Propose transfer with memo', async () => { const page = sharedPage;
+  log('=== Step 25a: Propose transfer with memo ===');
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const recipientsTextarea = page.locator('textarea').first();
+  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
+  await recipientsTextarea.fill(`${accounts[2].publicKey},0.1`);
+
+  const memoInput = page.locator('input[placeholder*="memo"]').or(
+    page.locator('input[placeholder*="Short note"]')
+  );
+  await memoInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await memoInput.fill('e2e-test-memo');
+
+  const byteCounter = page.locator('text=13 / 32 bytes');
+  await expect(byteCounter).toBeVisible({ timeout: 3_000 });
+  log('Byte counter shows 13 / 32');
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting proposal with memo...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes transfer proposal with memo',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.memo === 'e2e-test-memo');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const memoProposal = proposals.find((p: any) => p.memo === 'e2e-test-memo');
+  expect(memoProposal).toBeDefined();
+  expect(memoProposal.memoHash).toBeTruthy();
+  expect(memoProposal.txType).toBe('transfer');
+  proposalHashes.push(memoProposal.proposalHash);
+  log(`Memo proposal created: hash=${memoProposal.proposalHash.slice(0, 12)}..., memo=${memoProposal.memo}, memoHash=${memoProposal.memoHash?.slice(0, 12)}...`);
+});
+
+// ---------------------------------------------------------------------------
+// 25b. Execute transfer with memo and verify memo match
+// ---------------------------------------------------------------------------
+
+test('25b. Execute transfer with memo and verify memo match', async () => { const page = sharedPage;
+  log('=== Step 25b: Execute memo transfer ===');
+  const proposalHash = proposalHashes[proposalHashes.length - 1];
+
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Verify memo is displayed on the proposal detail page
+  await expect(page.locator('text=e2e-test-memo')).toBeVisible({ timeout: 10_000 });
+  log('Memo visible on proposal detail page');
+
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes memo transfer execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, proposalHash);
+      return proposal?.status === 'executed';
+    },
+    360_000,
+    10_000
+  );
+
+  const proposal = await getProposal(contractAddress, proposalHash);
+  expect(proposal.status).toBe('executed');
+  expect(proposal.memo).toBe('e2e-test-memo');
+  expect(proposal.proposalMemoMatch).toBe(true);
+  expect(proposal.memoExecutionMatch).toBe(true);
+  log(`Memo match verified: proposalMemoMatch=${proposal.proposalMemoMatch}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
+
+  // Verify the UI shows the match indicator
+  await navigateTo(page, `/transactions/${proposalHash}`);
+  await page.waitForTimeout(SHORT_WAIT);
+  await expect(page.locator('text=e2e-test-memo')).toBeVisible({ timeout: 10_000 });
+  log('Memo match indicator visible on executed proposal');
+});
+
+// ---------------------------------------------------------------------------
+// 25c. Propose and execute with memo mismatch
+// ---------------------------------------------------------------------------
+
+test('25c. Propose and execute with memo mismatch', async () => { const page = sharedPage;
+  log('=== Step 25c: Propose and execute with memo mismatch ===');
+
+  // --- Propose with memo ---
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const recipientsTextarea = page.locator('textarea').first();
+  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
+  await recipientsTextarea.fill(`${accounts[2].publicKey},0.1`);
+
+  const memoInput = page.locator('input[placeholder*="memo"]').or(
+    page.locator('input[placeholder*="Short note"]')
+  );
+  await memoInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await memoInput.fill('e2e-mismatch');
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting proposal with memo...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes mismatch proposal',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.memo === 'e2e-mismatch');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const mismatchProposal = proposals.find((p: any) => p.memo === 'e2e-mismatch');
+  expect(mismatchProposal).toBeDefined();
+  const mismatchHash = mismatchProposal.proposalHash;
+  proposalHashes.push(mismatchHash);
+  log(`Mismatch proposal created: hash=${mismatchHash.slice(0, 12)}...`);
+
+  // --- Execute with memo stripped from the API response ---
+  // Intercept both the single-proposal and proposals-list endpoints so the
+  // worker sees memo=null and doesn't set a transaction memo. memoHash is
+  // preserved so the struct hash is still correct and the circuit accepts.
+  const stripMemo = (obj: any) => { if (obj && obj.proposalHash === mismatchHash) obj.memo = null; };
+  const memoInterceptHandler = async (route: Route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (Array.isArray(body)) body.forEach(stripMemo);
+    else stripMemo(body);
+    await route.fulfill({
+      response,
+      body: JSON.stringify(body),
+      headers: { ...response.headers(), 'content-type': 'application/json' },
+    });
+  };
+  // Intercept both the single-proposal and proposals-list endpoints
+  await page.route(`**/proposals/${mismatchHash}`, memoInterceptHandler);
+  await page.route(/\/proposals(\?|$)/, memoInterceptHandler);
+
+  await gotoWithWallet(`/transactions/${mismatchHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Execute Proposal (memo stripped)...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  // Remove intercepts before verifying
+  await page.unroute(`**/proposals/${mismatchHash}`);
+  await page.unroute(/\/proposals(\?|$)/);
+
+  await waitForIndexer(
+    'indexer processes mismatch execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, mismatchHash);
+      return proposal?.status === 'executed';
+    },
+    360_000,
+    10_000
+  );
+
+  // Verify mismatch via API
+  const proposal = await getProposal(contractAddress, mismatchHash);
+  expect(proposal.status).toBe('executed');
+  expect(proposal.memo).toBe('e2e-mismatch');
+  expect(proposal.proposalMemoMatch).toBe(true);
+  expect(proposal.memoExecutionMatch).toBe(false);
+  log(`Memo mismatch verified: proposalMemoMatch=${proposal.proposalMemoMatch}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
+
+  // Verify the UI shows the mismatch indicator
+  await navigateTo(page, `/transactions/${mismatchHash}`);
+  await page.waitForTimeout(SHORT_WAIT);
+  await expect(page.locator('text=e2e-mismatch')).toBeVisible({ timeout: 10_000 });
+  log('Mismatch indicator visible on executed proposal');
 });
 
 // ===========================================================================

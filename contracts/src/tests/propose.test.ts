@@ -223,6 +223,7 @@ describe('MinaGuard - Propose shape rules', () => {
       tokenId: Field(0),
       txType: overrides.txType ?? TxType.TRANSFER,
       data: overrides.data ?? Field(0),
+      memoHash: (overrides as any).memoHash ?? Field(0),
       nonce: overrides.nonce ?? Field(1),
       configNonce: overrides.configNonce ?? Field(0),
       expiryBlock: overrides.expiryBlock ?? Field(0),

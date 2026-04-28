@@ -12,6 +12,7 @@ export interface ChainEvent {
   blockHash: string;
   parentHash: string;
   txHash: string | null;
+  txMemo: string | null;
 }
 
 /** Block identity row returned by the daemon's bestChain query. */
@@ -293,14 +294,18 @@ export async function fetchDecodedContractEvents(
   // TODO: restore toHeight once archive node supports upper-bound filtering
   const rawEvents = await contract.fetchEvents(UInt32.from(fromHeight));
 
-  return rawEvents.map((entry) => ({
-    type: entry.type,
-    event: toSerializableObject((entry.event as any).data),
-    blockHeight: Number(entry.blockHeight.toString()),
-    blockHash: (entry as any).blockHash as string,
-    parentHash: (entry as any).parentBlockHash as string,
-    txHash: ((entry.event as any).transactionInfo?.transactionHash as string | undefined) ?? null,
-  }));
+  return rawEvents.map((entry) => {
+    const txInfo = (entry.event as any).transactionInfo;
+    return {
+      type: entry.type,
+      event: toSerializableObject((entry.event as any).data),
+      blockHeight: Number(entry.blockHeight.toString()),
+      blockHash: (entry as any).blockHash as string,
+      parentHash: (entry as any).parentBlockHash as string,
+      txHash: (txInfo?.transactionHash as string | undefined) ?? null,
+      txMemo: (txInfo?.transactionMemo as string | undefined) ?? null,
+    };
+  });
 }
 
 /** Runs a GraphQL request with optional endpoint fallback. */

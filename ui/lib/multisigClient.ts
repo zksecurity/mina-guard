@@ -68,7 +68,7 @@ export async function assertLedgerReady(signer?: SignerConfig): Promise<void> {
 /** Proxied Auro sendTransaction callback for use inside the worker. Returns null for Ledger. */
 function proxiedSendTx(signer?: SignerConfig) {
   if (signer?.type === 'ledger') return null;
-  return Comlink.proxy((txJson: string) => sendTransaction(txJson));
+  return Comlink.proxy((txJson: string, memo?: string) => sendTransaction(txJson, undefined, memo));
 }
 
 /** Proxied Ledger fee payer signing callback. Returns undefined for Auro. */
