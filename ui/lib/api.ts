@@ -102,11 +102,13 @@ export async function fetchBalance(address: string): Promise<string | null> {
   return data?.balance ?? null;
 }
 
-/** Pulls the tx hash out of the worker's "Transaction submitted: HASH" /
- *  "Approval submitted: HASH" success message. Returns null if absent. */
+/** Pulls the tx hash out of the worker's success message. The worker uses a
+ *  few different prefixes — "Transaction submitted", "Approval submitted",
+ *  "Deploy submitted", "Subaccount action submitted" (CREATE_CHILD finalize
+ *  + child lifecycle txs) — but the shape is always `<phrase> submitted: <hash>`. */
 export function extractTxHash(message: string | null): string | null {
   if (!message) return null;
-  const match = message.match(/(?:Transaction|Approval|Deploy)\s+submitted:\s*(\S+)/);
+  const match = message.match(/(?:Transaction|Approval|Deploy|Subaccount action)\s+submitted:\s*(\S+)/);
   return match ? match[1] : null;
 }
 

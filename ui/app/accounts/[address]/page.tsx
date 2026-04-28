@@ -29,6 +29,7 @@ import {
   savePendingTx,
   type PendingTx,
 } from '@/lib/storage';
+import { CREATE_TX_STATUS_PROBE_MIN_AGE_MS } from '@/hooks/useTransactions';
 
 /** Account detail page — reads address from URL, syncs AppContext selection. */
 export default function AccountPage() {
@@ -588,7 +589,7 @@ function PendingSubaccountsBanner({
     for (const pt of pendingDeployByChild.values()) {
       if (!pt.txHash) continue;
       const ageMs = Date.now() - new Date(pt.createdAt).getTime();
-      if (ageMs >= 30_000) stale.push(pt);
+      if (ageMs >= CREATE_TX_STATUS_PROBE_MIN_AGE_MS) stale.push(pt);
     }
     if (stale.length === 0) return;
     let cancelled = false;

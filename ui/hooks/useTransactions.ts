@@ -11,9 +11,12 @@ import {
 } from '@/lib/storage';
 import { useAdaptivePolling } from '@/hooks/useAdaptivePolling';
 
-/** Wait this long before asking the daemon whether a pending CREATE landed.
- *  Mina blocks are ~3 min, so anything sooner is guaranteed-pending. */
-const CREATE_TX_STATUS_PROBE_MIN_AGE_MS = 30_000;
+/** Wait this long before asking the daemon whether a pending CREATE/deploy
+ *  landed. Mina blocks on lightnet are ~10 s; on devnet/mainnet ~3 min, so
+ *  anything sooner is guaranteed-pending.
+ *  TODO: bump this on devnet/mainnet — 30 s wastes status calls when blocks
+ *  are 3 min apart. Keyed off the network when we have it threaded here. */
+export const CREATE_TX_STATUS_PROBE_MIN_AGE_MS = 30_000;
 
 /** Polls backend proposal endpoints for the currently selected contract and
  *  reconciles localStorage `PendingTx` entries against the indexer each tick.
@@ -106,6 +109,16 @@ export function useTransactions(multisigAddress: string | null) {
 
       if (pt.kind === 'approve') {
         if (!indexed) continue;
+        // Unlikely but possible: the proposal hits threshold and gets executed
+        // (or expires/invalidates) while our approve tx is still in flight.
+        // Once the proposal leaves 'pending', tracking the approve buys
+        // nothing — clear it so the button re-enables and the row stops
+        // showing the approve-pending pill.
+        if (indexed.status !== 'pending') {
+          clearPendingTx(pt.contractAddress, pt.proposalHash, 'approve', pt.signerPubkey);
+          dirty = true;
+          continue;
+        }
         if (indexed.lastApproveError && indexed.lastApproveTxHash === pt.txHash) {
           clearPendingTx(pt.contractAddress, pt.proposalHash, 'approve', pt.signerPubkey);
           dirty = true;
