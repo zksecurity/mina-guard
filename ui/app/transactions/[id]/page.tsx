@@ -689,40 +689,44 @@ export default function TransactionDetailPage() {
                     <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                   </div>
                   <DownloadCLILink />
-                  <OfflineSigningFlow
-                    action="approve"
-                    label="Approve"
-                    onBuildBundle={() => {
-                      assertValidMinaAddress(offlineFeePayerAddress);
-                      if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
-                        throw new Error('Signer address is not an owner of this multisig');
-                      }
-                      if (approvalAddresses.includes(offlineFeePayerAddress)) {
-                        throw new Error('This address has already approved this proposal');
-                      }
-                      const p = proposal!;
-                      return buildOfflineApproveBundle({
-                        contractAddress: multisig!.address,
-                        feePayerAddress: offlineFeePayerAddress,
-                        proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
-                      });
-                    }}
-                  />
-                  {proposal.approvalCount >= threshold && proposal.txType !== 'createChild' && (
-                    <OfflineSigningFlow
-                      action="execute"
-                      label="Execute"
-                      onBuildBundle={() => {
-                        assertValidMinaAddress(offlineFeePayerAddress);
-                        const p = proposal!;
-                        return buildOfflineExecuteBundle({
-                          contractAddress: multisig!.address,
-                          feePayerAddress: offlineFeePayerAddress,
-                          proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
-                        });
-                      }}
-                    />
-                  )}
+                  <div className="flex flex-wrap gap-3">
+                    {proposal.approvalCount < owners.length && (
+                      <OfflineSigningFlow
+                        action="approve"
+                        label="Approve"
+                        onBuildBundle={() => {
+                          assertValidMinaAddress(offlineFeePayerAddress);
+                          if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
+                            throw new Error('Signer address is not an owner of this multisig');
+                          }
+                          if (approvalAddresses.includes(offlineFeePayerAddress)) {
+                            throw new Error('This address has already approved this proposal');
+                          }
+                          const p = proposal!;
+                          return buildOfflineApproveBundle({
+                            contractAddress: multisig!.address,
+                            feePayerAddress: offlineFeePayerAddress,
+                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                          });
+                        }}
+                      />
+                    )}
+                    {proposal.approvalCount >= threshold && proposal.txType !== 'createChild' && (
+                      <OfflineSigningFlow
+                        action="execute"
+                        label="Execute"
+                        onBuildBundle={() => {
+                          assertValidMinaAddress(offlineFeePayerAddress);
+                          const p = proposal!;
+                          return buildOfflineExecuteBundle({
+                            contractAddress: multisig!.address,
+                            feePayerAddress: offlineFeePayerAddress,
+                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                          });
+                        }}
+                      />
+                    )}
+                  </div>
                   <UploadSignedResponse
                     action={proposal.approvalCount >= threshold ? 'execute' : 'approve'}
                     onComplete={(_response, txHash) => {
