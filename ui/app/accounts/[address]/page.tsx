@@ -68,6 +68,14 @@ export default function AccountPage() {
   const childMultiSigEnabled = multisig?.childMultiSigEnabled !== false;
   const localProposalsEnabled = isOwner && (isRoot || childMultiSigEnabled);
   const childActionsEnabled = isRoot && isOwner;
+  const hasChildren = useMemo(
+    () => contracts.some((c) => c.parent === multisig?.address),
+    [contracts, multisig?.address],
+  );
+  const childRequiresExisting = useMemo(
+    () => new Set(['allocateChild', 'reclaimChild', 'destroyChild', 'enableChildMultiSig']),
+    [],
+  );
   const localDisabledReason = !isOwner
     ? 'You are not an owner of this Vault'
     : !childMultiSigEnabled
@@ -245,6 +253,8 @@ export default function AccountPage() {
                       disabledReason={!isOwner ? 'You are not an owner of this Vault' : null}
                       hrefPrefix={`/transactions/new?account=${multisig.address}&type=`}
                       accountAddress={multisig.address}
+                      disabledTypes={hasChildren ? undefined : childRequiresExisting}
+                      disabledTypesReason="No SubVaults exist yet"
                     />
                   </div>
                 )}
@@ -318,9 +328,11 @@ interface ProposalButtonRowProps {
   hrefPrefix: string;
   /** Address of the contract these buttons target — needed for type-specific routing. */
   accountAddress: string;
+  disabledTypes?: Set<string>;
+  disabledTypesReason?: string;
 }
 
-function ProposalButtonRow({ types, enabled, disabledReason, hrefPrefix, accountAddress }: ProposalButtonRowProps) {
+function ProposalButtonRow({ types, enabled, disabledReason, hrefPrefix, accountAddress, disabledTypes, disabledTypesReason }: ProposalButtonRowProps) {
   // createChild lives in the wizard, not in /transactions/new — route around the
   // generic proposal form so we don't bounce through it on click.
   const hrefFor = (typeValue: string): string => {
@@ -333,12 +345,13 @@ function ProposalButtonRow({ types, enabled, disabledReason, hrefPrefix, account
       {types.map((type) => {
         const className =
           'flex items-center gap-2 px-4 py-2 rounded-full bg-safe-gray border border-safe-border text-sm font-semibold text-center transition-all';
-        if (!enabled) {
+        const typeDisabled = disabledTypes?.has(type.value);
+        if (!enabled || typeDisabled) {
           return (
             <span
               key={type.value}
               className={`${className} text-safe-text/60 cursor-not-allowed`}
-              title={disabledReason ?? 'Unavailable'}
+              title={(typeDisabled ? disabledTypesReason : disabledReason) ?? 'Unavailable'}
             >
               <TxTypeIcon icon={type.icon} className="w-4 h-4" />
               {type.label}
