@@ -474,6 +474,21 @@ export async function waitForBanner(
   return text?.trim() ?? '';
 }
 
+/**
+ * Fills the recipients section of the new-proposal form using its Bulk mode
+ * (one `address,amount` per line). The form defaults to per-row inputs; tests
+ * predate that change and rely on the legacy comma-separated format, so this
+ * helper switches to Bulk mode if needed before writing.
+ */
+export async function fillRecipients(page: Page, content: string): Promise<void> {
+  const textarea = page.locator('textarea').first();
+  if (!(await textarea.isVisible().catch(() => false))) {
+    await page.getByRole('button', { name: 'Bulk', exact: true }).click();
+    await textarea.waitFor({ state: 'visible', timeout: 5_000 });
+  }
+  await textarea.fill(content);
+}
+
 /** Waits for the operating spinner to disappear. */
 export async function waitForOperationDone(
   page: Page,

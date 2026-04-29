@@ -133,12 +133,16 @@ export default function TransactionDetailPage() {
       cancelled = true;
     };
   }, [spendingTarget?.sourceAddress, indexerStatus?.lastSuccessfulRunAt]);
-  // Fail-open: only block when we've successfully fetched a balance below the
-  // proposal's send amount. Unknown/failed fetches let the chain decide.
+  // Fail-open: only block when we've successfully fetched a non-zero balance
+  // below the proposal's send amount. The backend coalesces missing daemon
+  // data to "0" (routes.ts), so a literal "0" is indistinguishable from "the
+  // account isn't visible to the daemon yet" — treat it as ambiguous and let
+  // the chain reject if the Vault is genuinely empty.
   const insufficientBalance =
     spendingTarget != null &&
     sourceBalance != null &&
     !balanceFetchFailed &&
+    BigInt(sourceBalance) > 0n &&
     BigInt(sourceBalance) < spendingTarget.amount;
 
   const threshold = multisig?.threshold ?? 0;
@@ -162,7 +166,29 @@ export default function TransactionDetailPage() {
   // Contract-wide indexer-lag lock. Any in-flight tx on this contract (own
   // or cross-signer) makes rebuildStoresFromBackend stale; serialize until
   // the indexer catches up.
-  const contractLock = useContractTxLock(multisig?.address ?? null, proposals);
+  //
+  // Exception: the viewed proposal's own *already-counted* approve. Approval
+  // counts are event-sourced from the indexer (see applyApprovalEvent), so
+  // `approvalCount >= threshold` proves the chain's approvalRoot reflects
+  // those approvals and is fresh enough to execute. The lingering
+  // `lastApproveTxHash` on the same record is just stale metadata when the
+  // indexer's tx-hash-match clearing doesn't fire (e.g. archive vs broadcast
+  // hash format mismatches). Mask that signal so it doesn't gate execute on
+  // this page.
+  const proposalsForLock = useMemo(
+    () =>
+      proposals.map((p) => {
+        const isViewedAndCounted =
+          proposal != null &&
+          p.proposalHash === proposal.proposalHash &&
+          p.lastApproveTxHash != null &&
+          p.lastApproveError == null &&
+          p.approvalCount >= threshold;
+        return isViewedAndCounted ? { ...p, lastApproveTxHash: null } : p;
+      }),
+    [proposals, proposal?.proposalHash, threshold],
+  );
+  const contractLock = useContractTxLock(multisig?.address ?? null, proposalsForLock);
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -172,6 +198,13 @@ export default function TransactionDetailPage() {
     !isConfigStale &&
     !myPendingApprove &&
     !contractLock.locked;
+  // Note on insufficientBalance: surfaced as a banner above the action row but
+  // not gated into canExecute. The UI-side balance signal can lag the daemon
+  // (the backend's /api/account/.../balance route coalesces missing data to
+  // "0" — `backend/src/routes.ts`), and a false-positive there would silently
+  // hide the Execute button. The chain still rejects an undercollateralised
+  // tx, so the cost of letting an over-eager click through is one tx fee; the
+  // cost of a stuck UI is a confused user.
   const canExecute =
     !!proposal &&
     !isLocalPending &&
@@ -179,8 +212,7 @@ export default function TransactionDetailPage() {
     proposal.approvalCount >= threshold &&
     !isConfigStale &&
     !executeInFlight &&
-    !contractLock.locked &&
-    !insufficientBalance;
+    !contractLock.locked;
   const canDelete =
     !!proposal &&
     !isLocalPending &&
@@ -553,8 +585,8 @@ export default function TransactionDetailPage() {
             <p className="opacity-90">
               The {proposal.txType === 'reclaimChild' ? 'SubVault' : 'Vault'} holds{' '}
               {formatMina(sourceBalance!)} MINA but this proposal sends{' '}
-              {formatMina(spendingTarget!.amount.toString())} MINA. Execute is blocked
-              until it is funded.
+              {formatMina(spendingTarget!.amount.toString())} MINA. Execute will
+              fail on chain until it is funded.
             </p>
           </div>
         )}
