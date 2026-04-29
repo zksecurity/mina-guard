@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { existsSync, readdirSync, createReadStream } from 'fs';
+import { join } from 'path';
 import { PublicKey, fetchAccount } from 'o1js';
 
 import { prisma } from './db.js';
@@ -631,6 +633,34 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     }
     await deleteContract(contract.id);
     res.json({ ok: true });
+  }));
+
+  const CLI_DIST_DIR = join(process.cwd(), '..', 'offline-cli', 'dist');
+
+  router.get('/api/offline-cli/platforms', safe(async (_req, res) => {
+    if (!existsSync(CLI_DIST_DIR)) {
+      res.json([]);
+      return;
+    }
+    const files = readdirSync(CLI_DIST_DIR).filter((f) => f.startsWith('mina-guard-cli-'));
+    const platforms = files.map((f) => f.replace('mina-guard-cli-', ''));
+    res.json(platforms);
+  }));
+
+  router.get('/api/offline-cli/:platform', safe(async (req, res) => {
+    const platform = req.params.platform;
+    if (!platform || /[/\\]/.test(platform)) {
+      res.status(400).json({ error: 'Invalid platform' });
+      return;
+    }
+    const filePath = join(CLI_DIST_DIR, `mina-guard-cli-${platform}`);
+    if (!existsSync(filePath)) {
+      res.status(404).json({ error: 'Platform binary not found' });
+      return;
+    }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="mina-guard-cli-${platform}"`);
+    createReadStream(filePath).pipe(res);
   }));
 
   router.use((error: unknown, req: any, res: any, _next: any) => {

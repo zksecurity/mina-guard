@@ -56,6 +56,14 @@ jobs:
         env:
           CI: true
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
+      - name: Build mina-signer for offline-cli
+        run: cd ui/deps/o1js/src/mina-signer && bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
+      - name: Run offline-cli tests
+        run: cd offline-cli && bun test
+        env:
+          SKIP_PROOFS: '1'
+      - name: Build offline-cli binary
+        run: cd offline-cli && bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/mina-guard-cli-linux-x64 --define 'process.versions.node=""'
 
       # Enable the following block if you also want to use the Lightnet in your tests.
       #

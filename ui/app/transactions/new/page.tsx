@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ProposalForm from '@/components/ProposalForm';
@@ -13,9 +13,11 @@ import {
 } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOnchainProposal } from '@/lib/multisigClient';
+import { assertValidMinaAddress, buildOfflineProposeBundle } from '@/lib/offline-signing';
 import { fetchChildren, fetchContract } from '@/lib/api';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
 import { savePendingTx } from '@/lib/storage';
+import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
 
 export default function NewTransactionPage() {
   return (
@@ -129,6 +131,10 @@ function NewTransactionPageInner() {
     router.replace('/transactions/new?type=transfer');
   };
 
+  const [mode, setMode] = useState<'online' | 'offline'>('online');
+  const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
+  const offlineSubmitRef = useRef<((input: NewProposalInput) => void) | null>(null);
+
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
   useEffect(() => {
@@ -228,40 +234,141 @@ function NewTransactionPageInner() {
               />
             )}
 
-            <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
-              {proposals.some(
-                (p) =>
-                  p.status === 'pending' &&
-                  p.txType &&
-                  ['addOwner', 'removeOwner', 'changeThreshold', 'setDelegate'].includes(p.txType)
-              ) && (
-                <div className="rounded-lg px-4 py-3 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
-                  There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
+            <div className="bg-safe-gray border border-safe-border rounded-xl overflow-hidden">
+              {!deleteMode && (
+                <div className="flex border-b border-safe-border">
+                  <button
+                    type="button"
+                    onClick={() => setMode('online')}
+                    className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
+                      mode === 'online'
+                        ? 'text-safe-green border-b-2 border-safe-green'
+                        : 'text-safe-text/60 hover:text-safe-text'
+                    }`}
+                  >
+                    Online
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('offline')}
+                    className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
+                      mode === 'offline'
+                        ? 'text-safe-green border-b-2 border-safe-green'
+                        : 'text-safe-text/60 hover:text-safe-text'
+                    }`}
+                  >
+                    Offline
+                  </button>
                 </div>
               )}
-              {contractLock.locked && (
-                <div className="rounded-lg px-4 py-3 text-xs bg-amber-500/10 text-amber-200 border border-amber-400/30">
-                  {contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).
-                </div>
-              )}
-              <ProposalForm
-                owners={owners.map((owner) => owner.address)}
-                currentThreshold={multisig.threshold ?? 1}
-                numOwners={multisig.numOwners ?? owners.length}
-                onSubmit={handleSubmit}
-                isSubmitting={isOperating}
-                submitDisabledReason={contractLock.locked ? contractLock.reason : null}
-                txType={txType}
-                children={children}
-                initialNonce={initialNonce}
-                currentNonce={currentNonce}
-                proposals={proposals}
-                nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
-                deleteMode={deleteMode}
-                deleteTargetHash={deleteTargetHash}
-                deleteTargetProposal={deleteTargetProposal}
-                onExitDeleteMode={handleExitDeleteMode}
-              />
+
+              <div className="p-6 space-y-4">
+                {!deleteMode && (
+                  <p className="text-xs text-safe-text/60">
+                    {mode === 'online'
+                      ? 'Sign and broadcast directly from your browser wallet or Ledger.'
+                      : 'Export a bundle, sign on an air-gapped machine, then upload the signed transaction to broadcast.'}
+                  </p>
+                )}
+                {contractLock.locked && (
+                  <div className="rounded-lg px-4 py-3 text-xs bg-amber-500/10 text-amber-200 border border-amber-400/30">
+                    {contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).
+                  </div>
+                )}
+                {proposals.some(
+                  (p) =>
+                    p.status === 'pending' &&
+                    p.txType &&
+                    ['addOwner', 'removeOwner', 'changeThreshold', 'setDelegate'].includes(p.txType)
+                ) && (
+                  <div className="rounded-lg px-4 py-3 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
+                    There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
+                  </div>
+                )}
+
+                {mode === 'offline' && !deleteMode && (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm text-safe-text font-medium">Signer Address (Fee Payer)</label>
+                      <input
+                        type="text"
+                        value={offlineFeePayerAddress}
+                        onChange={(e) => setOfflineFeePayerAddress(e.target.value)}
+                        placeholder="B62q..."
+                        className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
+                      />
+                      <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
+                    </div>
+                    <DownloadCLILink />
+                  </>
+                )}
+
+                <ProposalForm
+                  owners={owners.map((owner) => owner.address)}
+                  currentThreshold={multisig.threshold ?? 1}
+                  numOwners={multisig.numOwners ?? owners.length}
+                  onSubmit={handleSubmit}
+                  isSubmitting={isOperating}
+                  submitDisabledReason={contractLock.locked ? contractLock.reason : null}
+                  txType={txType}
+                  children={children}
+                  initialNonce={initialNonce}
+                  currentNonce={currentNonce}
+                  proposals={proposals}
+                  nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
+                  deleteMode={deleteMode}
+                  deleteTargetHash={deleteTargetHash}
+                  deleteTargetProposal={deleteTargetProposal}
+                  onExitDeleteMode={handleExitDeleteMode}
+                  offlineSubmitRef={mode === 'offline' ? offlineSubmitRef : undefined}
+                  hideSubmit={mode === 'offline' && !deleteMode}
+                />
+
+                {mode === 'offline' && !deleteMode && (
+                  <>
+                    <OfflineSigningFlow
+                      action="propose"
+                      label="Propose"
+                      onBuildBundle={() => {
+                        assertValidMinaAddress(offlineFeePayerAddress);
+                        if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
+                          throw new Error('Signer address is not an owner of this multisig');
+                        }
+                        return new Promise<unknown>((resolve, reject) => {
+                          offlineSubmitRef.current = (input: NewProposalInput) => {
+                            const fresh = fetchContract(multisig!.address);
+                            fresh.then((f) => {
+                              const configNonce = f?.configNonce ?? multisig!.configNonce ?? 0;
+                              const networkId = multisig!.networkId ?? '0';
+                              buildOfflineProposeBundle({
+                                contractAddress: multisig!.address,
+                                feePayerAddress: offlineFeePayerAddress,
+                                input,
+                                configNonce,
+                                networkId,
+                              }).then(resolve).catch(reject);
+                            }).catch(reject);
+                          };
+                          const form = document.querySelector('form');
+                          if (form) {
+                            form.requestSubmit();
+                          } else {
+                            offlineSubmitRef.current = null;
+                            reject(new Error('Form not found'));
+                          }
+                        });
+                      }}
+                    />
+                    <UploadSignedResponse
+                      action="propose"
+                      onComplete={(response) => {
+                        const hash = response.proposalHash;
+                        router.push(hash ? `/transactions/${hash}?pending=1` : '/transactions');
+                      }}
+                    />
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}

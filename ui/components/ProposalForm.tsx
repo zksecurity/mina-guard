@@ -44,6 +44,8 @@ interface ProposalFormProps {
   deleteTargetHash?: string | null;
   deleteTargetProposal?: Proposal | null;
   onExitDeleteMode?: () => void;
+  offlineSubmitRef?: React.MutableRefObject<((input: NewProposalInput) => void) | null>;
+  hideSubmit?: boolean;
 }
 
 /** Dynamic proposal form that maps UI inputs to MinaGuard tx type payloads. */
@@ -64,6 +66,8 @@ export default function ProposalForm({
   deleteTargetHash = null,
   deleteTargetProposal = null,
   onExitDeleteMode,
+  offlineSubmitRef,
+  hideSubmit = false,
 }: ProposalFormProps) {
   // Recipient rows are the source of truth for both transfer + allocateChild.
   // Bulk mode renders a textarea derived from these rows (and parses back on
@@ -212,6 +216,9 @@ export default function ProposalForm({
     e.preventDefault();
     setValidationError(null);
 
+    const offlineHandler = offlineSubmitRef?.current ?? null;
+    if (offlineSubmitRef) offlineSubmitRef.current = null;
+
     const parsedNonce = parseProposalNonce(nonce);
     if (parsedNonce === null) {
       setValidationError('Nonce must be a positive integer.');
@@ -301,7 +308,7 @@ export default function ProposalForm({
       ? [{ address: EMPTY_PUBKEY_B58, amount: '0' }]
       : undefined;
 
-    onSubmit({
+    const payload: NewProposalInput = {
       txType: effectiveTxType,
       nonce: parsedNonce,
       receivers:
@@ -330,7 +337,14 @@ export default function ProposalForm({
         !deleteMode && txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
       memo: memo.length > 0 ? memo : undefined,
-    });
+    };
+
+    if (offlineHandler) {
+      offlineHandler(payload);
+      return;
+    }
+
+    onSubmit(payload);
   };
 
   return (
@@ -687,14 +701,16 @@ export default function ProposalForm({
 
       {validationError && <p className="text-sm text-red-400">{validationError}</p>}
 
-      <button
-        type="submit"
-        disabled={isSubmitting || !!submitDisabledReason}
-        title={submitDisabledReason ?? undefined}
-        className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isSubmitting ? 'Submitting Proposal...' : (deleteMode ? 'Create Delete Proposal' : 'Submit Proposal')}
-      </button>
+      {!hideSubmit && (
+        <button
+          type="submit"
+          disabled={isSubmitting || !!submitDisabledReason}
+          title={submitDisabledReason ?? undefined}
+          className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isSubmitting ? 'Submitting Proposal...' : (deleteMode ? 'Create Delete Proposal' : 'Submit Proposal')}
+        </button>
+      )}
     </form>
   );
 }

@@ -6,6 +6,7 @@ contracts/build/
 ui/.next/
 ui/out/
 .next
+offline-cli/dist/
 
 # environment
 .env
