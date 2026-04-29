@@ -12,6 +12,7 @@ import {
   AccountUpdate,
   TokenId,
   Signature,
+  Poseidon,
 } from 'o1js';
 import {
   MinaGuard,
@@ -26,6 +27,7 @@ import {
   PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
+  TxType,
 } from 'contracts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
@@ -506,4 +508,284 @@ describe('offline-cli e2e', () => {
 
     console.log('[e2e] Compiled binary OK');
   }, 600_000);
+
+  describe('child lifecycle (enableChildMultiSig)', () => {
+    let childAddress: PublicKey;
+    let childZkApp: MinaGuard;
+    let childProposalHash: string;
+    let enableProposal: InstanceType<typeof TransactionProposal>;
+
+    const emptyKey = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+
+    const childProposalBundle = () => ({
+      proposalHash: childProposalHash,
+      proposer: owners[0].pub.toBase58(),
+      toAddress: null,
+      tokenId: '0',
+      txType: 'enableChildMultiSig',
+      data: '0',
+      nonce: '1',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: zkAppAddress.toBase58(),
+      destination: 'remote',
+      childAccount: childAddress.toBase58(),
+      memoHash: '0',
+      receivers: [{ address: emptyKey, amount: '0' }],
+    });
+
+    function accountsSnapshot() {
+      return {
+        [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
+        [owners[0].pub.toBase58()]: snapshotAccount(owners[0].pub),
+        [owners[1].pub.toBase58()]: snapshotAccount(owners[1].pub),
+        [owners[2].pub.toBase58()]: snapshotAccount(owners[2].pub),
+        [childAddress.toBase58()]: snapshotAccount(childAddress),
+      };
+    }
+
+    async function parentEvents() {
+      const raw = await zkApp.fetchEvents();
+      return raw.map((e) => ({
+        eventType: e.type,
+        payload: JSON.parse(safeStringify(e.event.data)),
+      }));
+    }
+
+    beforeAll(async () => {
+      const childKey = PrivateKey.random();
+      childAddress = childKey.toPublicKey();
+      childZkApp = new MinaGuard(childAddress);
+
+      const childOwners = owners.map((o) => o.pub);
+      const ownersCommitment = computeOwnerChain(childOwners);
+      const thresholdField = Field(2);
+      const numOwnersField = Field(childOwners.length);
+
+      // CREATE_CHILD: propose + approve on parent, then deploy + setup atomically
+      const createChildProposal = new TransactionProposal({
+        receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
+        tokenId: Field(0),
+        txType: TxType.CREATE_CHILD,
+        data: Poseidon.hash([ownersCommitment, thresholdField, numOwnersField]),
+        nonce: Field(0),
+        configNonce: Field(0),
+        expiryBlock: Field(0),
+        networkId: Field(1),
+        guardAddress: zkAppAddress,
+        destination: Destination.REMOTE,
+        childAccount: childAddress,
+        memoHash: Field(0),
+      });
+      const ccHash = createChildProposal.hash();
+
+      const ccSig0 = Signature.create(owners[0].key, [ccHash]);
+      const ccProposeTx = await Mina.transaction(owners[0].pub, async () => {
+        await zkApp.propose(
+          createChildProposal, ownerStore.getWitness(), owners[0].pub, ccSig0,
+          nullifierStore.getWitness(ccHash, owners[0].pub), approvalStore.getWitness(ccHash),
+        );
+      });
+      await ccProposeTx.prove();
+      await ccProposeTx.sign([owners[0].key]).send();
+      nullifierStore.nullify(ccHash, owners[0].pub);
+      approvalStore.setCount(ccHash, PROPOSED_MARKER.add(1));
+
+      const ccSig1 = Signature.create(owners[1].key, [ccHash]);
+      const ccCount = approvalStore.getCount(ccHash);
+      const ccApproveTx = await Mina.transaction(owners[1].pub, async () => {
+        await zkApp.approveProposal(
+          createChildProposal, ccSig1, owners[1].pub, ownerStore.getWitness(),
+          approvalStore.getWitness(ccHash), ccCount, nullifierStore.getWitness(ccHash, owners[1].pub),
+        );
+      });
+      await ccApproveTx.prove();
+      await ccApproveTx.sign([owners[1].key]).send();
+      nullifierStore.nullify(ccHash, owners[1].pub);
+      approvalStore.setCount(ccHash, ccCount.add(1));
+
+      const setupOwners = toFixedOwners(childOwners);
+      const atomicTx = await Mina.transaction(deployer.pub, async () => {
+        AccountUpdate.fundNewAccount(deployer.pub);
+        await childZkApp.deploy();
+        const funder = AccountUpdate.createSigned(deployer.pub);
+        funder.send({ to: childAddress, amount: UInt64.from(10_000_000_000) });
+        await childZkApp.executeSetupChild(
+          ownersCommitment, thresholdField, numOwnersField,
+          new SetupOwnersInput({ owners: setupOwners }),
+          createChildProposal, approvalStore.getWitness(ccHash), approvalStore.getCount(ccHash),
+        );
+      });
+      await atomicTx.prove();
+      await atomicTx.sign([deployer.key, childKey]).send();
+
+      // Build the enableChildMultiSig proposal struct (reused across tests)
+      enableProposal = new TransactionProposal({
+        receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
+        tokenId: Field(0),
+        txType: TxType.ENABLE_CHILD_MULTI_SIG,
+        data: Field(0),
+        nonce: Field(1),
+        configNonce: Field(0),
+        expiryBlock: Field(0),
+        networkId: Field(1),
+        guardAddress: zkAppAddress,
+        destination: Destination.REMOTE,
+        childAccount: childAddress,
+        memoHash: Field(0),
+      });
+
+      console.log('[e2e] Child guard deployed at', childAddress.toBase58());
+    }, 600_000);
+
+    it('propose', async () => {
+      const proposer = owners[0];
+      const bundle = {
+        version: 1,
+        action: 'propose',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(),
+        accounts: accountsSnapshot(),
+        events: await parentEvents(),
+        input: {
+          txType: 'enableChildMultiSig',
+          nonce: 1,
+          childAccount: childAddress.toBase58(),
+          childMultiSigEnable: false,
+        },
+        configNonce: 0,
+        networkId: '1',
+      };
+
+      const bundlePath = join(tmpDir, 'child-propose-bundle.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      console.log('[e2e] Running CLI: propose enableChildMultiSig...');
+      const result = await runCLI(bundlePath, proposer.key.toBase58());
+      console.log('[e2e] CLI stderr:', result.stderr);
+      if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('Proof generated');
+
+      const output = JSON.parse(result.stdout);
+      expect(output.type).toBe('offline-signed-tx');
+      expect(output.action).toBe('propose');
+      expect(output.proposalHash).toBeTruthy();
+      expect(output.transaction.feePayer.authorization).toBeTruthy();
+      childProposalHash = output.proposalHash;
+
+      // Execute propose on-chain to advance state
+      const pHash = enableProposal.hash();
+      const sig = Signature.create(proposer.key, [pHash]);
+      const propTx = await Mina.transaction(proposer.pub, async () => {
+        await zkApp.propose(
+          enableProposal, ownerStore.getWitness(), proposer.pub, sig,
+          nullifierStore.getWitness(pHash, proposer.pub), approvalStore.getWitness(pHash),
+        );
+      });
+      await propTx.prove();
+      await propTx.sign([proposer.key]).send();
+      nullifierStore.nullify(pHash, proposer.pub);
+      approvalStore.setCount(pHash, PROPOSED_MARKER.add(1));
+
+      console.log('[e2e] enableChildMultiSig propose OK, hash:', childProposalHash);
+    }, 900_000);
+
+    it('approve', async () => {
+      expect(childProposalHash).toBeTruthy();
+      const approver = owners[1];
+
+      const bundle = {
+        version: 1,
+        action: 'approve',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: approver.pub.toBase58(),
+        accounts: accountsSnapshot(),
+        events: await parentEvents(),
+        proposal: childProposalBundle(),
+      };
+
+      const bundlePath = join(tmpDir, 'child-approve-bundle.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      console.log('[e2e] Running CLI: approve enableChildMultiSig...');
+      const result = await runCLI(bundlePath, approver.key.toBase58());
+      console.log('[e2e] CLI stderr:', result.stderr);
+      if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('Proof generated');
+
+      const output = JSON.parse(result.stdout);
+      expect(output.type).toBe('offline-signed-tx');
+      expect(output.action).toBe('approve');
+      expect(output.proposalHash).toBe(childProposalHash);
+      expect(output.transaction.feePayer.authorization).toBeTruthy();
+
+      // Execute approve on-chain to advance state
+      const pHash = enableProposal.hash();
+      const approverSig = Signature.create(approver.key, [pHash]);
+      const currentCount = approvalStore.getCount(pHash);
+      const approveTx = await Mina.transaction(approver.pub, async () => {
+        await zkApp.approveProposal(
+          enableProposal, approverSig, approver.pub, ownerStore.getWitness(),
+          approvalStore.getWitness(pHash), currentCount, nullifierStore.getWitness(pHash, approver.pub),
+        );
+      });
+      await approveTx.prove();
+      await approveTx.sign([approver.key]).send();
+      nullifierStore.nullify(pHash, approver.pub);
+      approvalStore.setCount(pHash, currentCount.add(1));
+
+      console.log('[e2e] enableChildMultiSig approve OK');
+    }, 900_000);
+
+    it('execute', async () => {
+      expect(childProposalHash).toBeTruthy();
+      const executor = owners[2];
+
+      const childRawEvents = await childZkApp.fetchEvents();
+      const childEvents = childRawEvents.map((e) => ({
+        eventType: e.type,
+        payload: JSON.parse(safeStringify(e.event.data)),
+      }));
+
+      const bundle = {
+        version: 1,
+        action: 'execute',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: executor.pub.toBase58(),
+        accounts: accountsSnapshot(),
+        events: await parentEvents(),
+        proposal: childProposalBundle(),
+        receiverAccountExists: {},
+        childAddress: childAddress.toBase58(),
+        childEvents,
+      };
+
+      const bundlePath = join(tmpDir, 'child-execute-bundle.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      console.log('[e2e] Running CLI: execute enableChildMultiSig...');
+      const result = await runCLI(bundlePath, executor.key.toBase58());
+      console.log('[e2e] CLI stderr:', result.stderr);
+      if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('Proof generated');
+
+      const output = JSON.parse(result.stdout);
+      expect(output.type).toBe('offline-signed-tx');
+      expect(output.action).toBe('execute');
+      expect(output.proposalHash).toBe(childProposalHash);
+      expect(output.transaction.feePayer.authorization).toBeTruthy();
+
+      console.log('[e2e] enableChildMultiSig execute OK');
+    }, 900_000);
+  });
 });
