@@ -65,12 +65,22 @@ export function useContractTxLock(
     // never auto-cleared from localStorage today, so honoring them as a lock
     // would leave the parent permanently blocked even after the child is
     // finalized.
-    const myPending = pendingTxs.find(
-      (pt) =>
+    //
+    // Additionally: a localStorage entry whose matching proposal has already
+    // moved past `pending` (executed / invalidated / expired) is stale —
+    // useTransactions cleans these up on indexer ticks, but on a fresh
+    // navigation that cleanup may not have run yet. Don't lock on them.
+    const indexedByHash = new Map(proposals.map((p) => [p.proposalHash, p]));
+    const myPending = pendingTxs.find((pt) => {
+      const isLockable =
         (pt.kind === 'create' && !pt.childAccount) ||
         pt.kind === 'approve' ||
-        pt.kind === 'execute',
-    );
+        pt.kind === 'execute';
+      if (!isLockable) return false;
+      const matched = indexedByHash.get(pt.proposalHash);
+      if (matched && matched.status !== 'pending') return false;
+      return true;
+    });
     if (myPending) {
       return {
         locked: true,
