@@ -287,17 +287,51 @@ export function UploadSignedResponse({ action, onComplete }: UploadSignedRespons
     setDone(false);
     try {
       const text = await file.text();
-      const response = JSON.parse(text) as OfflineSignedTxResponse;
-      if (response.version !== 1 || response.type !== 'offline-signed-tx') {
-        throw new Error('Invalid signed response file');
+
+      let response: OfflineSignedTxResponse;
+      try {
+        response = JSON.parse(text);
+      } catch {
+        throw new Error('File is not valid JSON. Make sure you are uploading the signed output from the CLI, not the original bundle.');
+      }
+
+      if (!response || typeof response !== 'object') {
+        throw new Error('File does not contain a JSON object.');
+      }
+      if (response.type !== 'offline-signed-tx') {
+        if ('action' in response && 'version' in response && 'contractAddress' in response) {
+          throw new Error('This looks like the unsigned bundle, not the signed output. Run the CLI first, then upload the file it produces (stdout → signed.json).');
+        }
+        throw new Error('Unrecognized file format. Expected the signed JSON output from the offline CLI.');
+      }
+      if (response.version !== 1) {
+        throw new Error(`Unsupported signed response version (${response.version}). You may need a newer version of the UI.`);
       }
       if (response.action !== action) {
-        throw new Error(`Expected action "${action}" but got "${response.action}"`);
+        throw new Error(`This is a signed "${response.action}" transaction, but this upload expects "${action}".`);
       }
+      if (!response.transaction) {
+        throw new Error('Signed response is missing the transaction field. The CLI may have encountered an error during signing.');
+      }
+
       setBroadcasting(true);
       const txJson = typeof response.transaction === 'string'
         ? response.transaction : JSON.stringify(response.transaction);
-      await broadcastSignedTx(txJson);
+      try {
+        await broadcastSignedTx(txJson);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('Invalid_signature') || msg.includes('invalid signature')) {
+          throw new Error('The Mina node rejected the transaction signature. This usually means the private key used on the air-gapped machine does not match the fee payer address.');
+        }
+        if (msg.includes('Invalid_proof') || msg.includes('invalid proof')) {
+          throw new Error('The Mina node rejected the transaction proof. The contract verification key may have changed since the bundle was exported. Export a fresh bundle and try again.');
+        }
+        if (msg.includes('Insufficient_fee') || msg.includes('insufficient')) {
+          throw new Error('The fee payer account does not have enough MINA to cover the transaction fee.');
+        }
+        throw new Error(`Broadcast failed: ${msg}`);
+      }
       setDone(true);
       onComplete?.(response);
     } catch (err) {

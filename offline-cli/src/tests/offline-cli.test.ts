@@ -213,8 +213,8 @@ describe('offline-cli', () => {
   // -- Fee payer signing --
 
   it('signFeePayer produces valid authorization', async () => {
-    // @ts-ignore — resolved at runtime via node_modules symlink
-    const Client = (await import('../../node_modules/mina-signer/dist/web/index.js')).default;
+    // @ts-ignore — ESM bundle built by ui/package.json postinstall
+    const Client = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
     const client = new Client({ network: 'testnet' });
     const key = PrivateKey.random();
 
