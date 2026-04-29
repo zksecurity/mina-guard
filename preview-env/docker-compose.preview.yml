@@ -15,7 +15,7 @@ services:
     image: o1labs/mina-local-network:mesa-latest-lightnet
     restart: unless-stopped
     environment:
-      - SLOT_TIME=10000
+      - SLOT_TIME=5000
       - PROOF_LEVEL=none
       - RUN_ARCHIVE_NODE=true
       - NETWORK_TYPE=single-node

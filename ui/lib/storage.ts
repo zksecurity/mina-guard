@@ -74,7 +74,7 @@ export interface PendingTxSummary {
   txType: string | null;
   nonce: string | null;
   configNonce: string | null;
-  expiryBlock: string | null;
+  expirySlot: string | null;
   destination: 'local' | 'remote' | null;
   childAccount: string | null;
   receivers: { address: string; amount: string }[];
@@ -88,7 +88,7 @@ export interface PendingTxChildAccount {
   childOwners: string[];
   childThreshold: number;
   childName: string;
-  expiryBlock: number | null;
+  expirySlot: number | null;
 }
 
 export interface PendingTx {

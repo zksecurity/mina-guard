@@ -32,7 +32,7 @@ On every index tick:
 4. Verify zkApp verification key hash (optional strict match with `MINAGUARD_VK_HASH`).
 5. Fetch and decode MinaGuard events for tracked contracts.
 6. Upsert normalized rows (`Contract`, `Owner`, `Proposal`, `Approval`) and raw events (`EventRaw`).
-7. Mark pending proposals as `expired` when current height passes `expiryBlock`.
+7. Mark pending proposals as `expired` when current global slot passes `expirySlot`.
 8. Persist cursor to latest synced height.
 
 ## Requirements
@@ -208,7 +208,7 @@ Normalized proposal lifecycle record:
 - indexed: `@@index([contractId, status])`
 - fields include `proposer`, `toAddress`, `amount`, `tokenId`, `txType`, `data`
 - lifecycle: `status`, `approvalCount`, `createdAtBlock`, `executedAtBlock`
-- metadata: `nonce`, `configNonce`, `expiryBlock`, `networkId`, `guardAddress`, `destination`, `childAccount`
+- metadata: `nonce`, `configNonce`, `expirySlot`, `networkId`, `guardAddress`, `destination`, `childAccount`
 - invalidation: `status`, `invalidReason`
 
 ### `Approval`
@@ -248,7 +248,7 @@ Indexer applies contract events as follows:
 
 After event ingestion, non-executed proposals are re-evaluated and moved to:
 
-- `expired` if `latestHeight > expiryBlock`
+- `expired` if `latestSlot > expirySlot`
 - `invalidated` if `configNonce` is stale
 - `invalidated` if the proposal nonce is no longer fresh for its LOCAL or REMOTE nonce domain
 

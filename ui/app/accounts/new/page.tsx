@@ -251,7 +251,7 @@ function CreateAccountWizard() {
           txType: 'createChild',
           nonce: '0',
           configNonce: String(parentContract.configNonce!),
-          expiryBlock: null,
+          expirySlot: null,
           destination: 'remote',
           childAccount: childAddress,
           receivers: [],
@@ -262,7 +262,7 @@ function CreateAccountWizard() {
           childOwners: parsedOwners,
           childThreshold,
           childName: name.trim(),
-          expiryBlock: null,
+          expirySlot: null,
         },
       });
 

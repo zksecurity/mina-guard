@@ -38,6 +38,7 @@ function buildStubIndexer(): MinaGuardIndexer {
       lastRunAt: null,
       lastSuccessfulRunAt: null,
       latestChainHeight: 0,
+      latestSlot: 0,
       indexedHeight: 0,
       lastError: null,
       discoveredContracts: 0,

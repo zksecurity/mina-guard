@@ -337,7 +337,7 @@ describe('reconstruction after rollback', () => {
         blockHash: OLD_HASH(7), parentHash: OLD_HASH(6),
         event: {
           proposalHash: 'OLD_PROPOSAL', proposer: ownerA, tokenId: '1', txType: '0',
-          data: 'd', uid: 'u1', configNonce: '0', expiryBlock: '1000',
+          data: 'd', uid: 'u1', configNonce: '0', expirySlot: '1000',
           networkId: 'net', guardAddress: address, destination: '0', childAccount: null,
         },
       },
@@ -421,7 +421,7 @@ describe('reconstruction after rollback', () => {
         blockHash: NEW_HASH(7), parentHash: OLD_HASH(6),
         event: {
           proposalHash: 'NEW_PROPOSAL', proposer: ownerA, tokenId: '1', txType: '0',
-          data: 'd2', uid: 'u2', configNonce: '0', expiryBlock: '1000',
+          data: 'd2', uid: 'u2', configNonce: '0', expirySlot: '1000',
           networkId: 'net', guardAddress: address, destination: '0', childAccount: null,
         },
       },

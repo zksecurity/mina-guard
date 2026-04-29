@@ -95,7 +95,7 @@ model Proposal {
   data              String?
   nonce             String?
   configNonce       String?
-  expiryBlock       String?
+  expirySlot        String?
   networkId         String?
   guardAddress      String?
   memo              String?

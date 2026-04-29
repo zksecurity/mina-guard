@@ -210,7 +210,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      const latestHeight = indexer.getStatus().latestChainHeight;
+      const latestSlot = indexer.getStatus().latestSlot;
 
       // Status is derived at read time from ProposalExecution existence +
       // expiry + nonce/config staleness vs current ContractConfig. The status
@@ -239,7 +239,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       const serialized = proposals.map((p) =>
         serializeProposalRecord(
           p,
-          latestHeight,
+          latestSlot,
           parentState,
           p.childAccount ? childStateByAddress.get(p.childAccount) ?? null : null,
         ),
@@ -291,14 +291,14 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      const latestHeight = indexer.getStatus().latestChainHeight;
+      const latestSlot = indexer.getStatus().latestSlot;
       const parentState = toContractState(await latestContractConfig(contract.id));
       const childState =
         proposal.destination === 'remote' && proposal.txType !== '5' && proposal.childAccount
           ? await resolveChildState(proposal.childAccount)
           : null;
 
-      res.json(serializeProposalRecord(proposal, latestHeight, parentState, childState));
+      res.json(serializeProposalRecord(proposal, latestSlot, parentState, childState));
     })
   );
 

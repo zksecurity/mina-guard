@@ -1083,17 +1083,17 @@ test('22. Execute undelegate', async () => { const page = sharedPage;
 });
 
 // ---------------------------------------------------------------------------
-// 23. Propose transfer with low expiry block (will expire before execution)
+// 23. Propose transfer with low expiry slot (will expire before execution)
 // ---------------------------------------------------------------------------
 
 test('23. Propose transfer with near-future expiry', async () => { const page = sharedPage;
   log('=== Step 23: Propose transfer with expiry ===');
 
-  // Get current block height from indexer status
+  // Get current global slot from indexer status
   const status = await getIndexerStatus();
-  const currentHeight = status?.latestChainHeight ?? status?.indexedHeight ?? 0;
-  const expiryBlock = currentHeight + netConfig.expiryBlockOffset;
-  log(`Current block height: ${currentHeight}, setting expiry: ${expiryBlock}`);
+  const currentSlot = status?.latestSlot ?? 0;
+  const expirySlot = currentSlot + netConfig.expirySlotOffset;
+  log(`Current slot: ${currentSlot}, setting expiry: ${expirySlot}`);
 
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
@@ -1101,10 +1101,10 @@ test('23. Propose transfer with near-future expiry', async () => { const page = 
   // 0.5 MINA to account3.
   await fillRecipients(page, `${accounts[2].publicKey},0.5`);
 
-  // Set the low expiry block
+  // Set the low expiry slot
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
-    await expiryInput.first().fill(String(expiryBlock));
+    await expiryInput.first().fill(String(expirySlot));
   }
 
   log('Submitting proposal with expiry...');
@@ -1117,18 +1117,18 @@ test('23. Propose transfer with near-future expiry', async () => { const page = 
     async () => {
       const proposals = await getProposals(contractAddress);
       return proposals.some(
-        (p: any) => p.txType === 'transfer' && p.expiryBlock === String(expiryBlock)
+        (p: any) => p.txType === 'transfer' && p.expirySlot === String(expirySlot)
       );
     }
   );
 
   const proposals = await getProposals(contractAddress);
   const expiringProposal = proposals.find(
-    (p: any) => p.txType === 'transfer' && p.expiryBlock === String(expiryBlock)
+    (p: any) => p.txType === 'transfer' && p.expirySlot === String(expirySlot)
   );
   expect(expiringProposal).toBeDefined();
   proposalHashes.push(expiringProposal.proposalHash);
-  log(`Expiring proposal created: hash=${expiringProposal.proposalHash.slice(0, 12)}..., expiryBlock=${expiryBlock}`);
+  log(`Expiring proposal created: hash=${expiringProposal.proposalHash.slice(0, 12)}..., expirySlot=${expirySlot}`);
 });
 
 // ---------------------------------------------------------------------------

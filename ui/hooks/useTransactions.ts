@@ -239,7 +239,7 @@ function synthesizePendingProposal(pt: PendingTx): Proposal {
     data: null,
     nonce: summary?.nonce ?? null,
     configNonce: summary?.configNonce ?? null,
-    expiryBlock: summary?.expiryBlock ?? null,
+    expirySlot: summary?.expirySlot ?? null,
     networkId: null,
     guardAddress: pt.contractAddress,
     destination: summary?.destination ?? null,

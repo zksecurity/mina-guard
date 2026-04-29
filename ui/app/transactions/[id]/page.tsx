@@ -546,7 +546,7 @@ export default function TransactionDetailPage() {
               />
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
-            <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
+            <DetailRow label="Expiry Slot" value={proposal.expirySlot ?? '0'} mono />
             {hasMemo && (
               <DetailRow label="Memo" value={proposal.memo ?? proposal.memoHash!} mono={!proposal.memo} labelAdornment={memoAdornment} />
             )}

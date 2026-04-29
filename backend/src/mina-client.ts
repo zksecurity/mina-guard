@@ -84,6 +84,46 @@ export async function fetchBestChainHeaders(
   return headers;
 }
 
+/** Genesis-derived constants used to compute current global slot from wall-clock. */
+export interface GenesisConstants {
+  /** Genesis Unix timestamp in milliseconds. */
+  genesisTimestampMs: number;
+  /** Slot duration in milliseconds. */
+  slotDurationMs: number;
+}
+
+/**
+ * Fetches the network's genesis timestamp and slot duration from the daemon.
+ * Used to compute `globalSlotSinceGenesis` from wall-clock — the chain's
+ * slot counter advances every slot regardless of whether a block is produced,
+ * so a wall-clock derivation is more reliable than reading the latest block's
+ * slot when blocks stall.
+ */
+export async function fetchGenesisConstants(
+  config: BackendConfig,
+): Promise<GenesisConstants> {
+  const query = `{
+    genesisConstants { genesisTimestamp }
+    daemonStatus { consensusConfiguration { slotDuration } }
+  }`;
+  const response = await graphqlRequest<{
+    genesisConstants?: { genesisTimestamp?: string };
+    daemonStatus?: { consensusConfiguration?: { slotDuration?: number | string } };
+  }>(query, config.minaEndpoint, config.minaFallbackEndpoint);
+
+  const tsRaw = response.genesisConstants?.genesisTimestamp;
+  const slotRaw = response.daemonStatus?.consensusConfiguration?.slotDuration;
+  if (!tsRaw || slotRaw == null) {
+    throw new Error('Failed to fetch genesisConstants/slotDuration from daemon');
+  }
+  const genesisTimestampMs = Date.parse(tsRaw);
+  const slotDurationMs = Number(slotRaw);
+  if (!Number.isFinite(genesisTimestampMs) || !Number.isFinite(slotDurationMs) || slotDurationMs <= 0) {
+    throw new Error(`Invalid genesisConstants response: timestamp=${tsRaw} slotDuration=${slotRaw}`);
+  }
+  return { genesisTimestampMs, slotDurationMs };
+}
+
 /** Fetches latest block height from archive node to stay aligned with event availability. */
 export async function fetchLatestBlockHeight(config: BackendConfig): Promise<number> {
   const query = `{

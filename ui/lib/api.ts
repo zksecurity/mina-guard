@@ -203,7 +203,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     data: asNullableString(input.data),
     nonce: asNullableString(input.nonce) ?? asNullableString(input.uid),
     configNonce: asNullableString(input.configNonce),
-    expiryBlock: asNullableString(input.expiryBlock),
+    expirySlot: asNullableString(input.expirySlot),
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
     memo: asNullableString(input.memo),

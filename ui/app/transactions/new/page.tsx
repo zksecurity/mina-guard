@@ -192,7 +192,7 @@ function NewTransactionPageInner() {
           txType: data.txType,
           nonce: String(data.nonce),
           configNonce: String(configNonce),
-          expiryBlock: data.expiryBlock != null ? String(data.expiryBlock) : null,
+          expirySlot: data.expirySlot != null ? String(data.expirySlot) : null,
           destination: isRemote ? 'remote' : 'local',
           childAccount: data.childAccount ?? null,
           receivers: data.receivers ?? [],
