@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { existsSync, readdirSync, createReadStream } from 'fs';
+import { existsSync, mkdirSync, createReadStream } from 'fs';
+import { execSync } from 'child_process';
 import { join } from 'path';
 import { PublicKey, fetchAccount } from 'o1js';
 
@@ -635,31 +636,42 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json({ ok: true });
   }));
 
-  const CLI_DIST_DIR = join(process.cwd(), '..', 'offline-cli', 'dist');
+  const CLI_SRC_DIR = join(process.cwd(), '..', 'offline-cli');
+  const CLI_DIST_DIR = join(CLI_SRC_DIR, 'dist');
 
-  router.get('/api/offline-cli/platforms', safe(async (_req, res) => {
-    if (!existsSync(CLI_DIST_DIR)) {
-      res.json([]);
-      return;
-    }
-    const files = readdirSync(CLI_DIST_DIR).filter((f) => f.startsWith('mina-guard-cli-'));
-    const platforms = files.map((f) => f.replace('mina-guard-cli-', ''));
-    res.json(platforms);
-  }));
+  const PLATFORM_TARGETS: Record<string, string> = {
+    'macos-arm64': 'bun-darwin-arm64',
+    'macos-x64': 'bun-darwin-x64',
+    'linux-x64': 'bun-linux-x64',
+    'linux-arm64': 'bun-linux-arm64',
+    'windows-x64': 'bun-windows-x64',
+  };
 
   router.get('/api/offline-cli/:platform', safe(async (req, res) => {
     const platform = req.params.platform;
-    if (!platform || /[/\\]/.test(platform)) {
+    const target = PLATFORM_TARGETS[platform];
+    if (!target) {
       res.status(400).json({ error: 'Invalid platform' });
       return;
     }
-    const filePath = join(CLI_DIST_DIR, `mina-guard-cli-${platform}`);
+    const filename = `mina-guard-cli-${platform}`;
+    const filePath = join(CLI_DIST_DIR, filename);
+
     if (!existsSync(filePath)) {
-      res.status(404).json({ error: 'Platform binary not found' });
-      return;
+      if (!existsSync(join(CLI_SRC_DIR, 'src', 'index.ts'))) {
+        res.status(404).json({ error: 'offline-cli source not found' });
+        return;
+      }
+      mkdirSync(CLI_DIST_DIR, { recursive: true });
+      console.log(`[offline-cli] Building ${filename} (target: ${target})...`);
+      execSync(
+        `bun build --compile --target=${target} src/index.ts --outfile dist/${filename} --define 'process.versions.node=""'`,
+        { cwd: CLI_SRC_DIR, stdio: 'inherit' },
+      );
     }
+
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="mina-guard-cli-${platform}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     createReadStream(filePath).pipe(res);
   }));
 

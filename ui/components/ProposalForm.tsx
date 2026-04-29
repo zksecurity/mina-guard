@@ -44,7 +44,7 @@ interface ProposalFormProps {
   deleteTargetHash?: string | null;
   deleteTargetProposal?: Proposal | null;
   onExitDeleteMode?: () => void;
-  offlineSubmitRef?: React.MutableRefObject<((input: NewProposalInput) => void) | null>;
+  getFormInputRef?: React.MutableRefObject<(() => NewProposalInput) | null>;
   hideSubmit?: boolean;
 }
 
@@ -66,7 +66,7 @@ export default function ProposalForm({
   deleteTargetHash = null,
   deleteTargetProposal = null,
   onExitDeleteMode,
-  offlineSubmitRef,
+  getFormInputRef,
   hideSubmit = false,
 }: ProposalFormProps) {
   // Recipient rows are the source of truth for both transfer + allocateChild.
@@ -211,104 +211,68 @@ export default function ProposalForm({
     return parsed;
   })();
 
-  /** Emits normalized form payload according to the selected transaction type. */
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setValidationError(null);
-
-    const offlineHandler = offlineSubmitRef?.current ?? null;
-    if (offlineSubmitRef) offlineSubmitRef.current = null;
-
+  /** Validates form state and returns the payload. Throws on validation error. */
+  const getInput = (): NewProposalInput => {
     const parsedNonce = parseProposalNonce(nonce);
     if (parsedNonce === null) {
-      setValidationError('Nonce must be a positive integer.');
-      return;
+      throw new Error('Nonce must be a positive integer.');
     }
-    // Skip the executed-nonce floor in delete mode: the target proposal's
-    // nonce is authoritative. Otherwise the floor depends on txType's nonce
-    // space (parent's localNonce for LOCAL, child's parentNonce for REMOTE).
     if (!deleteMode && effectiveNonceFloor !== null && parsedNonce <= effectiveNonceFloor) {
       const floorLabel = isRemoteSpaceTxType
         ? `the selected SubVault's executed remote nonce (${effectiveNonceFloor})`
         : `the current executed nonce (${effectiveNonceFloor})`;
-      setValidationError(`Nonce must be greater than ${floorLabel}.`);
-      return;
+      throw new Error(`Nonce must be greater than ${floorLabel}.`);
     }
-    // Nonce collision with a pending proposal is deliberately allowed — it's
-    // the same mechanism as delete-mode (whichever executes first burns the
-    // slot and invalidates the other). A non-blocking warning is rendered
-    // below the form instead.
-
     if (effectiveTxType === 'addOwner' && numOwners >= MAX_OWNERS) {
-      setValidationError(`Cannot exceed the maximum of ${MAX_OWNERS} owners.`);
-      return;
+      throw new Error(`Cannot exceed the maximum of ${MAX_OWNERS} owners.`);
     }
     if (!deleteMode && (txType === 'transfer' || txType === 'allocateChild') && !recipientsParse.ok) {
-      setValidationError(
-        recipientsParse.topError ?? 'Fix the highlighted recipient rows before submitting.',
-      );
-      return;
+      throw new Error(recipientsParse.topError ?? 'Fix the highlighted recipient rows before submitting.');
     }
     if (
       !deleteMode &&
       (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') &&
       !targetChild
     ) {
-      setValidationError('Pick a SubVault to target.');
-      return;
+      throw new Error('Pick a SubVault to target.');
     }
     if (!deleteMode && txType === 'reclaimChild') {
       const parsed = parseMinaToNanomina(reclaimAmount);
-      if (!parsed) {
-        setValidationError('Reclaim amount must be a positive MINA value.');
-        return;
-      }
+      if (!parsed) throw new Error('Reclaim amount must be a positive MINA value.');
       if (targetBalance !== null && BigInt(parsed.nanomina) > BigInt(targetBalance)) {
-        setValidationError(`Reclaim amount exceeds SubVault balance (${formatMina(targetBalance)} MINA).`);
-        return;
+        throw new Error(`Reclaim amount exceeds SubVault balance (${formatMina(targetBalance)} MINA).`);
       }
     }
     if (!deleteMode && txType === 'destroyChild' && !destroyConfirm) {
-      setValidationError('Confirm the destroy action — this drains the SubVault and disables its multi-sig.');
-      return;
+      throw new Error('Confirm the destroy action — this drains the SubVault and disables its multi-sig.');
     }
     if (effectiveTxType === 'addOwner' && owners.includes(newOwner.trim())) {
-      setValidationError('This address is already an owner.');
-      return;
+      throw new Error('This address is already an owner.');
     }
     if (effectiveTxType === 'removeOwner' && !owners.includes(removeOwnerAddress.trim())) {
-      setValidationError('This address is not a current owner.');
-      return;
+      throw new Error('This address is not a current owner.');
     }
     if (effectiveTxType === 'removeOwner' && numOwners - 1 < currentThreshold) {
-      setValidationError('Reduce the threshold first before removing an owner.');
-      return;
+      throw new Error('Reduce the threshold first before removing an owner.');
     }
     if (
       effectiveTxType === 'changeThreshold'
-      && (
-        !Number.isInteger(newThreshold)
-        || newThreshold < 1
-        || newThreshold > Math.max(1, numOwners)
-      )
+      && (!Number.isInteger(newThreshold) || newThreshold < 1 || newThreshold > Math.max(1, numOwners))
     ) {
-      setValidationError(`Threshold must be between 1 and ${Math.max(1, numOwners)}.`);
-      return;
+      throw new Error(`Threshold must be between 1 and ${Math.max(1, numOwners)}.`);
     }
     if (effectiveTxType === 'changeThreshold' && newThreshold === currentThreshold) {
-      setValidationError('The new threshold is the same as the current one.');
-      return;
+      throw new Error('The new threshold is the same as the current one.');
     }
     if (memoOverLimit) {
-      setValidationError(`Memo exceeds ${MEMO_MAX_BYTES} UTF-8 bytes.`);
-      return;
+      throw new Error(`Memo exceeds ${MEMO_MAX_BYTES} UTF-8 bytes.`);
     }
 
     const deleteReceivers = deleteMode && !isRemoteDelete
       ? [{ address: EMPTY_PUBKEY_B58, amount: '0' }]
       : undefined;
 
-    const payload: NewProposalInput = {
+    return {
       txType: effectiveTxType,
       nonce: parsedNonce,
       receivers:
@@ -338,13 +302,18 @@ export default function ProposalForm({
       expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
       memo: memo.length > 0 ? memo : undefined,
     };
+  };
 
-    if (offlineHandler) {
-      offlineHandler(payload);
-      return;
+  if (getFormInputRef) getFormInputRef.current = getInput;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setValidationError(null);
+    try {
+      onSubmit(getInput());
+    } catch (err) {
+      setValidationError(err instanceof Error ? err.message : String(err));
     }
-
-    onSubmit(payload);
   };
 
   return (

@@ -133,7 +133,7 @@ function NewTransactionPageInner() {
 
   const [mode, setMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
-  const offlineSubmitRef = useRef<((input: NewProposalInput) => void) | null>(null);
+  const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
 
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
@@ -320,7 +320,7 @@ function NewTransactionPageInner() {
                   deleteTargetHash={deleteTargetHash}
                   deleteTargetProposal={deleteTargetProposal}
                   onExitDeleteMode={handleExitDeleteMode}
-                  offlineSubmitRef={mode === 'offline' ? offlineSubmitRef : undefined}
+                  getFormInputRef={mode === 'offline' ? getFormInputRef : undefined}
                   hideSubmit={mode === 'offline' && !deleteMode}
                 />
 
@@ -329,41 +329,54 @@ function NewTransactionPageInner() {
                     <OfflineSigningFlow
                       action="propose"
                       label="Propose"
-                      onBuildBundle={() => {
+                      onBuildBundle={async () => {
                         assertValidMinaAddress(offlineFeePayerAddress);
                         if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
                           throw new Error('Signer address is not an owner of this multisig');
                         }
-                        return new Promise<unknown>((resolve, reject) => {
-                          offlineSubmitRef.current = (input: NewProposalInput) => {
-                            const fresh = fetchContract(multisig!.address);
-                            fresh.then((f) => {
-                              const configNonce = f?.configNonce ?? multisig!.configNonce ?? 0;
-                              const networkId = multisig!.networkId ?? '0';
-                              buildOfflineProposeBundle({
-                                contractAddress: multisig!.address,
-                                feePayerAddress: offlineFeePayerAddress,
-                                input,
-                                configNonce,
-                                networkId,
-                              }).then(resolve).catch(reject);
-                            }).catch(reject);
-                          };
-                          const form = document.querySelector('form');
-                          if (form) {
-                            form.requestSubmit();
-                          } else {
-                            offlineSubmitRef.current = null;
-                            reject(new Error('Form not found'));
-                          }
+                        const input = getFormInputRef.current!();
+                        const fresh = await fetchContract(multisig!.address);
+                        const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
+                        const networkId = multisig!.networkId ?? '0';
+                        return buildOfflineProposeBundle({
+                          contractAddress: multisig!.address,
+                          feePayerAddress: offlineFeePayerAddress,
+                          input,
+                          configNonce,
+                          networkId,
                         });
                       }}
                     />
                     <UploadSignedResponse
                       action="propose"
-                      onComplete={(response) => {
+                      onComplete={(response, txHash) => {
                         const hash = response.proposalHash;
-                        router.push(hash ? `/transactions/${hash}?pending=1` : '/transactions');
+                        if (hash && multisig) {
+                          const input = getFormInputRef.current?.();
+                          const isRemote = input && (
+                            input.txType === 'reclaimChild' ||
+                            input.txType === 'destroyChild' ||
+                            input.txType === 'enableChildMultiSig'
+                          );
+                          savePendingTx({
+                            kind: 'create',
+                            contractAddress: multisig.address,
+                            proposalHash: hash,
+                            txHash,
+                            signerPubkey: offlineFeePayerAddress,
+                            createdAt: new Date().toISOString(),
+                            summary: input ? {
+                              txType: input.txType,
+                              nonce: String(input.nonce),
+                              configNonce: String(multisig.configNonce ?? 0),
+                              expiryBlock: input.expiryBlock != null ? String(input.expiryBlock) : null,
+                              destination: isRemote ? 'remote' : 'local',
+                              childAccount: input.childAccount ?? null,
+                              receivers: input.receivers ?? [],
+                            } : undefined,
+                          });
+                        }
+                        router.push(hash ? `/transactions/${hash}` : '/transactions');
                       }}
                     />
                   </>

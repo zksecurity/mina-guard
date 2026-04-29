@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
@@ -59,32 +59,23 @@ function getPlatformInfo(p: string): PlatformInfo {
   };
 }
 
+const ALL_PLATFORMS: PlatformInfo[] = [
+  getPlatformInfo('macos-arm64'),
+  getPlatformInfo('macos-x64'),
+  getPlatformInfo('linux-x64'),
+  getPlatformInfo('linux-arm64'),
+  getPlatformInfo('windows-x64'),
+];
+
 export function DownloadCLILink() {
-  const [platforms, setPlatforms] = useState<PlatformInfo[] | null>(null);
   const [selected, setSelected] = useState<PlatformInfo | null>(null);
   const [open, setOpen] = useState(false);
-
-  const loadPlatforms = useCallback(async () => {
-    if (platforms) { setOpen(!open); return; }
-    try {
-      const res = await fetch(`${API_BASE}/api/offline-cli/platforms`);
-      if (res.ok) {
-        const raw: string[] = await res.json();
-        setPlatforms(raw.map(getPlatformInfo));
-      } else {
-        setPlatforms([]);
-      }
-    } catch {
-      setPlatforms([]);
-    }
-    setOpen(true);
-  }, [platforms, open]);
 
   return (
     <div className="border border-safe-border rounded-lg p-4 space-y-3">
       <button
         type="button"
-        onClick={loadPlatforms}
+        onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 text-sm font-semibold text-safe-green hover:underline"
       >
         Instructions
@@ -98,37 +89,33 @@ export function DownloadCLILink() {
       {open && (
         <div className="space-y-3 text-sm text-safe-text">
           <p className="font-semibold">1. Choose your platform {!selected && <span className="font-normal text-safe-text/50">— select one to see setup steps</span>}</p>
-          {platforms && platforms.length > 0 ? (
-            <div className="space-y-2">
-              {(['macOS', 'Linux', 'Windows'] as const).map((os) => {
-                const group = platforms.filter((p) => p.label.startsWith(os));
-                if (group.length === 0) return null;
-                return (
-                  <div key={os} className="flex items-center gap-2">
-                    <span className="text-xs text-safe-text/50 w-14 shrink-0">{os}</span>
-                    <div className="flex flex-wrap gap-2">
-                      {group.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => setSelected(p)}
-                          className={`px-3 py-1.5 rounded border text-xs font-semibold transition-colors ${
-                            selected?.id === p.id
-                              ? 'bg-safe-green text-safe-dark border-safe-green'
-                              : 'border-safe-green text-safe-green hover:bg-safe-green/10'
-                          }`}
-                        >
-                          {p.label.replace(`${os} `, '').replace(/[()]/g, '')}
-                        </button>
-                      ))}
-                    </div>
+          <div className="space-y-2">
+            {(['macOS', 'Linux', 'Windows'] as const).map((os) => {
+              const group = ALL_PLATFORMS.filter((p) => p.label.startsWith(os));
+              if (group.length === 0) return null;
+              return (
+                <div key={os} className="flex items-center gap-2">
+                  <span className="text-xs text-safe-text/50 w-14 shrink-0">{os}</span>
+                  <div className="flex flex-wrap gap-2">
+                    {group.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setSelected(p)}
+                        className={`px-3 py-1.5 rounded border text-xs font-semibold transition-colors ${
+                          selected?.id === p.id
+                            ? 'bg-safe-green text-safe-dark border-safe-green'
+                            : 'border-safe-green text-safe-green hover:bg-safe-green/10'
+                        }`}
+                      >
+                        {p.label.replace(`${os} `, '').replace(/[()]/g, '')}
+                      </button>
+                    ))}
                   </div>
-                );
-              })}
-            </div>
-          ) : platforms !== null ? (
-            <p className="text-xs text-safe-text/70">No pre-built binaries available. Build from source in the <code>offline-cli/</code> directory.</p>
-          ) : null}
+                </div>
+              );
+            })}
+          </div>
 
           {selected && (
             <>
@@ -271,7 +258,7 @@ export function OfflineSigningFlow({ action, label, onBuildBundle }: OfflineSign
 
 interface UploadSignedResponseProps {
   action: 'propose' | 'approve' | 'execute';
-  onComplete?: (response: OfflineSignedTxResponse) => void;
+  onComplete?: (response: OfflineSignedTxResponse, txHash: string) => void;
 }
 
 export function UploadSignedResponse({ action, onComplete }: UploadSignedResponseProps) {
@@ -317,8 +304,9 @@ export function UploadSignedResponse({ action, onComplete }: UploadSignedRespons
       setBroadcasting(true);
       const txJson = typeof response.transaction === 'string'
         ? response.transaction : JSON.stringify(response.transaction);
+      let txHash: string;
       try {
-        await broadcastSignedTx(txJson);
+        txHash = await broadcastSignedTx(txJson);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('Invalid_signature') || msg.includes('invalid signature')) {
@@ -333,7 +321,7 @@ export function UploadSignedResponse({ action, onComplete }: UploadSignedRespons
         throw new Error(`Broadcast failed: ${msg}`);
       }
       setDone(true);
-      onComplete?.(response);
+      onComplete?.(response, txHash);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

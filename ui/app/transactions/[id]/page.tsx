@@ -681,7 +681,6 @@ export default function TransactionDetailPage() {
                     <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                   </div>
                   <DownloadCLILink />
-                  {!hasApproved && (
                   <OfflineSigningFlow
                     action="approve"
                     label="Approve"
@@ -689,6 +688,9 @@ export default function TransactionDetailPage() {
                       assertValidMinaAddress(offlineFeePayerAddress);
                       if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
                         throw new Error('Signer address is not an owner of this multisig');
+                      }
+                      if (approvalAddresses.includes(offlineFeePayerAddress)) {
+                        throw new Error('This address has already approved this proposal');
                       }
                       const p = proposal!;
                       return buildOfflineApproveBundle({
@@ -698,7 +700,6 @@ export default function TransactionDetailPage() {
                       });
                     }}
                   />
-                  )}
                   {proposal.approvalCount >= threshold && proposal.txType !== 'createChild' && (
                     <OfflineSigningFlow
                       action="execute"
@@ -716,8 +717,18 @@ export default function TransactionDetailPage() {
                   )}
                   <UploadSignedResponse
                     action={proposal.approvalCount >= threshold ? 'execute' : 'approve'}
-                    onComplete={() => {
-                      if (proposal!.approvalCount >= threshold) {
+                    onComplete={(_response, txHash) => {
+                      const kind = proposal!.approvalCount >= threshold ? 'execute' : 'approve';
+                      void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
+                      savePendingTx({
+                        kind,
+                        contractAddress: multisig!.address,
+                        proposalHash: proposal!.proposalHash,
+                        txHash,
+                        signerPubkey: offlineFeePayerAddress,
+                        createdAt: new Date().toISOString(),
+                      });
+                      if (kind === 'execute') {
                         router.push(`/accounts/${multisig!.address}`);
                       } else {
                         router.push('/transactions');
