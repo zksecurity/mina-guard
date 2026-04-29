@@ -444,11 +444,18 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     }
 
     const json = (await response.json()) as {
-      data?: { account?: { balance?: { total?: string } } };
+      data?: { account?: { balance?: { total?: string } } | null };
     };
 
-    const totalNano = json.data?.account?.balance?.total ?? '0';
-    res.json({ balance: totalNano });
+    // Distinguish "account not found" (daemon returns account=null) from
+    // "balance is 0". The UI fail-opens on null but gates on a real "0", so
+    // collapsing both to "0" lets undercollateralised executes slip through.
+    const account = json.data?.account;
+    if (account == null) {
+      res.json({ balance: null });
+      return;
+    }
+    res.json({ balance: account.balance?.total ?? '0' });
   }));
 
   /** Funds an account on lightnet by acquiring a pre-funded keypair from the account manager. */
