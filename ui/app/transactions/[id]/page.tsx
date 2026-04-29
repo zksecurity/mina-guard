@@ -49,6 +49,8 @@ export default function TransactionDetailPage() {
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
   const [actionMode, setActionMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
+  const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
+  const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
 
   // Per-signer approve self-disable: did *this* wallet submit an approval
   // that's still in flight for this proposal? Watched via PENDING_TXS_CHANGED
@@ -688,12 +690,14 @@ export default function TransactionDetailPage() {
                     />
                     <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                   </div>
-                  <DownloadCLILink />
+                  <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
                   <div className="flex flex-wrap gap-3">
                     {proposal.approvalCount < owners.length && (
                       <OfflineSigningFlow
                         action="approve"
                         label="Approve"
+                        onExported={setExportedBundleName}
+                        cliBinaryName={cliBinaryName}
                         onBuildBundle={() => {
                           assertValidMinaAddress(offlineFeePayerAddress);
                           if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
@@ -715,6 +719,8 @@ export default function TransactionDetailPage() {
                       <OfflineSigningFlow
                         action="execute"
                         label="Execute"
+                        onExported={setExportedBundleName}
+                        cliBinaryName={cliBinaryName}
                         onBuildBundle={() => {
                           assertValidMinaAddress(offlineFeePayerAddress);
                           const p = proposal!;

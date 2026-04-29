@@ -67,7 +67,7 @@ const ALL_PLATFORMS: PlatformInfo[] = [
   getPlatformInfo('windows-x64'),
 ];
 
-export function DownloadCLILink() {
+export function DownloadCLILink({ exportedBundleName, onPlatformSelect }: { exportedBundleName?: string | null; onPlatformSelect?: (cliFilename: string) => void }) {
   const [selected, setSelected] = useState<PlatformInfo | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -101,7 +101,7 @@ export function DownloadCLILink() {
                       <button
                         key={p.id}
                         type="button"
-                        onClick={() => setSelected(p)}
+                        onClick={() => { setSelected(p); onPlatformSelect?.(p.filename); }}
                         className={`px-3 py-1.5 rounded border text-xs font-semibold transition-colors ${
                           selected?.id === p.id
                             ? 'bg-safe-green text-safe-dark border-safe-green'
@@ -144,7 +144,9 @@ export function DownloadCLILink() {
 
               <p className="font-semibold">{selected.setupSteps.length > 0 ? '5' : '4'}. Sign on the air-gapped machine</p>
               <code className="block text-xs bg-safe-dark px-2 py-1.5 rounded">
-                {selected.runCmd}
+                {exportedBundleName
+                  ? selected.runCmd.replace('bundle.json', exportedBundleName)
+                  : selected.runCmd}
               </code>
 
               <p className="font-semibold">{selected.setupSteps.length > 0 ? '6' : '5'}. Transfer <code className="text-xs bg-safe-dark px-1 rounded">signed.json</code> back and upload it below</p>
@@ -169,6 +171,8 @@ interface OfflineSigningFlowProps {
   action: 'propose' | 'approve' | 'execute';
   label: string;
   onBuildBundle: () => Promise<unknown>;
+  onExported?: (filename: string) => void;
+  cliBinaryName?: string | null;
 }
 
 function extractBundleWarnings(bundle: any): string[] {
@@ -197,7 +201,7 @@ function extractBundleWarnings(bundle: any): string[] {
   return warnings;
 }
 
-export function OfflineSigningFlow({ action, label, onBuildBundle }: OfflineSigningFlowProps) {
+export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, cliBinaryName }: OfflineSigningFlowProps) {
   const [building, setBuilding] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -220,6 +224,7 @@ export function OfflineSigningFlow({ action, label, onBuildBundle }: OfflineSign
       a.click();
       URL.revokeObjectURL(url);
       setExportedFilename(filename);
+      onExported?.(filename);
     } catch (err) {
       setExportError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -238,9 +243,15 @@ export function OfflineSigningFlow({ action, label, onBuildBundle }: OfflineSign
         {building ? 'Building bundle...' : `Export ${label} Bundle`}
       </button>
       {exportedFilename && (
-        <p className="text-xs text-safe-text/60">
-          Exported <code className="bg-safe-dark px-1.5 py-0.5 rounded text-safe-text/80">{exportedFilename}</code>
-        </p>
+        <div className="space-y-1.5">
+          <p className="text-xs text-safe-text/60">
+            Exported <code className="bg-safe-dark px-1.5 py-0.5 rounded text-safe-text/80">{exportedFilename}</code>
+          </p>
+          <p className="text-xs text-safe-text/50">Run on the air-gapped machine:</p>
+          <code className="block text-xs bg-safe-dark px-2 py-1.5 rounded text-safe-text/80">
+            MINA_PRIVATE_KEY=EK... ./{cliBinaryName ?? 'mina-guard-cli'} {exportedFilename} &gt; signed.json
+          </code>
+        </div>
       )}
       {warnings.length > 0 && (
         <div className="space-y-1">

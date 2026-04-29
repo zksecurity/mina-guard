@@ -133,6 +133,8 @@ function NewTransactionPageInner() {
 
   const [mode, setMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
+  const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
+  const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
   const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
 
   // Children are needed by the form for child-target pickers and allocate hints.
@@ -231,6 +233,7 @@ function NewTransactionPageInner() {
                 childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
                 selected={txType}
                 onSelect={handleTxTypeSelect}
+                hasChildren={children.length > 0}
               />
             )}
 
@@ -299,7 +302,7 @@ function NewTransactionPageInner() {
                       />
                       <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                     </div>
-                    <DownloadCLILink />
+                    <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
                   </>
                 )}
 
@@ -329,6 +332,8 @@ function NewTransactionPageInner() {
                     <OfflineSigningFlow
                       action="propose"
                       label="Propose"
+                      onExported={setExportedBundleName}
+                      cliBinaryName={cliBinaryName}
                       onBuildBundle={async () => {
                         assertValidMinaAddress(offlineFeePayerAddress);
                         if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
@@ -395,15 +400,25 @@ interface TxTypePickerProps {
   childTypes: typeof CHILD_TX_TYPES;
   selected: TxType;
   onSelect: (value: TxType) => void;
+  hasChildren: boolean;
 }
 
+const CHILD_REQUIRES_EXISTING = new Set(['allocateChild', 'reclaimChild', 'destroyChild', 'enableChildMultiSig']);
+
 /** Two-row picker: Account actions on top, Subaccount actions below (only on roots). */
-function TxTypePicker({ localTypes, childTypes, selected, onSelect }: TxTypePickerProps) {
+function TxTypePicker({ localTypes, childTypes, selected, onSelect, hasChildren }: TxTypePickerProps) {
   return (
     <div className="space-y-3">
       <PickerRow label="Vault" types={localTypes} selected={selected} onSelect={onSelect} />
       {childTypes.length > 0 && (
-        <PickerRow label="SubVault" types={childTypes} selected={selected} onSelect={onSelect} />
+        <PickerRow
+          label="SubVault"
+          types={childTypes}
+          selected={selected}
+          onSelect={onSelect}
+          disabledTypes={hasChildren ? undefined : CHILD_REQUIRES_EXISTING}
+          disabledReason="No SubVaults exist yet"
+        />
       )}
     </div>
   );
@@ -414,31 +429,40 @@ interface PickerRowProps {
   types: typeof LOCAL_TX_TYPES;
   selected: TxType;
   onSelect: (value: TxType) => void;
+  disabledTypes?: Set<string>;
+  disabledReason?: string;
 }
 
-function PickerRow({ label, types, selected, onSelect }: PickerRowProps) {
+function PickerRow({ label, types, selected, onSelect, disabledTypes, disabledReason }: PickerRowProps) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0 w-20">{label}</span>
       <div className="flex flex-wrap gap-2">
-        {types.map((type) => (
-          <button
-            key={type.value}
-            type="button"
-            onClick={() => onSelect(type.value)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-center transition-all ${
-              selected === type.value
-                ? 'bg-safe-green text-safe-dark shadow-md shadow-safe-green/20'
-                : 'bg-safe-gray border border-safe-border text-safe-text hover:bg-safe-hover hover:text-white'
-            }`}
-          >
-            <TxTypeIcon icon={type.icon} className="w-4 h-4" />
-            {type.label}
-            {selected === type.value && (
-              <span className="w-2 h-2 rounded-full bg-safe-dark/40" />
-            )}
-          </button>
-        ))}
+        {types.map((type) => {
+          const disabled = disabledTypes?.has(type.value);
+          return (
+            <button
+              key={type.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(type.value)}
+              title={disabled ? disabledReason : undefined}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-center transition-all ${
+                disabled
+                  ? 'bg-safe-gray border border-safe-border text-safe-text/60 cursor-not-allowed'
+                  : selected === type.value
+                    ? 'bg-safe-green text-safe-dark shadow-md shadow-safe-green/20'
+                    : 'bg-safe-gray border border-safe-border text-safe-text hover:bg-safe-hover hover:text-white'
+              }`}
+            >
+              <TxTypeIcon icon={type.icon} className="w-4 h-4" />
+              {type.label}
+              {selected === type.value && !disabled && (
+                <span className="w-2 h-2 rounded-full bg-safe-dark/40" />
+              )}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
