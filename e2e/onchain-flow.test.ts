@@ -7,6 +7,7 @@ import {
   switchAccount,
   navigateTo,
   waitForBanner as _waitForBanner,
+  fillRecipients,
   waitForIndexer,
   getContracts,
   getContract,
@@ -206,7 +207,7 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
 
   // Click deploy
   log('Clicking Deploy account...');
-  const deployBtn = page.getByRole('button', { name: /deploy account/i });
+  const deployBtn = page.getByRole('button', { name: /deploy vault/i });
   await deployBtn.click();
 
   // Wait for the operation to complete (success banner or redirect)
@@ -474,11 +475,9 @@ test('7. Propose send MINA to account3', async () => { const page = sharedPage;
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  // The transfer form uses a single textarea with `address,amount` per line
-  // (see ProposalForm.tsx — parseTransferLines). 1 MINA to account3.
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${accounts[2].publicKey},1`);
+  // The transfer form defaults to per-row inputs; fillRecipients flips to
+  // Bulk mode and writes the legacy `address,amount` format. 1 MINA to account3.
+  await fillRecipients(page, `${accounts[2].publicKey},1`);
 
   // Set expiry to 0
   const expiryInput = page.locator('input[placeholder="0"]');
@@ -1099,10 +1098,8 @@ test('23. Propose transfer with near-future expiry', async () => { const page = 
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  // 0.5 MINA to account3 as a single textarea line.
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${accounts[2].publicKey},0.5`);
+  // 0.5 MINA to account3.
+  await fillRecipients(page, `${accounts[2].publicKey},0.5`);
 
   // Set the low expiry block
   const expiryInput = page.locator('input[placeholder="0"]');
@@ -1229,9 +1226,7 @@ test('25a. Propose transfer with memo', async () => { const page = sharedPage;
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${accounts[2].publicKey},0.1`);
+  await fillRecipients(page, `${accounts[2].publicKey},0.1`);
 
   const memoInput = page.locator('input[placeholder*="memo"]').or(
     page.locator('input[placeholder*="Short note"]')
@@ -1328,9 +1323,7 @@ test('25c. Propose and execute with memo mismatch', async () => { const page = s
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${accounts[2].publicKey},0.1`);
+  await fillRecipients(page, `${accounts[2].publicKey},0.1`);
 
   const memoInput = page.locator('input[placeholder*="memo"]').or(
     page.locator('input[placeholder*="Short note"]')
@@ -1464,7 +1457,7 @@ test('26. Propose CREATE_CHILD on parent', async () => { const page = sharedPage
   await page.locator('input[type="number"]').first().fill('1');
 
   log('Clicking Propose subaccount...');
-  await page.getByRole('button', { name: /propose subaccount/i }).click();
+  await page.getByRole('button', { name: /propose subvault/i }).click();
   await waitForBanner(page, 'success');
 
   await waitForIndexer(
@@ -1545,12 +1538,12 @@ test('28. Verify subaccount in UI tree', async () => { const page = sharedPage;
 
   await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-  await expect(page.locator('text=Subaccounts (1)')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('text=SubVaults (1)')).toBeVisible({ timeout: 10_000 });
   log('Subaccounts (1) card visible on parent dashboard');
 
   await gotoWithWallet(`/accounts/${childAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
-  await expect(page.locator('text=Parent Account')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('text=Parent Vault')).toBeVisible({ timeout: 10_000 });
   log('Child detail renders with Parent card');
 });
 
@@ -1579,9 +1572,7 @@ test('30. Propose ALLOCATE_CHILD', async () => { const page = sharedPage;
   await gotoWithWallet('/transactions/new?type=allocateChild', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${childAddress},2`);
+  await fillRecipients(page, `${childAddress},2`);
 
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
@@ -1897,9 +1888,7 @@ test('38. Propose transfer then delete it', async () => { const page = sharedPag
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${accounts[2].publicKey},0.1`);
+  await fillRecipients(page, `${accounts[2].publicKey},0.1`);
 
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
@@ -2074,11 +2063,8 @@ test('41. Transfer form validation', async () => { const page = sharedPage;
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-
   // Invalid address
-  await recipientsTextarea.fill('invalidaddress,1');
+  await fillRecipients(page, 'invalidaddress,1');
   const submitBtn = page.getByRole('button', { name: /submit proposal/i });
   await submitBtn.click();
   await page.waitForTimeout(1_000);
@@ -2086,8 +2072,8 @@ test('41. Transfer form validation', async () => { const page = sharedPage;
   expect(pageText).toMatch(/invalid|error|address/i);
   log('Invalid address rejected');
 
-  // Empty textarea
-  await recipientsTextarea.fill('');
+  // Empty recipients
+  await fillRecipients(page, '');
   await submitBtn.click();
   await page.waitForTimeout(1_000);
   log('Empty form handled');
@@ -2176,19 +2162,19 @@ test('45. Transfer form parsing edge cases', async () => { const page = sharedPa
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  const textarea = page.locator('textarea').first();
-  await textarea.waitFor({ state: 'visible', timeout: 5_000 });
   const submitBtn = page.getByRole('button', { name: /submit proposal/i });
 
-  // Missing comma → "expected address,amount"
-  await textarea.fill('B62qooZ8LNHjSomething');
+  // Missing comma → row is parsed as address-only with empty amount.
+  // Surfaces "Invalid Mina address" (the value isn't valid base58) and/or
+  // "Amount required".
+  await fillRecipients(page, 'B62qooZ8LNHjSomething');
   await page.waitForTimeout(500);
   let body = await page.textContent('body');
-  expect(body).toMatch(/expected.*address.*amount/i);
+  expect(body).toMatch(/(invalid mina address|amount required)/i);
   log('Missing comma rejected');
 
   // Zero amount → "invalid amount" (parseMinaToNanomina rejects 0)
-  await textarea.fill(`${accounts[2].publicKey},0`);
+  await fillRecipients(page, `${accounts[2].publicKey},0`);
   await submitBtn.click();
   await page.waitForTimeout(500);
   body = await page.textContent('body');
@@ -2196,24 +2182,25 @@ test('45. Transfer form parsing edge cases', async () => { const page = sharedPa
   log('Zero amount rejected');
 
   // Negative amount → "invalid amount"
-  await textarea.fill(`${accounts[2].publicKey},-1`);
+  await fillRecipients(page, `${accounts[2].publicKey},-1`);
   await page.waitForTimeout(500);
   body = await page.textContent('body');
   expect(body).toMatch(/invalid amount/i);
   log('Negative amount rejected');
 
   // Duplicate recipients → "duplicate recipient"
-  await textarea.fill(`${accounts[1].publicKey},1\n${accounts[1].publicKey},2`);
+  await fillRecipients(page, `${accounts[1].publicKey},1\n${accounts[1].publicKey},2`);
   await page.waitForTimeout(500);
   body = await page.textContent('body');
   expect(body).toMatch(/duplicate recipient/i);
   log('Duplicate recipient rejected');
 
-  // Extra commas → "expected address,amount"
-  await textarea.fill(`${accounts[2].publicKey},1,extra`);
+  // Extra commas → only the first comma splits, so the amount becomes
+  // "1,extra" which fails the numeric regex → "Invalid amount".
+  await fillRecipients(page, `${accounts[2].publicKey},1,extra`);
   await page.waitForTimeout(500);
   body = await page.textContent('body');
-  expect(body).toMatch(/expected.*address.*amount/i);
+  expect(body).toMatch(/invalid amount/i);
   log('Extra commas rejected');
 });
 
@@ -2337,9 +2324,7 @@ test('49. Nonce validation edge cases', async () => { const page = sharedPage;
   await page.waitForTimeout(SHORT_WAIT);
 
   // Fill valid recipients so nonce is the only validation target
-  const textarea = page.locator('textarea').first();
-  await textarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await textarea.fill(`${accounts[2].publicKey},1`);
+  await fillRecipients(page, `${accounts[2].publicKey},1`);
 
   const nonceInput = page.locator('input').first();
   await nonceInput.waitFor({ state: 'visible', timeout: 5_000 });

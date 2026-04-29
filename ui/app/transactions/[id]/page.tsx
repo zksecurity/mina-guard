@@ -10,8 +10,9 @@ import {
   formatMina,
   isDeleteProposal,
   truncateAddress,
+  type Proposal,
 } from '@/lib/types';
-import { fetchApprovals, extractTxHash, recordSubmission } from '@/lib/api';
+import { fetchApprovals, extractTxHash, fetchBalance, recordSubmission } from '@/lib/api';
 import {
   approveProposalOnchain,
   executeProposalOnchain,
@@ -23,6 +24,7 @@ import {
   getPendingTx,
   savePendingTx,
 } from '@/lib/storage';
+import { useContractTxLock } from '@/hooks/useContractTxLock';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -34,6 +36,7 @@ export default function TransactionDetailPage() {
     owners,
     proposals,
     proposalsAddress,
+    indexerStatus,
     startOperation,
     isOperating,
   } = useAppContext();
@@ -99,6 +102,49 @@ export default function TransactionDetailPage() {
     return approvalAddresses.includes(wallet.address);
   }, [approvalAddresses, wallet.address]);
 
+  // Source Vault/SubVault that funds the proposal's outgoing MINA. For
+  // transfer/allocateChild it's the Vault we're viewing; for reclaimChild it's
+  // the SubVault being drained.
+  const spendingTarget = useMemo(
+    () => (proposal && multisig ? getSpendingTarget(proposal, multisig.address) : null),
+    [proposal, multisig?.address],
+  );
+  const [sourceBalance, setSourceBalance] = useState<string | null>(null);
+  const [balanceFetchFailed, setBalanceFetchFailed] = useState(false);
+  useEffect(() => {
+    if (!spendingTarget) {
+      setSourceBalance(null);
+      setBalanceFetchFailed(false);
+      return;
+    }
+    let cancelled = false;
+    fetchBalance(spendingTarget.sourceAddress)
+      .then((b) => {
+        if (cancelled) return;
+        setSourceBalance(b);
+        setBalanceFetchFailed(b === null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSourceBalance(null);
+        setBalanceFetchFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [spendingTarget?.sourceAddress, indexerStatus?.lastSuccessfulRunAt]);
+  // Fail-open: only block when we've successfully fetched a non-zero balance
+  // below the proposal's send amount. The backend coalesces missing daemon
+  // data to "0" (routes.ts), so a literal "0" is indistinguishable from "the
+  // account isn't visible to the daemon yet" — treat it as ambiguous and let
+  // the chain reject if the Vault is genuinely empty.
+  const insufficientBalance =
+    spendingTarget != null &&
+    sourceBalance != null &&
+    !balanceFetchFailed &&
+    BigInt(sourceBalance) > 0n &&
+    BigInt(sourceBalance) < spendingTarget.amount;
+
   const threshold = multisig?.threshold ?? 0;
   const isConfigStale =
     !!proposal &&
@@ -117,6 +163,32 @@ export default function TransactionDetailPage() {
     proposal.status === 'pending' &&
     proposal.lastExecuteTxHash != null &&
     proposal.lastExecuteError == null;
+  // Contract-wide indexer-lag lock. Any in-flight tx on this contract (own
+  // or cross-signer) makes rebuildStoresFromBackend stale; serialize until
+  // the indexer catches up.
+  //
+  // Exception: the viewed proposal's own *already-counted* approve. Approval
+  // counts are event-sourced from the indexer (see applyApprovalEvent), so
+  // `approvalCount >= threshold` proves the chain's approvalRoot reflects
+  // those approvals and is fresh enough to execute. The lingering
+  // `lastApproveTxHash` on the same record is just stale metadata when the
+  // indexer's tx-hash-match clearing doesn't fire (e.g. archive vs broadcast
+  // hash format mismatches). Mask that signal so it doesn't gate execute on
+  // this page.
+  const proposalsForLock = useMemo(
+    () =>
+      proposals.map((p) => {
+        const isViewedAndCounted =
+          proposal != null &&
+          p.proposalHash === proposal.proposalHash &&
+          p.lastApproveTxHash != null &&
+          p.lastApproveError == null &&
+          p.approvalCount >= threshold;
+        return isViewedAndCounted ? { ...p, lastApproveTxHash: null } : p;
+      }),
+    [proposals, proposal?.proposalHash, threshold],
+  );
+  const contractLock = useContractTxLock(multisig?.address ?? null, proposalsForLock);
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -124,14 +196,23 @@ export default function TransactionDetailPage() {
     isOwner &&
     !hasApproved &&
     !isConfigStale &&
-    !myPendingApprove;
+    !myPendingApprove &&
+    !contractLock.locked;
+  // Note on insufficientBalance: surfaced as a banner above the action row but
+  // not gated into canExecute. The UI-side balance signal can lag the daemon
+  // (the backend's /api/account/.../balance route coalesces missing data to
+  // "0" — `backend/src/routes.ts`), and a false-positive there would silently
+  // hide the Execute button. The chain still rejects an undercollateralised
+  // tx, so the cost of letting an over-eager click through is one tx fee; the
+  // cost of a stuck UI is a confused user.
   const canExecute =
     !!proposal &&
     !isLocalPending &&
     proposal.status === 'pending' &&
     proposal.approvalCount >= threshold &&
     !isConfigStale &&
-    !executeInFlight;
+    !executeInFlight &&
+    !contractLock.locked;
   const canDelete =
     !!proposal &&
     !isLocalPending &&
@@ -146,7 +227,8 @@ export default function TransactionDetailPage() {
     // While an execute is in flight, the proposal is about to be invalidated
     // either way (success → executed, failure → user retries). Surfacing
     // Delete here just invites duplicate work / wasted fees.
-    !executeInFlight;
+    !executeInFlight &&
+    !contractLock.locked;
   const isNonceStale = proposal?.status === 'invalidated' && proposal.invalidReason === 'proposal_nonce_stale';
 
   /** Submits an on-chain approveProposal transaction. */
@@ -238,7 +320,7 @@ export default function TransactionDetailPage() {
       }
 
       if (captured.proposal.txType === 'createChild') {
-        return 'CREATE_CHILD proposals finalize via the parent detail page → Pending Subaccounts → Finalize deployment.';
+        return 'CREATE_CHILD proposals finalize via the parent Vault detail page → Pending SubVaults → Finalize deployment.';
       }
 
       const result = await executeProposalOnchain({
@@ -324,9 +406,9 @@ export default function TransactionDetailPage() {
       : 'Invalidates another proposal'
     : isRemote
       ? proposal.childAccount
-        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
-        : 'Executes on subaccount'
-      : 'Executes on this account';
+        ? `Executes on SubVault ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on SubVault'
+      : 'Executes on this Vault';
 
   // Pull the pending-create entry directly so we can show its tx hash even
   // before the synthesized row carries it via `proposal.lastExecuteTxHash`.
@@ -375,6 +457,16 @@ export default function TransactionDetailPage() {
             title="Your approval is in flight"
             description="Waiting for the network to include your approval transaction."
             txHash={myPendingApprove.txHash}
+            network={wallet.network ?? null}
+          />
+        )}
+
+        {contractLock.locked && !executeInFlight && !myPendingApprove && (
+          <PendingTxBanner
+            tone="approval"
+            title="Indexer catching up"
+            description={`${contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).`}
+            txHash={contractLock.txHash}
             network={wallet.network ?? null}
           />
         )}
@@ -484,6 +576,18 @@ export default function TransactionDetailPage() {
               <p className="opacity-90 break-words">Approve: {proposal.lastApproveError}</p>
             )}
             <p className="opacity-75 text-xs pt-1">Use the button below to retry.</p>
+          </div>
+        )}
+
+        {insufficientBalance && proposal.approvalCount >= threshold && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-300 text-sm">
+            <p className="font-semibold mb-1">Insufficient balance</p>
+            <p className="opacity-90">
+              The {proposal.txType === 'reclaimChild' ? 'SubVault' : 'Vault'} holds{' '}
+              {formatMina(sourceBalance!)} MINA but this proposal sends{' '}
+              {formatMina(spendingTarget!.amount.toString())} MINA. Execute will
+              fail on chain until it is funded.
+            </p>
           </div>
         )}
 
@@ -631,4 +735,21 @@ function DetailRow({
       )}
     </div>
   );
+}
+
+/** Returns the source Vault address and outgoing nanomina amount for proposals
+ *  that move MINA out of a Vault, or null if the proposal can't underfund. */
+function getSpendingTarget(
+  proposal: Proposal,
+  contractAddress: string,
+): { sourceAddress: string; amount: bigint } | null {
+  if (isDeleteProposal(proposal)) return null;
+  if (proposal.txType === 'transfer' || proposal.txType === 'allocateChild') {
+    if (!proposal.totalAmount) return null;
+    return { sourceAddress: contractAddress, amount: BigInt(proposal.totalAmount) };
+  }
+  if (proposal.txType === 'reclaimChild' && proposal.childAccount && proposal.data) {
+    return { sourceAddress: proposal.childAccount, amount: BigInt(proposal.data) };
+  }
+  return null;
 }

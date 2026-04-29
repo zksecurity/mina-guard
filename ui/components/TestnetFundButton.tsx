@@ -87,7 +87,7 @@ export default function TestnetFundButton({ address, network, explorerUrl }: Tes
       <button
         onClick={handleFund}
         disabled={status === 'loading'}
-        title={network === 'testnet' ? 'Fund this account via lightnet account manager' : 'Open Mina faucet'}
+        title={network === 'testnet' ? 'Fund this Vault via lightnet manager' : 'Open Mina faucet'}
         className={`flex items-center gap-1.5 text-xs font-medium rounded-lg px-3 py-2 transition-all ${
           status === 'loading'
             ? 'bg-safe-gray border border-safe-border text-safe-text opacity-60 cursor-wait'

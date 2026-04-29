@@ -23,6 +23,10 @@ interface ProposalFormProps {
   numOwners: number;
   onSubmit: (data: NewProposalInput) => void;
   isSubmitting: boolean;
+  /** External reason to keep the submit button disabled (e.g. indexer-lag
+   *  contract lock). The form just disables; the calling page renders the
+   *  user-facing banner explaining why. */
+  submitDisabledReason?: string | null;
   txType: TxType;
   /** Indexed subaccounts of this guard, used as targets for CHILD_TX_TYPES. */
   children?: ContractSummary[];
@@ -49,6 +53,7 @@ export default function ProposalForm({
   numOwners,
   onSubmit,
   isSubmitting,
+  submitDisabledReason = null,
   txType,
   children = [],
   initialNonce,
@@ -60,7 +65,14 @@ export default function ProposalForm({
   deleteTargetProposal = null,
   onExitDeleteMode,
 }: ProposalFormProps) {
-  const [transferLines, setTransferLines] = useState('');
+  // Recipient rows are the source of truth for both transfer + allocateChild.
+  // Bulk mode renders a textarea derived from these rows (and parses back on
+  // edit); Individual mode binds inputs directly.
+  const [recipients, setRecipients] = useState<Array<{ address: string; amount: string }>>([
+    { address: '', amount: '' },
+  ]);
+  const [recipientsMode, setRecipientsMode] = useState<'individual' | 'bulk'>('individual');
+  const [bulkText, setBulkText] = useState('');
   const [newOwner, setNewOwner] = useState('');
   const [removeOwnerAddress, setRemoveOwnerAddress] = useState('');
   const [newThreshold, setNewThreshold] = useState(Math.max(1, currentThreshold));
@@ -76,7 +88,9 @@ export default function ProposalForm({
 
   useEffect(() => {
     if (!deleteMode) return;
-    setTransferLines('');
+    setRecipients([{ address: '', amount: '' }]);
+    setBulkText('');
+    setRecipientsMode('individual');
     setExpiryBlock('0');
   }, [deleteMode]);
 
@@ -182,7 +196,7 @@ export default function ProposalForm({
   }, [txType, targetChild]);
 
   const [validationError, setValidationError] = useState<string | null>(null);
-  const transferParse = parseTransferLines(transferLines);
+  const recipientsParse = useMemo(() => parseRecipients(recipients), [recipients]);
   // Live warning for nonce collisions with pending proposals — non-blocking,
   // matches the delete-mode race-to-execute semantics.
   const nonceCollisionWarning = (() => {
@@ -208,7 +222,7 @@ export default function ProposalForm({
     // space (parent's localNonce for LOCAL, child's parentNonce for REMOTE).
     if (!deleteMode && effectiveNonceFloor !== null && parsedNonce <= effectiveNonceFloor) {
       const floorLabel = isRemoteSpaceTxType
-        ? `the selected subaccount's executed remote nonce (${effectiveNonceFloor})`
+        ? `the selected SubVault's executed remote nonce (${effectiveNonceFloor})`
         : `the current executed nonce (${effectiveNonceFloor})`;
       setValidationError(`Nonce must be greater than ${floorLabel}.`);
       return;
@@ -222,8 +236,10 @@ export default function ProposalForm({
       setValidationError(`Cannot exceed the maximum of ${MAX_OWNERS} owners.`);
       return;
     }
-    if (!deleteMode && (txType === 'transfer' || txType === 'allocateChild') && !transferParse.ok) {
-      setValidationError(transferParse.error);
+    if (!deleteMode && (txType === 'transfer' || txType === 'allocateChild') && !recipientsParse.ok) {
+      setValidationError(
+        recipientsParse.topError ?? 'Fix the highlighted recipient rows before submitting.',
+      );
       return;
     }
     if (
@@ -231,22 +247,22 @@ export default function ProposalForm({
       (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') &&
       !targetChild
     ) {
-      setValidationError('Pick a subaccount to target.');
+      setValidationError('Pick a SubVault to target.');
       return;
     }
     if (!deleteMode && txType === 'reclaimChild') {
-      const nano = parseMinaToNanomina(reclaimAmount);
-      if (!nano) {
+      const parsed = parseMinaToNanomina(reclaimAmount);
+      if (!parsed) {
         setValidationError('Reclaim amount must be a positive MINA value.');
         return;
       }
-      if (targetBalance !== null && BigInt(nano) > BigInt(targetBalance)) {
-        setValidationError(`Reclaim amount exceeds subaccount balance (${formatMina(targetBalance)} MINA).`);
+      if (targetBalance !== null && BigInt(parsed.nanomina) > BigInt(targetBalance)) {
+        setValidationError(`Reclaim amount exceeds SubVault balance (${formatMina(targetBalance)} MINA).`);
         return;
       }
     }
     if (!deleteMode && txType === 'destroyChild' && !destroyConfirm) {
-      setValidationError('Confirm the destroy action — this drains the subaccount and disables its multi-sig.');
+      setValidationError('Confirm the destroy action — this drains the SubVault and disables its multi-sig.');
       return;
     }
     if (effectiveTxType === 'addOwner' && owners.includes(newOwner.trim())) {
@@ -291,7 +307,7 @@ export default function ProposalForm({
       receivers:
         deleteReceivers ??
         (effectiveTxType === 'transfer' || effectiveTxType === 'allocateChild'
-          ? transferParse.receivers
+          ? recipientsParse.receivers
           : undefined),
       newOwner: !deleteMode && effectiveTxType === 'addOwner' ? newOwner : undefined,
       removeOwnerAddress: !deleteMode && effectiveTxType === 'removeOwner' ? removeOwnerAddress : undefined,
@@ -308,7 +324,7 @@ export default function ProposalForm({
         isRemoteDelete
           ? '0'
           : !deleteMode && txType === 'reclaimChild'
-            ? (parseMinaToNanomina(reclaimAmount) ?? '0')
+            ? (parseMinaToNanomina(reclaimAmount)?.nanomina ?? '0')
             : undefined,
       childMultiSigEnable:
         !deleteMode && txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
@@ -372,8 +388,8 @@ export default function ProposalForm({
         <p className="text-xs text-safe-text">
           {(() => {
             const floorLabel = isRemoteSpaceTxType
-              ? 'subaccount’s executed remote nonce'
-              : 'contract’s executed nonce';
+              ? 'SubVault’s executed remote nonce'
+              : 'Vault’s executed nonce';
             if (effectiveNonceFloor === null) {
               return `Use a nonce greater than the ${floorLabel}.`;
             }
@@ -386,77 +402,25 @@ export default function ProposalForm({
       </div>
 
       {!deleteMode && (txType === 'transfer' || txType === 'allocateChild') && (
-        <div className="space-y-3">
-          <label className="block text-sm text-safe-text">
-            {txType === 'allocateChild' ? 'Subaccount allocations' : 'Recipients'}
-          </label>
-          {txType === 'allocateChild' && children.length > 0 && (
-            <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-3 py-2 text-xs space-y-1">
-              <p className="text-safe-text">Indexed subaccounts (click to copy):</p>
-              <ul className="space-y-0.5">
-                {children.map((c) => (
-                  <li key={c.address}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = transferLines.trim()
-                          ? `${transferLines.trim()}\n${c.address},`
-                          : `${c.address},`;
-                        setTransferLines(next);
-                      }}
-                      className="font-mono text-safe-green hover:underline truncate"
-                      title={c.address}
-                    >
-                      {c.address.slice(0, 12)}…{c.address.slice(-6)}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <textarea
-            value={transferLines}
-            onChange={(e) => setTransferLines(e.target.value)}
-            placeholder={`B62q...,1.25\nB62q...,0.5`}
-            rows={8}
-            className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
-            required
-          />
-          <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-4 py-3 text-sm">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-safe-text">Parsed recipients</span>
-              <span className="font-mono text-safe-green">
-                {transferParse.recipientCount}/{MAX_RECEIVERS}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-4 mt-2">
-              <span className="text-safe-text">Total MINA</span>
-              <span className="font-mono text-safe-green">
-                {formatNanominaAsMina(transferParse.totalAmount)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-4 mt-2">
-              <span className="text-safe-text">Remaining slots</span>
-              <span className="font-mono text-safe-text">
-                {Math.max(0, MAX_RECEIVERS - transferParse.recipientCount)}
-              </span>
-            </div>
-          </div>
-          <p className="text-xs text-safe-text">
-            Enter one recipient per line as <span className="font-mono">address,amount</span>.
-          </p>
-          {!transferParse.ok && transferLines.trim() && (
-            <p className="text-sm text-red-400 whitespace-pre-wrap">{transferParse.error}</p>
-          )}
-        </div>
+        <RecipientsBlock
+          label={txType === 'allocateChild' ? 'SubVault allocations' : 'Recipients'}
+          recipients={recipients}
+          setRecipients={setRecipients}
+          recipientsMode={recipientsMode}
+          setRecipientsMode={setRecipientsMode}
+          bulkText={bulkText}
+          setBulkText={setBulkText}
+          parse={recipientsParse}
+          children={txType === 'allocateChild' ? children : []}
+        />
       )}
 
       {!deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') && (
         <div>
-          <label className="block text-sm text-safe-text mb-2">Target Subaccount</label>
+          <label className="block text-sm text-safe-text mb-2">Target SubVault</label>
           {children.length === 0 ? (
             <p className="text-sm text-amber-400">
-              No indexed subaccounts to target. Create one first via the parent &rarr; Create Subaccount flow.
+              No indexed SubVaults to target. Create one first via the parent Vault &rarr; Create SubVault flow.
             </p>
           ) : (
             <div className="space-y-2">
@@ -537,8 +501,8 @@ export default function ProposalForm({
       {!deleteMode && txType === 'destroyChild' && (
         <div className="space-y-2 rounded-lg border border-red-400/40 bg-red-400/5 px-4 py-3">
           <p className="text-xs text-red-300">
-            Destroy drains the subaccount&apos;s full balance to the parent and disables its
-            multi-sig. The on-chain account remains but its lifecycle is permanently frozen.
+            Destroy drains the SubVault&apos;s full balance to the parent Vault and disables its
+            multi-sig. The on-chain Vault remains but its lifecycle is permanently frozen.
           </p>
           <label className="inline-flex items-center gap-2 text-sm text-safe-text">
             <input
@@ -546,7 +510,7 @@ export default function ProposalForm({
               checked={destroyConfirm}
               onChange={(e) => setDestroyConfirm(e.target.checked)}
             />
-            I understand and want to destroy this subaccount.
+            I understand and want to destroy this SubVault.
           </label>
         </div>
       )}
@@ -567,8 +531,8 @@ export default function ProposalForm({
           </div>
           <p className="text-xs text-safe-text pt-1">
             {currentMultiSigEnabled
-              ? 'Disabling blocks the subaccount from running its own LOCAL proposals (transfers, owner changes, etc.). Parent-authorized lifecycle actions remain available.'
-              : 'Enabling restores the subaccount\'s ability to run its own LOCAL proposals.'}
+              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.). Parent-Vault-authorized lifecycle actions remain available.'
+              : 'Enabling restores the SubVault\'s ability to run its own LOCAL proposals.'}
           </p>
         </div>
       )}
@@ -725,8 +689,9 @@ export default function ProposalForm({
 
       <button
         type="submit"
-        disabled={isSubmitting}
-        className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50"
+        disabled={isSubmitting || !!submitDisabledReason}
+        title={submitDisabledReason ?? undefined}
+        className="w-full bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isSubmitting ? 'Submitting Proposal...' : (deleteMode ? 'Create Delete Proposal' : 'Submit Proposal')}
       </button>
@@ -734,107 +699,381 @@ export default function ProposalForm({
   );
 }
 
-type TransferParseResult =
-  | {
-    ok: true;
-    receivers: Array<{ address: string; amount: string }>;
-    recipientCount: number;
-    totalAmount: string;
-  }
-  | {
-    ok: false;
-    receivers: Array<{ address: string; amount: string }>;
-    recipientCount: number;
-    totalAmount: string;
-    error: string;
+/** Renders the recipients block in either Individual (per-row inputs) or
+ *  Bulk (textarea) mode. `recipients` is the source of truth; bulk mode just
+ *  serializes/parses through `bulkText`. */
+function RecipientsBlock({
+  label,
+  recipients,
+  setRecipients,
+  recipientsMode,
+  setRecipientsMode,
+  bulkText,
+  setBulkText,
+  parse,
+  children,
+}: {
+  label: string;
+  recipients: Array<{ address: string; amount: string }>;
+  setRecipients: (rows: Array<{ address: string; amount: string }>) => void;
+  recipientsMode: 'individual' | 'bulk';
+  setRecipientsMode: (mode: 'individual' | 'bulk') => void;
+  bulkText: string;
+  setBulkText: (text: string) => void;
+  parse: RecipientsParseResult;
+  children: ContractSummary[];
+}) {
+  const showAddRow = recipients.length < MAX_RECEIVERS;
+
+  const updateRow = (index: number, patch: Partial<{ address: string; amount: string }>) => {
+    setRecipients(recipients.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  };
+  const addRow = () => {
+    if (recipients.length >= MAX_RECEIVERS) return;
+    setRecipients([...recipients, { address: '', amount: '' }]);
+  };
+  const removeRow = (index: number) => {
+    if (recipients.length <= 1) return;
+    setRecipients(recipients.filter((_, i) => i !== index));
   };
 
-function parseTransferLines(input: string): TransferParseResult {
-  const lines = input
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const switchToBulk = () => {
+    setBulkText(serializeRecipients(recipients));
+    setRecipientsMode('bulk');
+  };
+  const switchToIndividual = () => {
+    setRecipientsMode('individual');
+  };
+  const handleBulkChange = (text: string) => {
+    setBulkText(text);
+    setRecipients(parseBulkRecipients(text));
+  };
 
-  if (lines.length === 0) {
-    return {
-      ok: false,
-      receivers: [],
-      recipientCount: 0,
-      totalAmount: '0',
-      error: 'Add at least one recipient line.',
-    };
+  const totalDisplay = formatNanominaAsMina(parse.totalAmount);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <label className="block text-sm text-safe-text">{label}</label>
+        <div className="inline-flex rounded-lg border border-safe-border overflow-hidden text-xs">
+          <button
+            type="button"
+            onClick={switchToIndividual}
+            className={`px-3 py-1 transition-colors ${
+              recipientsMode === 'individual'
+                ? 'bg-safe-green text-safe-dark font-semibold'
+                : 'bg-transparent text-safe-text hover:bg-safe-hover'
+            }`}
+          >
+            Individual
+          </button>
+          <button
+            type="button"
+            onClick={switchToBulk}
+            className={`px-3 py-1 transition-colors ${
+              recipientsMode === 'bulk'
+                ? 'bg-safe-green text-safe-dark font-semibold'
+                : 'bg-transparent text-safe-text hover:bg-safe-hover'
+            }`}
+          >
+            Bulk
+          </button>
+        </div>
+      </div>
+
+      {recipientsMode === 'individual' ? (
+        <div className="space-y-2">
+          {recipients.map((row, index) => {
+            const validation = parse.rows[index];
+            const hasError = validation?.errors.length > 0;
+            const hasWarning = !!validation?.warning;
+            return (
+              <div key={index} className="space-y-1">
+                <div className="flex gap-2 items-start">
+                  {children.length > 0 ? (
+                    <select
+                      value={row.address}
+                      onChange={(e) => updateRow(index, { address: e.target.value })}
+                      className="flex-1 min-w-0 bg-safe-gray border border-safe-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-safe-green"
+                    >
+                      <option value="">Select SubVault…</option>
+                      {children.map((c) => (
+                        <option key={c.address} value={c.address}>
+                          {c.address.slice(0, 12)}…{c.address.slice(-6)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={row.address}
+                      onChange={(e) => updateRow(index, { address: e.target.value })}
+                      placeholder="B62q..."
+                      className="flex-1 min-w-0 bg-safe-gray border border-safe-border rounded-lg px-3 py-2 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green"
+                    />
+                  )}
+                  <input
+                    type="text"
+                    value={row.amount}
+                    onChange={(e) => updateRow(index, { amount: e.target.value })}
+                    placeholder="0.00"
+                    inputMode="decimal"
+                    className="w-32 shrink-0 bg-safe-gray border border-safe-border rounded-lg px-3 py-2 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeRow(index)}
+                    disabled={recipients.length <= 1}
+                    title={recipients.length <= 1 ? 'At least one recipient is required.' : 'Remove recipient'}
+                    className="shrink-0 px-2 py-2 text-safe-text hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label="Remove recipient"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                {hasError && (
+                  <p className="text-xs text-red-400 pl-1">{validation.errors.join(' · ')}</p>
+                )}
+                {!hasError && hasWarning && (
+                  <p className="text-xs text-amber-300 pl-1">{validation.warning}</p>
+                )}
+              </div>
+            );
+          })}
+          {showAddRow && (
+            <button
+              type="button"
+              onClick={addRow}
+              className="text-xs font-medium text-safe-green hover:underline"
+            >
+              + Add recipient
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {children.length > 0 && (
+            <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-3 py-2 text-xs space-y-1">
+              <p className="text-safe-text">Indexed SubVaults (click to append):</p>
+              <ul className="space-y-0.5">
+                {children.map((c) => (
+                  <li key={c.address}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = bulkText.trim()
+                          ? `${bulkText.trim()}\n${c.address},`
+                          : `${c.address},`;
+                        handleBulkChange(next);
+                      }}
+                      className="font-mono text-safe-green hover:underline truncate"
+                      title={c.address}
+                    >
+                      {c.address.slice(0, 12)}…{c.address.slice(-6)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <textarea
+            value={bulkText}
+            onChange={(e) => handleBulkChange(e.target.value)}
+            placeholder={`B62q...,1.25\nB62q...,0.5`}
+            rows={8}
+            className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
+          />
+          <p className="text-xs text-safe-text">
+            One recipient per line as <span className="font-mono">address,amount</span>.
+          </p>
+          {parse.rows.some((r) => r.errors.length > 0) && (
+            <ul className="text-xs text-red-400 space-y-0.5">
+              {parse.rows.map((r, i) =>
+                r.errors.length > 0 ? (
+                  <li key={i}>Line {i + 1}: {r.errors.join(' · ')}</li>
+                ) : null,
+              )}
+            </ul>
+          )}
+          {parse.rows.some((r) => !r.errors.length && r.warning) && (
+            <ul className="text-xs text-amber-300 space-y-0.5">
+              {parse.rows.map((r, i) =>
+                !r.errors.length && r.warning ? (
+                  <li key={i}>Line {i + 1}: {r.warning}</li>
+                ) : null,
+              )}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="rounded-lg border border-safe-border bg-safe-dark/20 px-4 py-3 text-sm">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-safe-text">Parsed recipients</span>
+          <span className="font-mono text-safe-green">{parse.recipientCount}/{MAX_RECEIVERS}</span>
+        </div>
+        <div className="flex items-center justify-between gap-4 mt-2">
+          <span className="text-safe-text">Total MINA</span>
+          <span className="font-mono text-safe-green">{totalDisplay}</span>
+        </div>
+        <div className="flex items-center justify-between gap-4 mt-2">
+          <span className="text-safe-text">Remaining slots</span>
+          <span className="font-mono text-safe-text">
+            {Math.max(0, MAX_RECEIVERS - parse.recipientCount)}
+          </span>
+        </div>
+      </div>
+
+      {parse.topError && (
+        <p className="text-sm text-red-400">{parse.topError}</p>
+      )}
+    </div>
+  );
+}
+
+/** Per-row validation result emitted by `parseRecipients`. Empty rows return
+ *  `ok:false` with no `errors` so the UI doesn't yell at users about rows
+ *  they haven't filled in yet. */
+interface RecipientRowValidation {
+  ok: boolean;
+  /** Canonical nanomina value when both address and amount validate. */
+  nanomina: string | null;
+  /** Hard errors (red, block submission). */
+  errors: string[];
+  /** Soft warning (amber, non-blocking). Currently: amount truncated past 9 decimals. */
+  warning: string | null;
+}
+
+interface RecipientsParseResult {
+  rows: RecipientRowValidation[];
+  /** True when at least one row is filled and every filled row validates. */
+  ok: boolean;
+  /** Submission-ready array, only valid rows. */
+  receivers: Array<{ address: string; amount: string }>;
+  /** Sum of valid nanomina amounts. */
+  totalAmount: string;
+  /** Number of valid (submission-ready) rows. */
+  recipientCount: number;
+  /** Aggregate-level error (e.g. "Add at least one recipient"). Null when
+   *  only per-row errors exist; the row-level UI surfaces those. */
+  topError: string | null;
+}
+
+/** Validates a list of {address, amount} rows. The same logic powers both
+ *  Individual (per-row inputs) and Bulk (textarea) modes — the bulk mode
+ *  parses lines into rows and then defers to this. */
+function parseRecipients(rows: Array<{ address: string; amount: string }>): RecipientsParseResult {
+  const isEmpty = (r: { address: string; amount: string }) => !r.address.trim() && !r.amount.trim();
+  const filledCount = rows.filter((r) => !isEmpty(r)).length;
+
+  // Detect duplicates among filled rows so we can mark every duplicate row,
+  // not just the second occurrence.
+  const addressCounts = new Map<string, number>();
+  for (const r of rows) {
+    const a = r.address.trim();
+    if (!a) continue;
+    addressCounts.set(a, (addressCounts.get(a) ?? 0) + 1);
   }
 
-  if (lines.length > MAX_RECEIVERS) {
+  const validations: RecipientRowValidation[] = rows.map((row) => {
+    if (isEmpty(row)) return { ok: false, nanomina: null, errors: [], warning: null };
+
+    const address = row.address.trim();
+    const amountText = row.amount.trim();
+    const errors: string[] = [];
+    let warning: string | null = null;
+    let nanomina: string | null = null;
+
+    if (!address) errors.push('Address required');
+    else if (!/^B62[1-9A-HJ-NP-Za-km-z]+$/.test(address)) errors.push('Invalid Mina address');
+    else if ((addressCounts.get(address) ?? 0) > 1) errors.push('Duplicate recipient');
+
+    if (!amountText) errors.push('Amount required');
+    else {
+      const amt = parseMinaToNanomina(amountText);
+      if (!amt) errors.push('Invalid amount');
+      else {
+        nanomina = amt.nanomina;
+        if (amt.truncated) {
+          warning = `Will send ${formatNanominaAsMina(amt.nanomina)} MINA (Mina's precision is 9 decimals).`;
+        }
+      }
+    }
+
     return {
-      ok: false,
-      receivers: [],
-      recipientCount: lines.length,
-      totalAmount: '0',
-      error: `Too many recipients. The contract limit is ${MAX_RECEIVERS}.`,
+      ok: errors.length === 0 && nanomina !== null,
+      nanomina: errors.length === 0 ? nanomina : null,
+      errors,
+      warning,
     };
-  }
+  });
 
   const receivers: Array<{ address: string; amount: string }> = [];
-  const seen = new Set<string>();
-  const errors: string[] = [];
   let total = 0n;
-
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    const parts = line.split(',');
-    if (parts.length !== 2) {
-      errors.push(`Line ${index + 1}: expected "address,amount"`);
-      continue;
+  for (let i = 0; i < rows.length; i++) {
+    const v = validations[i];
+    if (v.ok && v.nanomina) {
+      receivers.push({ address: rows[i].address.trim(), amount: v.nanomina });
+      total += BigInt(v.nanomina);
     }
-
-    const address = parts[0].trim();
-    const amountText = parts[1].trim();
-    if (!/^B62[1-9A-HJ-NP-Za-km-z]+$/.test(address)) {
-      errors.push(`Line ${index + 1}: invalid Mina address`);
-      continue;
-    }
-
-    if (seen.has(address)) {
-      errors.push(`Line ${index + 1}: duplicate recipient`);
-      continue;
-    }
-
-    const amount = parseMinaToNanomina(amountText);
-    if (!amount) {
-      errors.push(`Line ${index + 1}: invalid amount`);
-      continue;
-    }
-
-    seen.add(address);
-    receivers.push({ address, amount });
-    total += BigInt(amount);
   }
 
-  if (errors.length > 0) {
-    return {
-      ok: false,
-      receivers,
-      recipientCount: receivers.length,
-      totalAmount: total.toString(),
-      error: errors.join('\n'),
-    };
-  }
+  let topError: string | null = null;
+  if (filledCount === 0) topError = 'Add at least one recipient.';
+  else if (filledCount > MAX_RECEIVERS) topError = `Too many recipients. The contract limit is ${MAX_RECEIVERS}.`;
+
+  // Aggregate ok: a) at least one filled+valid row, b) no row carries errors,
+  // c) no aggregate-level violation.
+  const ok =
+    topError === null &&
+    receivers.length > 0 &&
+    validations.every((v, i) => isEmpty(rows[i]) || v.ok);
 
   return {
-    ok: true,
+    rows: validations,
+    ok,
     receivers,
-    recipientCount: receivers.length,
     totalAmount: total.toString(),
+    recipientCount: receivers.length,
+    topError,
   };
 }
 
-function parseMinaToNanomina(value: string): string | null {
-  if (!/^\d+(\.\d{1,9})?$/.test(value)) return null;
+/** Serializes recipient rows back to the bulk textarea representation.
+ *  Drops empty rows so re-entering bulk mode starts clean. */
+function serializeRecipients(rows: Array<{ address: string; amount: string }>): string {
+  return rows
+    .filter((r) => r.address.trim() || r.amount.trim())
+    .map((r) => `${r.address.trim()},${r.amount.trim()}`)
+    .join('\n');
+}
+
+/** Parses bulk textarea content into recipient rows, preserving partially-
+ *  typed input (no early validation) so users don't lose progress mid-edit. */
+function parseBulkRecipients(text: string): Array<{ address: string; amount: string }> {
+  const lines = text.split('\n');
+  const rows = lines.map((line) => {
+    const idx = line.indexOf(',');
+    if (idx === -1) return { address: line.trim(), amount: '' };
+    return { address: line.slice(0, idx).trim(), amount: line.slice(idx + 1).trim() };
+  });
+  return rows.length > 0 ? rows : [{ address: '', amount: '' }];
+}
+
+/** Parses a MINA decimal string to canonical nanomina, truncating past 9
+ *  fractional digits (Mina's smallest unit is 1 nanomina = 1e-9 MINA).
+ *  Returns null for non-numeric input or values that round to zero. The
+ *  `truncated` flag tells the UI to surface a warning. */
+function parseMinaToNanomina(value: string): { nanomina: string; truncated: boolean } | null {
+  if (!/^\d+(\.\d*)?$/.test(value)) return null;
   const [whole, frac = ''] = value.split('.');
-  const fracPadded = frac.padEnd(9, '0');
-  const amount = `${whole}${fracPadded}`.replace(/^0+(?=\d)/, '') || '0';
-  return BigInt(amount) > 0n ? amount : null;
+  const truncated = frac.length > 9;
+  const fracTrimmed = frac.slice(0, 9).padEnd(9, '0');
+  const amount = `${whole}${fracTrimmed}`.replace(/^0+(?=\d)/, '') || '0';
+  if (BigInt(amount) === 0n) return null;
+  return { nanomina: amount, truncated };
 }
 
 function formatNanominaAsMina(value: string): string {

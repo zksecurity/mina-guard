@@ -108,7 +108,7 @@ export async function fetchBalance(address: string): Promise<string | null> {
  *  + child lifecycle txs) — but the shape is always `<phrase> submitted: <hash>`. */
 export function extractTxHash(message: string | null): string | null {
   if (!message) return null;
-  const match = message.match(/(?:Transaction|Approval|Deploy|Subaccount action)\s+submitted:\s*(\S+)/);
+  const match = message.match(/(?:Transaction|Approval|Deploy|SubVault action)\s+submitted:\s*(\S+)/);
   return match ? match[1] : null;
 }
 
