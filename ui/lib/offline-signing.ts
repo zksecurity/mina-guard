@@ -182,11 +182,23 @@ export async function buildOfflineProposeBundle(params: {
   configNonce: number;
   networkId: string;
 }): Promise<OfflineProposeBundle> {
-  const [contractAccount, feePayerAccount, events] = await Promise.all([
+  const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
-    fetchAllEvents(params.contractAddress),
-  ]);
+  ];
+  if (params.input.childAccount) {
+    fetches.push(fetchGraphQLAccount(params.input.childAccount));
+  }
+  const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
+  const events = await fetchAllEvents(params.contractAddress);
+
+  const accounts: Record<string, BundleAccount> = {
+    [params.contractAddress]: contractAccount,
+    [params.feePayerAddress]: feePayerAccount,
+  };
+  if (params.input.childAccount && childAccount) {
+    accounts[params.input.childAccount] = childAccount;
+  }
 
   return {
     version: 1,
@@ -194,10 +206,7 @@ export async function buildOfflineProposeBundle(params: {
     minaNetwork: MINA_NETWORK,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
-    accounts: {
-      [params.contractAddress]: contractAccount,
-      [params.feePayerAddress]: feePayerAccount,
-    },
+    accounts,
     events,
     input: params.input,
     configNonce: params.configNonce,
@@ -210,11 +219,20 @@ export async function buildOfflineApproveBundle(params: {
   feePayerAddress: string;
   proposal: OfflineApproveBundle['proposal'];
 }): Promise<OfflineApproveBundle> {
-  const [contractAccount, feePayerAccount, events] = await Promise.all([
+  const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
-    fetchAllEvents(params.contractAddress),
-  ]);
+  ];
+  const childAddr = params.proposal.childAccount;
+  if (childAddr) fetches.push(fetchGraphQLAccount(childAddr));
+  const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
+  const events = await fetchAllEvents(params.contractAddress);
+
+  const accounts: Record<string, BundleAccount> = {
+    [params.contractAddress]: contractAccount,
+    [params.feePayerAddress]: feePayerAccount,
+  };
+  if (childAddr && childAccount) accounts[childAddr] = childAccount;
 
   return {
     version: 1,
@@ -222,10 +240,7 @@ export async function buildOfflineApproveBundle(params: {
     minaNetwork: MINA_NETWORK,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
-    accounts: {
-      [params.contractAddress]: contractAccount,
-      [params.feePayerAddress]: feePayerAccount,
-    },
+    accounts,
     events,
     proposal: params.proposal,
   };
@@ -238,11 +253,20 @@ export async function buildOfflineExecuteBundle(params: {
   childAddress?: string;
   childEvents?: Array<{ eventType: string; payload: unknown }>;
 }): Promise<OfflineExecuteBundle> {
-  const [contractAccount, feePayerAccount, events] = await Promise.all([
+  const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
-    fetchAllEvents(params.contractAddress),
-  ]);
+  ];
+  const childAddr = params.proposal.childAccount;
+  if (childAddr) fetches.push(fetchGraphQLAccount(childAddr));
+  const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
+  const events = await fetchAllEvents(params.contractAddress);
+
+  const accounts: Record<string, BundleAccount> = {
+    [params.contractAddress]: contractAccount,
+    [params.feePayerAddress]: feePayerAccount,
+  };
+  if (childAddr && childAccount) accounts[childAddr] = childAccount;
 
   const receiverAccountExists: Record<string, boolean> = {};
   const emptyKey = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
@@ -259,8 +283,8 @@ export async function buildOfflineExecuteBundle(params: {
   const isChildLifecycle = params.proposal.txType === 'reclaimChild' ||
     params.proposal.txType === 'destroyChild' ||
     params.proposal.txType === 'enableChildMultiSig';
-  if (isChildLifecycle && params.proposal.childAccount && !childEvents) {
-    childAddress = params.proposal.childAccount;
+  if (isChildLifecycle && childAddr && !childEvents) {
+    childAddress = childAddr;
     childEvents = await fetchAllEvents(childAddress);
   }
 
@@ -270,10 +294,7 @@ export async function buildOfflineExecuteBundle(params: {
     minaNetwork: MINA_NETWORK,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
-    accounts: {
-      [params.contractAddress]: contractAccount,
-      [params.feePayerAddress]: feePayerAccount,
-    },
+    accounts,
     events,
     proposal: params.proposal,
     receiverAccountExists,
