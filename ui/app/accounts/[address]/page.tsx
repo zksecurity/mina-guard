@@ -147,7 +147,7 @@ export default function AccountPage() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Address</p>
+                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Vault Address</p>
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="text-sm font-mono flex min-w-0">
                     <span className="truncate">{multisig.address.slice(0, -4)}</span>
@@ -187,7 +187,7 @@ export default function AccountPage() {
               </div>
 
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
-                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Wallet Balance</p>
+                <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Vault Balance</p>
                 <p className="text-lg font-semibold mt-1">
                   {balance !== null ? formatMina(balance) : '-'}{' '}
                   <span className="text-sm text-safe-text font-normal">MINA</span>
