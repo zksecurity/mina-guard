@@ -60,9 +60,16 @@ export function useContractTxLock(
     // (1) Anything we ourselves submitted that hasn't reconciled yet. We
     // ignore kind='deploy' here — those mutate the *new* contract's state,
     // not the parent's stores, so they don't conflict with subsequent
-    // submissions on this contract.
+    // submissions on this contract. We also ignore kind='create' entries
+    // tagged with `childAccount` (CREATE_CHILD wizard records): those are
+    // never auto-cleared from localStorage today, so honoring them as a lock
+    // would leave the parent permanently blocked even after the child is
+    // finalized.
     const myPending = pendingTxs.find(
-      (pt) => pt.kind === 'create' || pt.kind === 'approve' || pt.kind === 'execute',
+      (pt) =>
+        (pt.kind === 'create' && !pt.childAccount) ||
+        pt.kind === 'approve' ||
+        pt.kind === 'execute',
     );
     if (myPending) {
       return {
