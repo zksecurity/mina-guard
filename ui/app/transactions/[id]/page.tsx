@@ -363,16 +363,24 @@ export default function TransactionDetailPage() {
   }
 
   if (!proposal) {
+    const hasPendingCreate = !!getPendingTx(multisig.address, proposalHash, 'create');
+    const stillLoading = proposalsAddress !== multisig.address || hasPendingCreate;
     return (
       <div>
         <div className="p-6 text-center py-20">
-          <p className="text-safe-text">Proposal not found</p>
-          <button
-            onClick={() => router.push('/transactions')}
-            className="mt-4 text-sm text-safe-green hover:underline"
-          >
-            Back to proposals
-          </button>
+          {stillLoading ? (
+            <p className="text-safe-text/60">Loading…</p>
+          ) : (
+            <>
+              <p className="text-safe-text">Proposal not found</p>
+              <button
+                onClick={() => router.push('/transactions')}
+                className="mt-4 text-sm text-safe-green hover:underline"
+              >
+                Back to proposals
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
