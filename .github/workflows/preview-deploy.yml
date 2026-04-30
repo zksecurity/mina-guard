@@ -94,7 +94,7 @@ jobs:
           # Add/remove wallet pubkeys here to test with multiple wallets.
           WALLETS=(
             "B62qpJgZSnx9dGFAqh45SehhK9TsxTnKia9vgnYzSXnCxwQQxixrnL1"
-            "B62qjtj1QNFRnWGJQpjSjiFD95j7UnwwVTHtDXSQeHxjGAEZUuZQSoj"
+            "B62qqgtCy8FAmPtrHbQfLunyMaXTNrutgpApaSGEM8zFLN4ypspQqo4"
           )
           args=()
           for w in "${WALLETS[@]}"; do args+=(--wallet "$w"); done
