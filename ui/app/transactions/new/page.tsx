@@ -353,7 +353,7 @@ function NewTransactionPageInner() {
                       }}
                     />
                     <UploadSignedResponse
-                      action="propose"
+                      acceptActions={['propose']}
                       onComplete={(response, txHash) => {
                         const hash = response.proposalHash;
                         if (hash && multisig) {

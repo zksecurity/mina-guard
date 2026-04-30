@@ -734,9 +734,9 @@ export default function TransactionDetailPage() {
                     )}
                   </div>
                   <UploadSignedResponse
-                    action={proposal.approvalCount >= threshold ? 'execute' : 'approve'}
-                    onComplete={(_response, txHash) => {
-                      const kind = proposal!.approvalCount >= threshold ? 'execute' : 'approve';
+                    acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
+                    onComplete={(response, txHash) => {
+                      const kind = response.action as 'approve' | 'execute';
                       void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
                       savePendingTx({
                         kind,

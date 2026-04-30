@@ -717,8 +717,6 @@ export async function handleApprove(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
-  assertNotCreateChild(bundle.proposal.txType);
-
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
   injectAccounts(bundle);

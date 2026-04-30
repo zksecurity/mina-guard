@@ -268,11 +268,11 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
 }
 
 interface UploadSignedResponseProps {
-  action: 'propose' | 'approve' | 'execute';
+  acceptActions: Array<'propose' | 'approve' | 'execute'>;
   onComplete?: (response: OfflineSignedTxResponse, txHash: string) => void;
 }
 
-export function UploadSignedResponse({ action, onComplete }: UploadSignedResponseProps) {
+export function UploadSignedResponse({ acceptActions, onComplete }: UploadSignedResponseProps) {
   const [broadcasting, setBroadcasting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -305,8 +305,8 @@ export function UploadSignedResponse({ action, onComplete }: UploadSignedRespons
       if (response.version !== 1) {
         throw new Error(`Unsupported signed response version (${response.version}). You may need a newer version of the UI.`);
       }
-      if (response.action !== action) {
-        throw new Error(`This is a signed "${response.action}" transaction, but this upload expects "${action}".`);
+      if (!acceptActions.includes(response.action)) {
+        throw new Error(`This is a signed "${response.action}" transaction, but this upload expects ${acceptActions.join(' or ')}.`);
       }
       if (!response.transaction) {
         throw new Error('Signed response is missing the transaction field. The CLI may have encountered an error during signing.');
