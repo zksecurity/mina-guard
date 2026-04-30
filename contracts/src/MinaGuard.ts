@@ -211,6 +211,7 @@ export class EnableChildMultiSigEvent extends Struct({
 export class CreateChildConfigEvent extends Struct({
   proposalHash: Field,
   childAccount: PublicKey,
+  ownersCommitment: Field,
   threshold: Field,
   numOwners: Field,
 }) { }
@@ -756,6 +757,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('createChildConfig', {
       proposalHash,
       childAccount,
+      ownersCommitment,
       threshold,
       numOwners,
     });

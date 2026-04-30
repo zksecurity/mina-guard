@@ -705,12 +705,9 @@ export async function handlePropose(
   let childOwnerStore: InstanceType<typeof OwnerStore> | null = null;
   let childPaddedOwners: InstanceType<typeof PublicKey>[] | null = null;
   if (isCreateChild) {
-    if (!input.childPrivateKey || !input.childOwners || input.childThreshold == null) {
-      throw new Error('createChild proposal requires childPrivateKey, childOwners, and childThreshold in the bundle');
-    }
-    childKey = PrivateKey.fromBase58(input.childPrivateKey);
+    childKey = PrivateKey.fromBase58(input.childPrivateKey!);
     childOwnerStore = new OwnerStore();
-    for (const addr of input.childOwners) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
+    for (const addr of input.childOwners!) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
     childPaddedOwners = [...childOwnerStore.owners];
     while (childPaddedOwners.length < MAX_OWNERS) childPaddedOwners.push(PublicKey.empty());
   }
