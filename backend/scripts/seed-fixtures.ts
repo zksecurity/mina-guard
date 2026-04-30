@@ -17,28 +17,32 @@ import { PrivateKey, PublicKey } from 'o1js';
 import { prisma } from '../src/db.js';
 
 interface Args {
-  wallet: string;
+  wallets: string[];
   clean: boolean;
 }
 
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
-  let wallet: string | null = null;
+  const wallets: string[] = [];
   let clean = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--wallet') {
-      wallet = argv[++i] ?? null;
+      const value = argv[++i];
+      if (!value) throw new Error('--wallet requires a value');
+      wallets.push(value);
     } else if (arg === '--clean') {
       clean = true;
     } else {
       throw new Error(`Unknown arg: ${arg}`);
     }
   }
-  if (!wallet) throw new Error('Missing required --wallet <base58-pubkey>');
-  // Validate base58 pubkey eagerly so we fail fast.
-  PublicKey.fromBase58(wallet);
-  return { wallet, clean };
+  if (wallets.length === 0) {
+    throw new Error('Missing required --wallet <base58-pubkey> (can be repeated)');
+  }
+  // Validate each base58 pubkey eagerly so we fail fast.
+  for (const w of wallets) PublicKey.fromBase58(w);
+  return { wallets, clean };
 }
 
 function randomPubkey(): string {
@@ -95,7 +99,11 @@ interface VaultSpec {
   threshold: number;
 }
 
-async function seedVault(spec: VaultSpec, walletAddress: string): Promise<void> {
+async function seedVault(spec: VaultSpec, walletAddresses: string[]): Promise<void> {
+  // Every test wallet is added as an owner so each can see the full set on
+  // connect. Random pubkeys fill remaining owner slots up to ownerCount.
+  const ownerCount = Math.max(spec.ownerCount, walletAddresses.length);
+
   const contract = await prisma.contract.create({
     data: {
       address: spec.address,
@@ -111,7 +119,7 @@ async function seedVault(spec: VaultSpec, walletAddress: string): Promise<void> 
       validFromBlock: 1,
       networkId: '0',
       threshold: spec.threshold,
-      numOwners: spec.ownerCount,
+      numOwners: ownerCount,
       nonce: 0,
       parentNonce: 0,
       configNonce: 0,
@@ -120,14 +128,19 @@ async function seedVault(spec: VaultSpec, walletAddress: string): Promise<void> 
     },
   });
 
-  // Wallet first so its index=0; remaining slots filled with random owners.
   const ownerRows = [
-    { contractId: contract.id, address: walletAddress, action: 'added', index: 0, validFromBlock: 1 },
-    ...Array.from({ length: spec.ownerCount - 1 }, (_, i) => ({
+    ...walletAddresses.map((address, idx) => ({
+      contractId: contract.id,
+      address,
+      action: 'added',
+      index: idx,
+      validFromBlock: 1,
+    })),
+    ...Array.from({ length: ownerCount - walletAddresses.length }, (_, i) => ({
       contractId: contract.id,
       address: randomPubkey(),
       action: 'added',
-      index: i + 1,
+      index: walletAddresses.length + i,
       validFromBlock: 1,
     })),
   ];
@@ -135,12 +148,13 @@ async function seedVault(spec: VaultSpec, walletAddress: string): Promise<void> 
 
   if (spec.proposalCount === 0) return;
 
-  const otherOwnerAddresses = ownerRows.slice(1).map((o) => o.address);
+  const allOwnerAddresses = ownerRows.map((o) => o.address);
   const recipients = Array.from({ length: 8 }, () => randomPubkey());
   const proposalRows = Array.from({ length: spec.proposalCount }, (_, i) => {
     const memoIdx = i % MEMO_PHRASES.length;
     const memo = `${MEMO_PHRASES[memoIdx]} #${1000 + i}`;
-    const proposer = i % 3 === 0 ? walletAddress : pick(otherOwnerAddresses);
+    // Cycle through every owner (wallets + randoms) as proposer for variety.
+    const proposer = allOwnerAddresses[i % allOwnerAddresses.length];
     const toAddress = pick(recipients);
     return {
       contractId: contract.id,
@@ -186,7 +200,7 @@ async function seedVault(spec: VaultSpec, walletAddress: string): Promise<void> 
     const approverCount = (i % 2) + 1; // 1 or 2 approvals
     return Array.from({ length: approverCount }, (_, j) => ({
       proposalId,
-      approver: j === 0 ? walletAddress : pick(otherOwnerAddresses),
+      approver: allOwnerAddresses[(i + j) % allOwnerAddresses.length],
       blockHeight: 1500 + i,
       eventOrder: j,
     }));
@@ -197,8 +211,8 @@ async function seedVault(spec: VaultSpec, walletAddress: string): Promise<void> 
 }
 
 async function main(): Promise<void> {
-  const { wallet, clean: shouldClean } = parseArgs();
-  console.log(`[seed] wallet: ${wallet}`);
+  const { wallets, clean: shouldClean } = parseArgs();
+  console.log(`[seed] wallets (${wallets.length}): ${wallets.join(', ')}`);
 
   if (shouldClean) await clean();
 
@@ -219,7 +233,7 @@ async function main(): Promise<void> {
 
   console.log(`[seed] inserting ${ROOT_COUNT} root vaults`);
   for (const spec of rootSpecs) {
-    await seedVault(spec, wallet);
+    await seedVault(spec, wallets);
   }
 
   const childSpecs: VaultSpec[] = [];
@@ -240,7 +254,7 @@ async function main(): Promise<void> {
 
   console.log(`[seed] inserting ${childSpecs.length} child vaults`);
   for (const spec of childSpecs) {
-    await seedVault(spec, wallet);
+    await seedVault(spec, wallets);
   }
 
   const totalVaults = ROOT_COUNT + childSpecs.length;

@@ -366,11 +366,11 @@ function VaultRow({ contract, isOwner, hasChildren, expanded, onToggle }: VaultR
             e.stopPropagation();
             onToggle();
           }}
-          className="w-4 h-4 flex items-center justify-center text-safe-text hover:text-white shrink-0"
+          className="w-9 h-9 -my-1 -ml-1 flex items-center justify-center text-safe-text hover:text-white hover:bg-safe-hover rounded shrink-0"
           aria-label={expanded ? 'Collapse' : 'Expand'}
         >
           <svg
-            className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -379,7 +379,7 @@ function VaultRow({ contract, isOwner, hasChildren, expanded, onToggle }: VaultR
           </svg>
         </button>
       ) : (
-        <span className="w-4 shrink-0" />
+        <span className="w-7 shrink-0" />
       )}
 
       <div className="w-10 h-10 rounded-full bg-safe-green/20 border border-safe-green/40 flex items-center justify-center shrink-0">
@@ -406,11 +406,9 @@ function VaultRow({ contract, isOwner, hasChildren, expanded, onToggle }: VaultR
         <ThresholdBadge threshold={contract.threshold} numOwners={contract.numOwners} size="sm" />
       )}
 
-      <div className="text-right w-28 shrink-0">
-        <p className="text-sm font-semibold">
-          {balance !== null ? formatMina(balance) : '—'}
-        </p>
-        <p className="text-[10px] text-safe-text">MINA</p>
+      <div className="text-right shrink-0 whitespace-nowrap">
+        <span className="text-sm font-semibold">{formatMina(balance)}</span>
+        <span className="text-[10px] text-safe-text ml-1">MINA</span>
       </div>
 
       <svg className="w-4 h-4 text-safe-text shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
