@@ -1,0 +1,13 @@
+{
+  "name": "offline-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "contracts": "workspace:*",
+    "mina-signer": "file:../ui/deps/o1js/src/mina-signer"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ProposalForm from '@/components/ProposalForm';
@@ -13,9 +13,11 @@ import {
 } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOnchainProposal } from '@/lib/multisigClient';
+import { assertValidMinaAddress, buildOfflineProposeBundle } from '@/lib/offline-signing';
 import { fetchChildren, fetchContract } from '@/lib/api';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
 import { savePendingTx } from '@/lib/storage';
+import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
 
 export default function NewTransactionPage() {
   return (
@@ -129,6 +131,12 @@ function NewTransactionPageInner() {
     router.replace('/transactions/new?type=transfer');
   };
 
+  const [mode, setMode] = useState<'online' | 'offline'>('online');
+  const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
+  const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
+  const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
+  const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
+
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
   useEffect(() => {
@@ -225,43 +233,160 @@ function NewTransactionPageInner() {
                 childTypes={availableTypes.filter((t) => CHILD_TX_TYPES.some((c) => c.value === t.value))}
                 selected={txType}
                 onSelect={handleTxTypeSelect}
+                hasChildren={children.length > 0}
               />
             )}
 
-            <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
-              {proposals.some(
-                (p) =>
-                  p.status === 'pending' &&
-                  p.txType &&
-                  ['addOwner', 'removeOwner', 'changeThreshold', 'setDelegate'].includes(p.txType)
-              ) && (
-                <div className="rounded-lg px-4 py-3 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
-                  There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
+            <div className="bg-safe-gray border border-safe-border rounded-xl overflow-hidden">
+              {!deleteMode && (
+                <div className="flex border-b border-safe-border">
+                  <button
+                    type="button"
+                    onClick={() => setMode('online')}
+                    className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
+                      mode === 'online'
+                        ? 'text-safe-green border-b-2 border-safe-green'
+                        : 'text-safe-text/60 hover:text-safe-text'
+                    }`}
+                  >
+                    Online
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('offline')}
+                    className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
+                      mode === 'offline'
+                        ? 'text-safe-green border-b-2 border-safe-green'
+                        : 'text-safe-text/60 hover:text-safe-text'
+                    }`}
+                  >
+                    Offline
+                  </button>
                 </div>
               )}
-              {contractLock.locked && (
-                <div className="rounded-lg px-4 py-3 text-xs bg-amber-500/10 text-amber-200 border border-amber-400/30">
-                  {contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).
-                </div>
-              )}
-              <ProposalForm
-                owners={owners.map((owner) => owner.address)}
-                currentThreshold={multisig.threshold ?? 1}
-                numOwners={multisig.numOwners ?? owners.length}
-                onSubmit={handleSubmit}
-                isSubmitting={isOperating}
-                submitDisabledReason={contractLock.locked ? contractLock.reason : null}
-                txType={txType}
-                children={children}
-                initialNonce={initialNonce}
-                currentNonce={currentNonce}
-                proposals={proposals}
-                nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
-                deleteMode={deleteMode}
-                deleteTargetHash={deleteTargetHash}
-                deleteTargetProposal={deleteTargetProposal}
-                onExitDeleteMode={handleExitDeleteMode}
-              />
+
+              <div className="p-6 space-y-4">
+                {!deleteMode && (
+                  <p className="text-xs text-safe-text/60">
+                    {mode === 'online'
+                      ? 'Sign and broadcast directly from your browser wallet or Ledger.'
+                      : 'Export a bundle, sign on an air-gapped machine, then upload the signed transaction to broadcast.'}
+                  </p>
+                )}
+                {contractLock.locked && (
+                  <div className="rounded-lg px-4 py-3 text-xs bg-amber-500/10 text-amber-200 border border-amber-400/30">
+                    {contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).
+                  </div>
+                )}
+                {proposals.some(
+                  (p) =>
+                    p.status === 'pending' &&
+                    p.txType &&
+                    ['addOwner', 'removeOwner', 'changeThreshold', 'setDelegate'].includes(p.txType)
+                ) && (
+                  <div className="rounded-lg px-4 py-3 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
+                    There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
+                  </div>
+                )}
+
+                {mode === 'offline' && !deleteMode && (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm text-safe-text font-medium">Signer Address (Fee Payer)</label>
+                      <input
+                        type="text"
+                        value={offlineFeePayerAddress}
+                        onChange={(e) => setOfflineFeePayerAddress(e.target.value)}
+                        placeholder="B62q..."
+                        className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
+                      />
+                      <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
+                    </div>
+                    <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
+                  </>
+                )}
+
+                <ProposalForm
+                  owners={owners.map((owner) => owner.address)}
+                  currentThreshold={multisig.threshold ?? 1}
+                  numOwners={multisig.numOwners ?? owners.length}
+                  onSubmit={handleSubmit}
+                  isSubmitting={isOperating}
+                  submitDisabledReason={contractLock.locked ? contractLock.reason : null}
+                  txType={txType}
+                  children={children}
+                  initialNonce={initialNonce}
+                  currentNonce={currentNonce}
+                  proposals={proposals}
+                  nonceResetKey={`${multisig.address}:${deleteMode ? deleteTargetHash ?? 'delete' : 'normal'}`}
+                  deleteMode={deleteMode}
+                  deleteTargetHash={deleteTargetHash}
+                  deleteTargetProposal={deleteTargetProposal}
+                  onExitDeleteMode={handleExitDeleteMode}
+                  getFormInputRef={mode === 'offline' ? getFormInputRef : undefined}
+                  hideSubmit={mode === 'offline' && !deleteMode}
+                />
+
+                {mode === 'offline' && !deleteMode && (
+                  <>
+                    <OfflineSigningFlow
+                      action="propose"
+                      label="Propose"
+                      onExported={setExportedBundleName}
+                      cliBinaryName={cliBinaryName}
+                      onBuildBundle={async () => {
+                        assertValidMinaAddress(offlineFeePayerAddress);
+                        if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
+                          throw new Error('Signer address is not an owner of this multisig');
+                        }
+                        const input = getFormInputRef.current!();
+                        const fresh = await fetchContract(multisig!.address);
+                        const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
+                        const networkId = multisig!.networkId ?? '0';
+                        return buildOfflineProposeBundle({
+                          contractAddress: multisig!.address,
+                          feePayerAddress: offlineFeePayerAddress,
+                          input,
+                          configNonce,
+                          networkId,
+                        });
+                      }}
+                    />
+                    <UploadSignedResponse
+                      acceptActions={['propose']}
+                      onComplete={(response, txHash) => {
+                        const hash = response.proposalHash;
+                        if (hash && multisig) {
+                          const input = getFormInputRef.current?.();
+                          const isRemote = input && (
+                            input.txType === 'reclaimChild' ||
+                            input.txType === 'destroyChild' ||
+                            input.txType === 'enableChildMultiSig'
+                          );
+                          savePendingTx({
+                            kind: 'create',
+                            contractAddress: multisig.address,
+                            proposalHash: hash,
+                            txHash,
+                            signerPubkey: offlineFeePayerAddress,
+                            createdAt: new Date().toISOString(),
+                            summary: input ? {
+                              txType: input.txType,
+                              nonce: String(input.nonce),
+                              configNonce: String(multisig.configNonce ?? 0),
+                              expiryBlock: input.expiryBlock != null ? String(input.expiryBlock) : null,
+                              destination: isRemote ? 'remote' : 'local',
+                              childAccount: input.childAccount ?? null,
+                              receivers: input.receivers ?? [],
+                            } : undefined,
+                          });
+                        }
+                        router.push(hash ? `/transactions/${hash}` : '/transactions');
+                      }}
+                    />
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -275,15 +400,25 @@ interface TxTypePickerProps {
   childTypes: typeof CHILD_TX_TYPES;
   selected: TxType;
   onSelect: (value: TxType) => void;
+  hasChildren: boolean;
 }
 
+const CHILD_REQUIRES_EXISTING = new Set(['allocateChild', 'reclaimChild', 'destroyChild', 'enableChildMultiSig']);
+
 /** Two-row picker: Account actions on top, Subaccount actions below (only on roots). */
-function TxTypePicker({ localTypes, childTypes, selected, onSelect }: TxTypePickerProps) {
+function TxTypePicker({ localTypes, childTypes, selected, onSelect, hasChildren }: TxTypePickerProps) {
   return (
     <div className="space-y-3">
       <PickerRow label="Vault" types={localTypes} selected={selected} onSelect={onSelect} />
       {childTypes.length > 0 && (
-        <PickerRow label="SubVault" types={childTypes} selected={selected} onSelect={onSelect} />
+        <PickerRow
+          label="SubVault"
+          types={childTypes}
+          selected={selected}
+          onSelect={onSelect}
+          disabledTypes={hasChildren ? undefined : CHILD_REQUIRES_EXISTING}
+          disabledReason="No SubVaults exist yet"
+        />
       )}
     </div>
   );
@@ -294,31 +429,40 @@ interface PickerRowProps {
   types: typeof LOCAL_TX_TYPES;
   selected: TxType;
   onSelect: (value: TxType) => void;
+  disabledTypes?: Set<string>;
+  disabledReason?: string;
 }
 
-function PickerRow({ label, types, selected, onSelect }: PickerRowProps) {
+function PickerRow({ label, types, selected, onSelect, disabledTypes, disabledReason }: PickerRowProps) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <span className="text-[10px] text-safe-text uppercase tracking-wider shrink-0 w-20">{label}</span>
       <div className="flex flex-wrap gap-2">
-        {types.map((type) => (
-          <button
-            key={type.value}
-            type="button"
-            onClick={() => onSelect(type.value)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-center transition-all ${
-              selected === type.value
-                ? 'bg-safe-green text-safe-dark shadow-md shadow-safe-green/20'
-                : 'bg-safe-gray border border-safe-border text-safe-text hover:bg-safe-hover hover:text-white'
-            }`}
-          >
-            <TxTypeIcon icon={type.icon} className="w-4 h-4" />
-            {type.label}
-            {selected === type.value && (
-              <span className="w-2 h-2 rounded-full bg-safe-dark/40" />
-            )}
-          </button>
-        ))}
+        {types.map((type) => {
+          const disabled = disabledTypes?.has(type.value);
+          return (
+            <button
+              key={type.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(type.value)}
+              title={disabled ? disabledReason : undefined}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-center transition-all ${
+                disabled
+                  ? 'bg-safe-gray border border-safe-border text-safe-text/60 cursor-not-allowed'
+                  : selected === type.value
+                    ? 'bg-safe-green text-safe-dark shadow-md shadow-safe-green/20'
+                    : 'bg-safe-gray border border-safe-border text-safe-text hover:bg-safe-hover hover:text-white'
+              }`}
+            >
+              <TxTypeIcon icon={type.icon} className="w-4 h-4" />
+              {type.label}
+              {selected === type.value && !disabled && (
+                <span className="w-2 h-2 rounded-full bg-safe-dark/40" />
+              )}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

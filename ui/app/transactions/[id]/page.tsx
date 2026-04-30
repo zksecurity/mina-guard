@@ -25,6 +25,8 @@ import {
   savePendingTx,
 } from '@/lib/storage';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
+import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
+import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -45,6 +47,10 @@ export default function TransactionDetailPage() {
   const proposal = proposals.find((item) => item.proposalHash === proposalHash);
 
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
+  const [actionMode, setActionMode] = useState<'online' | 'offline'>('online');
+  const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
+  const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
+  const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
 
   // Per-signer approve self-disable: did *this* wallet submit an approval
   // that's still in flight for this proposal? Watched via PENDING_TXS_CHANGED
@@ -359,16 +365,24 @@ export default function TransactionDetailPage() {
   }
 
   if (!proposal) {
+    const hasPendingCreate = !!getPendingTx(multisig.address, proposalHash, 'create');
+    const stillLoading = proposalsAddress !== multisig.address || hasPendingCreate;
     return (
       <div>
         <div className="p-6 text-center py-20">
-          <p className="text-safe-text">Proposal not found</p>
-          <button
-            onClick={() => router.push('/transactions')}
-            className="mt-4 text-sm text-safe-green hover:underline"
-          >
-            Back to proposals
-          </button>
+          {stillLoading ? (
+            <p className="text-safe-text/60">Loading…</p>
+          ) : (
+            <>
+              <p className="text-safe-text">Proposal not found</p>
+              <button
+                onClick={() => router.push('/transactions')}
+                className="mt-4 text-sm text-safe-green hover:underline"
+              >
+                Back to proposals
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -419,6 +433,15 @@ export default function TransactionDetailPage() {
   return (
     <div>
       <div className="p-6 max-w-3xl space-y-6">
+        <button
+          onClick={() => router.push('/transactions')}
+          className="flex items-center gap-1.5 text-sm text-safe-text/60 hover:text-safe-text transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to proposals
+        </button>
         <div className={`rounded-xl border p-4 ${statusColors[proposal.status]}`}>
           <div className="flex items-center gap-2">
             <span className="font-semibold capitalize">{proposal.status}</span>
@@ -592,43 +615,150 @@ export default function TransactionDetailPage() {
         )}
 
         {proposal.status === 'pending' && !isLocalPending && (
-          <div className="flex gap-3 flex-wrap">
-            {canApprove && (
+          <div className="bg-safe-gray border border-safe-border rounded-xl overflow-hidden">
+            <div className="flex border-b border-safe-border">
               <button
-                onClick={handleApprove}
-                disabled={isOperating}
-                className="flex-1 bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                onClick={() => setActionMode('online')}
+                className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
+                  actionMode === 'online'
+                    ? 'text-safe-green border-b-2 border-safe-green'
+                    : 'text-safe-text/60 hover:text-safe-text'
+                }`}
               >
-                {isOperating ? 'Waiting for pending transaction...' : 'Approve Proposal'}
+                Online
               </button>
-            )}
-            {canExecute && (
               <button
-                onClick={handleExecute}
-                disabled={isOperating}
-                className="flex-1 border border-safe-green text-safe-green font-semibold rounded-lg py-3 text-sm hover:bg-safe-green/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                onClick={() => setActionMode('offline')}
+                className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
+                  actionMode === 'offline'
+                    ? 'text-safe-green border-b-2 border-safe-green'
+                    : 'text-safe-text/60 hover:text-safe-text'
+                }`}
               >
-                {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
+                Offline
               </button>
-            )}
-            {canDelete && (
-              <button
-                onClick={handleDelete}
-                disabled={isOperating}
-                className="flex-1 border border-orange-400/50 text-orange-300 font-semibold rounded-lg py-3 text-sm hover:bg-orange-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isOperating ? 'Waiting for pending transaction...' : 'Delete Proposal'}
-              </button>
-            )}
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-safe-text/60">
+                {actionMode === 'online'
+                  ? 'Sign and broadcast directly from your browser wallet or Ledger.'
+                  : 'Export a bundle, sign on an air-gapped machine, then upload the signed transaction to broadcast.'}
+              </p>
+              {actionMode === 'online' ? (
+                <div className="flex gap-3 flex-wrap">
+                  {canApprove && (
+                    <button
+                      onClick={handleApprove}
+                      disabled={isOperating}
+                      className="flex-1 bg-safe-green text-safe-dark font-semibold rounded-lg py-3 text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isOperating ? 'Waiting for pending transaction...' : 'Approve Proposal'}
+                    </button>
+                  )}
+                  {canExecute && (
+                    <button
+                      onClick={handleExecute}
+                      disabled={isOperating}
+                      className="flex-1 border border-safe-green text-safe-green font-semibold rounded-lg py-3 text-sm hover:bg-safe-green/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={handleDelete}
+                      disabled={isOperating}
+                      className="flex-1 border border-orange-400/50 text-orange-300 font-semibold rounded-lg py-3 text-sm hover:bg-orange-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isOperating ? 'Waiting for pending transaction...' : 'Delete Proposal'}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-sm text-safe-text font-medium">Signer Address (Fee Payer)</label>
+                    <input
+                      type="text"
+                      value={offlineFeePayerAddress}
+                      onChange={(e) => setOfflineFeePayerAddress(e.target.value)}
+                      placeholder="B62q..."
+                      className="w-full bg-safe-gray border border-safe-border rounded-lg px-4 py-3 text-sm font-mono placeholder:text-safe-border focus:outline-none focus:border-safe-green transition-colors"
+                    />
+                    <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
+                  </div>
+                  <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
+                  <div className="flex flex-wrap gap-3">
+                    {proposal.approvalCount < owners.length && (
+                      <OfflineSigningFlow
+                        action="approve"
+                        label="Approve"
+                        onExported={setExportedBundleName}
+                        cliBinaryName={cliBinaryName}
+                        onBuildBundle={() => {
+                          assertValidMinaAddress(offlineFeePayerAddress);
+                          if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
+                            throw new Error('Signer address is not an owner of this multisig');
+                          }
+                          if (approvalAddresses.includes(offlineFeePayerAddress)) {
+                            throw new Error('This address has already approved this proposal');
+                          }
+                          const p = proposal!;
+                          return buildOfflineApproveBundle({
+                            contractAddress: multisig!.address,
+                            feePayerAddress: offlineFeePayerAddress,
+                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                          });
+                        }}
+                      />
+                    )}
+                    {proposal.approvalCount >= threshold && proposal.txType !== 'createChild' && (
+                      <OfflineSigningFlow
+                        action="execute"
+                        label="Execute"
+                        onExported={setExportedBundleName}
+                        cliBinaryName={cliBinaryName}
+                        onBuildBundle={() => {
+                          assertValidMinaAddress(offlineFeePayerAddress);
+                          const p = proposal!;
+                          return buildOfflineExecuteBundle({
+                            contractAddress: multisig!.address,
+                            feePayerAddress: offlineFeePayerAddress,
+                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                          });
+                        }}
+                      />
+                    )}
+                  </div>
+                  <UploadSignedResponse
+                    acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
+                    onComplete={(response, txHash) => {
+                      const kind = response.action as 'approve' | 'execute';
+                      void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
+                      savePendingTx({
+                        kind,
+                        contractAddress: multisig!.address,
+                        proposalHash: proposal!.proposalHash,
+                        txHash,
+                        signerPubkey: offlineFeePayerAddress,
+                        createdAt: new Date().toISOString(),
+                      });
+                      if (kind === 'execute') {
+                        router.push(`/accounts/${multisig!.address}`);
+                      } else {
+                        router.push('/transactions');
+                      }
+                    }}
+                  />
+                </>
+              )}
+            </div>
           </div>
         )}
 
-        <button
-          onClick={() => router.push('/transactions')}
-          className="text-sm text-safe-text hover:text-white transition-colors"
-        >
-          &larr; Back to proposals
-        </button>
       </div>
     </div>
   );

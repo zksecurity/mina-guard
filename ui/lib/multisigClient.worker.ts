@@ -1211,7 +1211,7 @@ const workerApi = {
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn, [childKey]);
     if (!txHash) return null;
-    return `SubVault deployed: ${txHash}`;
+    return `Deploy submitted: ${txHash}`;
   },
 
   /**
