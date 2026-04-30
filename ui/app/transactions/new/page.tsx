@@ -374,7 +374,7 @@ function NewTransactionPageInner() {
                               txType: input.txType,
                               nonce: String(input.nonce),
                               configNonce: String(multisig.configNonce ?? 0),
-                              expiryBlock: input.expiryBlock != null ? String(input.expiryBlock) : null,
+                              expirySlot: input.expirySlot != null ? String(input.expirySlot) : null,
                               destination: isRemote ? 'remote' : 'local',
                               childAccount: input.childAccount ?? null,
                               receivers: input.receivers ?? [],

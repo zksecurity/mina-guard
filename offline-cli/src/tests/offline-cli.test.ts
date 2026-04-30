@@ -156,7 +156,7 @@ describe('offline-cli', () => {
       data: Field(0),
       nonce: Field(1),
       configNonce: Field(0),
-      expiryBlock: Field(0),
+      expirySlot: Field(0),
       networkId: Field(1),
       guardAddress: zkAppAddress,
       destination: Destination.LOCAL,

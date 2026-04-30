@@ -62,7 +62,7 @@ Additional fields:
 | `input.newThreshold` | `number` | New signing threshold (changeThreshold only) |
 | `input.delegate` | `string` | Delegate address (setDelegate only) |
 | `input.childAccount` | `string` | Target child contract (child actions only) |
-| `input.expiryBlock` | `number` | Optional block height after which proposal expires |
+| `input.expirySlot` | `number` | Optional global slot after which proposal expires |
 
 ---
 
@@ -77,7 +77,7 @@ Additional fields:
 | `action` | `"approve"` | |
 | `proposal` | `object` | Full proposal data (hash, proposer, parameters) — needed to reconstruct the proposal hash on-chain |
 
-The `proposal` object mirrors what the backend stores: `proposalHash`, `proposer`, `toAddress`, `txType`, `data`, `nonce`, `configNonce`, `expiryBlock`, `networkId`, `guardAddress`, `destination`, `childAccount`, `receivers`.
+The `proposal` object mirrors what the backend stores: `proposalHash`, `proposer`, `toAddress`, `txType`, `data`, `nonce`, `configNonce`, `expirySlot`, `networkId`, `guardAddress`, `destination`, `childAccount`, `receivers`.
 
 ---
 

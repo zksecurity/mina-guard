@@ -53,7 +53,7 @@ export interface OfflineProposeBundle extends BundleBase {
     childAccount?: string;
     childMultiSigEnable?: boolean;
     createChildConfigHash?: string;
-    expiryBlock?: number;
+    expirySlot?: number;
     memo?: string;
   };
   configNonce: number;
@@ -71,7 +71,7 @@ export interface OfflineApproveBundle extends BundleBase {
     data: string | null;
     nonce: string | null;
     configNonce: string | null;
-    expiryBlock: string | null;
+    expirySlot: string | null;
     networkId: string | null;
     guardAddress: string | null;
     destination: string | null;
