@@ -81,6 +81,26 @@ jobs:
           echo "Backend failed to become ready within timeout"
           exit 1
 
+      # TEMPORARY (UI scaling PR only — remove before merging): seeds bulk
+      # synthetic vault/proposal data into the preview's Postgres so reviewers
+      # can exercise pagination, search, and the card grid at realistic counts.
+      # Each wallet listed below is added as an owner of every seeded vault, so
+      # connecting with any of them on the preview shows the full set.
+      # TODO: REMOVE BEFORE MERGING
+      - name: Seed UI scaling fixtures
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          # Add/remove wallet pubkeys here to test with multiple wallets.
+          WALLETS=(
+            "B62qpJgZSnx9dGFAqh45SehhK9TsxTnKia9vgnYzSXnCxwQQxixrnL1"
+            "B62qqgtCy8FAmPtrHbQfLunyMaXTNrutgpApaSGEM8zFLN4ypspQqo4"
+          )
+          args=()
+          for w in "${WALLETS[@]}"; do args+=(--wallet "$w"); done
+          docker compose -p "pr-${PR_NUMBER}" exec -T -w /app/backend backend \
+            bun scripts/seed-fixtures.ts "${args[@]}" --clean
+
       - name: Comment PR with preview URL
         uses: actions/github-script@v7
         with:

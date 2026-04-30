@@ -1,26 +1,100 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useAppContext } from '@/lib/app-context';
 import TransactionList from '@/components/TransactionList';
+import SearchInput from '@/components/SearchInput';
+import LoadMore from '@/components/LoadMore';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useLoadMore } from '@/hooks/useLoadMore';
+import { useUrlState } from '@/hooks/useUrlState';
 import Link from 'next/link';
 
 type Tab = 'all' | 'pending' | 'executed' | 'expired' | 'invalidated';
 
+const TABS: Tab[] = ['all', 'pending', 'executed', 'expired', 'invalidated'];
+const PAGE_SIZE = 25;
+
+function isTab(value: string | null): value is Tab {
+  return value !== null && (TABS as string[]).includes(value);
+}
+
 /** Full proposal table page with lifecycle-status filtering tabs. */
 export default function TransactionsPage() {
+  return (
+    <Suspense>
+      <TransactionsPageInner />
+    </Suspense>
+  );
+}
+
+function TransactionsPageInner() {
   const {
     wallet,
     multisig,
     owners,
     proposals,
   } = useAppContext();
-  const [activeTab, setActiveTab] = useState<Tab>('all');
 
-  const filtered =
-    activeTab === 'all'
-      ? proposals
-      : proposals.filter((proposal) => proposal.status === activeTab);
+  const [urlStatus, setUrlStatus] = useUrlState('status');
+  const [urlSearch, setUrlSearch] = useUrlState('search');
+  const [urlPageSize, setUrlPageSize] = useUrlState('pageSize');
+
+  const activeTab: Tab = isTab(urlStatus) ? urlStatus : 'all';
+  const [searchInput, setSearchInput] = useState<string>(urlSearch ?? '');
+  const debouncedSearch = useDebouncedValue(searchInput, 200);
+
+  useEffect(() => {
+    setUrlSearch(debouncedSearch || null);
+  }, [debouncedSearch, setUrlSearch]);
+
+  const setActiveTab = (tab: Tab) => {
+    setUrlStatus(tab === 'all' ? null : tab);
+  };
+
+  const statusFiltered = useMemo(
+    () =>
+      activeTab === 'all'
+        ? proposals
+        : proposals.filter((p) => p.status === activeTab),
+    [proposals, activeTab],
+  );
+
+  const q = debouncedSearch.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return statusFiltered;
+    return statusFiltered.filter((p) => {
+      if (p.memo && p.memo.toLowerCase().includes(q)) return true;
+      if (p.proposer && p.proposer.toLowerCase().includes(q)) return true;
+      if (p.toAddress && p.toAddress.toLowerCase().includes(q)) return true;
+      // Per-receiver recipient match
+      if (p.receivers.some((r) => r.address.toLowerCase().includes(q))) return true;
+      return false;
+    });
+  }, [statusFiltered, q]);
+
+  // Restore the user's prior visible-count from the URL on mount and across
+  // adaptive-polling refreshes so they don't snap back to the first page.
+  const initialCount = (() => {
+    const n = urlPageSize ? Number(urlPageSize) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : PAGE_SIZE;
+  })();
+  const { visible, hasMore, visibleCount, loadMore, reset } = useLoadMore(
+    filtered,
+    PAGE_SIZE,
+    initialCount,
+  );
+
+  // Persist visibleCount to URL so refresh / polling restores the user's page.
+  useEffect(() => {
+    setUrlPageSize(visibleCount === PAGE_SIZE ? null : String(visibleCount));
+  }, [visibleCount, setUrlPageSize]);
+
+  // Reset pagination when filters change.
+  useEffect(() => {
+    reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, q]);
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: proposals.length },
@@ -32,7 +106,6 @@ export default function TransactionsPage() {
 
   return (
     <div>
-
       <div className="p-6">
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
@@ -40,7 +113,7 @@ export default function TransactionsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex gap-1 bg-safe-gray border border-safe-border rounded-lg p-1">
                 {tabs.map((tab) => (
                   <button
@@ -75,16 +148,35 @@ export default function TransactionsPage() {
               )}
             </div>
 
+            <SearchInput
+              value={searchInput}
+              onChange={setSearchInput}
+              placeholder="Search by memo, proposer, or recipient address"
+            />
+
             <TransactionList
-              proposals={filtered}
+              proposals={visible}
               threshold={multisig.threshold ?? 0}
               owners={owners.map((owner) => owner.address)}
               emptyMessage={
-                activeTab === 'all'
-                  ? 'No proposals found'
-                  : `No ${activeTab} proposals`
+                q
+                  ? 'No proposals match your search'
+                  : activeTab === 'all'
+                    ? 'No proposals found'
+                    : `No ${activeTab} proposals`
               }
             />
+
+            <LoadMore
+              visibleCount={visibleCount}
+              totalCount={filtered.length}
+              onClick={loadMore}
+            />
+            {!hasMore && filtered.length > PAGE_SIZE && (
+              <p className="text-center text-[10px] text-safe-text">
+                Showing all {filtered.length}
+              </p>
+            )}
           </div>
         )}
       </div>

@@ -1,9 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAppContext } from '@/lib/app-context';
+import SearchInput from '@/components/SearchInput';
+import LoadMore from '@/components/LoadMore';
+import VaultCard from '@/components/VaultCard';
 import ThresholdBadge from '@/components/ThresholdBadge';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useLoadMore } from '@/hooks/useLoadMore';
+import { useUrlState } from '@/hooks/useUrlState';
 import { fetchBalance } from '@/lib/api';
 import { formatMina, truncateAddress, type ContractSummary } from '@/lib/types';
 import {
@@ -13,17 +19,12 @@ import {
   type PendingTx,
 } from '@/lib/storage';
 
-function networkLabel(networkId: string | null): string {
-  if (networkId == null) return 'Network unknown';
-  if (networkId === '1') return 'Mainnet';
-  if (networkId === '0') return 'Testnet';
-  return `Network ${networkId}`;
-}
-
 interface TreeNode {
   contract: ContractSummary;
   children: TreeNode[];
 }
+
+const PAGE_SIZE = 25;
 
 /**
  * Builds forest of owned subtrees.
@@ -51,13 +52,9 @@ function buildOwnedForest(
   const ownsNode = (addr: string): boolean =>
     allContractOwners.get(addr)?.includes(walletAddress) ?? false;
 
-  // Find every root whose subtree contains at least one owned node.
   const ownedRoots = new Set<string>();
   for (const c of contracts) {
     if (!ownsNode(c.address)) continue;
-    // Tree depth is capped at 2 (children can't create subaccounts), so this
-    // walks at most one hop today; written as a loop to stay correct if that
-    // constraint ever relaxes.
     let current: ContractSummary | undefined = c;
     while (current?.parent) {
       const next = byAddress.get(current.parent);
@@ -82,11 +79,33 @@ function buildOwnedForest(
     .map(buildNode);
 }
 
+/** Returns true if the node's subtree contains a node where `matches` returns true. */
+function subtreeHasMatch(node: TreeNode, matches: (c: ContractSummary) => boolean): boolean {
+  if (matches(node.contract)) return true;
+  return node.children.some((child) => subtreeHasMatch(child, matches));
+}
+
 /** Root page — shows every subtree that contains a wallet-owned account. */
 export default function AccountsListPage() {
+  return (
+    <Suspense>
+      <AccountsListPageInner />
+    </Suspense>
+  );
+}
+
+function AccountsListPageInner() {
   const { contracts, allContractOwners, wallet } = useAppContext();
 
-  const [query, setQuery] = useState('');
+  const [urlQuery, setUrlQuery] = useUrlState('search');
+  const [query, setQuery] = useState<string>(urlQuery ?? '');
+  const debouncedQuery = useDebouncedValue(query, 200);
+
+  // Sync the debounced value into the URL so refresh / share preserves search.
+  useEffect(() => {
+    setUrlQuery(debouncedQuery || null);
+  }, [debouncedQuery, setUrlQuery]);
+
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const forest = useMemo(
@@ -130,17 +149,28 @@ export default function AccountsListPage() {
 
   const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
 
-  const q = query.trim().toLowerCase();
+  const q = debouncedQuery.trim().toLowerCase();
   const matches = (c: ContractSummary): boolean => {
     if (!q) return true;
     const name = getAccountName(c.address)?.toLowerCase() ?? '';
     return c.address.toLowerCase().includes(q) || name.includes(q);
   };
 
-  const flat = useMemo(
-    () => flattenForRender(forest, collapsed, matches),
-    [forest, collapsed, q],
-  );
+  // When searching, restrict roots to subtrees containing a match.
+  const filteredRoots = useMemo(() => {
+    if (!q) return forest;
+    return forest.filter((root) => subtreeHasMatch(root, matches));
+    // matches closes over q; tracked via debouncedQuery dep below
+  }, [forest, q]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const { visible: visibleRoots, hasMore, visibleCount, loadMore, reset } =
+    useLoadMore(filteredRoots, PAGE_SIZE);
+
+  // Reset pagination when the search filter changes.
+  useEffect(() => {
+    reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   const toggle = (address: string) => {
     setCollapsed((prev) => {
@@ -150,6 +180,18 @@ export default function AccountsListPage() {
       return next;
     });
   };
+
+  // While searching, force-expand any root whose subtree matched (so children
+  // are visible even if the user had previously collapsed it).
+  const isExpanded = (root: TreeNode): boolean => {
+    if (q) return true;
+    return !collapsed.has(root.contract.address);
+  };
+
+  const isOwnerOf = (address: string): boolean =>
+    wallet.address
+      ? allContractOwners.get(address)?.includes(wallet.address) ?? false
+      : false;
 
   return (
     <div>
@@ -184,114 +226,196 @@ export default function AccountsListPage() {
           </ul>
         )}
 
-        <div className="bg-safe-gray border border-safe-border rounded-xl">
-          <div className="p-4 border-b border-safe-border">
-            <div className="relative">
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-safe-text"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
-              </svg>
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search by address or name"
-                className="w-full bg-safe-dark border border-safe-border rounded-lg pl-10 pr-3 py-2 text-sm placeholder:text-safe-text focus:outline-none focus:border-safe-green"
-              />
-            </div>
-          </div>
+        <div className="mb-4">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Search by address or name"
+          />
+        </div>
 
-          {flat.length === 0 ? (
-            <div className="p-10 text-center">
-              <p className="text-safe-text mb-4">
-                {!wallet.address
-                  ? 'Connect a wallet to see your Vaults.'
-                  : ownedCount === 0
-                    ? "You don't own any MinaGuard Vaults yet."
-                    : 'No Vaults match that search.'}
-              </p>
-              {wallet.address && ownedCount === 0 && (
-                <Link
-                  href="/accounts/new"
-                  className="inline-block bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110"
-                >
-                  Create your first Vault
-                </Link>
-              )}
-            </div>
-          ) : (
-            <ul className="divide-y divide-safe-border">
-              {flat.map(({ node, depth }) => (
-                <AccountRow
-                  key={node.contract.address}
-                  contract={node.contract}
-                  depth={depth}
-                  isOwner={
-                    wallet.address
-                      ? allContractOwners.get(node.contract.address)?.includes(wallet.address) ?? false
-                      : false
-                  }
-                  hasChildren={node.children.length > 0}
-                  collapsed={collapsed.has(node.contract.address)}
-                  onToggle={() => toggle(node.contract.address)}
+        {visibleRoots.length === 0 ? (
+          <div className="bg-safe-gray border border-safe-border rounded-xl p-10 text-center">
+            <p className="text-safe-text mb-4">
+              {!wallet.address
+                ? 'Connect a wallet to see your Vaults.'
+                : ownedCount === 0
+                  ? "You don't own any MinaGuard Vaults yet."
+                  : 'No Vaults match that search.'}
+            </p>
+            {wallet.address && ownedCount === 0 && (
+              <Link
+                href="/accounts/new"
+                className="inline-block bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110"
+              >
+                Create your first Vault
+              </Link>
+            )}
+          </div>
+        ) : (
+          <>
+            <ul className="bg-safe-gray border border-safe-border rounded-xl divide-y divide-safe-border overflow-hidden">
+              {visibleRoots.map((root) => (
+                <RootGroup
+                  key={root.contract.address}
+                  root={root}
+                  expanded={isExpanded(root)}
+                  onToggle={() => toggle(root.contract.address)}
+                  isOwnerOf={isOwnerOf}
+                  matches={matches}
+                  filterActive={Boolean(q)}
                 />
               ))}
             </ul>
-          )}
-        </div>
+            <LoadMore visibleCount={visibleCount} totalCount={filteredRoots.length} onClick={loadMore} />
+            {!hasMore && filteredRoots.length > PAGE_SIZE && (
+              <p className="text-center text-[10px] text-safe-text pb-4">
+                Showing all {filteredRoots.length}
+              </p>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-/**
- * Flattens the forest into a render-ready list, preserving the ancestor chain for
- * search matches: a matching descendant keeps every ancestor visible so it isn't
- * orphaned. Collapsed parents hide their descendants regardless of match state.
- */
-function flattenForRender(
-  forest: TreeNode[],
-  collapsed: Set<string>,
-  matches: (c: ContractSummary) => boolean,
-): Array<{ node: TreeNode; depth: number }> {
-  const out: Array<{ node: TreeNode; depth: number }> = [];
-  for (const root of forest) collectSubtree(root, 0, collapsed, matches, out);
-  return out;
+interface RootGroupProps {
+  root: TreeNode;
+  expanded: boolean;
+  onToggle: () => void;
+  isOwnerOf: (address: string) => boolean;
+  matches: (c: ContractSummary) => boolean;
+  /** True when a search query is active — children are filtered to matches only. */
+  filterActive: boolean;
 }
 
-/** Pushes visible nodes into `scratch`, returns whether any node in the subtree matched. */
-function collectSubtree(
-  node: TreeNode,
-  depth: number,
-  collapsed: Set<string>,
-  matches: (c: ContractSummary) => boolean,
-  scratch: Array<{ node: TreeNode; depth: number }>,
-): boolean {
-  const selfMatches = matches(node.contract);
-  const isCollapsed = collapsed.has(node.contract.address);
+/**
+ * Renders one root vault as a full-width row and, when expanded, a nested
+ * indented card grid of its children. Tree depth is capped at 2 (children
+ * can't create subaccounts).
+ */
+function RootGroup({ root, expanded, onToggle, isOwnerOf, matches, filterActive }: RootGroupProps) {
+  const hasChildren = root.children.length > 0;
+  const visibleChildren = filterActive
+    ? root.children.filter((child) => matches(child.contract))
+    : root.children;
 
-  const childRows: Array<{ node: TreeNode; depth: number }> = [];
-  let anyChildMatched = false;
-  if (!isCollapsed) {
-    for (const child of node.children) {
-      const childRowsForChild: Array<{ node: TreeNode; depth: number }> = [];
-      if (collectSubtree(child, depth + 1, collapsed, matches, childRowsForChild)) {
-        anyChildMatched = true;
-        childRows.push(...childRowsForChild);
-      }
-    }
-  }
+  return (
+    <li>
+      <VaultRow
+        contract={root.contract}
+        isOwner={isOwnerOf(root.contract.address)}
+        hasChildren={hasChildren}
+        expanded={expanded}
+        onToggle={onToggle}
+      />
+      {expanded && visibleChildren.length > 0 && (
+        <div className="px-4 pb-3 pt-1 ml-12 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {visibleChildren.map((child) => (
+            <VaultCard
+              key={child.contract.address}
+              contract={child.contract}
+              isOwner={isOwnerOf(child.contract.address)}
+              isChild
+              showBalance={false}
+            />
+          ))}
+        </div>
+      )}
+    </li>
+  );
+}
 
-  if (selfMatches || anyChildMatched) {
-    scratch.push({ node, depth });
-    scratch.push(...childRows);
-    return true;
-  }
-  return false;
+interface VaultRowProps {
+  contract: ContractSummary;
+  isOwner: boolean;
+  hasChildren: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+/** Full-width row for a root vault on the main page. Mirrors the pre-card design. */
+function VaultRow({ contract, isOwner, hasChildren, expanded, onToggle }: VaultRowProps) {
+  const [balance, setBalance] = useState<string | null>(null);
+  const [name, setName] = useState<string | null>(null);
+
+  useEffect(() => {
+    setName(getAccountName(contract.address));
+    let cancelled = false;
+    fetchBalance(contract.address).then((b) => {
+      if (!cancelled) setBalance(b);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [contract.address]);
+
+  return (
+    <Link
+      href={`/accounts/${contract.address}`}
+      className={`flex items-center gap-3 px-4 py-3 hover:bg-safe-hover transition-colors ${
+        !isOwner ? 'opacity-70' : ''
+      }`}
+    >
+      {hasChildren ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onToggle();
+          }}
+          className="w-9 h-9 -my-1 -ml-1 flex items-center justify-center text-safe-text hover:text-white hover:bg-safe-hover rounded shrink-0"
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+        >
+          <svg
+            className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      ) : (
+        <span className="w-7 shrink-0" />
+      )}
+
+      <div className="w-10 h-10 rounded-full bg-safe-green/20 border border-safe-green/40 flex items-center justify-center shrink-0">
+        <span className="text-safe-green font-bold text-xs">
+          {contract.address.slice(3, 5).toUpperCase()}
+        </span>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          {name && <p className="text-sm font-semibold truncate">{name}</p>}
+          {!isOwner && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-safe-border/40 text-safe-text shrink-0">
+              View-only
+            </span>
+          )}
+        </div>
+        <p className={`font-mono truncate ${name ? 'text-xs text-safe-text' : 'text-sm'}`}>
+          {truncateAddress(contract.address, 10)}
+        </p>
+      </div>
+
+      {contract.threshold != null && contract.numOwners != null && (
+        <ThresholdBadge threshold={contract.threshold} numOwners={contract.numOwners} size="sm" />
+      )}
+
+      <div className="text-right shrink-0 whitespace-nowrap">
+        <span className="text-sm font-semibold">{formatMina(balance)}</span>
+        <span className="text-[10px] text-safe-text ml-1">MINA</span>
+      </div>
+
+      <svg className="w-4 h-4 text-safe-text shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+    </Link>
+  );
 }
 
 /** Top-of-list row for an account whose deploy tx is broadcast but not yet
@@ -345,132 +469,6 @@ function PendingDeployRow({
               truncateAddress(pendingTx.txHash, 8)
             )}
           </p>
-        </div>
-
-        <svg className="w-4 h-4 text-safe-text shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-      </Link>
-    </li>
-  );
-}
-
-interface AccountRowProps {
-  contract: ContractSummary;
-  depth: number;
-  isOwner: boolean;
-  hasChildren: boolean;
-  collapsed: boolean;
-  onToggle: () => void;
-}
-
-function AccountRow({
-  contract,
-  depth,
-  isOwner,
-  hasChildren,
-  collapsed,
-  onToggle,
-}: AccountRowProps) {
-  const [balance, setBalance] = useState<string | null>(null);
-  const [name, setName] = useState<string | null>(null);
-
-  useEffect(() => {
-    setName(getAccountName(contract.address));
-    let cancelled = false;
-    fetchBalance(contract.address).then((b) => {
-      if (!cancelled) setBalance(b);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [contract.address]);
-
-  const indentPx = depth * 20;
-  const isChild = depth > 0;
-
-  return (
-    <li className="relative">
-      <Link
-        href={`/accounts/${contract.address}`}
-        className={`flex items-center gap-3 px-4 py-3 hover:bg-safe-hover transition-colors ${
-          !isOwner ? 'opacity-70' : ''
-        }`}
-        style={{ paddingLeft: 16 + indentPx }}
-      >
-        {hasChildren ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onToggle();
-            }}
-            className="w-4 h-4 flex items-center justify-center text-safe-text hover:text-white shrink-0"
-            aria-label={collapsed ? 'Expand' : 'Collapse'}
-          >
-            <svg
-              className={`w-3 h-3 transition-transform ${collapsed ? '' : 'rotate-90'}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        ) : (
-          <span className="w-4 shrink-0 text-safe-text/60 font-mono text-xs">
-            {isChild ? '└' : ''}
-          </span>
-        )}
-
-        <div
-          className={`${
-            isChild ? 'w-8 h-8' : 'w-10 h-10'
-          } rounded-full bg-safe-green/20 border border-safe-green/40 flex items-center justify-center shrink-0`}
-        >
-          <span className="text-safe-green font-bold text-xs">
-            {contract.address.slice(3, 5).toUpperCase()}
-          </span>
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            {name && <p className="text-sm font-semibold truncate">{name}</p>}
-            {isChild && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-safe-border/40 text-safe-text shrink-0">
-                SubVault
-              </span>
-            )}
-            {isChild && contract.childMultiSigEnabled === false && (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 shrink-0"
-                title="Multi-sig disabled by parent"
-              >
-                Multi-sig off
-              </span>
-            )}
-            {!isOwner && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-safe-border/40 text-safe-text shrink-0">
-                View-only
-              </span>
-            )}
-          </div>
-          <p className={`font-mono truncate ${name ? 'text-xs text-safe-text' : 'text-sm'}`}>
-            {truncateAddress(contract.address, 10)}
-          </p>
-          <p className="text-xs text-safe-text mt-0.5">{networkLabel(contract.networkId)}</p>
-        </div>
-
-        {contract.threshold != null && contract.numOwners != null && (
-          <ThresholdBadge threshold={contract.threshold} numOwners={contract.numOwners} size="sm" />
-        )}
-
-        <div className="text-right w-28 shrink-0">
-          <p className="text-sm font-semibold">
-            {balance !== null ? formatMina(balance) : '—'}
-          </p>
-          <p className="text-[10px] text-safe-text">MINA</p>
         </div>
 
         <svg className="w-4 h-4 text-safe-text shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
