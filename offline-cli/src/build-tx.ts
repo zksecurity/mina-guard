@@ -122,7 +122,7 @@ export interface OfflineProposeBundle extends BundleBase {
     childAccount?: string;
     childMultiSigEnable?: boolean;
     createChildConfigHash?: string;
-    expiryBlock?: number;
+    expirySlot?: number;
     childPrivateKey?: string;
     childOwners?: string[];
     childThreshold?: number;
@@ -157,7 +157,7 @@ interface BundleProposal {
   data: string | null;
   nonce: string | null;
   configNonce: string | null;
-  expiryBlock: string | null;
+  expirySlot: string | null;
   networkId: string | null;
   guardAddress: string | null;
   destination: string | null;
@@ -180,7 +180,7 @@ interface NewProposalInput {
   newThreshold?: number;
   delegate?: string;
   undelegate?: boolean;
-  expiryBlock?: number;
+  expirySlot?: number;
   childAccount?: string;
   reclaimAmount?: string;
   childMultiSigEnable?: boolean;
@@ -338,7 +338,7 @@ function buildProposalStruct(
     data: Field(proposal.data ?? '0'),
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
-    expirySlot: Field(proposal.expiryBlock ?? '0'),
+    expirySlot: Field(proposal.expirySlot ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
@@ -674,7 +674,7 @@ export async function handlePropose(
     data,
     nonce: Field(input.nonce),
     configNonce: Field(bundle.configNonce),
-    expirySlot: Field(input.expiryBlock ?? 0),
+    expirySlot: Field(input.expirySlot ?? 0),
     networkId: Field(bundle.networkId),
     guardAddress: PublicKey.fromBase58(bundle.contractAddress),
     destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
@@ -705,9 +705,12 @@ export async function handlePropose(
   let childOwnerStore: InstanceType<typeof OwnerStore> | null = null;
   let childPaddedOwners: InstanceType<typeof PublicKey>[] | null = null;
   if (isCreateChild) {
-    childKey = PrivateKey.fromBase58(input.childPrivateKey!);
+    if (!input.childPrivateKey || !input.childOwners || input.childThreshold == null) {
+      throw new Error('createChild proposal requires childPrivateKey, childOwners, and childThreshold in the bundle');
+    }
+    childKey = PrivateKey.fromBase58(input.childPrivateKey);
     childOwnerStore = new OwnerStore();
-    for (const addr of input.childOwners!) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
+    for (const addr of input.childOwners) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
     childPaddedOwners = [...childOwnerStore.owners];
     while (childPaddedOwners.length < MAX_OWNERS) childPaddedOwners.push(PublicKey.empty());
   }

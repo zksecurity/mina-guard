@@ -712,12 +712,11 @@ export default function TransactionDetailPage() {
                           if (approvalAddresses.includes(offlineFeePayerAddress)) {
                             throw new Error('This address has already approved this proposal');
                           }
-                          const { expirySlot, ...p } = proposal!;
-                          const bundleProposal = { ...p, expiryBlock: expirySlot, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) };
+                          const p = proposal!;
                           return buildOfflineApproveBundle({
                             contractAddress: multisig!.address,
                             feePayerAddress: offlineFeePayerAddress,
-                            proposal: bundleProposal,
+                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
                           });
                         }}
                       />
@@ -730,12 +729,11 @@ export default function TransactionDetailPage() {
                         cliBinaryName={cliBinaryName}
                         onBuildBundle={() => {
                           assertValidMinaAddress(offlineFeePayerAddress);
-                          const { expirySlot, ...p } = proposal!;
-                          const bundleProposal = { ...p, expiryBlock: expirySlot, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) };
+                          const p = proposal!;
                           return buildOfflineExecuteBundle({
                             contractAddress: multisig!.address,
                             feePayerAddress: offlineFeePayerAddress,
-                            proposal: bundleProposal,
+                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
                           });
                         }}
                       />
