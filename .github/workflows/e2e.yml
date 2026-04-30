@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     timeout-minutes: 60
@@ -17,6 +21,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: minaguard
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5433:5432
         options: >-
