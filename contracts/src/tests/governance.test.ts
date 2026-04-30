@@ -358,7 +358,7 @@ describe('MinaGuard - Governance', () => {
         memoHash: Field(0),
         nonce: Field(1),
         configNonce: Field(0), // old configNonce
-        expiryBlock: Field(0),
+        expirySlot: Field(0),
         networkId: Field(1),
         guardAddress: ctx.zkAppAddress,
         destination: Destination.LOCAL,

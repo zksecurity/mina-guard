@@ -102,7 +102,7 @@ class TransactionProposal extends Struct({
   data:         Field,       // Context-dependent payload (see below)
   nonce:        Field,       // Ordered execution nonce (LOCAL or child-REMOTE domain)
   configNonce:  Field,       // Must match on-chain configNonce
-  expiryBlock:  Field,       // Block height deadline (0 = no expiry)
+  expirySlot:   Field,       // Global slot deadline (0 = no expiry)
   networkId:    Field,       // Must match on-chain networkId
   guardAddress: PublicKey,   // Must match the guard the proposal lives on
   destination:  Field,       // LOCAL or REMOTE (see below)
@@ -228,7 +228,7 @@ All LOCAL execute methods share these checks:
 - `txType` matches the method, `destination == LOCAL`
 - `configNonce`, `networkId`, `guardAddress` match on-chain
 - `proposal.nonce == this.nonce + 1`
-- Proposal not expired (if `expiryBlock != 0`, asserts `blockchainLength <= expiryBlock`)
+- Proposal not expired (if `expirySlot != 0`, asserts `globalSlotSinceGenesis <= expirySlot`)
 - Not executed, exists, and threshold satisfied
 - Approval witness verified against `approvalRoot`
 
@@ -287,7 +287,7 @@ All event structs are defined in `MinaGuard.ts` and registered on `this.events`.
 | `DeployEvent` | `guardAddress` | `deploy` |
 | `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId, parent` | `setup`, `executeSetupChild` |
 | `SetupOwnerEvent` | `owner, index` | `setup`, `executeSetupChild` (one per `MAX_OWNERS` slot) |
-| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, nonce, configNonce, expiryBlock, networkId, guardAddress, destination, childAccount` | `propose` |
+| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, nonce, configNonce, expirySlot, networkId, guardAddress, destination, childAccount` | `propose` |
 | `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
 | `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
 | `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |
@@ -318,7 +318,7 @@ Every contract state field is reconstructable from events alone — no on-chain 
 | No LOCAL re-execution | `EXECUTED_MARKER` replaces count after execution |
 | No REMOTE re-execution | `EXECUTED_MARKER` written to child's `childExecutionRoot` |
 | Stale proposals rejected | `configNonce` in proposal must match on-chain value |
-| Time-bounded proposals | Optional `expiryBlock` checked against `blockchainLength` |
+| Time-bounded proposals | Optional `expirySlot` checked against `globalSlotSinceGenesis` |
 | No proposal substitution | Approvals keyed by content hash, not sequential ID |
 | Cross-network replay prevented | `networkId` in proposal must match on-chain |
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |

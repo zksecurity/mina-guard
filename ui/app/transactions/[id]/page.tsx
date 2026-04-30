@@ -139,16 +139,14 @@ export default function TransactionDetailPage() {
       cancelled = true;
     };
   }, [spendingTarget?.sourceAddress, indexerStatus?.lastSuccessfulRunAt]);
-  // Fail-open: only block when we've successfully fetched a non-zero balance
-  // below the proposal's send amount. The backend coalesces missing daemon
-  // data to "0" (routes.ts), so a literal "0" is indistinguishable from "the
-  // account isn't visible to the daemon yet" — treat it as ambiguous and let
-  // the chain reject if the Vault is genuinely empty.
+  // Fail-open on unknown balance (sourceBalance === null): the backend
+  // returns null when the daemon doesn't see the account yet, and we don't
+  // want to silently hide Execute in that window. A real "0" from the daemon
+  // (Vault exists, empty) gates execution.
   const insufficientBalance =
     spendingTarget != null &&
     sourceBalance != null &&
     !balanceFetchFailed &&
-    BigInt(sourceBalance) > 0n &&
     BigInt(sourceBalance) < spendingTarget.amount;
 
   const threshold = multisig?.threshold ?? 0;
@@ -204,13 +202,6 @@ export default function TransactionDetailPage() {
     !isConfigStale &&
     !myPendingApprove &&
     !contractLock.locked;
-  // Note on insufficientBalance: surfaced as a banner above the action row but
-  // not gated into canExecute. The UI-side balance signal can lag the daemon
-  // (the backend's /api/account/.../balance route coalesces missing data to
-  // "0" — `backend/src/routes.ts`), and a false-positive there would silently
-  // hide the Execute button. The chain still rejects an undercollateralised
-  // tx, so the cost of letting an over-eager click through is one tx fee; the
-  // cost of a stuck UI is a confused user.
   const canExecute =
     !!proposal &&
     !isLocalPending &&
@@ -218,7 +209,8 @@ export default function TransactionDetailPage() {
     proposal.approvalCount >= threshold &&
     !isConfigStale &&
     !executeInFlight &&
-    !contractLock.locked;
+    !contractLock.locked &&
+    !insufficientBalance;
   const canDelete =
     !!proposal &&
     !isLocalPending &&
@@ -546,7 +538,7 @@ export default function TransactionDetailPage() {
               />
             )}
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
-            <DetailRow label="Expiry Block" value={proposal.expiryBlock ?? '0'} mono />
+            <DetailRow label="Expiry Slot" value={proposal.expirySlot ?? '0'} mono />
             {hasMemo && (
               <DetailRow label="Memo" value={proposal.memo ?? proposal.memoHash!} mono={!proposal.memo} labelAdornment={memoAdornment} />
             )}
@@ -608,8 +600,8 @@ export default function TransactionDetailPage() {
             <p className="opacity-90">
               The {proposal.txType === 'reclaimChild' ? 'SubVault' : 'Vault'} holds{' '}
               {formatMina(sourceBalance!)} MINA but this proposal sends{' '}
-              {formatMina(spendingTarget!.amount.toString())} MINA. Execute will
-              fail on chain until it is funded.
+              {formatMina(spendingTarget!.amount.toString())} MINA. Execute is
+              blocked until it is funded.
             </p>
           </div>
         )}

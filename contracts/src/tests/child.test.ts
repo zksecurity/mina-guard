@@ -194,7 +194,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         memoHash: Field(0),
         nonce: Field(0),
         configNonce: Field(0),
-        expiryBlock: Field(0),
+        expirySlot: Field(0),
         networkId: parentCtx.networkId,
         guardAddress: parentCtx.zkAppAddress,
         destination: Destination.REMOTE,

@@ -398,7 +398,7 @@ function logProposeDiagnostics(args: {
     proposalDestination: proposal.destination.toString(),
     proposalTxType: proposal.txType.toString(),
     proposalData: proposal.data.toString(),
-    proposalExpiryBlock: proposal.expiryBlock.toString(),
+    proposalExpirySlot: proposal.expirySlot.toString(),
     proposalReceiver0: proposal.receivers[0].address.toBase58(),
     onchainOwnersCommitment: contract.ownersCommitment.get().toString(),
     storeOwnersCommitment: ownerStore.getCommitment().toString(),
@@ -540,7 +540,7 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'memoHash' | 'nonce' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'memoHash' | 'nonce' | 'configNonce' | 'expirySlot' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
@@ -557,7 +557,7 @@ function buildProposalStruct(
     memoHash: Field(proposal.memoHash ?? '0'),
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
-    expiryBlock: Field(proposal.expiryBlock ?? '0'),
+    expirySlot: Field(proposal.expirySlot ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
@@ -861,7 +861,7 @@ const workerApi = {
       memoHash,
       nonce: Field(params.input.nonce),
       configNonce: Field(params.configNonce),
-      expiryBlock: Field(params.input.expiryBlock ?? 0),
+      expirySlot: Field(params.input.expirySlot ?? 0),
       networkId: Field(params.networkId),
       guardAddress: PublicKey.fromBase58(params.contractAddress),
       destination: isRemote ? Destination.REMOTE : Destination.LOCAL,

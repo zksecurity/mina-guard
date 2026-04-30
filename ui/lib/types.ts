@@ -36,7 +36,7 @@ export interface Proposal {
   data: string | null;
   nonce: string | null;
   configNonce: string | null;
-  expiryBlock: string | null;
+  expirySlot: string | null;
   networkId: string | null;
   guardAddress: string | null;
   memo: string | null;
@@ -132,7 +132,7 @@ export interface NewProposalInput {
   newThreshold?: number;
   delegate?: string;
   undelegate?: boolean;
-  expiryBlock?: number;
+  expirySlot?: number;
   memo?: string;
   /** Subaccount the proposal targets (REMOTE proposals or pre-known child for CREATE/ALLOCATE). */
   childAccount?: string;

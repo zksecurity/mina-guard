@@ -7,11 +7,13 @@ import {
   discoverCandidateAddresses,
   fetchBestChainHeaders,
   fetchDecodedContractEvents,
+  fetchGenesisConstants,
   fetchLatestBlockHeight,
   fetchOnChainState,
   fetchVerificationKeyHash,
   fetchZkappTxStatus,
   type ChainEvent,
+  type GenesisConstants,
 } from './mina-client.js';
 
 const REORG_DETECTION_WINDOW = 290;
@@ -24,6 +26,8 @@ export interface IndexerStatus {
   lastRunAt: string | null;
   lastSuccessfulRunAt: string | null;
   latestChainHeight: number;
+  /** Current `globalSlotSinceGenesis` derived from wall-clock + genesis constants. */
+  latestSlot: number;
   indexedHeight: number;
   lastError: string | null;
   discoveredContracts: number;
@@ -50,11 +54,13 @@ type ContractConfigChanges = Partial<ContractConfigFields>;
 export class MinaGuardIndexer {
   private readonly config: BackendConfig;
   private intervalHandle: NodeJS.Timeout | null = null;
+  private genesis: GenesisConstants | null = null;
   private status: Omit<IndexerStatus, 'indexerMode'> = {
     running: false,
     lastRunAt: null,
     lastSuccessfulRunAt: null,
     latestChainHeight: 0,
+    latestSlot: 0,
     indexedHeight: 0,
     lastError: null,
     discoveredContracts: 0,
@@ -70,6 +76,7 @@ export class MinaGuardIndexer {
   async start(): Promise<void> {
     if (this.intervalHandle) return;
     this.status.running = true;
+    this.genesis = await fetchGenesisConstants(this.config);
     await this.tick();
     this.intervalHandle = setInterval(() => {
       void this.tick();
@@ -97,6 +104,12 @@ export class MinaGuardIndexer {
     try {
       const latestHeight = await fetchLatestBlockHeight(this.config);
       this.status.latestChainHeight = latestHeight;
+      if (this.genesis) {
+        const elapsed = Date.now() - this.genesis.genesisTimestampMs;
+        this.status.latestSlot = elapsed > 0
+          ? Math.floor(elapsed / this.genesis.slotDurationMs)
+          : 0;
+      }
 
       // Detect a chain reorg before doing any new work. If detected, rollback
       // has rewound the cursor and deleted all rows above the fork; bail out
@@ -575,7 +588,7 @@ export class MinaGuardIndexer {
         memo,
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
-        expiryBlock: asString(event.expiryBlock),
+        expirySlot: asString(event.expirySlot),
         networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
         destination: normalizeDestination(asString(event.destination)),
@@ -590,7 +603,7 @@ export class MinaGuardIndexer {
         memo,
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
-        expiryBlock: asString(event.expiryBlock),
+        expirySlot: asString(event.expirySlot),
         networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
         destination: normalizeDestination(asString(event.destination)),

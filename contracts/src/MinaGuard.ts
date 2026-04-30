@@ -64,7 +64,7 @@ export class TransactionProposal extends Struct({
   memoHash: Field,
   nonce: Field,
   configNonce: Field,
-  expiryBlock: Field,
+  expirySlot: Field,
   networkId: Field,
   guardAddress: PublicKey,
   destination: Field,
@@ -84,7 +84,7 @@ export class TransactionProposal extends Struct({
       this.memoHash,
       this.nonce,
       this.configNonce,
-      this.expiryBlock,
+      this.expirySlot,
       this.networkId,
       ...this.guardAddress.toFields(),
       this.destination,
@@ -134,7 +134,7 @@ export class ProposalEvent extends Struct({
   memoHash: Field,
   nonce: Field,
   configNonce: Field,
-  expiryBlock: Field,
+  expirySlot: Field,
   networkId: Field,
   guardAddress: PublicKey,
   destination: Field,
@@ -409,18 +409,18 @@ export class MinaGuard extends SmartContract {
       .assertTrue('Remote destination proposals must be proposed on a root guard');
   }
 
-  /** Asserts optional expiry block has not passed. */
+  /** Asserts optional expiry slot has not passed. */
   private assertProposalNotExpired(proposal: TransactionProposal): void {
-    const noExpiry = proposal.expiryBlock.equals(Field(0));
-    const blockchainLength = this.network.blockchainLength.get();
-    // Use a range precondition so the tx isn't rejected when the block advances
+    const noExpiry = proposal.expirySlot.equals(Field(0));
+    const globalSlot = this.network.globalSlotSinceGenesis.get();
+    // Use a range precondition so the tx isn't rejected when the slot advances
     // between proof generation and inclusion. For proposals with an expiry, the
-    // upper bound is the expiry block; for no-expiry proposals it's uncapped.
-    this.network.blockchainLength.requireBetween(
+    // upper bound is the expiry slot; for no-expiry proposals it's uncapped.
+    this.network.globalSlotSinceGenesis.requireBetween(
       UInt32.from(0),
-      Provable.if(noExpiry, UInt32, UInt32.MAXINT(), UInt32.Unsafe.fromField(proposal.expiryBlock))
+      Provable.if(noExpiry, UInt32, UInt32.MAXINT(), UInt32.Unsafe.fromField(proposal.expirySlot))
     );
-    const notExpired = blockchainLength.value.lessThanOrEqual(proposal.expiryBlock);
+    const notExpired = globalSlot.value.lessThanOrEqual(proposal.expirySlot);
     noExpiry.or(notExpired).assertTrue('Proposal expired');
   }
 
@@ -885,7 +885,7 @@ export class MinaGuard extends SmartContract {
       memoHash: proposal.memoHash,
       nonce: proposal.nonce,
       configNonce: proposal.configNonce,
-      expiryBlock: proposal.expiryBlock,
+      expirySlot: proposal.expirySlot,
       networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
       destination: proposal.destination,

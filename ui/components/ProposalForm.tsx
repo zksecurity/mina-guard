@@ -85,7 +85,7 @@ export default function ProposalForm({
   }, [currentThreshold]);
   const [delegate, setDelegate] = useState('');
   const [undelegate, setUndelegate] = useState(false);
-  const [expiryBlock, setExpiryBlock] = useState('0');
+  const [expirySlot, setExpirySlot] = useState('0');
   const [memo, setMemo] = useState('');
   const memoBytes = memoByteLength(memo);
   const memoOverLimit = !isValidMemoLength(memo);
@@ -95,7 +95,7 @@ export default function ProposalForm({
     setRecipients([{ address: '', amount: '' }]);
     setBulkText('');
     setRecipientsMode('individual');
-    setExpiryBlock('0');
+    setExpirySlot('0');
   }, [deleteMode]);
 
   // Subaccount-action fields.
@@ -299,7 +299,7 @@ export default function ProposalForm({
             : undefined,
       childMultiSigEnable:
         !deleteMode && txType === 'enableChildMultiSig' ? enableTarget === 'enable' : undefined,
-      expiryBlock: Number(expiryBlock) > 0 ? Number(expiryBlock) : 0,
+      expirySlot: Number(expirySlot) > 0 ? Number(expirySlot) : 0,
       memo: memo.length > 0 ? memo : undefined,
     };
   };
@@ -650,9 +650,9 @@ export default function ProposalForm({
       </div>
 
       <FormInput
-        label="Expiry Block (0 = no expiry)"
-        value={expiryBlock}
-        onChange={setExpiryBlock}
+        label="Expiry Slot (0 = no expiry)"
+        value={expirySlot}
+        onChange={setExpirySlot}
         placeholder="0"
         inputMode="numeric"
       />

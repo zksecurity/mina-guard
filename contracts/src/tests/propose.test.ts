@@ -212,7 +212,7 @@ describe('MinaGuard - Propose shape rules', () => {
     data: Field;
     nonce: Field;
     configNonce: Field;
-    expiryBlock: Field;
+    expirySlot: Field;
     networkId: Field;
     guardAddress: PublicKey;
     destination: Field;
@@ -226,7 +226,7 @@ describe('MinaGuard - Propose shape rules', () => {
       memoHash: (overrides as any).memoHash ?? Field(0),
       nonce: overrides.nonce ?? Field(1),
       configNonce: overrides.configNonce ?? Field(0),
-      expiryBlock: overrides.expiryBlock ?? Field(0),
+      expirySlot: overrides.expirySlot ?? Field(0),
       networkId: overrides.networkId ?? Field(1),
       guardAddress: overrides.guardAddress ?? ctx.zkAppAddress,
       destination: overrides.destination ?? Destination.LOCAL,
