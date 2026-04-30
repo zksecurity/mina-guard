@@ -1480,19 +1480,20 @@ test('26. Propose CREATE_CHILD on parent', async () => { const page = sharedPage
 });
 
 // ---------------------------------------------------------------------------
-// 27. Finalize subaccount deployment (executeSetupChild on the new child)
+// 27. Execute CREATE_CHILD (executeSetupChild on the deployed child)
 // ---------------------------------------------------------------------------
 
-test('27. Finalize subaccount deployment', async () => { const page = sharedPage;
-  log('=== Step 27: Finalize subaccount deployment ===');
+test('27. Execute CREATE_CHILD via proposal detail', async () => { const page = sharedPage;
+  log('=== Step 27: Execute CREATE_CHILD ===');
 
-  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  const createChildHash = proposalHashes[proposalHashes.length - 1];
+  await gotoWithWallet(`/transactions/${createChildHash}?account=${contractAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  const finalizeBtn = page.getByRole('button', { name: /finalize deployment/i });
-  await finalizeBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  log('Clicking Finalize deployment...');
-  await finalizeBtn.click();
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  log('Clicking Execute...');
+  await executeBtn.click();
 
   log('Waiting for executeSetupChild transaction...');
   await waitForBanner(page, 'success');
@@ -1645,6 +1646,9 @@ test('32. Propose RECLAIM_CHILD', async () => { const page = sharedPage;
   const childLabel = page.locator(`label:has-text("${childAddress.slice(0, 10)}")`);
   await childLabel.waitFor({ state: 'visible', timeout: 10_000 });
   await childLabel.click();
+
+  // Wait for nonce field to update after child selection
+  await page.waitForTimeout(1_000);
 
   // Fill reclaim amount
   const amountInput = page.locator('input[placeholder="1.0"]');

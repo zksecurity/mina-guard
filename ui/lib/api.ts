@@ -104,11 +104,12 @@ export async function fetchBalance(address: string): Promise<string | null> {
 
 /** Pulls the tx hash out of the worker's success message. The worker uses a
  *  few different prefixes — "Transaction submitted", "Approval submitted",
- *  "Deploy submitted", "Subaccount action submitted" (CREATE_CHILD finalize
- *  + child lifecycle txs) — but the shape is always `<phrase> submitted: <hash>`. */
+ *  "Deploy submitted", "SubVault setup submitted" (CREATE_CHILD execute),
+ *  "SubVault action submitted" (child lifecycle txs) — but the shape is
+ *  always `<phrase> submitted: <hash>`. */
 export function extractTxHash(message: string | null): string | null {
   if (!message) return null;
-  const match = message.match(/(?:Transaction|Approval|Deploy|SubVault action)\s+submitted:\s*(\S+)/);
+  const match = message.match(/(?:Transaction|Approval|Deploy|SubVault (?:action|setup))\s+submitted:\s*(\S+)/);
   return match ? match[1] : null;
 }
 
@@ -338,6 +339,64 @@ export async function fetchAllEvents(contractAddress: string): Promise<Array<{ e
   }
 
   return events.reverse();
+}
+
+/**
+ * Parses child vault config from createChildConfig/createChildOwner events.
+ * Pure function — used by both the online UI (api.ts) and offline bundle builder.
+ */
+export function parseChildConfigFromEvents(
+  events: ReadonlyArray<{ eventType: string; payload: unknown }>,
+  proposalHash: string,
+): { owners: string[]; threshold: number } | null {
+  const EMPTY_KEY = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+
+  const configEvent = events.find(
+    (e) =>
+      e.eventType === 'createChildConfig' &&
+      (e.payload as Record<string, unknown>)?.proposalHash === proposalHash,
+  );
+  if (!configEvent) return null;
+  const configPayload = configEvent.payload as Record<string, unknown>;
+  const threshold = Number(configPayload.threshold ?? '0');
+  const numOwners = Number(configPayload.numOwners ?? '0');
+
+  const ownerEvents = events
+    .filter(
+      (e) =>
+        e.eventType === 'createChildOwner' &&
+        (e.payload as Record<string, unknown>)?.proposalHash === proposalHash,
+    )
+    .sort((a, b) => {
+      const ai = Number((a.payload as Record<string, unknown>)?.index ?? '0');
+      const bi = Number((b.payload as Record<string, unknown>)?.index ?? '0');
+      return ai - bi;
+    });
+
+  const owners = ownerEvents
+    .slice(0, numOwners)
+    .map((e) => (e.payload as Record<string, unknown>)?.owner as string)
+    .filter((addr) => typeof addr === 'string' && addr.length > 10 && addr !== EMPTY_KEY);
+
+  if (owners.length === 0) return null;
+  if (owners.length !== numOwners) {
+    throw new Error(
+      `SubVault owner event data is corrupt: expected ${numOwners} owners but found ${owners.length}`,
+    );
+  }
+  return { owners, threshold };
+}
+
+/**
+ * Fetches the child vault configuration for a CREATE_CHILD proposal
+ * from the parent's createChildConfig/createChildOwner events.
+ */
+export async function fetchChildConfigFromEvents(
+  parentAddress: string,
+  proposalHash: string,
+): Promise<{ owners: string[]; threshold: number } | null> {
+  const events = await fetchAllEvents(parentAddress);
+  return parseChildConfigFromEvents(events, proposalHash);
 }
 
 /** Parses JSON strings defensively when backend stores raw payload text. */

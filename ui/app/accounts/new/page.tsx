@@ -12,7 +12,7 @@ import {
   deployAndSetupContract,
   generateKeypair,
 } from '@/lib/multisigClient';
-import { clearPendingCreateChild, saveAccountName, savePendingTx } from '@/lib/storage';
+import { saveAccountName, savePendingTx } from '@/lib/storage';
 import { extractTxHash } from '@/lib/api';
 
 const NETWORKS = [
@@ -206,12 +206,6 @@ function CreateAccountWizard() {
     const childPrivateKey = keypair.privateKey;
     const childAddress = keypair.publicKey;
 
-    // If a prior attempt for the same (parent, child) left a pending entry,
-    // drop it before starting. If the new attempt fails (e.g. proof OOM),
-    // no entry exists and the banner stays clean. If it succeeds, the
-    // savePendingTx call below writes a fresh entry under the new proposalHash.
-    clearPendingCreateChild(parentAddress, childAddress);
-
     void startOperation('Preparing SubVault proposal…', async (onProgress) => {
       onProgress('Computing child config hash…');
       const { configHash } = await computeCreateChildConfigHash({
@@ -226,13 +220,13 @@ function CreateAccountWizard() {
         networkId: parentContract.networkId!,
         input: {
           txType: 'createChild',
-          // CREATE_CHILD uses the reserved nonce=0 sentinel enforced by
-          // assertFreshProposalNonce's isRemoteCreate branch. The usual
-          // "next available nonce" logic doesn't apply here.
           nonce: 0,
           childAccount: childAddress,
           createChildConfigHash: configHash,
         },
+        childPrivateKey,
+        childOwners: parsedOwners,
+        childThreshold,
       }, onProgress, signer);
 
       if (!result) return null;
@@ -256,17 +250,9 @@ function CreateAccountWizard() {
           childAccount: childAddress,
           receivers: [],
         },
-        childAccount: {
-          childAddress,
-          childPrivateKey,
-          childOwners: parsedOwners,
-          childThreshold,
-          childName: name.trim(),
-          expirySlot: null,
-        },
       });
 
-      return `SubVault proposal submitted. Approve on the parent Vault, then return to finalize deployment.`;
+      return `SubVault deployed and proposal submitted. Approve on the parent Vault, then execute to initialize.`;
     });
 
     router.push(`/accounts/${parentAddress}`);
