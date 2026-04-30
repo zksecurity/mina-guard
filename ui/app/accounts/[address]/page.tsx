@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import TransactionList from '@/components/TransactionList';
+import VaultCard from '@/components/VaultCard';
 import {
   truncateAddress,
   formatMina,
@@ -401,13 +402,13 @@ function OwnersCard({ owners, walletAddress, threshold }: OwnersCardProps) {
       {owners.length === 0 ? (
         <p className="text-sm text-safe-text">No owners indexed yet.</p>
       ) : (
-        <ul className="divide-y divide-safe-border">
+        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {owners.map((address) => {
             const isSelf = walletAddress === address;
             return (
               <li
                 key={address}
-                className="flex items-center gap-3 py-2 first:pt-0 last:pb-0"
+                className="flex items-center gap-3 py-1.5 px-2 rounded bg-safe-dark/40 border border-safe-border/50"
               >
                 <div className="w-7 h-7 rounded-full bg-safe-green/20 border border-safe-green/40 flex items-center justify-center shrink-0">
                   <span className="text-safe-green font-bold text-[10px]">
@@ -795,29 +796,16 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
           SubVaults ({children.length})
         </p>
       </div>
-      <ul className="divide-y divide-safe-border">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {children.map((child) => (
-          <li key={child.address}>
-            <Link
-              href={`/accounts/${child.address}`}
-              className="flex items-center justify-between gap-3 py-2 hover:bg-safe-hover transition-colors -mx-2 px-2 rounded"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-mono truncate">{truncateAddress(child.address, 10)}</p>
-                <p className="text-[10px] text-safe-text mt-0.5">
-                  {child.threshold != null && child.numOwners != null
-                    ? `${child.threshold}/${child.numOwners}`
-                    : '—'}
-                  {child.childMultiSigEnabled === false && (
-                    <span className="ml-2 text-amber-400">multi-sig off</span>
-                  )}
-                </p>
-              </div>
-              <span className="text-xs text-safe-green">→</span>
-            </Link>
-          </li>
+          <VaultCard
+            key={child.address}
+            contract={child}
+            isChild
+            showBalance={false}
+          />
         ))}
-      </ul>
+      </div>
     </div>
   );
 }
