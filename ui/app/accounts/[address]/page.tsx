@@ -215,22 +215,20 @@ export default function AccountPage() {
               <PendingSubaccountsBanner parentAddress={multisig.address} isOwner={isOwner} />
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <OwnersCard
-                owners={owners.map((o) => o.address)}
-                walletAddress={wallet.address}
-                threshold={multisig.threshold ?? 0}
+            <OwnersCard
+              owners={owners.map((o) => o.address)}
+              walletAddress={wallet.address}
+              threshold={multisig.threshold ?? 0}
+            />
+            {isRoot ? (
+              <SubaccountsCard parentAddress={multisig.address} />
+            ) : (
+              <ParentCard
+                parent={multisig.parent!}
+                parentContract={parentContract}
+                childMultiSigEnabled={childMultiSigEnabled}
               />
-              {isRoot ? (
-                <SubaccountsCard parentAddress={multisig.address} />
-              ) : (
-                <ParentCard
-                  parent={multisig.parent!}
-                  parentContract={parentContract}
-                  childMultiSigEnabled={childMultiSigEnabled}
-                />
-              )}
-            </div>
+            )}
 
             <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
               <p className="text-xs text-safe-text uppercase tracking-wider mb-3">New Proposal</p>
@@ -796,7 +794,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
           SubVaults ({children.length})
         </p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {children.map((child) => (
           <VaultCard
             key={child.address}
