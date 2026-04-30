@@ -6,10 +6,12 @@ import { useAppContext } from '@/lib/app-context';
 import SearchInput from '@/components/SearchInput';
 import LoadMore from '@/components/LoadMore';
 import VaultCard from '@/components/VaultCard';
+import ThresholdBadge from '@/components/ThresholdBadge';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useLoadMore } from '@/hooks/useLoadMore';
 import { useUrlState } from '@/hooks/useUrlState';
-import { truncateAddress, type ContractSummary } from '@/lib/types';
+import { fetchBalance } from '@/lib/api';
+import { formatMina, truncateAddress, type ContractSummary } from '@/lib/types';
 import {
   getAccountName,
   getPendingTxs,
@@ -193,7 +195,7 @@ function AccountsListPageInner() {
 
   return (
     <div>
-      <div className="p-6 max-w-5xl mx-auto w-full">
+      <div className="p-6 max-w-4xl mx-auto w-full">
         <div className="flex items-end justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Your Vaults</h1>
@@ -252,7 +254,7 @@ function AccountsListPageInner() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <ul className="bg-safe-gray border border-safe-border rounded-xl divide-y divide-safe-border overflow-hidden">
               {visibleRoots.map((root) => (
                 <RootGroup
                   key={root.contract.address}
@@ -264,7 +266,7 @@ function AccountsListPageInner() {
                   filterActive={Boolean(q)}
                 />
               ))}
-            </div>
+            </ul>
             <LoadMore visibleCount={visibleCount} totalCount={filteredRoots.length} onClick={loadMore} />
             {!hasMore && filteredRoots.length > PAGE_SIZE && (
               <p className="text-center text-[10px] text-safe-text pb-4">
@@ -289,8 +291,9 @@ interface RootGroupProps {
 }
 
 /**
- * Renders one root vault card and, when expanded, a nested card grid of its
- * children. Tree depth is capped at 2 (children can't create subaccounts).
+ * Renders one root vault as a full-width row and, when expanded, a nested
+ * indented card grid of its children. Tree depth is capped at 2 (children
+ * can't create subaccounts).
  */
 function RootGroup({ root, expanded, onToggle, isOwnerOf, matches, filterActive }: RootGroupProps) {
   const hasChildren = root.children.length > 0;
@@ -299,27 +302,121 @@ function RootGroup({ root, expanded, onToggle, isOwnerOf, matches, filterActive 
     : root.children;
 
   return (
-    <div className="flex flex-col gap-2">
-      <VaultCard
+    <li>
+      <VaultRow
         contract={root.contract}
         isOwner={isOwnerOf(root.contract.address)}
-        expandable={hasChildren}
+        hasChildren={hasChildren}
         expanded={expanded}
         onToggle={onToggle}
       />
       {expanded && visibleChildren.length > 0 && (
-        <div className="ml-4 pl-3 border-l border-safe-border/60 grid grid-cols-1 gap-2">
+        <div className="px-4 pb-3 pt-1 ml-12 grid grid-cols-1 sm:grid-cols-2 gap-2">
           {visibleChildren.map((child) => (
             <VaultCard
               key={child.contract.address}
               contract={child.contract}
               isOwner={isOwnerOf(child.contract.address)}
               isChild
+              showBalance={false}
             />
           ))}
         </div>
       )}
-    </div>
+    </li>
+  );
+}
+
+interface VaultRowProps {
+  contract: ContractSummary;
+  isOwner: boolean;
+  hasChildren: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+/** Full-width row for a root vault on the main page. Mirrors the pre-card design. */
+function VaultRow({ contract, isOwner, hasChildren, expanded, onToggle }: VaultRowProps) {
+  const [balance, setBalance] = useState<string | null>(null);
+  const [name, setName] = useState<string | null>(null);
+
+  useEffect(() => {
+    setName(getAccountName(contract.address));
+    let cancelled = false;
+    fetchBalance(contract.address).then((b) => {
+      if (!cancelled) setBalance(b);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [contract.address]);
+
+  return (
+    <Link
+      href={`/accounts/${contract.address}`}
+      className={`flex items-center gap-3 px-4 py-3 hover:bg-safe-hover transition-colors ${
+        !isOwner ? 'opacity-70' : ''
+      }`}
+    >
+      {hasChildren ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onToggle();
+          }}
+          className="w-4 h-4 flex items-center justify-center text-safe-text hover:text-white shrink-0"
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+        >
+          <svg
+            className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      ) : (
+        <span className="w-4 shrink-0" />
+      )}
+
+      <div className="w-10 h-10 rounded-full bg-safe-green/20 border border-safe-green/40 flex items-center justify-center shrink-0">
+        <span className="text-safe-green font-bold text-xs">
+          {contract.address.slice(3, 5).toUpperCase()}
+        </span>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          {name && <p className="text-sm font-semibold truncate">{name}</p>}
+          {!isOwner && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-safe-border/40 text-safe-text shrink-0">
+              View-only
+            </span>
+          )}
+        </div>
+        <p className={`font-mono truncate ${name ? 'text-xs text-safe-text' : 'text-sm'}`}>
+          {truncateAddress(contract.address, 10)}
+        </p>
+      </div>
+
+      {contract.threshold != null && contract.numOwners != null && (
+        <ThresholdBadge threshold={contract.threshold} numOwners={contract.numOwners} size="sm" />
+      )}
+
+      <div className="text-right w-28 shrink-0">
+        <p className="text-sm font-semibold">
+          {balance !== null ? formatMina(balance) : '—'}
+        </p>
+        <p className="text-[10px] text-safe-text">MINA</p>
+      </div>
+
+      <svg className="w-4 h-4 text-safe-text shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+    </Link>
   );
 }
 
