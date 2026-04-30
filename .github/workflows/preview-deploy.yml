@@ -81,6 +81,20 @@ jobs:
           echo "Backend failed to become ready within timeout"
           exit 1
 
+      # TEMPORARY (UI scaling PR only — remove before merging): seeds bulk
+      # synthetic vault/proposal data into the preview's Postgres so reviewers
+      # can exercise pagination, search, and the card grid at realistic counts.
+      # Skipped if the SEED_FIXTURES_WALLET repo variable is unset.
+      # TODO: REMOVE BEFORE MERGING
+      - name: Seed UI scaling fixtures
+        if: vars.SEED_FIXTURES_WALLET != ''
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+          SEED_WALLET: ${{ vars.SEED_FIXTURES_WALLET }}
+        run: |
+          docker compose -p "pr-${PR_NUMBER}" exec -T -w /app/backend backend \
+            bun scripts/seed-fixtures.ts --wallet "$SEED_WALLET" --clean
+
       - name: Comment PR with preview URL
         uses: actions/github-script@v7
         with:
