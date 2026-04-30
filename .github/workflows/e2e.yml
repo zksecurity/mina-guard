@@ -18,7 +18,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: minaguard
         ports:
-          - 5432:5432
+          - 5433:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -87,13 +87,13 @@ jobs:
         run: bunx prisma db push
         working-directory: backend
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/minaguard
 
       - name: Start backend
         run: bun run --filter backend dev &
         env:
           PORT: '4000'
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/minaguard
           MINA_ENDPOINT: http://localhost:8080/graphql
           ARCHIVE_ENDPOINT: http://localhost:8282
           LIGHTNET_ACCOUNT_MANAGER: http://localhost:8181
