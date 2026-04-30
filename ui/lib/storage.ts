@@ -74,21 +74,10 @@ export interface PendingTxSummary {
   txType: string | null;
   nonce: string | null;
   configNonce: string | null;
-  expirySlot: string | null;
+  expiryBlock: string | null;
   destination: 'local' | 'remote' | null;
   childAccount: string | null;
   receivers: { address: string; amount: string }[];
-}
-
-/** CREATE_CHILD wizard state needed to finalize the child deployment after
- *  the parent proposal lands. Only set on CREATE_CHILD `kind='create'` records. */
-export interface PendingTxChildAccount {
-  childAddress: string;
-  childPrivateKey: string;
-  childOwners: string[];
-  childThreshold: number;
-  childName: string;
-  expirySlot: number | null;
 }
 
 export interface PendingTx {
@@ -101,7 +90,6 @@ export interface PendingTx {
   signerPubkey: string;
   createdAt: string;
   summary?: PendingTxSummary;
-  childAccount?: PendingTxChildAccount;
 }
 
 const PENDING_TXS_KEY = getKey('pending-txs');
@@ -204,14 +192,3 @@ export function clearPendingTx(
   notifyPendingTxsChanged();
 }
 
-/** Drops the kind='create' pending entry that targets a specific child of a
- *  parent guard. Both the CREATE_CHILD wizard's "retry" path and the banner's
- *  dead-entry cleanup need this; neither knows the proposalHash up front. */
-export function clearPendingCreateChild(parentAddress: string, childAddress: string): void {
-  const matches = getPendingTxsForContract(parentAddress).filter(
-    (r) => r.kind === 'create' && r.childAccount?.childAddress === childAddress,
-  );
-  for (const m of matches) {
-    clearPendingTx(m.contractAddress, m.proposalHash, m.kind, m.signerPubkey);
-  }
-}

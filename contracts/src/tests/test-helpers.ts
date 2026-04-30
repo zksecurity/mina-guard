@@ -628,16 +628,12 @@ export async function proposeAndApproveOnParent(
 }
 
 /**
- * Deploys, funds, and runs `executeSetupChild` on a new child guard — all
- * in a SINGLE Mina transaction. The CREATE_CHILD proposal must already have
- * reached threshold on the parent via `proposeAndApproveOnParent`.
+ * Full CREATE_CHILD flow: deploys the child at propose time (with the
+ * proposer tx), runs approval txs, then executeSetupChild separately.
  *
- * The single-transaction pattern is load-bearing: between a standalone
- * deploy and a standalone executeSetupChild, the child sits on-chain with
- * `ownersCommitment == 0`, and anyone watching the mempool could call
- * `executeSetupChild` with a proposal bound to an attacker-controlled
- * "parent" and permanently bind the child to a hostile parent. Batching
- * them in one tx eliminates that window.
+ * Tx 1 (propose):  deploy child + propose() + announceChildConfig()
+ * Tx 2..N (approve): approveProposal() for remaining signers
+ * Tx N+1 (execute): executeSetupChild() + fund child (for subsequent test operations)
  */
 export async function deployAndSetupChildGuard(
   parentCtx: TestContext,
@@ -650,7 +646,7 @@ export async function deployAndSetupChildGuard(
   signerIndices: number[],
   nonce = Field(0),
 ): Promise<{ proposalHash: Field }> {
-  const { deployerAccount, deployerKey, networkId } = parentCtx;
+  const { deployerAccount, deployerKey, networkId, approvalStore, nullifierStore, owners } = parentCtx;
 
   const ownersCommitment = computeOwnerChain(childOwners);
   const thresholdField = Field(childThreshold);
@@ -662,20 +658,68 @@ export async function deployAndSetupChildGuard(
     thresholdField,
     numOwnersField,
     nonce,
-    Field(0), // parent's configNonce at time of propose
+    Field(0),
     parentAddress,
     Field(0),
     networkId,
   );
 
-  const { proposalHash, parentApprovalCount, parentApprovalWitness } =
-    await proposeAndApproveOnParent(parentCtx, proposal, signerIndices);
+  const proposalHash = proposal.hash();
+
+  // -- Tx 1: deploy child + propose + announceChildConfig --
+  if (signerIndices.length === 0) {
+    throw new Error('deployAndSetupChildGuard: need at least one signer');
+  }
+  const [proposerIndex, ...approverIndices] = signerIndices;
+  const proposer = owners[proposerIndex];
+
+  const parentContract = new MinaGuard(parentAddress);
+  const ownerWitness = makeOwnerWitness(owners.map((o) => o.pub));
+  const sig = Signature.create(proposer.key, [proposalHash]);
+  const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer.pub);
+  const approvalWitness = approvalStore.getWitness(proposalHash);
 
   const setupOwners = toFixedSetupOwners(childOwners);
 
-  const atomicTxn = await Mina.transaction(deployerAccount, async () => {
-    AccountUpdate.fundNewAccount(deployerAccount);
+  const proposeTxn = await Mina.transaction(proposer.pub, async () => {
+    AccountUpdate.fundNewAccount(proposer.pub);
     await childZkApp.deploy();
+    await parentContract.propose(
+      proposal,
+      ownerWitness,
+      proposer.pub,
+      sig,
+      nullifierWitness,
+      approvalWitness,
+    );
+    await parentContract.announceChildConfig(
+      proposalHash,
+      childAddress,
+      ownersCommitment,
+      thresholdField,
+      numOwnersField,
+      new SetupOwnersInput({ owners: setupOwners }),
+      ownerWitness,
+      proposer.pub,
+      sig,
+    );
+  });
+  await proposeTxn.prove();
+  await proposeTxn.sign([proposer.key, childKey]).send();
+
+  nullifierStore.nullify(proposalHash, proposer.pub);
+  approvalStore.setCount(proposalHash, PROPOSED_MARKER.add(1));
+
+  // -- Tx 2..N: approve --
+  for (const idx of approverIndices) {
+    await approveTransaction(parentCtx, proposal, idx);
+  }
+
+  // -- Tx N+1: executeSetupChild + seed child balance for downstream tests --
+  const parentApprovalCount = approvalStore.getCount(proposalHash);
+  const parentApprovalWitness = approvalStore.getWitness(proposalHash);
+
+  const executeTxn = await Mina.transaction(deployerAccount, async () => {
     const funder = AccountUpdate.createSigned(deployerAccount);
     funder.send({ to: childAddress, amount: UInt64.from(10_000_000_000) });
     await childZkApp.executeSetupChild(
@@ -688,8 +732,8 @@ export async function deployAndSetupChildGuard(
       parentApprovalCount,
     );
   });
-  await atomicTxn.prove();
-  await atomicTxn.sign([deployerKey, childKey]).send();
+  await executeTxn.prove();
+  await executeTxn.sign([deployerKey]).send();
 
   return { proposalHash };
 }

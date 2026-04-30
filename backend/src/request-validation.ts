@@ -30,8 +30,7 @@ export function clampedIntQuerySchema(
   max: number
 ) {
   return z.any().transform((input) => {
-    if (typeof input !== 'string') return fallback;
-    const value = Number(input);
+    const value = typeof input === 'number' ? input : Number(input);
     if (!Number.isFinite(value)) return fallback;
     return Math.max(min, Math.min(max, Math.floor(value)));
   });

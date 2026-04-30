@@ -1,3 +1,5 @@
+import { parseChildConfigFromEvents } from './api';
+
 export const OFFLINE_BUNDLE_VERSION = 1;
 
 interface BundleReceiver {
@@ -53,8 +55,11 @@ export interface OfflineProposeBundle extends BundleBase {
     childAccount?: string;
     childMultiSigEnable?: boolean;
     createChildConfigHash?: string;
-    expirySlot?: number;
+    expiryBlock?: number;
     memo?: string;
+    childPrivateKey?: string;
+    childOwners?: string[];
+    childThreshold?: number;
   };
   configNonce: number;
   networkId: string;
@@ -71,7 +76,7 @@ export interface OfflineApproveBundle extends BundleBase {
     data: string | null;
     nonce: string | null;
     configNonce: string | null;
-    expirySlot: string | null;
+    expiryBlock: string | null;
     networkId: string | null;
     guardAddress: string | null;
     destination: string | null;
@@ -88,6 +93,8 @@ export interface OfflineExecuteBundle extends BundleBase {
   receiverAccountExists: Record<string, boolean>;
   childAddress?: string;
   childEvents?: Array<{ eventType: string; payload: unknown }>;
+  childOwners?: string[];
+  childThreshold?: number;
 }
 
 export type OfflineRequestBundle =
@@ -280,12 +287,30 @@ export async function buildOfflineExecuteBundle(params: {
 
   let childAddress = params.childAddress;
   let childEvents = params.childEvents;
+  let childOwners: string[] | undefined;
+  let childThreshold: number | undefined;
+
+  const isCreateChild = params.proposal.txType === 'createChild';
   const isChildLifecycle = params.proposal.txType === 'reclaimChild' ||
     params.proposal.txType === 'destroyChild' ||
     params.proposal.txType === 'enableChildMultiSig';
+
   if (isChildLifecycle && childAddr && !childEvents) {
     childAddress = childAddr;
     childEvents = await fetchAllEvents(childAddress);
+  }
+
+  if (isCreateChild && childAddr) {
+    childAddress = childAddr;
+    const config = parseChildConfigFromEvents(events, params.proposal.proposalHash);
+    if (!config) {
+      throw new Error(
+        'SubVault config events not found for this proposal. ' +
+        'The createChildConfig events may not have been indexed yet — try again shortly.',
+      );
+    }
+    childOwners = config.owners;
+    childThreshold = config.threshold;
   }
 
   return {
@@ -300,5 +325,7 @@ export async function buildOfflineExecuteBundle(params: {
     receiverAccountExists,
     childAddress,
     childEvents,
+    childOwners,
+    childThreshold,
   };
 }
