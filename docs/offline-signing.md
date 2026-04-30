@@ -65,7 +65,7 @@ Additional fields:
 | `input.childPrivateKey` | `string` | Base58-encoded private key for the child contract (`createChild` only — needed to sign the deploy account update) |
 | `input.childOwners` | `string[]` | Child owner addresses (`createChild` only) |
 | `input.childThreshold` | `number` | Child signing threshold (`createChild` only) |
-| `input.expiryBlock` | `number` | Optional block height after which proposal expires |
+| `input.expirySlot` | `number` | Optional slot after which proposal expires |
 
 ---
 
@@ -80,7 +80,7 @@ Additional fields:
 | `action` | `"approve"` | |
 | `proposal` | `object` | Full proposal data (hash, proposer, parameters) — needed to reconstruct the proposal hash on-chain |
 
-The `proposal` object mirrors what the backend stores: `proposalHash`, `proposer`, `toAddress`, `txType`, `data`, `nonce`, `configNonce`, `expiryBlock`, `networkId`, `guardAddress`, `destination`, `childAccount`, `receivers`.
+The `proposal` object mirrors what the backend stores: `proposalHash`, `proposer`, `toAddress`, `txType`, `data`, `nonce`, `configNonce`, `expirySlot`, `networkId`, `guardAddress`, `destination`, `childAccount`, `receivers`.
 
 ---
 
