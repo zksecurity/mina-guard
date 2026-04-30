@@ -24,10 +24,12 @@ import {
   UInt32,
   AccountUpdate,
   PublicKey,
+  PrivateKey,
   Signature,
   Bool,
   Cache,
   MerkleMap,
+  Poseidon,
   addCachedAccount,
   TokenId,
 } from 'o1js';
@@ -39,6 +41,7 @@ import {
   MinaGuard,
   Receiver,
   TransactionProposal,
+  SetupOwnersInput,
   EXECUTED_MARKER,
   PROPOSED_MARKER,
   MAX_OWNERS,
@@ -119,7 +122,10 @@ export interface OfflineProposeBundle extends BundleBase {
     childAccount?: string;
     childMultiSigEnable?: boolean;
     createChildConfigHash?: string;
-    expirySlot?: number;
+    expiryBlock?: number;
+    childPrivateKey?: string;
+    childOwners?: string[];
+    childThreshold?: number;
   };
   configNonce: number;
   networkId: string;
@@ -136,6 +142,8 @@ export interface OfflineExecuteBundle extends BundleBase {
   receiverAccountExists: Record<string, boolean>;
   childAddress?: string;
   childEvents?: Array<{ eventType: string; payload: unknown }>;
+  childOwners?: string[];
+  childThreshold?: number;
 }
 
 export type OfflineBundle = OfflineProposeBundle | OfflineApproveBundle | OfflineExecuteBundle;
@@ -149,7 +157,7 @@ interface BundleProposal {
   data: string | null;
   nonce: string | null;
   configNonce: string | null;
-  expirySlot: string | null;
+  expiryBlock: string | null;
   networkId: string | null;
   guardAddress: string | null;
   destination: string | null;
@@ -172,11 +180,14 @@ interface NewProposalInput {
   newThreshold?: number;
   delegate?: string;
   undelegate?: boolean;
-  expirySlot?: number;
+  expiryBlock?: number;
   childAccount?: string;
   reclaimAmount?: string;
   childMultiSigEnable?: boolean;
   createChildConfigHash?: string;
+  childPrivateKey?: string;
+  childOwners?: string[];
+  childThreshold?: number;
   memo?: string;
 }
 
@@ -255,12 +266,6 @@ function uiTxTypeToField(type: string): InstanceType<typeof Field> {
 
 const CHILD_LIFECYCLE_TYPES = new Set(['reclaimChild', 'destroyChild', 'enableChildMultiSig']);
 
-function assertNotCreateChild(txType: string | null) {
-  if (txType === 'createChild') {
-    throw new Error('createChild requires deploying a new contract — use the web UI wizard instead');
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Proposal building helpers (duplicated from worker)
 // ---------------------------------------------------------------------------
@@ -333,7 +338,7 @@ function buildProposalStruct(
     data: Field(proposal.data ?? '0'),
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
-    expirySlot: Field(proposal.expirySlot ?? '0'),
+    expirySlot: Field(proposal.expiryBlock ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
@@ -562,6 +567,26 @@ function signFeePayer(txJson: string, privateKey: string, network: 'testnet' | '
   return JSON.stringify(parsed);
 }
 
+/** Signs a child zkApp's deploy account update using its private key. */
+function signChildAccount(txJson: string, childKey: InstanceType<typeof PrivateKey>, network: 'testnet' | 'mainnet'): string {
+  const parsed = JSON.parse(txJson);
+  const childPk = childKey.toPublicKey().toBase58();
+  const client = new Client({ network });
+  const wrapped = { feePayer: parsed.feePayer, zkappCommand: parsed };
+  const { fullCommitment } = client.getZkappCommandCommitmentsNoCheck(wrapped);
+  const signed = client.signFields([BigInt(fullCommitment)], childKey.toBase58());
+  for (const update of parsed.accountUpdates ?? []) {
+    if (
+      update.body?.publicKey === childPk &&
+      update.body?.authorizationKind?.isSigned === true &&
+      update.body?.useFullCommitment === true
+    ) {
+      update.authorization = { signature: signed.signature };
+    }
+  }
+  return JSON.stringify(parsed);
+}
+
 // ---------------------------------------------------------------------------
 // Transaction sender helper
 // ---------------------------------------------------------------------------
@@ -616,7 +641,11 @@ export async function handlePropose(
   log: LogFn,
 ): Promise<SignedTxOutput> {
   const input = bundle.input as NewProposalInput;
-  assertNotCreateChild(input.txType);
+  const isCreateChild = input.txType === 'createChild';
+
+  if (isCreateChild && (!input.childPrivateKey || !input.childOwners || input.childThreshold == null)) {
+    throw new Error('createChild proposal requires childPrivateKey, childOwners, and childThreshold in the bundle');
+  }
 
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
@@ -633,7 +662,7 @@ export async function handlePropose(
   const data = buildProposalDataField(input);
 
   const isRemote =
-    input.txType === 'createChild' ||
+    isCreateChild ||
     input.txType === 'reclaimChild' ||
     input.txType === 'destroyChild' ||
     input.txType === 'enableChildMultiSig';
@@ -645,7 +674,7 @@ export async function handlePropose(
     data,
     nonce: Field(input.nonce),
     configNonce: Field(bundle.configNonce),
-    expirySlot: Field(input.expirySlot ?? 0),
+    expirySlot: Field(input.expiryBlock ?? 0),
     networkId: Field(bundle.networkId),
     guardAddress: PublicKey.fromBase58(bundle.contractAddress),
     destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
@@ -671,12 +700,34 @@ export async function handlePropose(
   const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer);
   const approvalWitness = approvalStore.getWitness(proposalHash);
 
+  // Prepare child deployment data for CREATE_CHILD
+  let childKey: InstanceType<typeof PrivateKey> | null = null;
+  let childOwnerStore: InstanceType<typeof OwnerStore> | null = null;
+  let childPaddedOwners: InstanceType<typeof PublicKey>[] | null = null;
+  if (isCreateChild) {
+    if (!input.childPrivateKey || !input.childOwners || input.childThreshold == null) {
+      throw new Error('createChild proposal requires childPrivateKey, childOwners, and childThreshold in the bundle');
+    }
+    childKey = PrivateKey.fromBase58(input.childPrivateKey);
+    childOwnerStore = new OwnerStore();
+    for (const addr of input.childOwners) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
+    childPaddedOwners = [...childOwnerStore.owners];
+    while (childPaddedOwners.length < MAX_OWNERS) childPaddedOwners.push(PublicKey.empty());
+  }
+
   // Build transaction
   log('Building transaction...');
   const contractAddress = PublicKey.fromBase58(bundle.contractAddress);
   const contract = new MinaGuard(contractAddress);
 
   const tx = await Mina.transaction(txSender(proposer), async () => {
+    if (isCreateChild && childKey) {
+      const childAddress = childKey.toPublicKey();
+      const childZkApp = new MinaGuard(childAddress);
+      AccountUpdate.fundNewAccount(proposer);
+      await childZkApp.deploy();
+    }
+
     await contract.propose(
       proposal,
       ownerWitness,
@@ -685,6 +736,20 @@ export async function handlePropose(
       nullifierWitness,
       approvalWitness,
     );
+
+    if (isCreateChild && childOwnerStore && childPaddedOwners) {
+      await contract.announceChildConfig(
+        proposalHash,
+        proposal.childAccount,
+        childOwnerStore.getCommitment(),
+        Field(input.childThreshold!),
+        Field(input.childOwners!.length),
+        new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
+        ownerWitness,
+        proposer,
+        signature,
+      );
+    }
   });
 
   // Prove
@@ -694,9 +759,12 @@ export async function handlePropose(
   const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
   log(`Proof generated in ${elapsed}s`);
 
-  // Sign fee payer
+  // Sign fee payer (and child key for CREATE_CHILD deploy)
   log('Signing fee payer...');
-  const signedTxJson = signFeePayer(serializeTx(tx), privateKey, bundle.minaNetwork);
+  let signedTxJson = signFeePayer(serializeTx(tx), privateKey, bundle.minaNetwork);
+  if (childKey) {
+    signedTxJson = signChildAccount(signedTxJson, childKey, bundle.minaNetwork);
+  }
 
   return {
     version: 1,
@@ -799,8 +867,7 @@ export async function handleExecute(
   log: LogFn,
 ): Promise<SignedTxOutput> {
   const txType = normalizeTxType(bundle.proposal.txType);
-  assertNotCreateChild(txType);
-
+  const isCreateChild = txType === 'createChild';
   const isChildLifecycle = txType != null && CHILD_LIFECYCLE_TYPES.has(txType);
 
   log('Configuring network and injecting accounts...');
@@ -817,7 +884,7 @@ export async function handleExecute(
     {
       ...bundle.proposal,
       guardAddress: bundle.proposal.guardAddress ?? bundle.contractAddress,
-      ...(isChildLifecycle ? {
+      ...((isChildLifecycle || isCreateChild) ? {
         destination: 'remote',
         childAccount: bundle.proposal.childAccount ?? bundle.childAddress ?? null,
       } : {}),
@@ -833,6 +900,76 @@ export async function handleExecute(
   const approvalCount = approvalStore.getCount(proposalHash);
 
   const executor = PublicKey.fromBase58(bundle.feePayerAddress);
+
+  if (isCreateChild) {
+    const childAddr = bundle.childAddress ?? bundle.proposal.childAccount;
+    if (!childAddr) throw new Error('createChild execute bundle missing childAddress');
+    if (!bundle.childOwners || bundle.childThreshold == null) {
+      throw new Error('createChild execute bundle missing childOwners/childThreshold');
+    }
+
+    const childOwnerStore = new OwnerStore();
+    for (const addr of bundle.childOwners) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
+    const paddedOwners = [...childOwnerStore.owners];
+    while (paddedOwners.length < MAX_OWNERS) paddedOwners.push(PublicKey.empty());
+
+    const expectedData = Poseidon.hash([
+      childOwnerStore.getCommitment(),
+      Field(bundle.childThreshold!),
+      Field(bundle.childOwners!.length),
+    ]);
+    if (expectedData.toString() !== (bundle.proposal.data ?? '0')) {
+      throw new Error(
+        'SubVault config mismatch: announced owners/threshold do not match the proposal data hash. ' +
+        'The bundle may contain tampered SubVault config.',
+      );
+    }
+
+    const childAccount = bundle.accounts[childAddr];
+    if (!childAccount) {
+      throw new Error(`Bundle missing account snapshot for child address ${childAddr}`);
+    }
+    const childOwnersCommitment = childAccount.zkappState?.[0];
+    if (childOwnersCommitment && childOwnersCommitment !== '0') {
+      throw new Error(
+        'This SubVault has already been initialized by another party. ' +
+        'The address may have been hijacked — create a new SubVault with a fresh address.',
+      );
+    }
+
+    const childZkApp = new MinaGuard(PublicKey.fromBase58(childAddr));
+
+    log('Building transaction...');
+    const tx = await Mina.transaction(txSender(executor), async () => {
+      await childZkApp.executeSetupChild(
+        childOwnerStore.getCommitment(),
+        Field(bundle.childThreshold!),
+        Field(bundle.childOwners!.length),
+        new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) }),
+        proposalStruct,
+        approvalWitness,
+        approvalCount,
+      );
+    });
+
+    log('Generating zero-knowledge proof (this will take a while)...');
+    const t0 = performance.now();
+    await maybeProve(tx);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    log(`Proof generated in ${elapsed}s`);
+
+    log('Signing fee payer...');
+    const signedTxJson = signFeePayer(serializeTx(tx), privateKey, bundle.minaNetwork);
+
+    return {
+      version: 1,
+      type: 'offline-signed-tx',
+      action: 'execute',
+      contractAddress: bundle.contractAddress,
+      proposalHash: hashStr,
+      transaction: JSON.parse(signedTxJson),
+    };
+  }
 
   if (isChildLifecycle) {
     const childAddr = bundle.childAddress ?? bundle.proposal.childAccount;

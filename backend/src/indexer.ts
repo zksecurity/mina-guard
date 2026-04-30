@@ -305,6 +305,8 @@ export class MinaGuardIndexer {
       createChild: 10,
       reclaimChild: 11,
       enableChildMultiSig: 12,
+      createChildConfig: 13,
+      createChildOwner: 14,
     };
     events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
 
@@ -399,6 +401,10 @@ export class MinaGuardIndexer {
       }
       case 'enableChildMultiSig': {
         await this.applyEnableChildMultiSigEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        return;
+      }
+      case 'createChildConfig':
+      case 'createChildOwner': {
         return;
       }
       case 'receiver': {

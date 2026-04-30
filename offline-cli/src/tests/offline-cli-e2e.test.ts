@@ -56,10 +56,11 @@ function runCLI(
   bundlePath: string,
   privateKey: string,
   timeoutMs = 600_000,
+  extraEnv: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     const proc = spawn('bun', ['run', CLI_PATH, bundlePath], {
-      env: { ...process.env, MINA_PRIVATE_KEY: privateKey, SKIP_PROOFS: process.env.SKIP_PROOFS ?? '1' },
+      env: { ...process.env, MINA_PRIVATE_KEY: privateKey, ...(process.env.SKIP_PROOFS ? { SKIP_PROOFS: process.env.SKIP_PROOFS } : {}), ...extraEnv },
       cwd: join(import.meta.dirname, '..', '..'),
     });
     let stdout = '';
@@ -317,7 +318,7 @@ describe('offline-cli e2e', () => {
         data: '0',
         nonce: '1',
         configNonce: '0',
-        expirySlot: '0',
+        expiryBlock: '0',
         networkId: '1',
         guardAddress: zkAppAddress.toBase58(),
         destination: 'local',
@@ -415,7 +416,7 @@ describe('offline-cli e2e', () => {
         data: '0',
         nonce: '1',
         configNonce: '0',
-        expirySlot: '0',
+        expiryBlock: '0',
         networkId: '1',
         guardAddress: zkAppAddress.toBase58(),
         destination: 'local',
@@ -526,7 +527,7 @@ describe('offline-cli e2e', () => {
       data: '0',
       nonce: '1',
       configNonce: '0',
-      expirySlot: '0',
+      expiryBlock: '0',
       networkId: '1',
       guardAddress: zkAppAddress.toBase58(),
       destination: 'remote',
@@ -563,7 +564,8 @@ describe('offline-cli e2e', () => {
       const thresholdField = Field(2);
       const numOwnersField = Field(childOwners.length);
 
-      // CREATE_CHILD: propose + approve on parent, then deploy + setup atomically
+      // CREATE_CHILD: deploy child + propose + announceChildConfig in one tx,
+      // then approve, then executeSetupChild separately.
       const createChildProposal = new TransactionProposal({
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
@@ -579,16 +581,24 @@ describe('offline-cli e2e', () => {
         memoHash: Field(0),
       });
       const ccHash = createChildProposal.hash();
+      const setupOwners = toFixedOwners(childOwners);
 
       const ccSig0 = Signature.create(owners[0].key, [ccHash]);
       const ccProposeTx = await Mina.transaction(owners[0].pub, async () => {
+        AccountUpdate.fundNewAccount(owners[0].pub);
+        await childZkApp.deploy();
         await zkApp.propose(
           createChildProposal, ownerStore.getWitness(), owners[0].pub, ccSig0,
           nullifierStore.getWitness(ccHash, owners[0].pub), approvalStore.getWitness(ccHash),
         );
+        await zkApp.announceChildConfig(
+          ccHash, childAddress, ownersCommitment, thresholdField, numOwnersField,
+          new SetupOwnersInput({ owners: setupOwners }),
+          ownerStore.getWitness(), owners[0].pub, ccSig0,
+        );
       });
       await ccProposeTx.prove();
-      await ccProposeTx.sign([owners[0].key]).send();
+      await ccProposeTx.sign([owners[0].key, childKey]).send();
       nullifierStore.nullify(ccHash, owners[0].pub);
       approvalStore.setCount(ccHash, PROPOSED_MARKER.add(1));
 
@@ -605,10 +615,7 @@ describe('offline-cli e2e', () => {
       nullifierStore.nullify(ccHash, owners[1].pub);
       approvalStore.setCount(ccHash, ccCount.add(1));
 
-      const setupOwners = toFixedOwners(childOwners);
-      const atomicTx = await Mina.transaction(deployer.pub, async () => {
-        AccountUpdate.fundNewAccount(deployer.pub);
-        await childZkApp.deploy();
+      const executeTx = await Mina.transaction(deployer.pub, async () => {
         const funder = AccountUpdate.createSigned(deployer.pub);
         funder.send({ to: childAddress, amount: UInt64.from(10_000_000_000) });
         await childZkApp.executeSetupChild(
@@ -617,8 +624,8 @@ describe('offline-cli e2e', () => {
           createChildProposal, approvalStore.getWitness(ccHash), approvalStore.getCount(ccHash),
         );
       });
-      await atomicTx.prove();
-      await atomicTx.sign([deployer.key, childKey]).send();
+      await executeTx.prove();
+      await executeTx.sign([deployer.key]).send();
 
       // Build the enableChildMultiSig proposal struct (reused across tests)
       enableProposal = new TransactionProposal({
@@ -787,5 +794,313 @@ describe('offline-cli e2e', () => {
 
       console.log('[e2e] enableChildMultiSig execute OK');
     }, 900_000);
+  });
+
+  describe('child lifecycle (createChild, SKIP_PROOFS)', () => {
+    const skipEnv = { SKIP_PROOFS: '1' };
+    const childKey = PrivateKey.random();
+    const childAddr = childKey.toPublicKey();
+    const childOwnerAddrs = () => owners.map((o) => o.pub.toBase58()).sort();
+
+    let createChildProposalHash: string;
+
+    function accountsSnapshotForCreate() {
+      const snap: Record<string, unknown> = {
+        [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
+      };
+      for (const o of owners) snap[o.pub.toBase58()] = snapshotAccount(o.pub);
+      return snap;
+    }
+
+    async function parentEvents() {
+      const raw = await zkApp.fetchEvents();
+      return raw.map((e) => ({
+        eventType: e.type,
+        payload: JSON.parse(safeStringify(e.event.data)),
+      }));
+    }
+
+    const emptyKey = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+
+    const createChildProposalBundle = () => ({
+      proposalHash: createChildProposalHash,
+      proposer: owners[0].pub.toBase58(),
+      toAddress: null,
+      tokenId: '0',
+      txType: 'createChild',
+      data: configHash(),
+      nonce: '0',
+      configNonce: '0',
+      expiryBlock: '0',
+      networkId: '1',
+      guardAddress: zkAppAddress.toBase58(),
+      destination: 'remote',
+      childAccount: childAddr.toBase58(),
+      memoHash: '0',
+      receivers: [{ address: emptyKey, amount: '0' }],
+    });
+
+    function configHash(): string {
+      const childOS = new OwnerStore();
+      for (const addr of childOwnerAddrs()) childOS.addSorted(PublicKey.fromBase58(addr));
+      return Poseidon.hash([childOS.getCommitment(), Field(2), Field(owners.length)]).toString();
+    }
+
+    it('propose createChild', async () => {
+      const proposer = owners[0];
+      const bundle = {
+        version: 1,
+        action: 'propose',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(),
+        accounts: accountsSnapshotForCreate(),
+        events: await parentEvents(),
+        input: {
+          txType: 'createChild',
+          nonce: 0,
+          childAccount: childAddr.toBase58(),
+          createChildConfigHash: configHash(),
+          childPrivateKey: childKey.toBase58(),
+          childOwners: childOwnerAddrs(),
+          childThreshold: 2,
+        },
+        configNonce: 0,
+        networkId: '1',
+      };
+
+      const bundlePath = join(tmpDir, 'create-child-propose.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      console.log('[e2e] Running CLI: propose createChild (SKIP_PROOFS)...');
+      const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
+      console.log('[e2e] CLI stderr:', result.stderr);
+      if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
+
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      expect(output.type).toBe('offline-signed-tx');
+      expect(output.action).toBe('propose');
+      expect(output.proposalHash).toBeTruthy();
+      expect(output.transaction.feePayer.authorization).toBeTruthy();
+      createChildProposalHash = output.proposalHash;
+
+      // Verify child account update exists in the transaction
+      const childPk = childAddr.toBase58();
+      const childUpdate = output.transaction.accountUpdates?.find(
+        (au: any) => au.body?.publicKey === childPk,
+      );
+      expect(childUpdate).toBeTruthy();
+
+      // Execute propose on-chain to advance state for approve/execute
+      const childOwnersCommitment = (() => {
+        const cs = new OwnerStore();
+        for (const addr of childOwnerAddrs()) cs.addSorted(PublicKey.fromBase58(addr));
+        return cs.getCommitment();
+      })();
+      const createChildProposal = new TransactionProposal({
+        receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
+        tokenId: Field(0),
+        txType: TxType.CREATE_CHILD,
+        data: Poseidon.hash([childOwnersCommitment, Field(2), Field(owners.length)]),
+        nonce: Field(0),
+        configNonce: Field(0),
+        expirySlot: Field(0),
+        networkId: Field(1),
+        guardAddress: zkAppAddress,
+        destination: Destination.REMOTE,
+        childAccount: childAddr,
+        memoHash: Field(0),
+      });
+      const ccHash = createChildProposal.hash();
+      const sig = Signature.create(proposer.key, [ccHash]);
+      const setupOwners = toFixedOwners(owners.map((o) => o.pub));
+      const childZkApp = new MinaGuard(childAddr);
+      const propTx = await Mina.transaction(proposer.pub, async () => {
+        AccountUpdate.fundNewAccount(proposer.pub);
+        await childZkApp.deploy();
+        await zkApp.propose(
+          createChildProposal, ownerStore.getWitness(), proposer.pub, sig,
+          nullifierStore.getWitness(ccHash, proposer.pub), approvalStore.getWitness(ccHash),
+        );
+        await zkApp.announceChildConfig(
+          ccHash, childAddr, childOwnersCommitment, Field(2), Field(owners.length),
+          new SetupOwnersInput({ owners: setupOwners }),
+          ownerStore.getWitness(), proposer.pub, sig,
+        );
+      });
+      await propTx.prove();
+      await propTx.sign([proposer.key, childKey]).send();
+      nullifierStore.nullify(ccHash, proposer.pub);
+      approvalStore.setCount(ccHash, PROPOSED_MARKER.add(1));
+
+      console.log('[e2e] createChild propose OK, hash:', createChildProposalHash);
+    }, 120_000);
+
+    it('approve createChild', async () => {
+      expect(createChildProposalHash).toBeTruthy();
+      const approver = owners[1];
+
+      const bundle = {
+        version: 1,
+        action: 'approve',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: approver.pub.toBase58(),
+        accounts: accountsSnapshotForCreate(),
+        events: await parentEvents(),
+        proposal: createChildProposalBundle(),
+      };
+
+      const bundlePath = join(tmpDir, 'create-child-approve.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      console.log('[e2e] Running CLI: approve createChild (SKIP_PROOFS)...');
+      const result = await runCLI(bundlePath, approver.key.toBase58(), 600_000, skipEnv);
+      console.log('[e2e] CLI stderr:', result.stderr);
+      if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
+
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      expect(output.type).toBe('offline-signed-tx');
+      expect(output.action).toBe('approve');
+      expect(output.proposalHash).toBe(createChildProposalHash);
+
+      // Execute approve on-chain
+      const childOwnersCommitment = (() => {
+        const cs = new OwnerStore();
+        for (const addr of childOwnerAddrs()) cs.addSorted(PublicKey.fromBase58(addr));
+        return cs.getCommitment();
+      })();
+      const createChildProposal = new TransactionProposal({
+        receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
+        tokenId: Field(0),
+        txType: TxType.CREATE_CHILD,
+        data: Poseidon.hash([childOwnersCommitment, Field(2), Field(owners.length)]),
+        nonce: Field(0),
+        configNonce: Field(0),
+        expirySlot: Field(0),
+        networkId: Field(1),
+        guardAddress: zkAppAddress,
+        destination: Destination.REMOTE,
+        childAccount: childAddr,
+        memoHash: Field(0),
+      });
+      const pHash = createChildProposal.hash();
+      const approverSig = Signature.create(approver.key, [pHash]);
+      const currentCount = approvalStore.getCount(pHash);
+      const approveTx = await Mina.transaction(approver.pub, async () => {
+        await zkApp.approveProposal(
+          createChildProposal, approverSig, approver.pub, ownerStore.getWitness(),
+          approvalStore.getWitness(pHash), currentCount, nullifierStore.getWitness(pHash, approver.pub),
+        );
+      });
+      await approveTx.prove();
+      await approveTx.sign([approver.key]).send();
+      nullifierStore.nullify(pHash, approver.pub);
+      approvalStore.setCount(pHash, currentCount.add(1));
+
+      console.log('[e2e] createChild approve OK');
+    }, 120_000);
+
+    it('execute createChild', async () => {
+      expect(createChildProposalHash).toBeTruthy();
+      const executor = owners[2];
+
+      // Fund child so executeSetupChild can read its account
+      const fundTx = await Mina.transaction(deployer.pub, async () => {
+        const funder = AccountUpdate.createSigned(deployer.pub);
+        funder.send({ to: childAddr, amount: UInt64.from(10_000_000_000) });
+      });
+      await fundTx.prove();
+      await fundTx.sign([deployer.key]).send();
+
+      const childZkApp = new MinaGuard(childAddr);
+      const childRawEvents = await childZkApp.fetchEvents();
+      const childEvents = childRawEvents.map((e) => ({
+        eventType: e.type,
+        payload: JSON.parse(safeStringify(e.event.data)),
+      }));
+
+      const accounts = accountsSnapshotForCreate();
+      accounts[childAddr.toBase58()] = snapshotAccount(childAddr);
+
+      const bundle = {
+        version: 1,
+        action: 'execute',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: executor.pub.toBase58(),
+        accounts,
+        events: await parentEvents(),
+        proposal: createChildProposalBundle(),
+        receiverAccountExists: {},
+        childAddress: childAddr.toBase58(),
+        childEvents,
+        childOwners: childOwnerAddrs(),
+        childThreshold: 2,
+      };
+
+      const bundlePath = join(tmpDir, 'create-child-execute.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      console.log('[e2e] Running CLI: execute createChild (SKIP_PROOFS)...');
+      const result = await runCLI(bundlePath, executor.key.toBase58(), 600_000, skipEnv);
+      console.log('[e2e] CLI stderr:', result.stderr);
+      if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
+
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      expect(output.type).toBe('offline-signed-tx');
+      expect(output.action).toBe('execute');
+      expect(output.proposalHash).toBe(createChildProposalHash);
+      expect(output.transaction.feePayer.authorization).toBeTruthy();
+
+      console.log('[e2e] createChild execute OK');
+    }, 120_000);
+
+    it('rejects execute with tampered child config', async () => {
+      const executor = owners[2];
+
+      const childZkApp = new MinaGuard(childAddr);
+      const childRawEvents = await childZkApp.fetchEvents();
+      const childEvents = childRawEvents.map((e) => ({
+        eventType: e.type,
+        payload: JSON.parse(safeStringify(e.event.data)),
+      }));
+
+      const accounts = accountsSnapshotForCreate();
+      accounts[childAddr.toBase58()] = snapshotAccount(childAddr);
+
+      const bundle = {
+        version: 1,
+        action: 'execute',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: executor.pub.toBase58(),
+        accounts,
+        events: await parentEvents(),
+        proposal: createChildProposalBundle(),
+        receiverAccountExists: {},
+        childAddress: childAddr.toBase58(),
+        childEvents,
+        childOwners: [
+          PrivateKey.random().toPublicKey().toBase58(),
+          PrivateKey.random().toPublicKey().toBase58(),
+          PrivateKey.random().toPublicKey().toBase58(),
+        ].sort(),
+        childThreshold: 2,
+      };
+
+      const bundlePath = join(tmpDir, 'create-child-tampered.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      const result = await runCLI(bundlePath, executor.key.toBase58(), 600_000, skipEnv);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('config mismatch');
+    }, 120_000);
   });
 });

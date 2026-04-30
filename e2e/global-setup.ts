@@ -183,7 +183,7 @@ export default async function globalSetup() {
       log('Starting lightnet (this may take 1-2 minutes)...');
       try {
         // --pull=false: use the digest pinned by dev-helpers/pin-lightnet.sh.
-        execSync('zk lightnet start --pull=false --slot-time 3000', {
+        execSync('zk lightnet start --pull=false --slot-time 1000', {
           cwd: ROOT,
           stdio: 'inherit',
           timeout: 300_000,

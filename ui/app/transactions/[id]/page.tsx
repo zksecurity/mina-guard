@@ -17,8 +17,10 @@ import {
   approveProposalOnchain,
   executeProposalOnchain,
   executeChildLifecycleOnchain,
+  executeSetupChildOnchain,
   assertLedgerReady,
 } from '@/lib/multisigClient';
+import { fetchChildConfigFromEvents } from '@/lib/api';
 import {
   PENDING_TXS_CHANGED,
   getPendingTx,
@@ -280,9 +282,7 @@ export default function TransactionDetailPage() {
     }
     let success = false;
     await startOperation('Building execute transaction...', async (onProgress) => {
-      // REMOTE child-lifecycle proposals (RECLAIM/DESTROY/ENABLE) execute on the
-      // child guard, not the parent. CREATE_CHILD finalizes via the wizard's
-      // "Finalize deployment" path, not from this generic execute button.
+      const isCreateChild = captured.proposal.txType === 'createChild';
       const isRemoteLifecycle =
         captured.proposal.destination === 'remote' &&
         captured.proposal.childAccount &&
@@ -307,6 +307,24 @@ export default function TransactionDetailPage() {
         return result;
       };
 
+      if (isCreateChild) {
+        onProgress('Fetching child config from events...');
+        const childConfig = await fetchChildConfigFromEvents(
+          captured.contractAddress,
+          captured.proposal.proposalHash,
+        );
+        if (!childConfig) throw new Error('Child config not found in indexed events');
+        const result = await executeSetupChildOnchain({
+          parentAddress: captured.contractAddress,
+          childAddress: captured.proposal.childAccount!,
+          executorAddress: captured.executorAddress,
+          childOwners: childConfig.owners,
+          childThreshold: childConfig.threshold,
+          proposal: captured.proposal,
+        }, onProgress, signer);
+        return finalize(result);
+      }
+
       if (isRemoteLifecycle) {
         const result = await executeChildLifecycleOnchain({
           childAddress: captured.proposal.childAccount!,
@@ -315,10 +333,6 @@ export default function TransactionDetailPage() {
           proposal: captured.proposal,
         }, onProgress, signer);
         return finalize(result);
-      }
-
-      if (captured.proposal.txType === 'createChild') {
-        return 'CREATE_CHILD proposals finalize via the parent Vault detail page → Pending SubVaults → Finalize deployment.';
       }
 
       const result = await executeProposalOnchain({
@@ -698,16 +712,17 @@ export default function TransactionDetailPage() {
                           if (approvalAddresses.includes(offlineFeePayerAddress)) {
                             throw new Error('This address has already approved this proposal');
                           }
-                          const p = proposal!;
+                          const { expirySlot, ...p } = proposal!;
+                          const bundleProposal = { ...p, expiryBlock: expirySlot, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) };
                           return buildOfflineApproveBundle({
                             contractAddress: multisig!.address,
                             feePayerAddress: offlineFeePayerAddress,
-                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                            proposal: bundleProposal,
                           });
                         }}
                       />
                     )}
-                    {proposal.approvalCount >= threshold && proposal.txType !== 'createChild' && (
+                    {proposal.approvalCount >= threshold && (
                       <OfflineSigningFlow
                         action="execute"
                         label="Execute"
@@ -715,11 +730,12 @@ export default function TransactionDetailPage() {
                         cliBinaryName={cliBinaryName}
                         onBuildBundle={() => {
                           assertValidMinaAddress(offlineFeePayerAddress);
-                          const p = proposal!;
+                          const { expirySlot, ...p } = proposal!;
+                          const bundleProposal = { ...p, expiryBlock: expirySlot, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) };
                           return buildOfflineExecuteBundle({
                             contractAddress: multisig!.address,
                             feePayerAddress: offlineFeePayerAddress,
-                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                            proposal: bundleProposal,
                           });
                         }}
                       />
