@@ -150,6 +150,8 @@ export function useTransactions(multisigAddress: string | null) {
 
     if (!initialLoadDone.current) setIsLoading(true);
     try {
+      // Client-side filtering and pagination cannot show more than this cap; if
+      // a single vault exceeds 200 proposals we'll need a server-paginated mode.
       const rows = await fetchProposals(multisigAddress, { limit: 200, offset: 0 });
       // Bail if the address changed while fetching
       if (addressRef.current !== multisigAddress) return;
