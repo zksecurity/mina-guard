@@ -20,6 +20,7 @@ import {
 import {
   MAX_OWNERS,
   MAX_RECEIVERS,
+  INITIAL_OWNER_CHAIN,
   PROPOSED_MARKER,
   EXECUTED_MARKER,
   EMPTY_MERKLE_MAP_ROOT,
@@ -206,17 +207,41 @@ export class EnableChildMultiSigEvent extends Struct({
   enabled: Field,
 }) { }
 
+/** Emitted by reserveForParent to publish child vault config for a CREATE_CHILD proposal. */
+export class CreateChildConfigEvent extends Struct({
+  proposalHash: Field,
+  childAccount: PublicKey,
+  ownersCommitment: Field,
+  threshold: Field,
+  numOwners: Field,
+}) { }
+
+/** Emitted once per owner slot by reserveForParent (padded to MAX_OWNERS with empties). */
+export class CreateChildOwnerEvent extends Struct({
+  proposalHash: Field,
+  owner: PublicKey,
+  index: Field,
+}) { }
+
 // -- Contract ----------------------------------------------------------------
 
 /**
- * MinaGuard multisig contract.
- * Stores compact roots and counters on-chain while using witnesses for membership and approvals.
+ * MinaGuard — hierarchical multisig vault for Mina.
  *
- * A guard can operate either as a root (parent = PublicKey.empty()) or as a
- * child linked to a parent. Child guards authorize lifecycle operations
- * (reclaim, destroy, enable/disable policy) by reading the parent's on-chain
- * approval state as AccountUpdate preconditions and verifying a Merkle
- * witness proving the parent accumulated enough approvals.
+ * Lifecycle: deploy() → setup() → propose() → approveProposal() → execute*()
+ *
+ * A guard can be a **root** (parent = empty) or a **child** linked to a parent.
+ * Root guards can create, fund, reclaim from, and destroy children.
+ * Children cannot themselves be parents (hierarchy capped at 2 levels).
+ *
+ * Proposal types:
+ *   LOCAL  — proposed, approved, and executed on the same guard
+ *            (TRANSFER, ADD_OWNER, REMOVE_OWNER, CHANGE_THRESHOLD, SET_DELEGATE, ALLOCATE_CHILD)
+ *   REMOTE — proposed/approved on the parent, executed on the child
+ *            (CREATE_CHILD, RECLAIM_CHILD, DESTROY_CHILD, ENABLE_CHILD_MULTI_SIG)
+ *
+ * Execution is permissionless — anyone can call execute*() once threshold is met.
+ * All state is reconstructable from events alone.
  */
 export class MinaGuard extends SmartContract {
   @state(Field) ownersCommitment = State<Field>();
@@ -246,6 +271,8 @@ export class MinaGuard extends SmartContract {
     createChild: CreateChildEvent,
     reclaimChild: ReclaimChildEvent,
     enableChildMultiSig: EnableChildMultiSigEvent,
+    createChildConfig: CreateChildConfigEvent,
+    createChildOwner: CreateChildOwnerEvent,
   };
 
   /** Configures account permissions and emits a deploy discovery event. */
@@ -688,6 +715,7 @@ export class MinaGuard extends SmartContract {
     networkId: Field,
     initialOwners: SetupOwnersInput
   ) {
+    this.parent.requireEquals(PublicKey.empty());
     this.initializeState(
       ownersCommitment,
       threshold,
@@ -701,6 +729,48 @@ export class MinaGuard extends SmartContract {
   }
 
   /**
+   * Reserves a freshly-deployed child for a specific parent and publishes
+   * the intended owner list.
+   *
+   * Called on the **child** contract in the same transaction as deploy() +
+   * parent.propose(). Sets this.parent so that setup() is blocked and only
+   * executeSetupChild (which verifies the parent) can initialize the child.
+   *
+   * Can only be called once (parent must be empty).
+   */
+  @method async reserveForParent(
+    parentAddress: PublicKey,
+    proposalHash: Field,
+    ownersCommitment: Field,
+    threshold: Field,
+    numOwners: Field,
+    initialOwners: SetupOwnersInput,
+  ) {
+    this.ownersCommitment.requireEquals(Field(0));
+    this.parent.requireEquals(PublicKey.empty());
+    parentAddress.equals(PublicKey.empty()).assertFalse('Parent address must not be empty');
+    this.parent.set(parentAddress);
+
+    this.emitEvent('createChildConfig', {
+      proposalHash,
+      childAccount: this.address,
+      ownersCommitment,
+      threshold,
+      numOwners,
+    });
+
+    for (let i = 0; i < MAX_OWNERS; i++) {
+      const index = Field(i);
+      const active = index.lessThan(numOwners);
+      this.emitEvent('createChildOwner', {
+        proposalHash,
+        owner: Provable.if(active, PublicKey, initialOwners.owners[i], PublicKey.empty()),
+        index,
+      });
+    }
+  }
+
+  /**
    * Initializes a child guard linked to a parent.
    *
    * The parent must have a CREATE_CHILD proposal approved to threshold.
@@ -708,14 +778,8 @@ export class MinaGuard extends SmartContract {
    * verifies the approval witness. Idempotency is guarded by the
    * `ownersCommitment == 0` check inside `initializeState`.
    *
-   * ⚠️ DEPLOY-TIME RACE — callers MUST batch this call into the same Mina
-   * transaction as the child's `deploy()`. After `deploy()` lands on-chain,
-   * the child sits with `ownersCommitment == 0` and anyone in the mempool
-   * can call `executeSetupChild` with a proposal bound to an attacker-
-   * controlled "parent" address, permanently binding the child to a hostile
-   * parent. Keeping deploy + executeSetupChild in a single tx eliminates
-   * that mempool window. See `deployAndSetupChildGuard` in
-   * `tests/test-helpers.ts` for the safe pattern.
+   * The child is reserved for this parent at propose time via
+   * reserveForParent(), which sets this.parent and blocks setup().
    */
   @method async executeSetupChild(
     ownersCommitment: Field,
@@ -729,7 +793,8 @@ export class MinaGuard extends SmartContract {
     const parentAddress = proposal.guardAddress;
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address required');
 
-    // Bind proposal to the CREATE_CHILD txType + this child's address + this child's config.
+    this.parent.getAndRequireEquals().assertEquals(parentAddress);
+
     proposal.txType.assertEquals(TxType.CREATE_CHILD, 'Not a create child tx');
     proposal.destination.assertEquals(Destination.REMOTE, 'Not a remote execution proposal');
     proposal.childAccount.equals(this.address).assertTrue('Proposal not for this child');
@@ -738,11 +803,9 @@ export class MinaGuard extends SmartContract {
     const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
     proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
 
-    // this.parent isn't persisted yet, so call the shared helper directly
-    // with the proposal's guardAddress as the authority. The helper pins the
-    // parent's networkId as a precondition, so proposal.networkId is the
-    // parent-approved value — use it as the child's networkId instead of an
-    // attacker-supplied method argument.
+    // The helper pins the parent's networkId as a precondition, so
+    // proposal.networkId is the parent-approved value — use it as the
+    // child's networkId instead of an attacker-supplied method argument.
     const proposalHash = this.assertParentApprovalState(
       proposal,
       parentAddress,
@@ -773,7 +836,14 @@ export class MinaGuard extends SmartContract {
   }
 
   /**
-   * Proposes a new transaction and records the proposer's first approval.
+   * Proposes a new transaction and auto-approves as the proposer's first vote.
+   *
+   * The proposer must be an owner and sign the proposalHash. The proposal's
+   * nonce must be fresh for its execution domain (LOCAL: > this.nonce,
+   * REMOTE: > child.parentNonce, CREATE_CHILD: exactly 0).
+   *
+   * For CREATE_CHILD: call deploy() + reserveForParent() on the child
+   * in the same transaction.
    */
   @method async propose(
     proposal: TransactionProposal,
@@ -901,7 +971,12 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  /** Verifies and records a non-proposer owner approval for an existing proposal. */
+  /**
+   * Records an additional owner approval for an existing proposal.
+   *
+   * The approver must be an owner who hasn't already voted on this proposal.
+   * Increments the approval count in the approval map.
+   */
   @method async approveProposal(
     proposal: TransactionProposal,
     signature: Signature,
@@ -958,7 +1033,10 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  /** Executes transfer proposals once threshold and lifecycle checks pass. */
+  /**
+   * Executes a TRANSFER proposal, sending MINA to up to MAX_RECEIVERS recipients.
+   * Permissionless — anyone can call once threshold approvals are met.
+   */
   @method async executeTransfer(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
@@ -993,6 +1071,10 @@ export class MinaGuard extends SmartContract {
     });
   }
 
+  /**
+   * Executes an ALLOCATE_CHILD proposal, sending MINA from parent to child addresses.
+   * Same mechanics as executeTransfer but with ALLOCATE_CHILD txType.
+   */
   @method async executeAllocateToChildren(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
@@ -1027,7 +1109,11 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  /** Executes owner add/remove proposals and updates config nonce after success. */
+  /**
+   * Executes an ADD_OWNER or REMOVE_OWNER proposal.
+   * The target owner pubkey is in receivers[0]. Bumps configNonce,
+   * which invalidates any pending proposals that used the old configNonce.
+   */
   @method async executeOwnerChange(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
@@ -1096,7 +1182,10 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  /** Executes threshold change proposals and bumps config nonce on success. */
+  /**
+   * Executes a CHANGE_THRESHOLD proposal. New threshold is in proposal.data.
+   * Bumps configNonce, invalidating pending proposals with the old configNonce.
+   */
   @method async executeThresholdChange(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
@@ -1156,7 +1245,10 @@ export class MinaGuard extends SmartContract {
     });
   }
 
-  /** Executes delegate/undelegate proposals once threshold and data checks pass. */
+  /**
+   * Executes a SET_DELEGATE proposal. Delegate address is in receivers[0];
+   * empty receivers[0] undelegates (sets delegate to self). Does not bump configNonce.
+   */
   @method async executeDelegate(
     proposal: TransactionProposal,
     approvalWitness: MerkleMapWitness,
@@ -1205,11 +1297,11 @@ export class MinaGuard extends SmartContract {
   // -- Child Lifecycle Methods (REMOTE proposals, run on the child) ---------
 
   /**
-   * Child reclaims a specified amount of MINA to its parent.
+   * Sends a specified amount of MINA from this child back to its parent.
    *
-   * The RECLAIM_CHILD proposal is proposed and approved on the parent.
-   * The child reads the parent's approval state as preconditions and
-   * verifies the approval witness, then sends the funds.
+   * Proposed/approved on the parent, executed here on the child.
+   * proposal.data must equal the reclaim amount. Does not check
+   * childMultiSigEnabled — this is a recovery path that always works.
    */
   @method async executeReclaimToParent(
     proposal: TransactionProposal,
@@ -1256,11 +1348,11 @@ export class MinaGuard extends SmartContract {
   }
 
   /**
-   * Destroys the child: sends full balance to parent and disables the
-   * child's multisig policy. After destruction the child is inert —
-   * propose/approve/execute are all blocked by
-   * assertChildMultiSigEnabledIfChild, but parent-authorized lifecycle
-   * methods remain callable.
+   * Sends the child's full balance to its parent and disables multisig.
+   *
+   * After destruction, the child's own propose/approve/execute are blocked,
+   * but parent-authorized lifecycle methods (reclaim, enable) still work.
+   * The child can be re-enabled via executeEnableChildMultiSig.
    */
   @method async executeDestroy(
     proposal: TransactionProposal,
@@ -1313,8 +1405,11 @@ export class MinaGuard extends SmartContract {
   }
 
   /**
-   * Toggles the child's independent multisig policy on/off. `enabled == 0`
-   * blocks all child-local multisig ops; `enabled == 1` re-enables them.
+   * Toggles the child's independent multisig on (1) or off (0).
+   *
+   * When disabled, the child cannot propose/approve/execute its own
+   * transactions — only parent-authorized lifecycle ops work.
+   * proposal.data must equal the enabled flag (0 or 1).
    */
   @method async executeEnableChildMultiSig(
     proposal: TransactionProposal,

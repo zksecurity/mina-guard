@@ -68,6 +68,31 @@ jobs:
       - name: Build offline-cli binary
         run: cd offline-cli && bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/mina-guard-cli-linux-x64 --define 'process.versions.node=""'
 
+  test-offline-cli-macos:
+    timeout-minutes: 30
+    runs-on: macos-latest
+    steps:
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Git checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Install dependencies
+        run: bun install --ignore-scripts
+      - name: Build mina-signer
+        working-directory: ui/deps/o1js/src/mina-signer
+        run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
+      - name: Build contracts
+        run: bun run --filter contracts build
+      - name: Run offline-cli unit tests
+        working-directory: offline-cli
+        run: bun test src/tests/offline-cli.test.ts
+      - name: Run offline-cli e2e test (with proofs)
+        working-directory: offline-cli
+        run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
+        timeout-minutes: 20
+
   test-offline-cli-windows:
     timeout-minutes: 30
     runs-on: windows-latest
@@ -85,20 +110,10 @@ jobs:
         run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
       - name: Build contracts
         run: bun run --filter contracts build
-      - name: Run offline-cli tests
+      - name: Run offline-cli unit tests
         working-directory: offline-cli
-        run: bun test
-        env:
-          SKIP_PROOFS: '1'
-
-      # Enable the following block if you also want to use the Lightnet in your tests.
-      #
-      # - name: Upload Mina logs
-      #   uses: actions/upload-artifact@v4
-      #   continue-on-error: true
-      #   if: always()
-      #   with:
-      #     if-no-files-found: ignore
-      #     name: mina-logs-node${{ matrix.node }}-${{ matrix.os }}
-      #     path: /tmp/*.log
-      #     retention-days: 5
+        run: bun test src/tests/offline-cli.test.ts
+      - name: Run offline-cli e2e test (with proofs)
+        working-directory: offline-cli
+        run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
+        timeout-minutes: 20
