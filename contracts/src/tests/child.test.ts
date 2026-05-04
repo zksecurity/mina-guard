@@ -123,11 +123,24 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const setupOwners = toFixedSetupOwners(childOwners);
 
-      // Atomic deploy + executeSetupChild, matching the safe pattern.
+      // Reserve the child for the parent first.
+      const reserveTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          proposal.hash(),
+          ownersCommitment,
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await reserveTxn.prove();
+      await reserveTxn.sign([parentCtx.deployerKey, childKey]).send();
+
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
-          await childZkApp.deploy();
           await childZkApp.executeSetupChild(
             ownersCommitment,
             Field(2),
@@ -139,7 +152,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           );
         });
         await txn.prove();
-        await txn.sign([parentCtx.deployerKey, childKey]).send();
+        await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Insufficient approvals');
     });
 
@@ -206,10 +219,24 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const setupOwners = toFixedSetupOwners(childOwners);
 
+      // Reserve the child for the parent first (deploy + reserveForParent).
+      const reserveTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          badProposal.hash(),
+          ownersCommitment,
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await reserveTxn.prove();
+      await reserveTxn.sign([parentCtx.deployerKey, childKey]).send();
+
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
-          await childZkApp.deploy();
           await childZkApp.executeSetupChild(
             ownersCommitment,
             Field(2),
@@ -221,7 +248,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           );
         });
         await txn.prove();
-        await txn.sign([parentCtx.deployerKey, childKey]).send();
+        await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Child config mismatch');
     });
 

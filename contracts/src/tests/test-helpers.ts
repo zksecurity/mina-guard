@@ -631,7 +631,7 @@ export async function proposeAndApproveOnParent(
  * Full CREATE_CHILD flow: deploys the child at propose time (with the
  * proposer tx), runs approval txs, then executeSetupChild separately.
  *
- * Tx 1 (propose):  deploy child + propose() + announceChildConfig()
+ * Tx 1 (propose):  deploy child + reserveForParent() + propose()
  * Tx 2..N (approve): approveProposal() for remaining signers
  * Tx N+1 (execute): executeSetupChild() + fund child (for subsequent test operations)
  */
@@ -666,7 +666,7 @@ export async function deployAndSetupChildGuard(
 
   const proposalHash = proposal.hash();
 
-  // -- Tx 1: deploy child + propose + announceChildConfig --
+  // -- Tx 1: deploy child + reserveForParent + propose --
   if (signerIndices.length === 0) {
     throw new Error('deployAndSetupChildGuard: need at least one signer');
   }
@@ -684,6 +684,14 @@ export async function deployAndSetupChildGuard(
   const proposeTxn = await Mina.transaction(proposer.pub, async () => {
     AccountUpdate.fundNewAccount(proposer.pub);
     await childZkApp.deploy();
+    await childZkApp.reserveForParent(
+      parentAddress,
+      proposalHash,
+      ownersCommitment,
+      thresholdField,
+      numOwnersField,
+      new SetupOwnersInput({ owners: setupOwners }),
+    );
     await parentContract.propose(
       proposal,
       ownerWitness,
@@ -691,17 +699,6 @@ export async function deployAndSetupChildGuard(
       sig,
       nullifierWitness,
       approvalWitness,
-    );
-    await parentContract.announceChildConfig(
-      proposalHash,
-      childAddress,
-      ownersCommitment,
-      thresholdField,
-      numOwnersField,
-      new SetupOwnersInput({ owners: setupOwners }),
-      ownerWitness,
-      proposer.pub,
-      sig,
     );
   });
   await proposeTxn.prove();

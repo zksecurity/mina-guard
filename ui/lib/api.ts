@@ -389,13 +389,13 @@ export function parseChildConfigFromEvents(
 
 /**
  * Fetches the child vault configuration for a CREATE_CHILD proposal
- * from the parent's createChildConfig/createChildOwner events.
+ * from the child's createChildConfig/createChildOwner events.
  */
 export async function fetchChildConfigFromEvents(
-  parentAddress: string,
+  childAddress: string,
   proposalHash: string,
 ): Promise<{ owners: string[]; threshold: number } | null> {
-  const events = await fetchAllEvents(parentAddress);
+  const events = await fetchAllEvents(childAddress);
   return parseChildConfigFromEvents(events, proposalHash);
 }
 

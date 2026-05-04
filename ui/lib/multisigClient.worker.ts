@@ -824,8 +824,8 @@ const workerApi = {
    * the detail page AND persist a pending-create entry for the in-flight tx.
    *
    * For CREATE_CHILD proposals, the same transaction also deploys the child
-   * contract and calls announceChildConfig() on the parent to publish the
-   * child's owner list for later execution.
+   * contract and calls reserveForParent() on the child to reserve it and
+   * publish the owner list for later execution.
    */
   async createOnchainProposal(
     params: {
@@ -941,12 +941,20 @@ const workerApi = {
     clearStaleTransaction();
     const proposalMemo = params.input.memo ?? undefined;
     const tx = await Mina.transaction(txSender(proposer, proposalMemo), async () => {
-      // For CREATE_CHILD: deploy child contract in the same tx
-      if (isCreateChild && childKey) {
+      // For CREATE_CHILD: deploy + reserve child in the same tx
+      if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
         const childAddress = childKey.toPublicKey();
         const childZkApp = new MinaGuard(childAddress);
         AccountUpdate.fundNewAccount(proposer);
         await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          contractAddress,
+          proposalHash,
+          childOwnerStore.getCommitment(),
+          Field(params.childThreshold!),
+          Field(params.childOwners!.length),
+          new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
+        );
       }
 
       await contract.propose(
@@ -957,21 +965,6 @@ const workerApi = {
         nullifierWitness,
         approvalWitness
       );
-
-      // For CREATE_CHILD: announce child config so the indexer stores it
-      if (isCreateChild && childOwnerStore && childPaddedOwners) {
-        await contract.announceChildConfig(
-          proposalHash,
-          proposal.childAccount,
-          childOwnerStore.getCommitment(),
-          Field(params.childThreshold!),
-          Field(params.childOwners!.length),
-          new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
-          ownerWitness,
-          proposer,
-          signature,
-        );
-      }
     });
 
     console.log('[prove env] ' + JSON.stringify({

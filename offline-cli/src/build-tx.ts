@@ -721,11 +721,19 @@ export async function handlePropose(
   const contract = new MinaGuard(contractAddress);
 
   const tx = await Mina.transaction(txSender(proposer), async () => {
-    if (isCreateChild && childKey) {
+    if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
       const childAddress = childKey.toPublicKey();
       const childZkApp = new MinaGuard(childAddress);
       AccountUpdate.fundNewAccount(proposer);
       await childZkApp.deploy();
+      await childZkApp.reserveForParent(
+        contractAddress,
+        proposalHash,
+        childOwnerStore.getCommitment(),
+        Field(input.childThreshold!),
+        Field(input.childOwners!.length),
+        new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
+      );
     }
 
     await contract.propose(
@@ -736,20 +744,6 @@ export async function handlePropose(
       nullifierWitness,
       approvalWitness,
     );
-
-    if (isCreateChild && childOwnerStore && childPaddedOwners) {
-      await contract.announceChildConfig(
-        proposalHash,
-        proposal.childAccount,
-        childOwnerStore.getCommitment(),
-        Field(input.childThreshold!),
-        Field(input.childOwners!.length),
-        new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
-        ownerWitness,
-        proposer,
-        signature,
-      );
-    }
   });
 
   // Prove

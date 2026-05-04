@@ -302,7 +302,8 @@ export async function buildOfflineExecuteBundle(params: {
 
   if (isCreateChild && childAddr) {
     childAddress = childAddr;
-    const config = parseChildConfigFromEvents(events, params.proposal.proposalHash);
+    childEvents = await fetchAllEvents(childAddress);
+    const config = parseChildConfigFromEvents(childEvents, params.proposal.proposalHash);
     if (!config) {
       throw new Error(
         'SubVault config events not found for this proposal. ' +

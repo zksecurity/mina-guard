@@ -207,7 +207,7 @@ export class EnableChildMultiSigEvent extends Struct({
   enabled: Field,
 }) { }
 
-/** Emitted by announceChildConfig to publish child vault config for a CREATE_CHILD proposal. */
+/** Emitted by reserveForParent to publish child vault config for a CREATE_CHILD proposal. */
 export class CreateChildConfigEvent extends Struct({
   proposalHash: Field,
   childAccount: PublicKey,
@@ -216,7 +216,7 @@ export class CreateChildConfigEvent extends Struct({
   numOwners: Field,
 }) { }
 
-/** Emitted once per owner slot by announceChildConfig (padded to MAX_OWNERS with empties). */
+/** Emitted once per owner slot by reserveForParent (padded to MAX_OWNERS with empties). */
 export class CreateChildOwnerEvent extends Struct({
   proposalHash: Field,
   owner: PublicKey,
@@ -715,6 +715,7 @@ export class MinaGuard extends SmartContract {
     networkId: Field,
     initialOwners: SetupOwnersInput
   ) {
+    this.parent.requireEquals(PublicKey.empty());
     this.initializeState(
       ownersCommitment,
       threshold,
@@ -728,35 +729,30 @@ export class MinaGuard extends SmartContract {
   }
 
   /**
-   * Publishes the child vault's intended owner list for a CREATE_CHILD proposal.
+   * Reserves a freshly-deployed child for a specific parent and publishes
+   * the intended owner list.
    *
-   * Must be called in the same transaction as propose() + child deploy().
-   * Emits createChildConfig + 20 createChildOwner events on the parent so the
-   * indexer knows the child's config before executeSetupChild runs.
+   * Called on the **child** contract in the same transaction as deploy() +
+   * parent.propose(). Sets this.parent so that setup() is blocked and only
+   * executeSetupChild (which verifies the parent) can initialize the child.
    *
-   * Requires: root guard, caller is a parent owner, valid signature over proposalHash.
-   * The same ownerWitness and signature used for propose() can be reused here.
+   * Can only be called once (parent must be empty).
    */
-  @method async announceChildConfig(
+  @method async reserveForParent(
+    parentAddress: PublicKey,
     proposalHash: Field,
-    childAccount: PublicKey,
     ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
     initialOwners: SetupOwnersInput,
-    ownerWitness: OwnerWitness,
-    caller: PublicKey,
-    signature: Signature,
   ) {
-    this.parent.getAndRequireEquals().equals(PublicKey.empty())
-      .assertTrue('Only root guards can announce child config');
-    const parentCommitment = this.getInitializedOwnersCommitment();
-    this.assertOwnerMembership(caller, ownerWitness, parentCommitment);
-    signature.verify(caller, [proposalHash]).assertTrue('Invalid signature');
+    this.parent.requireEquals(PublicKey.empty());
+    parentAddress.equals(PublicKey.empty()).assertFalse('Parent address must not be empty');
+    this.parent.set(parentAddress);
 
     this.emitEvent('createChildConfig', {
       proposalHash,
-      childAccount,
+      childAccount: this.address,
       ownersCommitment,
       threshold,
       numOwners,
@@ -781,11 +777,8 @@ export class MinaGuard extends SmartContract {
    * verifies the approval witness. Idempotency is guarded by the
    * `ownersCommitment == 0` check inside `initializeState`.
    *
-   * The child contract is deployed at propose time and sits uninitialized
-   * until this method is called at execute time. During this window, an
-   * attacker could call `setup()` or `executeSetupChild` with their own
-   * parameters — this is accepted as low-severity griefing (the child is
-   * empty, the parent is unaffected, recovery is a new proposal).
+   * The child is reserved for this parent at propose time via
+   * reserveForParent(), which sets this.parent and blocks setup().
    */
   @method async executeSetupChild(
     ownersCommitment: Field,
@@ -799,7 +792,8 @@ export class MinaGuard extends SmartContract {
     const parentAddress = proposal.guardAddress;
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address required');
 
-    // Bind proposal to the CREATE_CHILD txType + this child's address + this child's config.
+    this.parent.getAndRequireEquals().assertEquals(parentAddress);
+
     proposal.txType.assertEquals(TxType.CREATE_CHILD, 'Not a create child tx');
     proposal.destination.assertEquals(Destination.REMOTE, 'Not a remote execution proposal');
     proposal.childAccount.equals(this.address).assertTrue('Proposal not for this child');
@@ -808,11 +802,9 @@ export class MinaGuard extends SmartContract {
     const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
     proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
 
-    // this.parent isn't persisted yet, so call the shared helper directly
-    // with the proposal's guardAddress as the authority. The helper pins the
-    // parent's networkId as a precondition, so proposal.networkId is the
-    // parent-approved value — use it as the child's networkId instead of an
-    // attacker-supplied method argument.
+    // The helper pins the parent's networkId as a precondition, so
+    // proposal.networkId is the parent-approved value — use it as the
+    // child's networkId instead of an attacker-supplied method argument.
     const proposalHash = this.assertParentApprovalState(
       proposal,
       parentAddress,
@@ -849,8 +841,8 @@ export class MinaGuard extends SmartContract {
    * nonce must be fresh for its execution domain (LOCAL: > this.nonce,
    * REMOTE: > child.parentNonce, CREATE_CHILD: exactly 0).
    *
-   * For CREATE_CHILD: call deploy() on the child and announceChildConfig()
-   * on the parent in the same transaction.
+   * For CREATE_CHILD: call deploy() + reserveForParent() on the child
+   * in the same transaction.
    */
   @method async propose(
     proposal: TransactionProposal,

@@ -564,7 +564,7 @@ describe('offline-cli e2e', () => {
       const thresholdField = Field(2);
       const numOwnersField = Field(childOwners.length);
 
-      // CREATE_CHILD: deploy child + propose + announceChildConfig in one tx,
+      // CREATE_CHILD: deploy child + reserveForParent + propose in one tx,
       // then approve, then executeSetupChild separately.
       const createChildProposal = new TransactionProposal({
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
@@ -587,14 +587,13 @@ describe('offline-cli e2e', () => {
       const ccProposeTx = await Mina.transaction(owners[0].pub, async () => {
         AccountUpdate.fundNewAccount(owners[0].pub);
         await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          zkAppAddress, ccHash, ownersCommitment, thresholdField, numOwnersField,
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
         await zkApp.propose(
           createChildProposal, ownerStore.getWitness(), owners[0].pub, ccSig0,
           nullifierStore.getWitness(ccHash, owners[0].pub), approvalStore.getWitness(ccHash),
-        );
-        await zkApp.announceChildConfig(
-          ccHash, childAddress, ownersCommitment, thresholdField, numOwnersField,
-          new SetupOwnersInput({ owners: setupOwners }),
-          ownerStore.getWitness(), owners[0].pub, ccSig0,
         );
       });
       await ccProposeTx.prove();
@@ -920,14 +919,13 @@ describe('offline-cli e2e', () => {
       const propTx = await Mina.transaction(proposer.pub, async () => {
         AccountUpdate.fundNewAccount(proposer.pub);
         await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          zkAppAddress, ccHash, childOwnersCommitment, Field(2), Field(owners.length),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
         await zkApp.propose(
           createChildProposal, ownerStore.getWitness(), proposer.pub, sig,
           nullifierStore.getWitness(ccHash, proposer.pub), approvalStore.getWitness(ccHash),
-        );
-        await zkApp.announceChildConfig(
-          ccHash, childAddr, childOwnersCommitment, Field(2), Field(owners.length),
-          new SetupOwnersInput({ owners: setupOwners }),
-          ownerStore.getWitness(), proposer.pub, sig,
         );
       });
       await propTx.prove();

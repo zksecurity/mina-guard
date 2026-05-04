@@ -308,15 +308,17 @@ export default function TransactionDetailPage() {
       };
 
       if (isCreateChild) {
+        const childAddr = captured.proposal.childAccount;
+        if (!childAddr) throw new Error('createChild proposal missing childAccount');
         onProgress('Fetching child config from events...');
         const childConfig = await fetchChildConfigFromEvents(
-          captured.contractAddress,
+          childAddr,
           captured.proposal.proposalHash,
         );
         if (!childConfig) throw new Error('Child config not found in indexed events');
         const result = await executeSetupChildOnchain({
           parentAddress: captured.contractAddress,
-          childAddress: captured.proposal.childAccount!,
+          childAddress: childAddr,
           executorAddress: captured.executorAddress,
           childOwners: childConfig.owners,
           childThreshold: childConfig.threshold,
