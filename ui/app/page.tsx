@@ -98,6 +98,7 @@ function AccountsListPageInner() {
   const { contracts, allContractOwners, wallet } = useAppContext();
 
   const [urlQuery, setUrlQuery] = useUrlState('search');
+  const [urlPageSize, setUrlPageSize] = useUrlState('pageSize');
   const [query, setQuery] = useState<string>(urlQuery ?? '');
   const debouncedQuery = useDebouncedValue(query, 200);
 
@@ -163,8 +164,18 @@ function AccountsListPageInner() {
     // matches closes over q; tracked via debouncedQuery dep below
   }, [forest, q]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Restore the user's prior visible-count from the URL on mount.
+  const initialCount = (() => {
+    const n = urlPageSize ? Number(urlPageSize) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : PAGE_SIZE;
+  })();
   const { visible: visibleRoots, hasMore, visibleCount, loadMore, reset } =
-    useLoadMore(filteredRoots, PAGE_SIZE);
+    useLoadMore(filteredRoots, PAGE_SIZE, initialCount);
+
+  // Persist visibleCount to URL so refresh/share restores the user's page.
+  useEffect(() => {
+    setUrlPageSize(visibleCount === PAGE_SIZE ? null : String(visibleCount));
+  }, [visibleCount, setUrlPageSize]);
 
   // Reset pagination when the search filter changes.
   useEffect(() => {
@@ -269,7 +280,7 @@ function AccountsListPageInner() {
             </ul>
             <LoadMore visibleCount={visibleCount} totalCount={filteredRoots.length} onClick={loadMore} />
             {!hasMore && filteredRoots.length > PAGE_SIZE && (
-              <p className="text-center text-[10px] text-safe-text pb-4">
+              <p className="text-center text-[10px] text-safe-text mt-6 pb-4">
                 Showing all {filteredRoots.length}
               </p>
             )}

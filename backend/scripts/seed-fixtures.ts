@@ -14,6 +14,7 @@
  */
 
 import { PrivateKey, PublicKey } from 'o1js';
+import { memoToField } from 'contracts';
 import { prisma } from '../src/db.js';
 
 interface Args {
@@ -169,6 +170,7 @@ async function seedVault(spec: VaultSpec, walletAddresses: string[]): Promise<vo
       networkId: '0',
       guardAddress: spec.address,
       memo,
+      memoHash: memoToField(memo).toString(),
       destination: 'local',
       createdAtBlock: 1000 + i,
       // Skew createdAt so newest-first sort is meaningful; older ones first.

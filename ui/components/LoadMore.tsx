@@ -9,7 +9,7 @@ interface LoadMoreProps {
 export default function LoadMore({ visibleCount, totalCount, onClick }: LoadMoreProps) {
   if (visibleCount >= totalCount) return null;
   return (
-    <div className="flex flex-col items-center gap-1 py-3">
+    <div className="flex flex-col items-center gap-1 mt-6 py-3">
       <button
         type="button"
         onClick={onClick}

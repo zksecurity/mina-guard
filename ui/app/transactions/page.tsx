@@ -173,7 +173,7 @@ function TransactionsPageInner() {
               onClick={loadMore}
             />
             {!hasMore && filtered.length > PAGE_SIZE && (
-              <p className="text-center text-[10px] text-safe-text">
+              <p className="text-center text-[10px] text-safe-text mt-6">
                 Showing all {filtered.length}
               </p>
             )}

@@ -10,10 +10,6 @@ import { formatMina, truncateAddress, type ContractSummary } from '@/lib/types';
 interface VaultCardProps {
   contract: ContractSummary;
   isOwner?: boolean;
-  /** When true, render the chevron toggle for tree expansion. */
-  expandable?: boolean;
-  expanded?: boolean;
-  onToggle?: () => void;
   /** Hides the balance fetch — useful in dense grids where the extra round-trip per card matters. */
   showBalance?: boolean;
   /** Visually marks this card as a child/sub-vault. */
@@ -23,9 +19,6 @@ interface VaultCardProps {
 export default function VaultCard({
   contract,
   isOwner = true,
-  expandable = false,
-  expanded = false,
-  onToggle,
   showBalance = true,
   isChild = false,
 }: VaultCardProps) {
@@ -88,27 +81,6 @@ export default function VaultCard({
             </p>
           </div>
 
-          {expandable && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onToggle?.();
-              }}
-              className="w-6 h-6 flex items-center justify-center text-safe-text hover:text-white shrink-0 -mr-1"
-              aria-label={expanded ? 'Collapse' : 'Expand'}
-            >
-              <svg
-                className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          )}
         </div>
 
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-safe-border/60">
@@ -118,10 +90,8 @@ export default function VaultCard({
             <span className="text-xs text-safe-text">—</span>
           )}
           {showBalance && (
-            <div className="text-right">
-              <span className="text-sm font-semibold">
-                {balance !== null ? formatMina(balance) : '—'}
-              </span>
+            <div className="text-right whitespace-nowrap">
+              <span className="text-sm font-semibold">{formatMina(balance)}</span>
               <span className="text-[10px] text-safe-text ml-1">MINA</span>
             </div>
           )}
