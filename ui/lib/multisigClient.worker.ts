@@ -50,6 +50,12 @@ import {
 import {
   fetchAllEvents,
 } from './api';
+import {
+  estimateZkappFee,
+  MIN_FEE_PER_AU,
+  EMPTY_MEMPOOL_FALLBACK_FEE,
+  DEFAULT_AU_ESTIMATE,
+} from './mempoolFee';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
 type SendTxFn = (txJson: string, memo?: string) => Promise<string | null>;
@@ -69,8 +75,39 @@ type ProgressFn = (step: string) => void;
 const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'https://api.minascan.io/node/devnet/v1/graphql';
 const ARCHIVE_ENDPOINT = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
 
-// TODO: make fee configurable per network (e.g. from env or UI input)
-const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
+// Fee constants (MIN_FEE_PER_AU, EMPTY_MEMPOOL_FALLBACK_FEE, DEFAULT_AU_ESTIMATE)
+// are imported from ./mempoolFee.
+
+async function getFee(): Promise<number> {
+  const floor = Math.ceil(MIN_FEE_PER_AU * DEFAULT_AU_ESTIMATE);
+  try {
+    const estimate = await estimateZkappFee(MINA_ENDPOINT, DEFAULT_AU_ESTIMATE);
+    const fee = Math.max(estimate.fee, floor);
+    console.log(
+      `[MultisigWorker] mempool fee estimate: ${fee} nanomina ` +
+      `(${estimate.feePerAU} per AU × ${DEFAULT_AU_ESTIMATE}, sample ${estimate.sampleSize}, ` +
+      `floor ${floor})`
+    );
+    return fee;
+  } catch (err) {
+    console.warn(
+      `[MultisigWorker] mempool fee estimate failed, using flat fallback ` +
+      `${EMPTY_MEMPOOL_FALLBACK_FEE} nanomina (0.01 MINA)`,
+      err,
+    );
+    return EMPTY_MEMPOOL_FALLBACK_FEE;
+  }
+}
+
+/** Returns the fee to bake into the tx JSON, or null when Auro should pick.
+ *  - Ledger (signFeePayerFn defined): mempool estimate, since Ledger signs
+ *    over the fee-payer commitment which includes the fee.
+ *  - E2E test mode: mempool estimate, since signAndSend bypasses any wallet.
+ *  - Auro: null, so Auro's UI prompts the user for the fee. */
+async function feeForFlow(signFeePayerFn?: SignFeePayerFn): Promise<number | null> {
+  if (!signFeePayerFn && !testPrivateKey) return null;
+  return getFee();
+}
 
 let compilePromise: Promise<void> | null = null;
 
@@ -108,11 +145,21 @@ async function maybeProve(tx: Awaited<ReturnType<typeof Mina.transaction>>) {
   }
 }
 
-/** Returns Mina.transaction sender arg — includes fee since we always set it explicitly. */
-function txSender(pub: InstanceType<typeof PublicKey>, memo?: string) {
+/** Returns Mina.transaction sender arg.
+ *  fee = null means "no fee in the tx JSON" — used for Auro so the wallet UI
+ *  can prompt the user for a fee. Ledger and e2e test mode pass a numeric fee
+ *  because they sign over the fee-payer commitment / send directly. */
+function txSender(
+  pub: InstanceType<typeof PublicKey>,
+  fee: number | null,
+  memo?: string
+) {
+  if (fee === null) {
+    return memo !== undefined ? { sender: pub, memo } : pub;
+  }
   return memo !== undefined
-    ? { sender: pub, fee: ZKAPP_TX_FEE, memo }
-    : { sender: pub, fee: ZKAPP_TX_FEE };
+    ? { sender: pub, fee, memo }
+    : { sender: pub, fee };
 }
 
 /**
@@ -689,7 +736,8 @@ const workerApi = {
 
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(feePayer), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(feePayer, fee), async () => {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
     });
@@ -743,7 +791,8 @@ const workerApi = {
 
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(feePayer), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(feePayer, fee), async () => {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
       await zkApp.setup(
@@ -796,7 +845,8 @@ const workerApi = {
 
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(feePayer), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(feePayer, fee), async () => {
       await zkApp.setup(
         ownerStore.getCommitment(),
         Field(params.threshold),
@@ -919,7 +969,8 @@ const workerApi = {
 
     clearStaleTransaction();
     const proposalMemo = params.input.memo ?? undefined;
-    const tx = await Mina.transaction(txSender(proposer, proposalMemo), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(proposer, fee, proposalMemo), async () => {
       await contract.propose(
         proposal,
         ownerWitness,
@@ -1001,7 +1052,8 @@ const workerApi = {
     const contract = new MinaGuard(PublicKey.fromBase58(params.contractAddress));
     await fetchAccount({ publicKey: approver });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(approver), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(approver, fee), async () => {
       await contract.approveProposal(
         proposalStruct,
         signature,
@@ -1081,7 +1133,8 @@ const workerApi = {
 
     clearStaleTransaction();
     const proposalMemo = params.proposal.memo ?? undefined;
-    const tx = await Mina.transaction(txSender(executor, proposalMemo), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(executor, fee, proposalMemo), async () => {
       if (newAccountCount > 0) {
         AccountUpdate.fundNewAccount(executor, newAccountCount);
       }
@@ -1191,7 +1244,8 @@ const workerApi = {
     progressFn('Building transaction...');
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(feePayer), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(feePayer, fee), async () => {
       AccountUpdate.fundNewAccount(feePayer);
       await childZkApp.deploy();
       await childZkApp.executeSetupChild(
@@ -1272,7 +1326,8 @@ const workerApi = {
     await fetchAccount({ publicKey: PublicKey.fromBase58(params.parentAddress) });
     clearStaleTransaction();
     const childMemo = params.proposal.memo ?? undefined;
-    const tx = await Mina.transaction(txSender(executor, childMemo), async () => {
+    const fee = await feeForFlow(signFeePayerFn);
+    const tx = await Mina.transaction(txSender(executor, fee, childMemo), async () => {
       if (txType === 'reclaimChild') {
         const amount = UInt64.from(params.proposal.data ?? '0');
         await childZkApp.executeReclaimToParent(
