@@ -278,6 +278,7 @@ Cross-child safety: because `proposalHash` includes `childAccount`, a REMOTE pro
 **Anti-front-running:** Setting `this.parent` at propose time prevents attackers from calling `setup()` on the uninitialized child between deploy and execute. `setup()` asserts `this.parent == PublicKey.empty()`, which fails once `reserveForParent` has run. `executeSetupChild` verifies `this.parent == proposal.guardAddress`, ensuring only the designated parent can initialize the child.
 
 Guards:
+- **Uninitialized only**: asserts `this.ownersCommitment == 0` — prevents calling on already-set-up contracts (which would let an attacker bind a live root vault to a hostile parent).
 - **One-time only**: asserts `this.parent == PublicKey.empty()` — cannot be called twice.
 - **Non-empty parent**: asserts `parentAddress != PublicKey.empty()`.
 
@@ -344,7 +345,7 @@ Every contract state field is reconstructable from events alone — no on-chain 
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |
 | Cross-child replay prevented | `childAccount` is inside `proposalHash`; children assert `proposal.childAccount == this.address` |
 | Parent state drift invalidates REMOTE approvals | Child reads `configNonce`/`ownersCommitment`/`approvalRoot`/`threshold` as AccountUpdate preconditions; any parent change aborts the child tx |
-| Child reserved at deploy time | `reserveForParent()` sets `this.parent` atomically with deploy, blocking `setup()` hijack and attacker-parent binding |
+| Child reserved at deploy time | `reserveForParent()` asserts `ownersCommitment == 0` and `parent == empty`, then sets `this.parent` atomically with deploy — blocking `setup()` hijack, attacker-parent binding, and reservation of initialized root vaults |
 | Hierarchy depth capped at 2 | `propose` rejects REMOTE proposals on any guard whose `parent != PublicKey.empty()`, so children can never raise `CREATE_CHILD` |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
 | Reclaim and destroy are recovery paths | Child-lifecycle methods bypass `childMultiSigEnabled`; the parent can always retrieve funds |

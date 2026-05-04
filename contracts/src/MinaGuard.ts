@@ -746,6 +746,7 @@ export class MinaGuard extends SmartContract {
     numOwners: Field,
     initialOwners: SetupOwnersInput,
   ) {
+    this.ownersCommitment.requireEquals(Field(0));
     this.parent.requireEquals(PublicKey.empty());
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address must not be empty');
     this.parent.set(parentAddress);

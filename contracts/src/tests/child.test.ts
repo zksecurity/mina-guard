@@ -290,6 +290,27 @@ describe('MinaGuard - Child Lifecycle', () => {
         proposeTransaction(childCtx, proposal, 0),
       ).rejects.toThrow('Remote destination proposals must be proposed on a root guard');
     });
+
+    it('rejects reserveForParent on an already-initialized root vault', async () => {
+      const attackerKey = PrivateKey.random();
+      const attackerAddress = attackerKey.toPublicKey();
+      const childOwners = parentCtx.owners.map((o) => o.pub);
+      const ownersCommitment = computeOwnerChain(childOwners);
+      const setupOwners = toFixedSetupOwners(childOwners);
+
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await parentCtx.zkApp.reserveForParent(
+          attackerAddress,
+          Field(999),
+          ownersCommitment,
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await txn.prove();
+      await expect(txn.sign([parentCtx.deployerKey]).send()).rejects.toThrow();
+    });
   });
 
   // -- executeAllocateToChildren (on the parent) ------------------------------

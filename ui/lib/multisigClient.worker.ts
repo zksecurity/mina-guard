@@ -1232,8 +1232,8 @@ const workerApi = {
     const childCommitment = childZkApp.ownersCommitment.get();
     if (childCommitment.toString() !== '0') {
       throw new Error(
-        'This SubVault has already been initialized by another party. ' +
-        'The address may have been hijacked — create a new SubVault with a fresh address.',
+        'This SubVault has already been initialized. ' +
+        'executeSetupChild is idempotent on-chain — no further action needed.',
       );
     }
 

@@ -573,15 +573,15 @@ function signChildAccount(txJson: string, childKey: InstanceType<typeof PrivateK
   const childPk = childKey.toPublicKey().toBase58();
   const client = new Client({ network });
   const wrapped = { feePayer: parsed.feePayer, zkappCommand: parsed };
-  const { fullCommitment } = client.getZkappCommandCommitmentsNoCheck(wrapped);
-  const signed = client.signFields([BigInt(fullCommitment)], childKey.toBase58());
+  const { commitment, fullCommitment } = client.getZkappCommandCommitmentsNoCheck(wrapped);
   let applied = false;
   for (const update of parsed.accountUpdates ?? []) {
     if (
       update.body?.publicKey === childPk &&
-      update.body?.authorizationKind?.isSigned === true &&
-      update.body?.useFullCommitment === true
+      update.body?.authorizationKind?.isSigned === true
     ) {
+      const usedCommitment = update.body.useFullCommitment ? fullCommitment : commitment;
+      const signed = client.signFields([BigInt(usedCommitment)], childKey.toBase58());
       update.authorization = { signature: signed.signature };
       applied = true;
     }
