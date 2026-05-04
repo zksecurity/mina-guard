@@ -271,7 +271,7 @@ Cross-child safety: because `proposalHash` includes `childAccount`, a REMOTE pro
 
 ### reserveForParent
 
-`reserveForParent(parentAddress, proposalHash, ownersCommitment, threshold, numOwners, initialOwners)` — Runs on the **child** contract in the same transaction as `deploy()` + parent `propose()` for a `CREATE_CHILD` proposal. Sets `this.parent` to the parent address and emits `CreateChildConfigEvent` + 20 `CreateChildOwnerEvent`s so the indexer knows the child's intended owner list before `executeSetupChild` runs.
+`reserveForParent(parentAddress, proposalHash, ownersCommitment, threshold, numOwners, initialOwners)` — Runs on the **child** contract in the same transaction as `deploy()` + parent `propose()` for a `CREATE_CHILD` proposal. Sets `this.parent` to the parent address and emits `CreateChildConfigEvent` + 20 `CreateChildOwnerEvent`s on-chain so the child's intended owner list is publicly available before `executeSetupChild` runs. (The indexer stores these as raw events but does not parse them; the UI and offline CLI fetch and parse them directly.)
 
 **Why this method exists:** `executeSetupChild` requires the child's owner list, threshold, and owners commitment as arguments. Without `reserveForParent`, the `ProposalEvent` only contains a `data` hash (`Poseidon([ownersCommitment, threshold, numOwners])`) — the individual owner addresses are not recoverable from the hash. The executor would need the original proposer to share the child config out-of-band. By emitting the full owner list on the child at propose time, any user can retrieve the config from on-chain events and execute `setupChild` without coordinating with the proposer.
 
@@ -344,7 +344,7 @@ Every contract state field is reconstructable from events alone — no on-chain 
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |
 | Cross-child replay prevented | `childAccount` is inside `proposalHash`; children assert `proposal.childAccount == this.address` |
 | Parent state drift invalidates REMOTE approvals | Child reads `configNonce`/`ownersCommitment`/`approvalRoot`/`threshold` as AccountUpdate preconditions; any parent change aborts the child tx |
-| Uninitialized child is low-severity griefing only | Child is empty at deploy time; hijack wastes the address but cannot steal funds or compromise the parent. UI detects and marks invalidated proposals |
+| Child reserved at deploy time | `reserveForParent()` sets `this.parent` atomically with deploy, blocking `setup()` hijack and attacker-parent binding |
 | Hierarchy depth capped at 2 | `propose` rejects REMOTE proposals on any guard whose `parent != PublicKey.empty()`, so children can never raise `CREATE_CHILD` |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
 | Reclaim and destroy are recovery paths | Child-lifecycle methods bypass `childMultiSigEnabled`; the parent can always retrieve funds |
@@ -404,14 +404,14 @@ Deploying a subaccount requires two separate Mina transactions:
 
 `localStorage` records are auto-pruned once the child's `SetupEvent` has been indexed (the parent detail page drops any record whose child address now appears in the contract list).
 
-#### Security: uninitialized child window
+#### Security: child reservation
 
-Between propose (deploy) and execute (setup), the child sits on-chain with `ownersCommitment == 0`. Two attack vectors exist during this window:
+At propose time, `reserveForParent()` is called on the child in the same transaction as `deploy()`, setting `this.parent` to the parent address. This blocks both historical attack vectors:
 
-1. **`setup()` hijack** — Anyone can call `setup()` on the uninitialized child, turning it into a root vault with attacker-controlled owners and no parent link. The legitimate CREATE_CHILD proposal becomes unusable since `executeSetupChild` will fail the `ownersCommitment == 0` guard in `initializeState`.
-2. **`executeSetupChild()` with an attacker-controlled parent** — An attacker deploys their own "parent" vault, creates a CREATE_CHILD proposal targeting the victim's child address, self-approves it to threshold, and calls `executeSetupChild`. The contract validates against the attacker's parent state, passes all checks, and permanently binds the child to the hostile parent.
+1. **`setup()` hijack** — `setup()` asserts `this.parent == PublicKey.empty()`, which fails once `reserveForParent` has run.
+2. **`executeSetupChild()` with an attacker-controlled parent** — `executeSetupChild` asserts `this.parent == proposal.guardAddress`, so only the designated parent can initialize the child.
 
-**Impact assessment:** Both attacks are low-severity griefing. The child vault is empty (no funds beyond the account creation fee). The parent vault's security, funds, and governance are unaffected. Recovery requires creating a new CREATE_CHILD proposal with a fresh child address and re-gathering signatures. Both the UI worker and offline CLI check the child's `ownersCommitment` before building the execute transaction — if it's non-zero (already initialized), they throw a clear error message advising the user to create a new subaccount with a fresh address.
+No authorization check is needed in `reserveForParent` because the child address comes from a freshly generated keypair whose private key is required to sign the deploy account update in the same atomic transaction.
 
 ### Offline signing support for CREATE_CHILD
 

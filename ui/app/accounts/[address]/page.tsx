@@ -203,10 +203,6 @@ export default function AccountPage() {
               </div>
             </div>
 
-            {isRoot && (
-              <PendingSubaccountsBanner parentAddress={multisig.address} isOwner={isOwner} />
-            )}
-
             <OwnersCard
               owners={owners.map((o) => o.address)}
               walletAddress={wallet.address}
