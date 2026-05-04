@@ -26,6 +26,13 @@ interface TreeNode {
 
 const PAGE_SIZE = 25;
 
+function networkLabel(networkId: string | null): string {
+  if (networkId == null) return 'Network unknown';
+  if (networkId === '1') return 'Mainnet';
+  if (networkId === '0') return 'Testnet';
+  return `Network ${networkId}`;
+}
+
 /**
  * Builds forest of owned subtrees.
  * Rule: a tree is visible if the connected wallet owns ANY node in the tree
@@ -165,10 +172,10 @@ function AccountsListPageInner() {
   }, [forest, q]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Restore the user's prior visible-count from the URL on mount.
-  const initialCount = (() => {
+  const initialCount = useMemo(() => {
     const n = urlPageSize ? Number(urlPageSize) : NaN;
     return Number.isFinite(n) && n > 0 ? n : PAGE_SIZE;
-  })();
+  }, [urlPageSize]);
   const { visible: visibleRoots, hasMore, visibleCount, loadMore, reset } =
     useLoadMore(filteredRoots, PAGE_SIZE, initialCount);
 
@@ -411,6 +418,7 @@ function VaultRow({ contract, isOwner, hasChildren, expanded, onToggle }: VaultR
         <p className={`font-mono truncate ${name ? 'text-xs text-safe-text' : 'text-sm'}`}>
           {truncateAddress(contract.address, 10)}
         </p>
+        <p className="text-xs text-safe-text mt-0.5">{networkLabel(contract.networkId)}</p>
       </div>
 
       {contract.threshold != null && contract.numOwners != null && (

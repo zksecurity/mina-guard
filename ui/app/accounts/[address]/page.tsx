@@ -756,8 +756,13 @@ function PendingSubaccountsBanner({
 }
 
 function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
-  const { indexerStatus } = useAppContext();
+  const { indexerStatus, allContractOwners, wallet } = useAppContext();
   const [children, setChildren] = useState<ContractSummary[] | null>(null);
+
+  const isOwnerOf = (address: string): boolean =>
+    wallet.address
+      ? allContractOwners.get(address)?.includes(wallet.address) ?? false
+      : false;
 
   useEffect(() => {
     let cancelled = false;
@@ -799,6 +804,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
           <VaultCard
             key={child.address}
             contract={child}
+            isOwner={isOwnerOf(child.address)}
             isChild
             showBalance={false}
           />

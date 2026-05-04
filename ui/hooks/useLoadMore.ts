@@ -23,8 +23,9 @@ export function useLoadMore<T>(
   const [count, setCount] = useState<number>(initialCount ?? pageSize);
 
   useEffect(() => {
-    if (initialCount != null && initialCount > count) setCount(initialCount);
-  }, [initialCount]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (initialCount == null) return;
+    setCount((prev) => (initialCount > prev ? initialCount : prev));
+  }, [initialCount]);
 
   const visible = items.slice(0, count);
   return {

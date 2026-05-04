@@ -159,7 +159,7 @@ async function seedVault(spec: VaultSpec, walletAddresses: string[]): Promise<vo
     const toAddress = pick(recipients);
     return {
       contractId: contract.id,
-      proposalHash: `${spec.address.slice(3, 11)}-${i}`,
+      proposalHash: `${spec.address}-${i}`,
       proposer,
       toAddress,
       txType: pick(TX_TYPES),
@@ -262,7 +262,7 @@ async function main(): Promise<void> {
   const totalVaults = ROOT_COUNT + childSpecs.length;
   const totalProposals =
     HEAVY_PROPOSAL_VAULTS * HEAVY_PROPOSAL_COUNT +
-    (ROOT_COUNT - HEAVY_PROPOSAL_VAULTS) * 5 + // upper bound
+    (ROOT_COUNT - HEAVY_PROPOSAL_VAULTS) * 5 + // ~mean of 3..7 from `3 + (i % 5)`
     childSpecs.filter((c) => c.proposalCount > 0).length * 12;
   console.log(`[seed] done — ${totalVaults} vaults, ~${totalProposals} proposals`);
 }

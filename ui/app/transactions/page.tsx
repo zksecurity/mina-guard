@@ -75,10 +75,10 @@ function TransactionsPageInner() {
 
   // Restore the user's prior visible-count from the URL on mount and across
   // adaptive-polling refreshes so they don't snap back to the first page.
-  const initialCount = (() => {
+  const initialCount = useMemo(() => {
     const n = urlPageSize ? Number(urlPageSize) : NaN;
     return Number.isFinite(n) && n > 0 ? n : PAGE_SIZE;
-  })();
+  }, [urlPageSize]);
   const { visible, hasMore, visibleCount, loadMore, reset } = useLoadMore(
     filtered,
     PAGE_SIZE,

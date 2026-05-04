@@ -16,16 +16,20 @@ export function useUrlState(key: string): [string | null, (value: string | null)
 
   const setValue = useCallback(
     (next: string | null) => {
-      // Read from window.location.search rather than the React-tracked
-      // searchParams snapshot so back-to-back setters in the same commit
-      // (e.g. useUrlState('search') + useUrlState('pageSize') firing
-      // together) compose against the freshly-replaced URL instead of
-      // each clobbering the other's write.
+      // `router.replace` updates the URL asynchronously, so two setters firing
+      // in the same commit (e.g. useUrlState('search') + useUrlState('pageSize')
+      // on mount) would each read the same pre-replacement URL and clobber
+      // each other. We use `history.replaceState` directly to mutate
+      // window.location synchronously, then call `router.replace` to keep the
+      // Next router tree in sync. Both writes carry the merged URL, so
+      // whichever `router.replace` lands last is correct.
       const params = new URLSearchParams(window.location.search);
       if (next == null || next === '') params.delete(key);
       else params.set(key, next);
       const qs = params.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      window.history.replaceState(null, '', url);
+      router.replace(url, { scroll: false });
     },
     [key, pathname, router],
   );
