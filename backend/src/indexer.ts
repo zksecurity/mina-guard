@@ -14,6 +14,7 @@ import {
   fetchLatestBlockHeightFromArchive,
   fetchOnChainState,
   fetchVerificationKeyHash,
+  fetchMempoolHashes,
   fetchZkappTxStatus,
   type DiscoveryCandidate,
   type ChainEvent,
@@ -21,6 +22,11 @@ import {
 } from './mina-client.js';
 
 const REORG_DETECTION_WINDOW = 290;
+
+/** Grace period before treating a tx absent from both bestChain and mempool as
+ *  dropped. Covers the brief window between a tx leaving the mempool and its
+ *  block appearing in bestChain (~2 blocks / 6 min on mainnet). */
+const DROPPED_TX_GRACE_MS = 20 * 60 * 1000;
 
 const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
 
@@ -1137,9 +1143,21 @@ export class MinaGuardIndexer {
         lastApproveError: true,
         lastExecuteTxHash: true,
         lastExecuteError: true,
+        updatedAt: true,
         executions: { select: { blockHeight: true }, take: 1 },
       },
     });
+
+    const now = Date.now();
+    const submissionAgeMs = (p: typeof proposals[number]) =>
+      now - p.updatedAt.getTime();
+
+    const needsMempoolCheck = proposals.some(
+      (p) => submissionAgeMs(p) > DROPPED_TX_GRACE_MS,
+    );
+    const mempoolHashes = needsMempoolCheck
+      ? await fetchMempoolHashes(this.config)
+      : null;
 
     for (const proposal of proposals) {
       const alreadyExecuted = proposal.executions.length > 0;
@@ -1150,6 +1168,16 @@ export class MinaGuardIndexer {
             where: { id: proposal.id },
             data: { lastExecuteError: result.reason ?? 'Execution transaction failed on-chain' },
           });
+        } else if (
+          result.status === 'pending' &&
+          submissionAgeMs(proposal) > DROPPED_TX_GRACE_MS &&
+          mempoolHashes !== null &&
+          !mempoolHashes.has(proposal.lastExecuteTxHash)
+        ) {
+          await prisma.proposal.update({
+            where: { id: proposal.id },
+            data: { lastExecuteError: 'Transaction was dropped from the mempool' },
+          });
         }
       }
       if (proposal.lastApproveTxHash && !proposal.lastApproveError) {
@@ -1158,6 +1186,16 @@ export class MinaGuardIndexer {
           await prisma.proposal.update({
             where: { id: proposal.id },
             data: { lastApproveError: result.reason ?? 'Approval transaction failed on-chain' },
+          });
+        } else if (
+          result.status === 'pending' &&
+          submissionAgeMs(proposal) > DROPPED_TX_GRACE_MS &&
+          mempoolHashes !== null &&
+          !mempoolHashes.has(proposal.lastApproveTxHash)
+        ) {
+          await prisma.proposal.update({
+            where: { id: proposal.id },
+            data: { lastApproveError: 'Transaction was dropped from the mempool' },
           });
         }
       }
