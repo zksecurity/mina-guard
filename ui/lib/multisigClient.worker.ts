@@ -582,9 +582,7 @@ async function broadcastWithLedgerSig(
   signFeePayerFn: SignFeePayerFn
 ): Promise<string | null> {
   const parsed = JSON.parse(txJson);
-  // mina-signer expects { feePayer, zkappCommand } wrapper; parsed is the raw tx JSON
-  const wrapped = { feePayer: parsed.feePayer, zkappCommand: parsed };
-  const { fullCommitment } = signerClient.getZkappCommandCommitmentsNoCheck(wrapped);
+  const { fullCommitment } = signerClient.getZkappCommandCommitmentsFromJSON(parsed);
   const sig = await signFeePayerFn(fullCommitment.toString());
   if (!sig) return null;
 
