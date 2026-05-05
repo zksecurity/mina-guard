@@ -1174,6 +1174,7 @@ export class MinaGuardIndexer {
           mempoolHashes !== null &&
           !mempoolHashes.has(proposal.lastExecuteTxHash)
         ) {
+          console.warn('[indexer] execute tx dropped from mempool, proposal=%d tx=%s', proposal.id, proposal.lastExecuteTxHash);
           await prisma.proposal.update({
             where: { id: proposal.id },
             data: { lastExecuteError: 'Transaction was dropped from the mempool' },
@@ -1193,6 +1194,7 @@ export class MinaGuardIndexer {
           mempoolHashes !== null &&
           !mempoolHashes.has(proposal.lastApproveTxHash)
         ) {
+          console.warn('[indexer] approve tx dropped from mempool, proposal=%d tx=%s', proposal.id, proposal.lastApproveTxHash);
           await prisma.proposal.update({
             where: { id: proposal.id },
             data: { lastApproveError: 'Transaction was dropped from the mempool' },
