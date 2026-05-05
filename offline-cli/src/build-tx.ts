@@ -547,8 +547,7 @@ function injectAccounts(bundle: BundleBase) {
 function signFeePayer(txJson: string, privateKey: string, network: 'testnet' | 'mainnet'): string {
   const client = new Client({ network });
   const parsed = typeof txJson === 'string' ? JSON.parse(txJson) : txJson;
-  const wrapped = { feePayer: parsed.feePayer, zkappCommand: parsed };
-  const { fullCommitment } = client.getZkappCommandCommitmentsNoCheck(wrapped);
+  const { fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
   const signed = client.signFields([BigInt(fullCommitment)], privateKey);
   parsed.feePayer.authorization = signed.signature;
 
@@ -572,8 +571,7 @@ function signChildAccount(txJson: string, childKey: InstanceType<typeof PrivateK
   const parsed = JSON.parse(txJson);
   const childPk = childKey.toPublicKey().toBase58();
   const client = new Client({ network });
-  const wrapped = { feePayer: parsed.feePayer, zkappCommand: parsed };
-  const { commitment, fullCommitment } = client.getZkappCommandCommitmentsNoCheck(wrapped);
+  const { commitment, fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
   let applied = false;
   for (const update of parsed.accountUpdates ?? []) {
     if (
