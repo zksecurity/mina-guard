@@ -1,7 +1,7 @@
 // -- Multisig Contract Worker ------------------------------------------
 // Runs o1js compilation and proof generation off the main thread.
 
-import './disable-wasm-finalizers';
+// import './disable-wasm-finalizers'; // TEMPORARILY DISABLED — testing Bug 2 repro
 import * as Comlink from 'comlink';
 
 import {
