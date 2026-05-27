@@ -20,6 +20,15 @@ jobs:
         with:
           submodules: true
 
+      # The self-hosted e2e runner has Docker Engine but not the Compose v2
+      # plugin (`docker compose`), so every compose step below fails with
+      # "unknown shorthand flag: 'f'". The official action installs the plugin
+      # into the runner's CLI plugin dir (handles arch/caching/integrity).
+      - name: Ensure Docker Compose v2
+        uses: docker/setup-compose-action@v1
+        with:
+          version: v2.29.7
+
       - name: Clean up previous run
         run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v --remove-orphans 2>/dev/null || true
 
