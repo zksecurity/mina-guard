@@ -226,4 +226,28 @@ describe('offline-cli', () => {
     const verified = client.verifyFields(signed);
     expect(verified).toBe(true);
   }, 10_000);
+
+  it('signs the fee payer under the correct (mainnet) signature domain', async () => {
+    // @ts-ignore — ESM bundle built by ui/package.json postinstall
+    const Client = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+
+    const Local = await Mina.LocalBlockchain({ proofsEnabled: false });
+    Mina.setActiveInstance(Local);
+    const sender = Local.testAccounts[0];
+    const senderKey = Local.testAccounts[0].key;
+    const senderPk = (sender as PublicKey).toBase58();
+
+    const tx = await Mina.transaction({ sender, fee: 100_000_000 }, async () => {
+      const u = AccountUpdate.createSigned(sender);
+      u.send({ to: PrivateKey.random().toPublicKey(), amount: UInt64.from(1_000_000) });
+    });
+    const parsed = JSON.parse(tx.toJSON());
+
+    // Sign under mainnet. The signature must verify on mainnet and must NOT
+    // verify on testnet — proving the network signature domain is applied.
+    // The old signFields path hard-coded the devnet domain and would fail this.
+    const signed = new Client({ network: 'mainnet' }).signZkappCommandFromJSON(parsed, senderKey.toBase58());
+    expect(new Client({ network: 'mainnet' }).verifyZkappCommandSignatureFromJSON(signed, senderPk)).toBe(true);
+    expect(new Client({ network: 'testnet' }).verifyZkappCommandSignatureFromJSON(signed, senderPk)).toBe(false);
+  }, 60_000);
 });

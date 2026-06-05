@@ -34,6 +34,10 @@ import {
   TokenId,
 } from 'o1js';
 
+// TODO: once the fork's *FromJSON Client methods (signZkappCommandFromJSON,
+// verifyZkappCommandSignatureFromJSON, getZkappCommandCommitmentsFromJSON) are
+// published upstream, switch to the upstream `mina-signer` bare specifier and
+// drop this deep import + the dist/web bundle dependency.
 // @ts-ignore — ESM bundle built by ui/package.json postinstall
 import Client from '../../ui/deps/o1js/src/mina-signer/dist/web/index.js';
 
@@ -547,45 +551,39 @@ function injectAccounts(bundle: BundleBase) {
 function signFeePayer(txJson: string, privateKey: string, network: 'testnet' | 'mainnet'): string {
   const client = new Client({ network });
   const parsed = typeof txJson === 'string' ? JSON.parse(txJson) : txJson;
-  const { fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
-  const signed = client.signFields([BigInt(fullCommitment)], privateKey);
-  parsed.feePayer.authorization = signed.signature;
-
-  // Also sign any account updates owned by the fee payer that require a signature
+  // Network-aware signing: signs the fee payer authorization (and any account
+  // update owned by the fee payer) under the correct network signature domain.
+  // Using signFields here would hard-code the devnet domain and produce
+  // mainnet-invalid signatures.
+  const signed = client.signZkappCommandFromJSON(parsed, privateKey);
   const feePayerPk = parsed.feePayer.body.publicKey;
-  for (const update of parsed.accountUpdates ?? []) {
-    if (
-      update.body?.publicKey === feePayerPk &&
-      update.body?.authorizationKind?.isSigned === true &&
-      update.body?.useFullCommitment === true
-    ) {
-      update.authorization = { signature: signed.signature };
-    }
+  if (!client.verifyZkappCommandSignatureFromJSON(signed, feePayerPk)) {
+    throw new Error(`signFeePayer: signature does not verify for network ${network}`);
   }
-
-  return JSON.stringify(parsed);
+  return JSON.stringify(signed);
 }
 
 /** Signs a child zkApp's deploy account update using its private key. */
 function signChildAccount(txJson: string, childKey: InstanceType<typeof PrivateKey>, network: 'testnet' | 'mainnet'): string {
+  const client = new Client({ network });
   const parsed = JSON.parse(txJson);
   const childPk = childKey.toPublicKey().toBase58();
-  const client = new Client({ network });
-  const { commitment, fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
-  let applied = false;
-  for (const update of parsed.accountUpdates ?? []) {
-    if (
-      update.body?.publicKey === childPk &&
-      update.body?.authorizationKind?.isSigned === true
-    ) {
-      const usedCommitment = update.body.useFullCommitment ? fullCommitment : commitment;
-      const signed = client.signFields([BigInt(usedCommitment)], childKey.toBase58());
-      update.authorization = { signature: signed.signature };
-      applied = true;
-    }
+
+  const hasChildUpdate = (parsed.accountUpdates ?? []).some(
+    (u: any) => u.body?.publicKey === childPk && u.body?.authorizationKind?.isSigned === true
+  );
+  if (!hasChildUpdate) throw new Error('signChildAccount: no matching deploy account update found');
+
+  // Network-aware signing with the child key. signZkappCommand only fills the fee
+  // payer authorization when the signing key matches the fee payer, so the
+  // already-present fee-payer signature is preserved here.
+  const signed = client.signZkappCommandFromJSON(parsed, childKey.toBase58());
+  // Verify the child's own updates; check the (already-present) fee-payer
+  // signature against the real fee payer rather than the child key.
+  if (!client.verifyZkappCommandSignatureFromJSON(signed, childPk, parsed.feePayer.body.publicKey)) {
+    throw new Error(`signChildAccount: signature does not verify for network ${network}`);
   }
-  if (!applied) throw new Error('signChildAccount: no matching deploy account update found');
-  return JSON.stringify(parsed);
+  return JSON.stringify(signed);
 }
 
 // ---------------------------------------------------------------------------
