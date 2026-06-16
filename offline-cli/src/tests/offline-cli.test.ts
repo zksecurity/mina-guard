@@ -26,6 +26,7 @@ import {
   MAX_OWNERS,
   MAX_RECEIVERS,
 } from 'contracts';
+import { signFeePayer, decodeTxMemo } from '../build-tx.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
 
@@ -225,4 +226,73 @@ describe('offline-cli', () => {
     const verified = client.verifyFields(signed);
     expect(verified).toBe(true);
   }, 10_000);
+
+  // -- Network-aware fee-payer signing (signZkappCommand path) --
+
+  describe('signFeePayer network domain', () => {
+    // Builds a realistic tx.toJSON() with a fee payer + one signed account update and a memo,
+    // without compiling any contract — a plain signed send on a LocalBlockchain.
+    async function buildSignedSendTxJson(memo: string): Promise<{ txJson: string; feePayerKey: InstanceType<typeof PrivateKey> }> {
+      const Local = await Mina.LocalBlockchain({ proofsEnabled: false });
+      Mina.setActiveInstance(Local);
+      const sender = Local.testAccounts[0];
+      const receiver = Local.testAccounts[1];
+      const tx = await Mina.transaction({ sender, fee: 1e8, memo }, async () => {
+        const au = AccountUpdate.createSigned(sender);
+        au.send({ to: receiver, amount: UInt64.from(1_000_000) });
+      });
+      const json = tx.toJSON();
+      return { txJson: typeof json === 'string' ? json : JSON.stringify(json), feePayerKey: sender.key };
+    }
+
+    function verifyWrapper(network: 'testnet' | 'mainnet', signedTxJson: string, key: InstanceType<typeof PrivateKey>): boolean {
+      const client = new ClientCtor({ network });
+      const parsed = JSON.parse(signedTxJson);
+      const wrapper = {
+        feePayer: {
+          feePayer: parsed.feePayer.body.publicKey,
+          fee: parsed.feePayer.body.fee,
+          nonce: parsed.feePayer.body.nonce,
+          validUntil: parsed.feePayer.body.validUntil,
+          memo: decodeTxMemo(parsed.memo),
+        },
+        zkappCommand: parsed,
+      };
+      const signature = parsed.feePayer.authorization;
+      return client.verifyZkappCommand({
+        data: { zkappCommand: parsed, feePayer: wrapper.feePayer },
+        publicKey: key.toPublicKey().toBase58(),
+        signature,
+      });
+    }
+
+    let ClientCtor: any;
+    beforeAll(async () => {
+      // @ts-ignore — ESM bundle built by ui/package.json postinstall
+      ClientCtor = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+    });
+
+    it('mainnet signature verifies under mainnet and FAILS under testnet', async () => {
+      const { txJson, feePayerKey } = await buildSignedSendTxJson('');
+      const signed = signFeePayer(txJson, feePayerKey.toBase58(), 'mainnet');
+      expect(verifyWrapper('mainnet', signed, feePayerKey)).toBe(true);
+      expect(verifyWrapper('testnet', signed, feePayerKey)).toBe(false);
+    }, 20_000);
+
+    it('testnet signature verifies under testnet and FAILS under mainnet', async () => {
+      const { txJson, feePayerKey } = await buildSignedSendTxJson('');
+      const signed = signFeePayer(txJson, feePayerKey.toBase58(), 'testnet');
+      expect(verifyWrapper('testnet', signed, feePayerKey)).toBe(true);
+      expect(verifyWrapper('mainnet', signed, feePayerKey)).toBe(false);
+    }, 20_000);
+
+    it('preserves the memo without double-encoding (empty and non-empty)', async () => {
+      for (const memo of ['', 'hello multisig']) {
+        const { txJson, feePayerKey } = await buildSignedSendTxJson(memo);
+        const signed = signFeePayer(txJson, feePayerKey.toBase58(), 'testnet');
+        expect(JSON.parse(signed).memo).toBe(JSON.parse(txJson).memo);
+        expect(decodeTxMemo(JSON.parse(signed).memo)).toBe(memo);
+      }
+    }, 20_000);
+  });
 });

@@ -29,6 +29,7 @@ import {
   MAX_RECEIVERS,
   TxType,
 } from 'contracts';
+import { decodeTxMemo } from '../build-tx.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
 const BINARY_PATH = join(import.meta.dirname, '..', '..', 'dist',
@@ -891,6 +892,11 @@ describe('offline-cli e2e', () => {
       );
       expect(childUpdate).toBeTruthy();
 
+      // Chained signing: signChildAccount must sign the child update WITHOUT clobbering the
+      // fee-payer authorization produced by signFeePayer.
+      expect(output.transaction.feePayer.authorization).toBeTruthy();
+      expect(childUpdate.authorization?.signature).toBeTruthy();
+
       // Execute propose on-chain to advance state for approve/execute
       const childOwnersCommitment = (() => {
         const cs = new OwnerStore();
@@ -933,6 +939,48 @@ describe('offline-cli e2e', () => {
       approvalStore.setCount(ccHash, PROPOSED_MARKER.add(1));
 
       console.log('[e2e] createChild propose OK, hash:', createChildProposalHash);
+    }, 120_000);
+
+    it('propose carries the on-chain tx memo', async () => {
+      // Isolated from the createChild flow above: own child key, own bundle, not fed
+      // downstream — so a non-empty memo (which changes the proposal hash) is harmless here.
+      const proposer = owners[0];
+      const memo = 'pay rent for june';
+      const localChildKey = PrivateKey.random();
+      const bundle = {
+        version: 1,
+        action: 'propose',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(),
+        accounts: accountsSnapshotForCreate(),
+        events: await parentEvents(),
+        input: {
+          txType: 'createChild',
+          nonce: 0,
+          memo,
+          childAccount: localChildKey.toPublicKey().toBase58(),
+          createChildConfigHash: configHash(),
+          childPrivateKey: localChildKey.toBase58(),
+          childOwners: childOwnerAddrs(),
+          childThreshold: 2,
+        },
+        configNonce: 0,
+        networkId: '1',
+      };
+
+      const bundlePath = join(tmpDir, 'propose-memo.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+      console.log('[e2e] Running CLI: propose with memo (SKIP_PROOFS)...');
+      const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
+      if (result.code !== 0) console.log('[e2e] CLI stderr:', result.stderr, '\nstdout:', result.stdout);
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      // The on-chain tx memo must round-trip back to the user's plaintext memo.
+      expect(output.transaction.memo).toBeTruthy();
+      expect(decodeTxMemo(output.transaction.memo)).toBe(memo);
     }, 120_000);
 
     it('approve createChild', async () => {
