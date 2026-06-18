@@ -324,6 +324,23 @@ export async function fetchZkappTxStatus(
   }
 }
 
+/** Fetches all zkApp tx hashes currently in the daemon's mempool. Returns null
+ *  on network failure so callers can fall back conservatively. */
+export async function fetchMempoolHashes(
+  config: BackendConfig,
+): Promise<Set<string> | null> {
+  const query = `{ pooledZkappCommands { hash } }`;
+  try {
+    const data = await graphqlRequest<{
+      pooledZkappCommands?: Array<{ hash: string }>;
+    }>(query, config.minaEndpoint, config.minaFallbackEndpoint);
+    return new Set((data.pooledZkappCommands ?? []).map((c) => c.hash));
+  } catch (err) {
+    console.warn('[mina-client] fetchMempoolHashes failed', err);
+    return null;
+  }
+}
+
 /** Fetches decoded MinaGuard events for a contract within a block range. */
 export async function fetchDecodedContractEvents(
   address: string,
