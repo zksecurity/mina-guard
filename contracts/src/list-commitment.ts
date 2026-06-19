@@ -23,11 +23,11 @@ function computeOwnerChain(owners: PublicKey[]): Field {
  * Takes a raw PublicKey[] (caller passes SetupOwnersInput.owners) to avoid a
  * circular import with MinaGuard.ts where SetupOwnersInput is defined.
  *
- * TODO: while chaining, add coherence checks to harden the committed set:
- *   - reject duplicate owners (same pk appearing twice within the active range)
- *   - assert padding slots (index >= numOwners) are PublicKey.empty()
- *   - (optional) assert active owners are strictly ascending by base58 to
- *     enforce canonical ordering rather than only failing the equality check
+ * Duplicate-owner and padding-is-empty coherence checks live in the companion
+ * `assertCoherentSetupOwners`. Canonical ordering is intentionally NOT enforced
+ * in-circuit (the off-chain order is base58, infeasible to reproduce cheaply
+ * here); it is pinned for free by binding this result to the approved
+ * `ownersCommitment` — any reordering changes the chain hash.
  */
 function computeSetupOwnersChain(owners: PublicKey[], numOwners: Field): Field {
   let currentChain = INITIAL_OWNER_CHAIN;
@@ -37,6 +37,36 @@ function computeSetupOwnersChain(owners: PublicKey[], numOwners: Field): Field {
     currentChain = Provable.if(active, next, currentChain);
   });
   return currentChain;
+}
+
+/**
+ * Asserts the setup owner array is coherent w.r.t. `numOwners`:
+ *  1. Every inactive slot (index >= numOwners) is PublicKey.empty() — padding
+ *     must be empty (the dedup gate below intentionally ignores padding).
+ *  2. No two active owners are equal — rejects a committed duplicate set
+ *     (e.g. [A, A]), which the `commitment == ownersCommitment` bind cannot
+ *     catch on its own.
+ *
+ * Ordering is NOT checked here: the canonical order is base58, which is
+ * infeasible in-circuit, and ordering is already pinned by the separate
+ * commitment-equality assert.
+ */
+function assertCoherentSetupOwners(owners: PublicKey[], numOwners: Field): void {
+  const empty = PublicKey.empty();
+  // hoist: one lessThan per index instead of recomputing inside the O(N^2) loop
+  const active = owners.map((_, i) => Field(i).lessThan(numOwners));
+
+  for (let i = 0; i < owners.length; i++) {
+
+    // check if padding positions are indeed empty
+    active[i].or(owners[i].equals(empty)).assertTrue('Padding slot must be empty');
+
+    // pairwise dedup: slot i against all later active slots (O(N^2) overall)
+    for (let j = i + 1; j < owners.length; j++) {
+      owners[i].equals(owners[j]).and(active[i]).and(active[j])
+        .assertFalse('Duplicate owner in setup list');
+    }
+  }
 }
 
 /**
@@ -170,5 +200,5 @@ function removeOwnerFromCommitment(
 
 export {
   OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, computeSetupOwnersChain,
-  assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment
+  assertCoherentSetupOwners, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment
 };
