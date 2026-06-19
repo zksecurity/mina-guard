@@ -61,7 +61,7 @@ import {
 /** Must match the fee used by the web worker. */
 const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
 
-const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+export const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
 
 // ---------------------------------------------------------------------------
 // Bundle types
@@ -217,7 +217,7 @@ type LogFn = (msg: string) => void;
 // TxType helpers (duplicated from worker to stay self-contained)
 // ---------------------------------------------------------------------------
 
-type TxType =
+export type TxType =
   | 'transfer'
   | 'addOwner'
   | 'removeOwner'
@@ -234,7 +234,7 @@ const TX_TYPE_NAME_SET: ReadonlySet<string> = new Set([
   'createChild', 'allocateChild', 'reclaimChild', 'destroyChild', 'enableChildMultiSig',
 ]);
 
-function normalizeTxType(value: string | null | undefined): TxType | null {
+export function normalizeTxType(value: string | null | undefined): TxType | null {
   if (!value) return null;
   if (TX_TYPE_NAME_SET.has(value)) return value as TxType;
   // Numeric form
