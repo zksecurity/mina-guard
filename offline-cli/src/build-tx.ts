@@ -164,6 +164,8 @@ interface BundleProposal {
   destination: string | null;
   childAccount: string | null;
   memoHash: string | null;
+  /** Plaintext tx memo (cosmetic, shown on the explorer); rides along from the backend Proposal record. */
+  memo?: string | null;
   receivers: BundleReceiver[];
   [key: string]: unknown;
 }
@@ -1048,7 +1050,8 @@ export async function handleExecute(
     const childZkApp = new MinaGuard(PublicKey.fromBase58(childAddr));
 
     log('Building transaction...');
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    const childMemo = bundle.proposal.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(executor, childMemo), async () => {
       if (txType === 'reclaimChild') {
         const amount = UInt64.from(bundle.proposal.data ?? '0');
         await childZkApp.executeReclaimToParent(
@@ -1107,7 +1110,8 @@ export async function handleExecute(
   log('Building transaction...');
   const contract = new MinaGuard(PublicKey.fromBase58(bundle.contractAddress));
 
-  const tx = await Mina.transaction(txSender(executor), async () => {
+  const proposalMemo = bundle.proposal.memo ?? undefined;
+  const tx = await Mina.transaction(txSender(executor, proposalMemo), async () => {
     if (newAccountCount > 0) {
       AccountUpdate.fundNewAccount(executor, newAccountCount);
     }

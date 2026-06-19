@@ -294,5 +294,16 @@ describe('offline-cli', () => {
         expect(decodeTxMemo(JSON.parse(signed).memo)).toBe(memo);
       }
     }, 20_000);
+
+    // Guards the execute-path memo propagation (build-tx handleExecute passes
+    // bundle.proposal.memo into txSender). buildSignedSendTxJson mirrors the
+    // shape of a local-execute tx (fee payer + a signed update); we assert the
+    // proposal memo survives all the way through signFeePayer onto the tx.
+    it('carries the proposal memo through to the signed execute tx', async () => {
+      const proposalMemo = 'pay rent #42';
+      const { txJson, feePayerKey } = await buildSignedSendTxJson(proposalMemo);
+      const signed = signFeePayer(txJson, feePayerKey.toBase58(), 'testnet');
+      expect(decodeTxMemo(JSON.parse(signed).memo)).toBe(proposalMemo);
+    }, 20_000);
   });
 });
