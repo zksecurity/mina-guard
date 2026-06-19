@@ -135,7 +135,6 @@ describe('offline-cli', () => {
     const setupOwners = toFixedOwners(owners.map((o) => o.pub));
     const setupTx = await Mina.transaction(deployer.pub, async () => {
       await zkApp.setup(
-        ownersCommitment,
         Field(2),
         Field(owners.length),
         Field(1),

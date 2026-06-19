@@ -727,7 +727,6 @@ export async function handlePropose(
       await childZkApp.reserveForParent(
         contractAddress,
         proposalHash,
-        childOwnerStore.getCommitment(),
         Field(input.childThreshold!),
         Field(input.childOwners!.length),
         new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
@@ -934,7 +933,6 @@ export async function handleExecute(
     log('Building transaction...');
     const tx = await Mina.transaction(txSender(executor), async () => {
       await childZkApp.executeSetupChild(
-        childOwnerStore.getCommitment(),
         Field(bundle.childThreshold!),
         Field(bundle.childOwners!.length),
         new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) }),

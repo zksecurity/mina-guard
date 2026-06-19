@@ -185,7 +185,6 @@ describe('offline-cli e2e', () => {
 
     const setupTx = await Mina.transaction(deployer.pub, async () => {
       await zkApp.setup(
-        computeOwnerChain(owners.map((o) => o.pub)),
         Field(2),
         Field(owners.length),
         Field(1),
@@ -588,7 +587,7 @@ describe('offline-cli e2e', () => {
         AccountUpdate.fundNewAccount(owners[0].pub);
         await childZkApp.deploy();
         await childZkApp.reserveForParent(
-          zkAppAddress, ccHash, ownersCommitment, thresholdField, numOwnersField,
+          zkAppAddress, ccHash, thresholdField, numOwnersField,
           new SetupOwnersInput({ owners: setupOwners }),
         );
         await zkApp.propose(
@@ -618,7 +617,7 @@ describe('offline-cli e2e', () => {
         const funder = AccountUpdate.createSigned(deployer.pub);
         funder.send({ to: childAddress, amount: UInt64.from(10_000_000_000) });
         await childZkApp.executeSetupChild(
-          ownersCommitment, thresholdField, numOwnersField,
+          thresholdField, numOwnersField,
           new SetupOwnersInput({ owners: setupOwners }),
           createChildProposal, approvalStore.getWitness(ccHash), approvalStore.getCount(ccHash),
         );
@@ -920,7 +919,7 @@ describe('offline-cli e2e', () => {
         AccountUpdate.fundNewAccount(proposer.pub);
         await childZkApp.deploy();
         await childZkApp.reserveForParent(
-          zkAppAddress, ccHash, childOwnersCommitment, Field(2), Field(owners.length),
+          zkAppAddress, ccHash, Field(2), Field(owners.length),
           new SetupOwnersInput({ owners: setupOwners }),
         );
         await zkApp.propose(

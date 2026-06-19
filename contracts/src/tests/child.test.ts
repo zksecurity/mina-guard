@@ -130,7 +130,6 @@ describe('MinaGuard - Child Lifecycle', () => {
         await childZkApp.reserveForParent(
           parentCtx.zkAppAddress,
           proposal.hash(),
-          ownersCommitment,
           Field(2),
           Field(3),
           new SetupOwnersInput({ owners: setupOwners }),
@@ -142,7 +141,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -170,7 +168,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -226,7 +223,6 @@ describe('MinaGuard - Child Lifecycle', () => {
         await childZkApp.reserveForParent(
           parentCtx.zkAppAddress,
           badProposal.hash(),
-          ownersCommitment,
           Field(2),
           Field(3),
           new SetupOwnersInput({ owners: setupOwners }),
@@ -238,7 +234,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -302,7 +297,6 @@ describe('MinaGuard - Child Lifecycle', () => {
         await parentCtx.zkApp.reserveForParent(
           attackerAddress,
           Field(999),
-          ownersCommitment,
           Field(2),
           Field(3),
           new SetupOwnersInput({ owners: setupOwners }),

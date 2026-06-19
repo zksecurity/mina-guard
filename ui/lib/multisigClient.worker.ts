@@ -745,7 +745,6 @@ const workerApi = {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
       await zkApp.setup(
-        ownerStore.getCommitment(),
         Field(params.threshold),
         Field(ownerKeys.length),
         Field(params.networkId),
@@ -796,7 +795,6 @@ const workerApi = {
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
       await zkApp.setup(
-        ownerStore.getCommitment(),
         Field(params.threshold),
         Field(ownerStore.length),
         Field(params.networkId),
@@ -948,7 +946,6 @@ const workerApi = {
         await childZkApp.reserveForParent(
           contractAddress,
           proposalHash,
-          childOwnerStore.getCommitment(),
           Field(params.childThreshold!),
           Field(params.childOwners!.length),
           new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
@@ -1238,7 +1235,6 @@ const workerApi = {
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(executor), async () => {
       await childZkApp.executeSetupChild(
-        ownersCommitment,
         threshold,
         numOwners,
         new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) }),

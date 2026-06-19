@@ -149,12 +149,10 @@ export async function deployAndSetup(
   await fundTxn.prove();
   await fundTxn.sign([deployerKey]).send();
 
-  const ownersCommitment = computeOwnerChain(owners.map((o) => o.pub));
   const setupOwners = toFixedSetupOwners(owners.map((o) => o.pub));
 
   const setupTxn = await Mina.transaction(deployerAccount, async () => {
     await zkApp.setup(
-      ownersCommitment,
       Field(threshold),
       Field(owners.length),
       ctx.networkId,
@@ -687,7 +685,6 @@ export async function deployAndSetupChildGuard(
     await childZkApp.reserveForParent(
       parentAddress,
       proposalHash,
-      ownersCommitment,
       thresholdField,
       numOwnersField,
       new SetupOwnersInput({ owners: setupOwners }),
@@ -720,7 +717,6 @@ export async function deployAndSetupChildGuard(
     const funder = AccountUpdate.createSigned(deployerAccount);
     funder.send({ to: childAddress, amount: UInt64.from(10_000_000_000) });
     await childZkApp.executeSetupChild(
-      ownersCommitment,
       thresholdField,
       numOwnersField,
       new SetupOwnersInput({ owners: setupOwners }),
