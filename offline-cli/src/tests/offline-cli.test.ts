@@ -26,7 +26,7 @@ import {
   MAX_OWNERS,
   MAX_RECEIVERS,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers } from '../build-tx.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
 
@@ -209,6 +209,50 @@ describe('offline-cli', () => {
     expect(proposalHash.toString()).toBeTruthy();
     expect(proposal.hash().toString()).toBe(proposalHash.toString());
   }, 60_000);
+
+  // -- Account-creation fee counting (canonical, hash-bound receivers) --
+
+  describe('countNewReceiverAccounts', () => {
+    const real = (i: number) =>
+      new Receiver({ address: PrivateKey.random().toPublicKey(), amount: UInt64.from(1_000_000 + i) });
+
+    it('skips empty/padded slots and counts only non-existent real receivers', () => {
+      const receivers = [real(0), real(1)];
+      while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
+      // none exist on-chain -> both real ones counted, empties ignored
+      expect(countNewReceiverAccounts(receivers, () => false)).toBe(2);
+    });
+
+    it('does not count receivers that already exist on-chain', () => {
+      const existing = real(0);
+      const fresh = real(1);
+      const receivers = [existing, fresh];
+      while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
+      const existingAddr = existing.address.toBase58();
+      expect(
+        countNewReceiverAccounts(receivers, (addr) => addr === existingAddr),
+      ).toBe(1); // only `fresh` is new
+    });
+
+    // SECURITY REGRESSION: extra receiver rows beyond MAX_RECEIVERS must not be
+    // able to inflate the account-creation fee. buildTransferReceivers slices to
+    // MAX_RECEIVERS, so >MAX_RECEIVERS source rows collapse to the canonical set
+    // and the count can never exceed MAX_RECEIVERS — regardless of how many extra
+    // rows an untrusted bundle/backend appended.
+    it('cannot exceed MAX_RECEIVERS even with extra untrusted rows', () => {
+      const extraRows = Array.from({ length: MAX_RECEIVERS + 25 }, (_, i) => ({
+        address: PrivateKey.random().toPublicKey().toBase58(),
+        amount: String(1_000_000 + i),
+      }));
+      const canonical = buildTransferReceivers(extraRows);
+      expect(canonical.length).toBe(MAX_RECEIVERS);
+      // Even if EVERY canonical receiver is reported non-existent, the count is
+      // bounded by the canonical slice — the 25 extra rows are simply gone.
+      const count = countNewReceiverAccounts(canonical, () => false);
+      expect(count).toBe(MAX_RECEIVERS);
+      expect(count).toBeLessThanOrEqual(MAX_RECEIVERS);
+    });
+  });
 
   // -- Fee payer signing --
 
