@@ -14,6 +14,32 @@ function computeOwnerChain(owners: PublicKey[]): Field {
 }
 
 /**
+ * Computes the owner-chain commitment from a fixed-size setup owner array,
+ * folding in only the first `numOwners` slots (index < numOwners) and skipping
+ * the PublicKey.empty() padding. Mirrors `computeOwnerChain` (which hashes only
+ * real owners) so the result matches the commitment produced off-chain by
+ * OwnerStore.getCommitment().
+ *
+ * Takes a raw PublicKey[] (caller passes SetupOwnersInput.owners) to avoid a
+ * circular import with MinaGuard.ts where SetupOwnersInput is defined.
+ *
+ * TODO: while chaining, add coherence checks to harden the committed set:
+ *   - reject duplicate owners (same pk appearing twice within the active range)
+ *   - assert padding slots (index >= numOwners) are PublicKey.empty()
+ *   - (optional) assert active owners are strictly ascending by base58 to
+ *     enforce canonical ordering rather than only failing the equality check
+ */
+function computeSetupOwnersChain(owners: PublicKey[], numOwners: Field): Field {
+  let currentChain = INITIAL_OWNER_CHAIN;
+  owners.forEach((pk, i) => {
+    const active = Field(i).lessThan(numOwners);
+    const next = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
+    currentChain = Provable.if(active, next, currentChain);
+  });
+  return currentChain;
+}
+
+/**
  * Circuit to check membership of a public key in the owner list.
  * 
  * @param ownerCommitment
@@ -143,6 +169,6 @@ function removeOwnerFromCommitment(
 }
 
 export {
-  OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, assertOwnerMembership,
-  addOwnerToCommitment, removeOwnerFromCommitment
+  OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, computeSetupOwnersChain,
+  assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment
 };
