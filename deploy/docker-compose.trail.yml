@@ -76,6 +76,7 @@ services:
         # faucet (the o1js Mina.faucet() helper also targets this host with
         # `?network=mesa`).
         - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mesa.minaexplorer.com
+        - NEXT_PUBLIC_POLL_INTERVAL_MS=1000
         - ENABLE_SOURCE_MAPS=false
     restart: unless-stopped
     depends_on:

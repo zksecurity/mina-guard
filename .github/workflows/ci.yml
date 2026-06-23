@@ -93,6 +93,43 @@ jobs:
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
         timeout-minutes: 20
 
+  check-vk-hash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fail if VK-affecting files changed without updating contracts/.vk-hash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          # Skip on initial push (before SHA is all-zeros)
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Initial push — skipping VK hash drift check."
+            exit 0
+          fi
+
+          SRC_CHANGED=$(git diff --name-only "$BASE"...HEAD -- contracts/src/ || true)
+          O1JS_CHANGED=$(git diff "$BASE"...HEAD -- bun.lock | grep '^[+-].*"o1js@' | grep -v '^---\|^+++' || true)
+          HASH_CHANGED=$(git diff --name-only "$BASE"...HEAD -- contracts/.vk-hash || true)
+
+          TRIGGER=""
+          [ -n "$SRC_CHANGED" ] && TRIGGER="contracts/src changed"
+          [ -n "$O1JS_CHANGED" ] && TRIGGER="${TRIGGER:+$TRIGGER; }o1js version changed in bun.lock"
+
+          if [ -n "$TRIGGER" ] && [ -z "$HASH_CHANGED" ]; then
+            echo "::error::$TRIGGER but contracts/.vk-hash was not updated."
+            echo "Regenerate: bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile"
+            exit 1
+          fi
+
+          echo "VK hash drift check passed."
+
   test-offline-cli-windows:
     timeout-minutes: 30
     runs-on: windows-latest
