@@ -75,12 +75,21 @@ services:
         # Mesa Trail has no built-in faucet; point users at the public Mina
         # faucet (the o1js Mina.faucet() helper also targets this host with
         # `?network=mesa`).
-        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mesa.minaexplorer.com
+        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-nodes.duckdns.org/trail/explorer
         - NEXT_PUBLIC_POLL_INTERVAL_MS=1000
         - ENABLE_SOURCE_MAPS=false
     restart: unless-stopped
     depends_on:
       - backend
+
+  explorer:
+    build:
+      context: ../preview-env
+      dockerfile: Dockerfile.explorer
+      args:
+        - NEXT_PUBLIC_BASE_PATH=/trail/explorer
+        - TESTNET_GRAPHQL_URL=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set}:3085/graphql
+    restart: unless-stopped
 
   caddy:
     image: caddy:2
@@ -99,6 +108,7 @@ services:
     depends_on:
       - frontend
       - backend
+      - explorer
 
 volumes:
   minaguard-trail-db:

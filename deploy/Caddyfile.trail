@@ -68,6 +68,14 @@
         }
     }
 
+    # Block explorer
+    handle /trail/explorer/* {
+        reverse_proxy explorer:3000
+    }
+    handle /trail/explorer {
+        reverse_proxy explorer:3000
+    }
+
     # Static assets (content-hashed filenames, safe to cache long-term).
     # COOP/COEP set here too so cross-origin-isolated requirements (needed
     # by the o1js worker's SharedArrayBuffer) are consistent across assets.
