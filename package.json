@@ -19,7 +19,7 @@
     "typecheck": "bun run --filter contracts typecheck && bun run --filter backend build"
   },
   "dependencies": {
-    "o1js": "github:mellowcroc/o1js#mesa-srs-fix"
+    "o1js": "3.0.0-mesa.final"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
