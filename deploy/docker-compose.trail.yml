@@ -1,0 +1,103 @@
+# MinaGuard Mesa Trail (mesa-mut) deployment.
+#
+# This compose project runs on the prod-facing box alongside the existing
+# /app/* (localnet) deploy and the PR previews. The application stack
+# (db + backend + frontend + inner Caddy) lives here; the Mina node stack
+# (daemon + archive + archive-node-api) lives on a separate box and is
+# reached over the network at:
+#   - daemon GraphQL    → ${MESA_NODE_HOST}:3085
+#   - archive-node-api  → ${MESA_NODE_HOST}:8282
+#
+# MESA_NODE_HOST is required — `docker compose up` fails if it's not set in
+# the deploying shell. See deploy/.env.example for the shape of the file
+# deploy-trail.sh sources; or just `export MESA_NODE_HOST=...` before running.
+# ufw on whichever box that resolves to must allow inbound 3085 + 8282 from
+# this server's IP — see MINA_GUARD_PRODUCTION.md §3.
+#
+# Usage:
+#   ./deploy/deploy-trail.sh up
+#   ./deploy/deploy-trail.sh down
+#
+# Coexists with `deploy/docker-compose.yml -p minaguard` (the localnet
+# deployment) and the per-PR preview projects from `preview-env/preview.sh`
+# — different project name, different volumes, different inner-Caddy port.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=minaguard
+      - POSTGRES_PASSWORD=minaguard
+      - POSTGRES_DB=minaguard
+    volumes:
+      - minaguard-trail-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minaguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: preview-env/Dockerfile.backend
+      args:
+        # Skip the (memory-heavy) in-image circuit compile — host computes the
+        # vk-hash once and threads it through. See preview-env/preview.sh for
+        # how the localnet/preview path does the same.
+        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-}
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
+      # The Mesa Trail node stack lives on a separate box. ufw on that box
+      # restricts ports 3085 + 8282 to inbound from this server's IP only.
+      - MINA_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:3085/graphql
+      - ARCHIVE_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:8282
+      - PORT=4000
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: preview-env/Dockerfile.frontend
+      args:
+        # Public-facing URLs that the browser hits. Mirrors the localnet deploy's
+        # /app/* convention but under /trail/*. Substitute the actual host
+        # if you're not using mina-nodes.duckdns.org.
+        - NEXT_PUBLIC_BASE_PATH=/trail
+        - NEXT_PUBLIC_API_BASE_URL=https://mina-nodes.duckdns.org/trail
+        - NEXT_PUBLIC_MINA_ENDPOINT=https://mina-nodes.duckdns.org/trail/graphql
+        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-nodes.duckdns.org/trail/archive
+        - NEXT_PUBLIC_MINA_NETWORK=testnet
+        # Mesa Trail has no built-in faucet; point users at the public Mina
+        # faucet (the o1js Mina.faucet() helper also targets this host with
+        # `?network=mesa`).
+        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mesa.minaexplorer.com
+        - ENABLE_SOURCE_MAPS=false
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    # Inner Caddy for this compose project. Listens on container :80, host-
+    # published at :10001. The outer host Caddy on this same box reverse-proxies
+    # /trail, /trail/* to localhost:10001 (see deploy-trail.sh add_caddy_route).
+    ports:
+      - "10001:80"
+    volumes:
+      - ./Caddyfile.trail:/etc/caddy/Caddyfile:ro
+    # Pass MESA_NODE_HOST into the caddy container so the Caddyfile's
+    # {$MESA_NODE_HOST} substitution resolves to the node-stack address.
+    environment:
+      - MESA_NODE_HOST=${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  minaguard-trail-db:
