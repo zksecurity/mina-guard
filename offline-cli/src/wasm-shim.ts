@@ -1,20 +1,12 @@
 // @ts-nocheck
 // Embed the plonk WASM binary so the compiled binary is fully self-contained.
-// Bun embeds imported file assets into its $bunfs virtual filesystem.
-// We patch the CJS require("fs").readFileSync to redirect WASM loads.
+// Bun embeds imported file assets into its $bunfs virtual filesystem; we patch
+// the CJS require("fs").readFileSync to redirect WASM loads to the embedded copy.
 //
-// Filesystem-relative import that goes through the top-level
-// node_modules/o1js/ symlink that bun creates on workspace install — stable
-// across npm-vs-github cache layouts (i.e., whether bun cached o1js as
-// .bun/o1js@<version>/ for npm or .bun/o1js@github+.../ for a github dep).
-// A package-name import (`o1js/dist/...`) would be cleaner but doesn't work:
-// o1js's package.json declares a conditional `exports` field, which blocks
-// any subpath that isn't explicitly exported.
-//
-// Previous versions of this file imported through `.bun/o1js@github+
-// mellowcroc+o1js+e0a1022/...` — that hardcoded a specific bun cache key
-// for the old mesa-srs-fix fork, and broke when we bumped to
-// o1js@3.0.0-mesa.final on npm (the cache key changed).
+// The import path is filesystem-relative (through the top-level node_modules/o1js
+// symlink) rather than a package import (`o1js/dist/...`): o1js's package.json
+// declares a conditional `exports` field that blocks any subpath not explicitly
+// exported, so the package-style import fails to resolve.
 import embeddedWasmPath from "../../node_modules/o1js/dist/node/bindings/compiled/node_bindings/plonk_wasm_bg.wasm";
 
 const nodeFs = require("fs");

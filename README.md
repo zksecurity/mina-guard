@@ -17,7 +17,7 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 
 ## o1js dependency
 
-The runtime o1js library comes from `o1js@3.0.0-mesa.final` on npm — the canonical Mesa-network release. Earlier versions of this monorepo depended on a [fork](https://github.com/mellowcroc/o1js/tree/mesa-srs-fix) carrying the SRS `getLagrangeBasis` try-catch fix; that patch (along with the graikos commitment-exposure patches as PR [#2869](https://github.com/o1-labs/o1js/pull/2869) and the SRS web-worker fix as PR [#2866](https://github.com/o1-labs/o1js/pull/2866)) has since been merged upstream and is baked into `3.0.0-mesa.final`.
+The runtime o1js library comes from `o1js@3.0.0-mesa.final` on npm — the canonical Mesa-network release.
 
 The `ui/deps/o1js/` submodule is still required, but only for `mina-signer` — the `ui` and `offline-cli` workspaces import it via `file:` workspace deps (mina-signer is a Mina-specific browser-side signing package shipped as a subpackage inside the o1js repo). The submodule points at [`graikos/o1js#develop-3.0`](https://github.com/graikos/o1js/tree/develop-3.0) (currently tip `a252f8bb`); its mina-signer source is byte-identical to what `o1js@3.0.0-mesa.final` ships in `node_modules/o1js/src/mina-signer/`, so there's no protocol-level divergence. A follow-up could drop the submodule entirely by switching to the standalone [`mina-signer`](https://www.npmjs.com/package/mina-signer) npm package.
 

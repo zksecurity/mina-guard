@@ -38,6 +38,16 @@ if [ -f deploy/.env ]; then
 fi
 : "${MESA_NODE_HOST:?MESA_NODE_HOST must be set in deploy/.env (see deploy/.env.example) or exported in the shell}"
 
+# The MinaGuard VK hash is a property of the contract source, not deploy-time
+# config — it's committed at contracts/.vk-hash. Read it from there (stripping
+# the comment header) unless explicitly overridden in the environment. The
+# backend image takes it as a build arg; the indexer filters events by it.
+if [ -z "${MINAGUARD_VK_HASH:-}" ] && [ -f contracts/.vk-hash ]; then
+  MINAGUARD_VK_HASH=$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')
+  export MINAGUARD_VK_HASH
+fi
+: "${MINAGUARD_VK_HASH:?contracts/.vk-hash parsed to empty — regenerate with: bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile}"
+
 COMMAND="${1:-}"
 PORT=10001
 CADDY_API="http://localhost:2019"
@@ -122,7 +132,7 @@ case "$COMMAND" in
 
     down)
         echo "Tearing down trail deployment..."
-        docker compose -p minaguard-trail down --remove-orphans --rmi local
+        docker compose -f deploy/docker-compose.trail.yml -p minaguard-trail down --remove-orphans --rmi local
         remove_caddy_route
         echo "Done."
         ;;
