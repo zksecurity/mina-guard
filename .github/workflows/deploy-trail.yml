@@ -9,22 +9,13 @@
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #
 #   - MESA_NODE_HOST       IP/host of the standalone Mesa Trail node stack
-#                          REQUIRED — the
-#                          docker-compose.trail.yml has a ${MESA_NODE_HOST:?...}
-#                          assertion that fails the build if unset.
+#                          REQUIRED — docker-compose.trail.yml asserts it.
 #
-#   - MINAGUARD_VK_HASH    Verification key hash of the deployed MinaGuard
-#                          contract (currently the browser-compiled hash —
-#                          see MINA_GUARD_PRODUCTION.md §10 2026-06-23
-#                          entry for the Node↔browser VK divergence context).
-#                          Optional but recommended; leave blank to fall
-#                          through to "no VK filter" mode (the indexer then
-#                          records events from any zkApp at queried
-#                          addresses, fine for testnet trial but not for
-#                          mainnet).
+# The MinaGuard VK hash is NOT a secret — it's committed at
+# contracts/.vk-hash and read automatically by deploy-trail.sh.
 #
-# To bootstrap: add the two secrets above, then merge a PR to main (or
-# trigger via `gh workflow run deploy-trail.yml`).
+# To bootstrap: add MESA_NODE_HOST, then merge a PR to main (or trigger
+# via `gh workflow run deploy-trail.yml`).
 #
 # To tighten later: add a `paths:` filter under `on.push` so this only
 # fires when trail-relevant files change. Today it fires on every main
@@ -45,36 +36,9 @@ jobs:
   deploy:
     runs-on: [self-hosted, deploy]
     steps:
-      - name: Verify branch is main
-        run: |
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            echo "::error::Refusing to deploy from ${{ github.ref }}. This workflow only runs on main."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Write deploy/.env from secrets
-        # deploy-trail.sh sources deploy/.env at startup. MESA_NODE_HOST is
-        # required (compose's ${MESA_NODE_HOST:?...} fails the build if
-        # unset); MINAGUARD_VK_HASH is used as a build arg for the backend
-        # image (the Dockerfile writes it to /app/.vk-hash, the indexer
-        # reads it at runtime).
-        env:
-          MESA_NODE_HOST: ${{ secrets.MESA_NODE_HOST }}
-          MINAGUARD_VK_HASH: ${{ secrets.MINAGUARD_VK_HASH }}
-        run: |
-          if [ -z "$MESA_NODE_HOST" ]; then
-            echo "::error::secrets.MESA_NODE_HOST is not set — add it in repo Settings → Secrets"
-            exit 1
-          fi
-          cat > deploy/.env <<EOF
-          MESA_NODE_HOST=$MESA_NODE_HOST
-          MINAGUARD_VK_HASH=$MINAGUARD_VK_HASH
-          EOF
-          chmod 600 deploy/.env
 
       - name: Deploy
         # deploy-trail.sh runs `docker compose ... up -d --build` for the
@@ -82,6 +46,9 @@ jobs:
         # /trail, /trail/* route to the host Caddy via admin API on
         # localhost:2019 (mirrors deploy.sh add_caddy_route + COOP/COEP).
         # Idempotent — safe to re-run on every main push.
+        # The VK hash is read from contracts/.vk-hash by deploy-trail.sh.
+        env:
+          MESA_NODE_HOST: ${{ secrets.MESA_NODE_HOST }}
         run: |
           chmod +x deploy/deploy-trail.sh
           ./deploy/deploy-trail.sh up
