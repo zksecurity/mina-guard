@@ -11,6 +11,22 @@ export interface BackendConfig {
   indexStartHeight: number;
   minaguardVkHash: string | null;
   indexerMode: 'full' | 'lite';
+  /** Where to source candidate addresses for contract discovery.
+   *  - 'daemon': scan daemon's bestChain — capped at 290 blocks back.
+   *  - 'archive': query Mina archive postgres directly — unbounded history. */
+  discoveryBackend: 'daemon' | 'archive';
+  /** Read-only Mina archive postgres connection (required when discoveryBackend='archive').
+   *  Discrete parts so reserved characters in the password don't need URL-encoding. */
+  archiveDb: ArchiveDbConfig | null;
+}
+
+/** Discrete postgres connection params for the Mina archive read replica. */
+export interface ArchiveDbConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
 }
 
 /** Throws if a required environment variable is missing or empty. */
@@ -45,6 +61,29 @@ export function loadConfig(): BackendConfig {
   }
   const indexerMode: 'full' | 'lite' = rawMode;
 
+  const rawDiscoveryBackend = process.env.DISCOVERY_BACKEND ?? 'daemon';
+  if (rawDiscoveryBackend !== 'daemon' && rawDiscoveryBackend !== 'archive') {
+    throw new Error(
+      `Env var DISCOVERY_BACKEND must be 'daemon' or 'archive', got: "${rawDiscoveryBackend}"`,
+    );
+  }
+  const discoveryBackend: 'daemon' | 'archive' = rawDiscoveryBackend;
+  let archiveDb: ArchiveDbConfig | null = null;
+  if (discoveryBackend === 'archive') {
+    if (!process.env.MINAGUARD_VK_HASH) {
+      throw new Error(
+        "DISCOVERY_BACKEND=archive requires MINAGUARD_VK_HASH to be set — the archive postgres query filters on the VK hash to keep results bounded. Without it, the indexer would silently fall back to the 290-block daemon scan, defeating the point of switching backends.",
+      );
+    }
+    archiveDb = {
+      host: requireEnv('ARCHIVE_DB_HOST'),
+      port: numericEnv('ARCHIVE_DB_PORT', 5432),
+      user: requireEnv('ARCHIVE_DB_USER'),
+      password: requireEnv('ARCHIVE_DB_PASSWORD'),
+      database: requireEnv('ARCHIVE_DB_NAME'),
+    };
+  }
+
   return {
     port,
     databaseUrl,
@@ -57,5 +96,7 @@ export function loadConfig(): BackendConfig {
     indexStartHeight: numericEnv('INDEX_START_HEIGHT', 0),
     minaguardVkHash: process.env.MINAGUARD_VK_HASH ?? null,
     indexerMode,
+    discoveryBackend,
+    archiveDb,
   };
 }

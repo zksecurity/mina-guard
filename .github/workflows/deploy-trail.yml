@@ -10,11 +10,14 @@
 #
 #   - MESA_NODE_HOST       IP/host of the standalone Mesa Trail node stack
 #                          REQUIRED — docker-compose.trail.yml asserts it.
+#   - ARCHIVE_DB_PASSWORD  Password for the read-only `minaguard_ro` role
+#                          on the node-stack box's archive postgres. REQUIRED —
+#                          docker-compose.trail.yml asserts it.
 #
 # The MinaGuard VK hash is NOT a secret — it's committed at
 # contracts/.vk-hash and read automatically by deploy-trail.sh.
 #
-# To bootstrap: add MESA_NODE_HOST, then merge a PR to main (or trigger
+# To bootstrap: add the secrets above, then merge a PR to main (or trigger
 # via `gh workflow run deploy-trail.yml`).
 #
 # To tighten later: add a `paths:` filter under `on.push` so this only
@@ -49,6 +52,7 @@ jobs:
         # The VK hash is read from contracts/.vk-hash by deploy-trail.sh.
         env:
           MESA_NODE_HOST: ${{ secrets.MESA_NODE_HOST }}
+          ARCHIVE_DB_PASSWORD: ${{ secrets.ARCHIVE_DB_PASSWORD }}
         run: |
           chmod +x deploy/deploy-trail.sh
           ./deploy/deploy-trail.sh up

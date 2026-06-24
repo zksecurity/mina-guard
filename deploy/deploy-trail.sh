@@ -37,6 +37,7 @@ if [ -f deploy/.env ]; then
   set +a
 fi
 : "${MESA_NODE_HOST:?MESA_NODE_HOST must be set in deploy/.env (see deploy/.env.example) or exported in the shell}"
+: "${ARCHIVE_DB_PASSWORD:?ARCHIVE_DB_PASSWORD must be set in deploy/.env (see deploy/.env.example) or exported in the shell — read-only role on the node-stack archive postgres}"
 
 # The MinaGuard VK hash is a property of the contract source, not deploy-time
 # config — it's committed at contracts/.vk-hash. Read it from there (stripping
