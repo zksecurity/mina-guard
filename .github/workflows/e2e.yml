@@ -54,9 +54,9 @@ jobs:
       - name: Wait for services
         run: |
           echo "Waiting for backend..."
-          timeout 60 bash -c 'until curl -sf http://localhost:4000/health; do sleep 2; done'
+          timeout 60 bash -c 'until curl -sf http://localhost:14000/health; do sleep 2; done'
           echo "Waiting for frontend..."
-          timeout 120 bash -c 'until curl -sf http://localhost:3000; do sleep 2; done'
+          timeout 120 bash -c 'until curl -sf http://localhost:13000; do sleep 2; done'
           echo "Services ready"
 
       - name: Run e2e tests
@@ -64,6 +64,13 @@ jobs:
         env:
           CI: true
           TMPDIR: ${{ github.workspace }}/.tmp
+          # Point the harness at the isolated host ports published by
+          # docker-compose.e2e-ci.yml (1xxxx range avoids runner collisions).
+          E2E_MINA_ENDPOINT: http://127.0.0.1:18080/graphql
+          E2E_ARCHIVE_ENDPOINT: http://127.0.0.1:18282
+          E2E_ACCOUNT_MANAGER: http://127.0.0.1:18181
+          E2E_BACKEND_URL: http://localhost:14000
+          E2E_FRONTEND_URL: http://localhost:13000
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

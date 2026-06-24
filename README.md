@@ -17,13 +17,9 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 
 ## o1js dependency
 
-The monorepo depends on a [fork of o1js](https://github.com/mellowcroc/o1js/tree/mesa-srs-fix) (`mesa-srs-fix` branch) rather than the upstream `3.0.0-mesa.0` release.
+The runtime o1js library comes from `o1js@3.0.0-mesa.final` on npm — the canonical Mesa-network release.
 
-The upstream `srs.ts` calls `caml_{fp,fq}_srs_get_lagrange_basis` to compute and cache the lagrange basis during compilation. This WASM function is not properly implemented for the web target — it throws an uncaught error that crashes the browser tab. The upstream code has a TODO acknowledging this but no guard around it. The issue only surfaces when a writable `Cache` is provided (which we now do via IndexedDB).
-
-The fork wraps both `getLagrangeBasis` call sites in try-catch. On the first site (cache miss with writable cache), the catch falls back to `lagrangeCommitment()` which computes the basis point-by-point without the broken WASM path. On the second site (post-computation cache write), the catch silently skips the cache write. Compilation succeeds either way — the lagrange basis is still computed, just not via the batch WASM function.
-
-The fix is baked into the fork's dist files so no postinstall patching is needed. Revert to upstream once this is fixed in a future o1js release.
+The `ui/deps/o1js/` submodule is still required, but only for `mina-signer` — the `ui` and `offline-cli` workspaces import it via `file:` workspace deps (mina-signer is a Mina-specific browser-side signing package shipped as a subpackage inside the o1js repo). The submodule points at [`graikos/o1js#develop-3.0`](https://github.com/graikos/o1js/tree/develop-3.0) (currently tip `a252f8bb`); its mina-signer source is byte-identical to what `o1js@3.0.0-mesa.final` ships in `node_modules/o1js/src/mina-signer/`, so there's no protocol-level divergence. A follow-up could drop the submodule entirely by switching to the standalone [`mina-signer`](https://www.npmjs.com/package/mina-signer) npm package.
 
 ## Development
 
