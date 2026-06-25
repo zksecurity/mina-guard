@@ -44,17 +44,20 @@ jobs:
           submodules: recursive
 
       - name: Deploy
-        # deploy-trail.sh runs `docker compose ... up -d --build` for the
-        # minaguard-trail compose project on host port 10001, then adds the
-        # /trail, /trail/* route to the host Caddy via admin API on
-        # localhost:2019 (mirrors deploy.sh add_caddy_route + COOP/COEP).
-        # Idempotent — safe to re-run on every main push.
-        # The VK hash is read from contracts/.vk-hash by deploy-trail.sh.
+        # `down` wipes the app DB volume before `up` rebuilds. Mirrors the
+        # main deploy's reasoning: the MinaGuard contract changes per PR
+        # merge, the VK hash changes with it, and the indexer filters
+        # discovery by VK hash — so any previously-indexed Contract rows
+        # point at addresses deployed with the old VK that the new
+        # indexer would skip anyway. Wiping is cleaner than carrying dead
+        # rows forward. When the contract stabilizes, switch back to
+        # `up`-only to get persistence.
         env:
           MESA_NODE_HOST: ${{ secrets.MESA_NODE_HOST }}
           ARCHIVE_DB_PASSWORD: ${{ secrets.ARCHIVE_DB_PASSWORD }}
         run: |
           chmod +x deploy/deploy-trail.sh
+          ./deploy/deploy-trail.sh down
           ./deploy/deploy-trail.sh up
 
       - name: Wait for trail backend

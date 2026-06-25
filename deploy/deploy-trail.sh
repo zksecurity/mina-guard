@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./deploy-trail.sh up      — deploy the trail (Mesa Trail / mesa-mut) compose project
-#   ./deploy-trail.sh down    — teardown (preserves db volume; pass -v manually to wipe)
+#   ./deploy-trail.sh down    — teardown (wipes the app DB volume — see comment on `down -v` below)
 #
 # Runs on the prod-facing box alongside /app/* (localnet, `deploy.sh`) and
 # the PR previews (`preview-env/preview.sh`). All three patterns use the
@@ -133,7 +133,17 @@ case "$COMMAND" in
 
     down)
         echo "Tearing down trail deployment..."
-        docker compose -f deploy/docker-compose.trail.yml -p minaguard-trail down --remove-orphans --rmi local
+        # `-v` wipes the minaguard-trail-db volume. Rationale: during active
+        # contract development the VK hash changes per PR merge, and the
+        # indexer filters discovery by VK hash — so on every deploy the
+        # previously-indexed Contract rows point at vk-hash-mismatched
+        # addresses that the new indexer would skip anyway. Preserving them
+        # would just leave dead rows in the DB and waste tick cycles on
+        # rescanUnreadyContracts for contracts nobody can interact with.
+        # Same applies to the new archive_discovered_height cursor — stale
+        # high-water mark, no longer matches the current VK's deploy heights.
+        # When the contract stabilizes, drop the `-v` to get persistence.
+        docker compose -f deploy/docker-compose.trail.yml -p minaguard-trail down -v --remove-orphans --rmi local
         remove_caddy_route
         echo "Done."
         ;;
