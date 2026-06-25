@@ -1,3 +1,4 @@
+import pg from 'pg';
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
 import { PublicKey } from 'o1js';
@@ -5,10 +6,12 @@ import { memoToField, decodeTxMemo } from 'contracts';
 import {
   configureNetwork,
   discoverCandidateAddresses,
+  discoverCandidateAddressesFromArchive,
   fetchBestChainHeaders,
   fetchDecodedContractEvents,
   fetchGenesisConstants,
   fetchLatestBlockHeight,
+  fetchLatestBlockHeightFromArchive,
   fetchOnChainState,
   fetchVerificationKeyHash,
   fetchZkappTxStatus,
@@ -55,6 +58,7 @@ export class MinaGuardIndexer {
   private readonly config: BackendConfig;
   private intervalHandle: NodeJS.Timeout | null = null;
   private genesis: GenesisConstants | null = null;
+  private archivePool: pg.Pool | null = null;
   private status: Omit<IndexerStatus, 'indexerMode'> = {
     running: false,
     lastRunAt: null,
@@ -90,6 +94,35 @@ export class MinaGuardIndexer {
       this.intervalHandle = null;
     }
     this.status.running = false;
+    if (this.archivePool) {
+      const pool = this.archivePool;
+      this.archivePool = null;
+      pool.end().catch((error) => {
+        console.error('[indexer] archivePool.end() failed during shutdown:', error);
+      });
+    }
+  }
+
+  /** Lazily constructs the read-only archive postgres pool when discoveryBackend='archive'. */
+  private getArchivePool(): pg.Pool {
+    if (!this.archivePool) {
+      if (!this.config.archiveDb) {
+        throw new Error('archiveDb is required for archive discovery backend');
+      }
+      this.archivePool = new pg.Pool({
+        ...this.config.archiveDb,
+        max: 2,
+        idleTimeoutMillis: 30_000,
+        // Cap how long a wedged archive postgres can hang the indexer for.
+        // Without these, a network blackhole or DB lockup makes every tick
+        // block until the kernel TCP timeout (minutes), starving everything
+        // downstream.
+        connectionTimeoutMillis: 5_000,
+        statement_timeout: 30_000,
+        query_timeout: 30_000,
+      });
+    }
+    return this.archivePool;
   }
 
   /** Returns the latest in-memory indexer status snapshot. Does not include `indexerMode` — the route layer adds it from config. */
@@ -102,7 +135,9 @@ export class MinaGuardIndexer {
     this.status.lastRunAt = new Date().toISOString();
 
     try {
-      const latestHeight = await fetchLatestBlockHeight(this.config);
+      const latestHeight = this.config.discoveryBackend === 'archive'
+        ? await fetchLatestBlockHeightFromArchive(this.getArchivePool())
+        : await fetchLatestBlockHeight(this.config);
       this.status.latestChainHeight = latestHeight;
       if (this.genesis) {
         const elapsed = Date.now() - this.genesis.genesisTimestampMs;
@@ -128,20 +163,52 @@ export class MinaGuardIndexer {
       const fromHeight = indexedHeight + 1;
       const toHeight = latestHeight;
 
-      // Scan bestChain for new contract deployments. Only look at the
-      // un-indexed delta plus a small margin for the race where a block lands
-      // between the latestHeight read and the bestChain call. Clamped to 290
-      // (Mina's bestChain cap); reorg safety is handled by detectAndRollbackReorg
-      // above, which rewinds IndexerCursor on fork — the next tick's window
-      // naturally re-covers the reorged range. Lite mode skips discovery
-      // entirely and tracks only contracts added via the /subscribe route.
+      // Scan for new contract deployments. The candidate-address source is
+      // pluggable: 'daemon' scans bestChain (capped at 290 blocks — see Mina's
+      // transition-frontier limit), 'archive' queries the archive postgres
+      // directly and has no horizon. Lite mode skips discovery entirely and
+      // tracks only contracts added via the /subscribe route. Reorg safety is
+      // handled by detectAndRollbackReorg above, which rewinds IndexerCursor
+      // on fork — the next tick re-covers the reorged range.
       if (this.config.indexerMode === 'full') {
         const DISCOVERY_MARGIN = 5;
-        const discoveryWindow = Math.max(
-          1,
-          Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
-        );
-        await this.discoverContracts(discoveryWindow, latestHeight);
+        let candidates: string[];
+        if (this.config.discoveryBackend === 'archive' && this.config.minaguardVkHash) {
+          // Cold start (no archive_discovered_height cursor): scan from
+          // indexStartHeight back to genesis-or-configured-floor so historical
+          // deploys are picked up. Subsequent ticks scan only the new delta
+          // plus a small reorg margin. The archive query filters by MinaGuard's
+          // VK hash, so even a from-genesis scan returns a tiny row set.
+          const lastDiscovered = await this.getArchiveDiscoveredHeight();
+          const discoveryFromHeight = lastDiscovered === null
+            ? this.config.indexStartHeight
+            : Math.max(this.config.indexStartHeight, lastDiscovered - DISCOVERY_MARGIN);
+          candidates = await discoverCandidateAddressesFromArchive(
+            this.getArchivePool(),
+            this.config.minaguardVkHash,
+            discoveryFromHeight,
+            latestHeight,
+          );
+        } else {
+          const discoveryWindow = Math.max(
+            1,
+            Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
+          );
+          candidates = await discoverCandidateAddresses(this.config, discoveryWindow);
+        }
+        const failureCount = await this.processCandidateAddresses(candidates, latestHeight);
+        if (this.config.discoveryBackend === 'archive' && failureCount === 0) {
+          // Only advance the cursor when every candidate was either inserted
+          // or intentionally skipped (existing / VK mismatch). If any candidate
+          // threw, keep the cursor where it was so the next tick re-scans the
+          // same range and gets another shot at the transient failure. The
+          // re-scan is cheap (single VK-filtered SQL returning a tiny row set)
+          // and existing-row dedup makes successful inserts from this tick
+          // skipped harmlessly next time. Without this gate, a pre-create
+          // failure (e.g. a flaky VK fetch via the daemon) would silently
+          // drop the candidate forever once the cursor moved past its block.
+          await this.setArchiveDiscoveredHeight(latestHeight);
+        }
       }
 
       // Rescan contracts that haven't yet seen a MinaGuard event. Runs
@@ -172,40 +239,79 @@ export class MinaGuardIndexer {
     return detectAndRollbackReorg(this.config);
   }
 
-  /** Discovers candidate contracts and stores verified MinaGuard addresses. */
-  private async discoverContracts(blockWindow: number, latestHeight: number): Promise<void> {
-    const candidates = await discoverCandidateAddresses(this.config, blockWindow);
+  /**
+   * Inserts new contracts for any candidate addresses that aren't already tracked
+   * and whose on-chain VK matches the configured MinaGuard hash. Candidates come
+   * from either the daemon bestChain scan or the archive postgres scan — both
+   * branches funnel through here so the dedup, VK re-verification, and backfill
+   * logic stays in one place.
+   *
+   * Returns the count of candidates that threw — the archive branch in tick()
+   * uses this to decide whether to advance the archive_discovered_height
+   * cursor (only advances when 0 failures, so transient failures get retried
+   * on the next tick instead of being dropped past the cursor).
+   *
+   * The on-chain VK re-fetch via the daemon stays in place even for the archive
+   * branch: it's cheap (one fetchAccount per new candidate, only on the first
+   * sighting), and it catches the edge case where the archive shows a VK install
+   * that has since been upgraded to a different VK on chain.
+   */
+  private async processCandidateAddresses(addresses: string[], latestHeight: number): Promise<number> {
+    let failureCount = 0;
+    for (const address of addresses) {
+      try {
+        const existing = await prisma.contract.findUnique({ where: { address } });
+        if (existing) continue;
 
-    for (const address of candidates) {
-      const existing = await prisma.contract.findUnique({ where: { address } });
-      if (existing) continue;
+        const verificationKeyHash = await fetchVerificationKeyHash(address);
+        if (!verificationKeyHash) continue;
 
-      const verificationKeyHash = await fetchVerificationKeyHash(address);
-      if (!verificationKeyHash) continue;
+        if (
+          this.config.minaguardVkHash &&
+          verificationKeyHash !== this.config.minaguardVkHash
+        ) {
+          continue;
+        }
 
-      if (
-        this.config.minaguardVkHash &&
-        verificationKeyHash !== this.config.minaguardVkHash
-      ) {
-        continue;
+        const created = await prisma.contract.create({
+          data: { address, discoveredAtBlock: latestHeight },
+        });
+
+        await this.backfillContract(created.id, address);
+      } catch (error) {
+        // Per-candidate isolation: a single bad apple (e.g. archive-node-api
+        // hiccup during backfill, transient daemon error during VK fetch)
+        // must not abort the whole batch. The caller uses the returned count
+        // to gate cursor advancement, so transient failures get retried on
+        // the next tick.
+        failureCount += 1;
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[indexer] processCandidateAddresses failed for ${address}: ${msg}`);
       }
-
-      const created = await prisma.contract.create({
-        data: { address, discoveredAtBlock: latestHeight },
-      });
-
-      await this.backfillContract(created.id, address);
     }
 
     this.status.discoveredContracts = await prisma.contract.count();
+    return failureCount;
   }
 
   /**
-   * Backfills events for a newly tracked contract. In full mode the backfill
-   * spans 300 blocks (bestChain window — the contract was just discovered there,
-   * so any earlier events are out of reorg range anyway). In lite mode the
-   * backfill starts at config.indexStartHeight (default 0) so a cold-started
-   * indexer pulls full history for any user-subscribed contract.
+   * Backfills events for a newly tracked contract. The lower bound depends on
+   * how the contract was sourced:
+   *
+   *   - Lite mode (user-subscribed via /api/subscribe with fromBlock=0) →
+   *     config.indexStartHeight (default 0). Full history fetch.
+   *   - Full mode + archive discovery → also config.indexStartHeight, because
+   *     archive-discovery can surface contracts deployed at arbitrary
+   *     historical heights and the 300-block guard below would lose every
+   *     event between the deploy block and (indexedHeight - 300).
+   *   - Full mode + daemon discovery → max(0, indexedHeight - 300). The 300
+   *     is a safe margin around Mina's ~290-block bestChain horizon: daemon
+   *     discovery could only have surfaced the contract from within that
+   *     window, so a 300-block backfill is guaranteed to cover the deploy.
+   *
+   * archive-node-api supports `from: 0` natively, so the from-genesis branches
+   * don't require direct postgres access — they just work harder against the
+   * same `events(input:{address, from, to})` endpoint o1js calls.
    *
    * Readiness is flipped by syncSingleContract on first event ingestion —
    * a subscribed-before-deploy contract returns from here with ready=false
@@ -217,7 +323,8 @@ export class MinaGuardIndexer {
   async backfillContract(contractId: number, address: string): Promise<void> {
     const indexedHeight = await this.getIndexedHeight();
     const backfillFrom =
-      this.config.indexerMode === 'lite'
+      this.config.indexerMode === 'lite' ||
+      this.config.discoveryBackend === 'archive'
         ? this.config.indexStartHeight
         : Math.max(0, indexedHeight - 300);
     if (indexedHeight > backfillFrom) {
@@ -1042,6 +1149,28 @@ export class MinaGuardIndexer {
     await prisma.indexerCursor.upsert({
       where: { key: 'indexed_height' },
       create: { key: 'indexed_height', value: String(height) },
+      update: { value: String(height) },
+    });
+  }
+
+  /**
+   * Returns the highest block height that's been scanned for archive-discovery,
+   * or null if archive discovery has never run on this DB. Tracked separately
+   * from `indexed_height` so that switching DISCOVERY_BACKEND from 'daemon' to
+   * 'archive' triggers a from-genesis sweep instead of inheriting the (much
+   * narrower) daemon cursor's position.
+   */
+  private async getArchiveDiscoveredHeight(): Promise<number | null> {
+    const cursor = await prisma.indexerCursor.findUnique({
+      where: { key: 'archive_discovered_height' },
+    });
+    return cursor ? Number(cursor.value) : null;
+  }
+
+  private async setArchiveDiscoveredHeight(height: number): Promise<void> {
+    await prisma.indexerCursor.upsert({
+      where: { key: 'archive_discovered_height' },
+      create: { key: 'archive_discovered_height', value: String(height) },
       update: { value: String(height) },
     });
   }

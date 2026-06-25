@@ -54,6 +54,16 @@ services:
       # restricts ports 3085 + 8282 to inbound from this server's IP only.
       - MINA_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:3085/graphql
       - ARCHIVE_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:8282
+      # Read-only archive postgres on the node-stack box. Lets the indexer
+      # scan beyond the daemon's 290-block bestChain cap. Passed as discrete
+      # parts (not a URL) so passwords with reserved URL characters (/, @, :,
+      # etc.) don't need percent-encoding.
+      - ARCHIVE_DB_HOST=${MESA_NODE_HOST}
+      - ARCHIVE_DB_PORT=5433
+      - ARCHIVE_DB_USER=minaguard_ro
+      - ARCHIVE_DB_PASSWORD=${ARCHIVE_DB_PASSWORD:?ARCHIVE_DB_PASSWORD must be set (see deploy/.env.example)}
+      - ARCHIVE_DB_NAME=archive
+      - DISCOVERY_BACKEND=archive
       - PORT=4000
     depends_on:
       db:
