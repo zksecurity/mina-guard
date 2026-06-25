@@ -295,11 +295,23 @@ export class MinaGuardIndexer {
   }
 
   /**
-   * Backfills events for a newly tracked contract. In full mode the backfill
-   * spans 300 blocks (bestChain window — the contract was just discovered there,
-   * so any earlier events are out of reorg range anyway). In lite mode the
-   * backfill starts at config.indexStartHeight (default 0) so a cold-started
-   * indexer pulls full history for any user-subscribed contract.
+   * Backfills events for a newly tracked contract. The lower bound depends on
+   * how the contract was sourced:
+   *
+   *   - Lite mode (user-subscribed via /api/subscribe with fromBlock=0) →
+   *     config.indexStartHeight (default 0). Full history fetch.
+   *   - Full mode + archive discovery → also config.indexStartHeight, because
+   *     archive-discovery can surface contracts deployed at arbitrary
+   *     historical heights and the 300-block guard below would lose every
+   *     event between the deploy block and (indexedHeight - 300).
+   *   - Full mode + daemon discovery → max(0, indexedHeight - 300). The 300
+   *     is a safe margin around Mina's ~290-block bestChain horizon: daemon
+   *     discovery could only have surfaced the contract from within that
+   *     window, so a 300-block backfill is guaranteed to cover the deploy.
+   *
+   * archive-node-api supports `from: 0` natively, so the from-genesis branches
+   * don't require direct postgres access — they just work harder against the
+   * same `events(input:{address, from, to})` endpoint o1js calls.
    *
    * Readiness is flipped by syncSingleContract on first event ingestion —
    * a subscribed-before-deploy contract returns from here with ready=false
@@ -311,7 +323,8 @@ export class MinaGuardIndexer {
   async backfillContract(contractId: number, address: string): Promise<void> {
     const indexedHeight = await this.getIndexedHeight();
     const backfillFrom =
-      this.config.indexerMode === 'lite'
+      this.config.indexerMode === 'lite' ||
+      this.config.discoveryBackend === 'archive'
         ? this.config.indexStartHeight
         : Math.max(0, indexedHeight - 300);
     if (indexedHeight > backfillFrom) {

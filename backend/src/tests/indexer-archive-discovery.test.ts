@@ -27,6 +27,14 @@ const archiveConfig = {
   },
 } as unknown as BackendConfig;
 
+async function setIndexedHeight(height: number) {
+  await prisma.indexerCursor.upsert({
+    where: { key: 'indexed_height' },
+    create: { key: 'indexed_height', value: String(height) },
+    update: { value: String(height) },
+  });
+}
+
 async function clearAll() {
   await prisma.approval.deleteMany();
   await prisma.proposalExecution.deleteMany();
@@ -169,7 +177,10 @@ describe('archive discovery: per-iteration failure isolation', () => {
     // Another shape of the same bug: backfillContract throws (not VK fetch).
     // Same expectation — other candidates still get processed, AND the cursor
     // does not advance so the next tick re-scans the same range and can retry
-    // backfill for `bad`.
+    // backfill for `bad`. Pre-seed indexedHeight so backfillContract actually
+    // runs (it short-circuits when indexedHeight <= backfillFrom).
+    await setIndexedHeight(999);
+
     const ok = PrivateKey.random().toPublicKey().toBase58();
     const bad = PrivateKey.random().toPublicKey().toBase58();
 
@@ -207,6 +218,51 @@ describe('archive discovery: per-iteration failure isolation', () => {
       where: { key: 'archive_discovered_height' },
     });
     expect(cursor).toBeNull();
+  });
+});
+
+describe('archive discovery: backfill range', () => {
+  test('backfill for a newly-discovered contract starts from indexStartHeight, not indexedHeight - 300', async () => {
+    // Regression test for the "historical event gap" bug: under full mode +
+    // daemon discovery, backfill spans the last 300 blocks (safe because
+    // daemon-discovery can't surface anything older). Archive-discovery can
+    // surface a deploy from 50k blocks ago — but with the old 300-block guard,
+    // every event between the deploy and (indexedHeight - 300) would be lost.
+    // This test pins the fix: archive backend uses indexStartHeight (the same
+    // lite-mode/manual-subscribe-with-fromBlock=0 path) regardless of how
+    // far ahead the indexer's cursor has advanced.
+    // Simulate: indexer has been running, cursor at 49999, archive scan now
+    // surfaces a contract whose deploy block is somewhere in [0, 49999].
+    // Without the seed, backfillContract short-circuits (indexedHeight=0,
+    // backfillFrom=0, nothing to fetch).
+    await setIndexedHeight(49_999);
+
+    const addr = PrivateKey.random().toPublicKey().toBase58();
+
+    const backfillCalls: Array<{ from: number; to: number }> = [];
+    mock.module('../mina-client.js', () => ({
+      ...minaClient,
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeightFromArchive: async () => 50_000,
+      fetchBestChainHeaders: async () => [],
+      discoverCandidateAddressesFromArchive: async () => [addr],
+      fetchVerificationKeyHash: async () => VK_HASH,
+      fetchDecodedContractEvents: async (_addr: string, from: number, to: number) => {
+        backfillCalls.push({ from, to });
+        return [];
+      },
+    }));
+
+    const indexer = new MinaGuardIndexer(archiveConfig);
+    await indexer.start();
+    indexer.stop();
+
+    // First call to fetchDecodedContractEvents is the backfill triggered by
+    // discovery. Lower bound must be indexStartHeight (0 in this config),
+    // NOT indexedHeight - 300 = 49699 (the old daemon-discovery guard).
+    expect(backfillCalls.length).toBeGreaterThan(0);
+    expect(backfillCalls[0].from).toBe(0);
+    expect(backfillCalls[0].to).toBe(49_999);
   });
 });
 
