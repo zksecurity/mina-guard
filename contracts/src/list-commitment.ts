@@ -14,6 +14,62 @@ function computeOwnerChain(owners: PublicKey[]): Field {
 }
 
 /**
+ * Computes the owner-chain commitment from a fixed-size setup owner array,
+ * folding in only the first `numOwners` slots (index < numOwners) and skipping
+ * the PublicKey.empty() padding. Mirrors `computeOwnerChain` (which hashes only
+ * real owners) so the result matches the commitment produced off-chain by
+ * OwnerStore.getCommitment().
+ *
+ * Takes a raw PublicKey[] (caller passes SetupOwnersInput.owners) to avoid a
+ * circular import with MinaGuard.ts where SetupOwnersInput is defined.
+ *
+ * Duplicate-owner and padding-is-empty coherence checks live in the companion
+ * `assertCoherentSetupOwners`. Canonical ordering is intentionally NOT enforced
+ * in-circuit (the off-chain order is base58, infeasible to reproduce cheaply
+ * here); it is pinned for free by binding this result to the approved
+ * `ownersCommitment` — any reordering changes the chain hash.
+ */
+function computeSetupOwnersChain(owners: PublicKey[], numOwners: Field): Field {
+  let currentChain = INITIAL_OWNER_CHAIN;
+  owners.forEach((pk, i) => {
+    const active = Field(i).lessThan(numOwners);
+    const next = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
+    currentChain = Provable.if(active, next, currentChain);
+  });
+  return currentChain;
+}
+
+/**
+ * Asserts the setup owner array is coherent w.r.t. `numOwners`:
+ *  1. Every inactive slot (index >= numOwners) is PublicKey.empty() — padding
+ *     must be empty (the dedup gate below intentionally ignores padding).
+ *  2. No two active owners are equal — rejects a committed duplicate set
+ *     (e.g. [A, A]), which the `commitment == ownersCommitment` bind cannot
+ *     catch on its own.
+ *
+ * Ordering is NOT checked here: the canonical order is base58, which is
+ * infeasible in-circuit, and ordering is already pinned by the separate
+ * commitment-equality assert.
+ */
+function assertCoherentSetupOwners(owners: PublicKey[], numOwners: Field): void {
+  const empty = PublicKey.empty();
+  // hoist: one lessThan per index instead of recomputing inside the O(N^2) loop
+  const active = owners.map((_, i) => Field(i).lessThan(numOwners));
+
+  for (let i = 0; i < owners.length; i++) {
+
+    // check if padding positions are indeed empty
+    active[i].or(owners[i].equals(empty)).assertTrue('Padding slot must be empty');
+
+    // pairwise dedup: slot i against all later active slots (O(N^2) overall)
+    for (let j = i + 1; j < owners.length; j++) {
+      owners[i].equals(owners[j]).and(active[i]).and(active[j])
+        .assertFalse('Duplicate owner in setup list');
+    }
+  }
+}
+
+/**
  * Circuit to check membership of a public key in the owner list.
  * 
  * @param ownerCommitment
@@ -143,6 +199,6 @@ function removeOwnerFromCommitment(
 }
 
 export {
-  OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, assertOwnerMembership,
-  addOwnerToCommitment, removeOwnerFromCommitment
+  OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, computeSetupOwnersChain,
+  assertCoherentSetupOwners, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment
 };

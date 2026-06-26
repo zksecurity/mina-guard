@@ -28,7 +28,7 @@ import {
   Destination,
 } from './constants';
 
-import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption } from './list-commitment';
+import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners } from './list-commitment';
 
 // -- Types -------------------------------------------------------------------
 
@@ -656,7 +656,6 @@ export class MinaGuard extends SmartContract {
 
   /** Shared initialization: validates config, sets all state, emits setup + owner events. */
   private initializeState(
-    ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
     networkId: Field,
@@ -668,7 +667,13 @@ export class MinaGuard extends SmartContract {
     // Use requireEquals instead of getAndRequireEquals so deploy+setup can
     // be combined in a single transaction (no account cache read needed).
     this.ownersCommitment.requireEquals(Field(0));
-    ownersCommitment.assertNotEquals(Field(0), 'Owners commitment must not be zero');
+
+    // Compute the commitment ON-CHAIN from the supplied owner list rather than
+    // trusting a caller-supplied value: this makes commitment == hash(ownerSet)
+    // true by construction, so the stored anchor and emitted setupOwner events
+    // can never describe a different set than the one committed to.
+    assertCoherentSetupOwners(initialOwners.owners, numOwners);
+    const ownersCommitment = computeSetupOwnersChain(initialOwners.owners, numOwners);
 
     threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
     numOwners.assertGreaterThanOrEqual(
@@ -705,11 +710,11 @@ export class MinaGuard extends SmartContract {
   /**
    * Initializes a root guard (no parent). Cannot call twice.
    *
-   * IMPORTANT: Assuming an untrusted deployer, a client must compute the expected commitment
-   * themselves and cross-check with the one on chain. numOwners as well, for sync.
+   * The owners commitment is computed on-chain from `initialOwners` (see
+   * initializeState), so the deployer cannot store a commitment that disagrees
+   * with the owner set — no client-side cross-check is required.
    */
   @method async setup(
-    ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
     networkId: Field,
@@ -717,7 +722,6 @@ export class MinaGuard extends SmartContract {
   ) {
     this.parent.requireEquals(PublicKey.empty());
     this.initializeState(
-      ownersCommitment,
       threshold,
       numOwners,
       networkId,
@@ -741,7 +745,6 @@ export class MinaGuard extends SmartContract {
   @method async reserveForParent(
     parentAddress: PublicKey,
     proposalHash: Field,
-    ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
     initialOwners: SetupOwnersInput,
@@ -750,6 +753,12 @@ export class MinaGuard extends SmartContract {
     this.parent.requireEquals(PublicKey.empty());
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address must not be empty');
     this.parent.set(parentAddress);
+
+    // Compute the commitment on-chain from the owner list so the emitted
+    // createChildConfig/createChildOwner events are provably coherent (the
+    // event commitment is the hash of the emitted owner set, not a free input).
+    assertCoherentSetupOwners(initialOwners.owners, numOwners);
+    const ownersCommitment = computeSetupOwnersChain(initialOwners.owners, numOwners);
 
     this.emitEvent('createChildConfig', {
       proposalHash,
@@ -782,7 +791,6 @@ export class MinaGuard extends SmartContract {
    * reserveForParent(), which sets this.parent and blocks setup().
    */
   @method async executeSetupChild(
-    ownersCommitment: Field,
     threshold: Field,
     numOwners: Field,
     initialOwners: SetupOwnersInput,
@@ -800,6 +808,13 @@ export class MinaGuard extends SmartContract {
     proposal.childAccount.equals(this.address).assertTrue('Proposal not for this child');
     proposal.nonce.assertEquals(Field(0), 'Create child proposal nonce must be 0');
 
+    // Compute the commitment on-chain from the owner list, then bind the
+    // parent-approved proposal.data to THAT computed value. This makes the
+    // approved data commit to the real owner set: the executor cannot
+    // substitute a different list that merely shares a caller-supplied
+    // commitment.
+    assertCoherentSetupOwners(initialOwners.owners, numOwners);
+    const ownersCommitment = computeSetupOwnersChain(initialOwners.owners, numOwners);
     const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
     proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
 
@@ -814,7 +829,6 @@ export class MinaGuard extends SmartContract {
     );
 
     this.initializeState(
-      ownersCommitment,
       threshold,
       numOwners,
       proposal.networkId,

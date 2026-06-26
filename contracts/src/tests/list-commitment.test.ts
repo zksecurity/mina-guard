@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'bun:test';
-import { Bool, PrivateKey, Provable, PublicKey } from 'o1js';
+import { Bool, Field, PrivateKey, Provable, PublicKey } from 'o1js';
 import {
   PublicKeyOption,
   OwnerWitness,
   computeOwnerChain,
+  computeSetupOwnersChain,
+  assertCoherentSetupOwners,
   assertOwnerMembership,
   addOwnerToCommitment,
   removeOwnerFromCommitment,
@@ -26,10 +28,20 @@ function after(pk: PublicKey): PublicKeyOption {
   return new PublicKeyOption({ value: pk, isSome: Bool(true) });
 }
 
+/** Pad a compact owner list to MAX_OWNERS with PublicKey.empty() at the end. */
+function padToMax(real: PublicKey[]): PublicKey[] {
+  const padded = [...real];
+  while (padded.length < MAX_OWNERS) {
+    padded.push(PublicKey.empty());
+  }
+  return padded.slice(0, MAX_OWNERS);
+}
+
 // Pre-generate test keys
 const keyA = PrivateKey.random().toPublicKey();
 const keyB = PrivateKey.random().toPublicKey();
 const keyC = PrivateKey.random().toPublicKey();
+const keyD = PrivateKey.random().toPublicKey();
 
 describe('computeOwnerChain', () => {
   it('empty array returns INITIAL_OWNER_CHAIN', () => {
@@ -331,5 +343,76 @@ describe('round-trips', () => {
       remValid.assertTrue();
       removed.assertEquals(original);
     });
+  });
+});
+
+describe('computeSetupOwnersChain', () => {
+  it('matches computeOwnerChain for a padded list with numOwners = N', () => {
+    const real = [keyA, keyB, keyC];
+    const h = computeSetupOwnersChain(padToMax(real), Field(real.length));
+    expect(h.toBigInt()).toBe(computeOwnerChain(real).toBigInt());
+  });
+
+  it('numOwners = 0 returns INITIAL_OWNER_CHAIN', () => {
+    const h = computeSetupOwnersChain(padToMax([keyA, keyB]), Field(0));
+    expect(h.toBigInt()).toBe(INITIAL_OWNER_CHAIN.toBigInt());
+  });
+
+  it('full list (numOwners = 2) matches computeOwnerChain([A, B])', () => {
+    const h = computeSetupOwnersChain(padToMax([keyA, keyB]), Field(2));
+    expect(h.toBigInt()).toBe(computeOwnerChain([keyA, keyB]).toBigInt());
+  });
+
+  it('ignores padding: single real owner matches computeOwnerChain([A])', () => {
+    const h = computeSetupOwnersChain(padToMax([keyA]), Field(1));
+    expect(h.toBigInt()).toBe(computeOwnerChain([keyA]).toBigInt());
+  });
+
+  it('numOwners is sensitive: Field(2) != Field(3) for the same array', () => {
+    const padded = padToMax([keyA, keyB, keyC]);
+    const h2 = computeSetupOwnersChain(padded, Field(2));
+    const h3 = computeSetupOwnersChain(padded, Field(3));
+    expect(h2.toBigInt()).not.toBe(h3.toBigInt());
+  });
+});
+
+describe('assertCoherentSetupOwners', () => {
+  it('passes for distinct active owners with empty padding', async () => {
+    await Provable.runAndCheck(() => {
+      assertCoherentSetupOwners(padToMax([keyA, keyB, keyC]), Field(3));
+    });
+  });
+
+  it('passes for a single owner', async () => {
+    await Provable.runAndCheck(() => {
+      assertCoherentSetupOwners(padToMax([keyA]), Field(1));
+    });
+  });
+
+  it('passes despite many duplicate empty() padding slots', async () => {
+    // numOwners = 2, the remaining 18 slots are all PublicKey.empty() (equal to
+    // each other) — the active-gate must keep dedup from firing on them.
+    await Provable.runAndCheck(() => {
+      assertCoherentSetupOwners(padToMax([keyA, keyB]), Field(2));
+    });
+  });
+
+  it('fails on a duplicate active owner', async () => {
+    // keyA at slots 0 and 1, both active (numOwners = 3).
+    await expect(
+      Provable.runAndCheck(() => {
+        assertCoherentSetupOwners(padToMax([keyA, keyA, keyB]), Field(3));
+      })
+    ).rejects.toThrow();
+  });
+
+  it('fails on a non-empty padding slot', async () => {
+    // Real owner planted at index 2, but numOwners = 2 so index 2 is inactive
+    // and must be empty.
+    await expect(
+      Provable.runAndCheck(() => {
+        assertCoherentSetupOwners(padToMax([keyA, keyB, keyC]), Field(2));
+      })
+    ).rejects.toThrow();
   });
 });
