@@ -62,11 +62,11 @@ afterAll(async () => {
 });
 
 describe('archive discovery: happy path', () => {
-  test('discovers contracts returned by archive query and advances archive_discovered_height cursor', async () => {
-    const addrs = [
-      PrivateKey.random().toPublicKey().toBase58(),
-      PrivateKey.random().toPublicKey().toBase58(),
-      PrivateKey.random().toPublicKey().toBase58(),
+  test('discovers contracts returned by archive query, stores deploy block as discoveredAtBlock, and advances cursor', async () => {
+    const candidates = [
+      { address: PrivateKey.random().toPublicKey().toBase58(), deployBlock: 100 },
+      { address: PrivateKey.random().toPublicKey().toBase58(), deployBlock: 250 },
+      { address: PrivateKey.random().toPublicKey().toBase58(), deployBlock: 700 },
     ];
 
     let archiveQueryCalledWith: { from: number; to: number } | null = null;
@@ -82,7 +82,7 @@ describe('archive discovery: happy path', () => {
         to: number,
       ) => {
         archiveQueryCalledWith = { from, to };
-        return addrs;
+        return candidates;
       },
       // All 3 candidates verify with the matching MinaGuard VK on-chain.
       fetchVerificationKeyHash: async () => VK_HASH,
@@ -98,7 +98,17 @@ describe('archive discovery: happy path', () => {
     expect(archiveQueryCalledWith).toEqual({ from: 0, to: 1000 });
 
     const contracts = await prisma.contract.findMany({ orderBy: { address: 'asc' } });
-    expect(contracts.map((c) => c.address).sort()).toEqual([...addrs].sort());
+    expect(contracts.map((c) => c.address).sort()).toEqual(candidates.map((c) => c.address).sort());
+
+    // Critical: discoveredAtBlock must be the actual deploy block, not the
+    // tick's chain tip. This is what makes rescanUnreadyContracts's
+    // [discoveredAtBlock, latestHeight] window cover the deploy events
+    // (without it, archive-discovered contracts would have a permanent
+    // blind spot below the tick's chain tip).
+    const byAddr = new Map(contracts.map((c) => [c.address, c.discoveredAtBlock]));
+    for (const { address, deployBlock } of candidates) {
+      expect(byAddr.get(address)).toBe(deployBlock);
+    }
 
     const cursor = await prisma.indexerCursor.findUnique({
       where: { key: 'archive_discovered_height' },
@@ -115,7 +125,10 @@ describe('archive discovery: happy path', () => {
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 500,
       fetchBestChainHeaders: async () => [],
-      discoverCandidateAddressesFromArchive: async () => [matching, mismatched],
+      discoverCandidateAddressesFromArchive: async () => [
+        { address: matching, deployBlock: 200 },
+        { address: mismatched, deployBlock: 300 },
+      ],
       fetchVerificationKeyHash: async (addr: string) =>
         addr === matching ? VK_HASH : 'different-vk-hash',
       fetchDecodedContractEvents: async () => [],
@@ -146,7 +159,11 @@ describe('archive discovery: per-iteration failure isolation', () => {
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 1000,
       fetchBestChainHeaders: async () => [],
-      discoverCandidateAddressesFromArchive: async () => [ok1, bad, ok2],
+      discoverCandidateAddressesFromArchive: async () => [
+        { address: ok1, deployBlock: 100 },
+        { address: bad, deployBlock: 200 },
+        { address: ok2, deployBlock: 300 },
+      ],
       fetchVerificationKeyHash: async (addr: string) => {
         if (addr === bad) throw new Error('simulated daemon hiccup on VK fetch');
         return VK_HASH;
@@ -190,7 +207,10 @@ describe('archive discovery: per-iteration failure isolation', () => {
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 1000,
       fetchBestChainHeaders: async () => [],
-      discoverCandidateAddressesFromArchive: async () => [bad, ok],
+      discoverCandidateAddressesFromArchive: async () => [
+        { address: bad, deployBlock: 100 },
+        { address: ok, deployBlock: 200 },
+      ],
       fetchVerificationKeyHash: async () => VK_HASH,
       fetchDecodedContractEvents: async (addr: string) => {
         if (addr === bad) {
@@ -245,7 +265,7 @@ describe('archive discovery: backfill range', () => {
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 50_000,
       fetchBestChainHeaders: async () => [],
-      discoverCandidateAddressesFromArchive: async () => [addr],
+      discoverCandidateAddressesFromArchive: async () => [{ address: addr, deployBlock: 12_345 }],
       fetchVerificationKeyHash: async () => VK_HASH,
       fetchDecodedContractEvents: async (_addr: string, from: number, to: number) => {
         backfillCalls.push({ from, to });

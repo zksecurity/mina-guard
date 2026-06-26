@@ -15,6 +15,7 @@ import {
   fetchOnChainState,
   fetchVerificationKeyHash,
   fetchZkappTxStatus,
+  type DiscoveryCandidate,
   type ChainEvent,
   type GenesisConstants,
 } from './mina-client.js';
@@ -120,6 +121,22 @@ export class MinaGuardIndexer {
         connectionTimeoutMillis: 5_000,
         statement_timeout: 30_000,
         query_timeout: 30_000,
+        // Cross-host postgres connections die silently when ufw/NAT timeouts
+        // close idle conns. TCP keepalives keep them warm + detect drops fast
+        // so the next query reopens cleanly instead of hanging.
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10_000,
+      });
+      // node-postgres pool errors on idle clients propagate as uncaught
+      // exceptions and crash the process unless this listener is attached
+      // (see node-postgres docs: "Pool errors"). Logging and swallowing here
+      // lets the pool transparently replace the dead client on the next
+      // checkout — what we want for transient cross-host drops.
+      this.archivePool.on('error', (err) => {
+        console.error(
+          '[indexer] archive pool idle error (will reconnect on next query):',
+          err instanceof Error ? err.message : err,
+        );
       });
     }
     return this.archivePool;
@@ -172,7 +189,7 @@ export class MinaGuardIndexer {
       // on fork — the next tick re-covers the reorged range.
       if (this.config.indexerMode === 'full') {
         const DISCOVERY_MARGIN = 5;
-        let candidates: string[];
+        let candidates: DiscoveryCandidate[];
         if (this.config.discoveryBackend === 'archive' && this.config.minaguardVkHash) {
           // Cold start (no archive_discovered_height cursor): scan from
           // indexStartHeight back to genesis-or-configured-floor so historical
@@ -194,9 +211,13 @@ export class MinaGuardIndexer {
             1,
             Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
           );
-          candidates = await discoverCandidateAddresses(this.config, discoveryWindow);
+          // TODO: daemon path approximates deployBlock as latestHeight, which
+          // sits above the actual deploy by up to ~290 blocks. Follow-up PR
+          // threads per-block height through the bestChain query.
+          const addrs = await discoverCandidateAddresses(this.config, discoveryWindow);
+          candidates = addrs.map((address) => ({ address, deployBlock: latestHeight }));
         }
-        const failureCount = await this.processCandidateAddresses(candidates, latestHeight);
+        const failureCount = await this.processCandidateAddresses(candidates);
         if (this.config.discoveryBackend === 'archive' && failureCount === 0) {
           // Only advance the cursor when every candidate was either inserted
           // or intentionally skipped (existing / VK mismatch). If any candidate
@@ -246,6 +267,12 @@ export class MinaGuardIndexer {
    * branches funnel through here so the dedup, VK re-verification, and backfill
    * logic stays in one place.
    *
+   * `deployBlock` is persisted as `discoveredAtBlock` so `rescanUnreadyContracts`
+   * scans a tight `[deploy_block, latestHeight]` window. For archive discovery
+   * this is the actual on-chain deploy block (from MIN(blocks.height) in the
+   * SQL); for daemon discovery it's the tick's chain tip — close enough since
+   * bestChain horizon caps the imprecision at ~290 blocks.
+   *
    * Returns the count of candidates that threw — the archive branch in tick()
    * uses this to decide whether to advance the archive_discovered_height
    * cursor (only advances when 0 failures, so transient failures get retried
@@ -256,9 +283,9 @@ export class MinaGuardIndexer {
    * sighting), and it catches the edge case where the archive shows a VK install
    * that has since been upgraded to a different VK on chain.
    */
-  private async processCandidateAddresses(addresses: string[], latestHeight: number): Promise<number> {
+  private async processCandidateAddresses(candidates: DiscoveryCandidate[]): Promise<number> {
     let failureCount = 0;
-    for (const address of addresses) {
+    for (const { address, deployBlock } of candidates) {
       try {
         const existing = await prisma.contract.findUnique({ where: { address } });
         if (existing) continue;
@@ -274,7 +301,7 @@ export class MinaGuardIndexer {
         }
 
         const created = await prisma.contract.create({
-          data: { address, discoveredAtBlock: latestHeight },
+          data: { address, discoveredAtBlock: deployBlock },
         });
 
         await this.backfillContract(created.id, address);
