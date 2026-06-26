@@ -211,11 +211,7 @@ export class MinaGuardIndexer {
             1,
             Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
           );
-          // TODO: daemon path approximates deployBlock as latestHeight, which
-          // sits above the actual deploy by up to ~290 blocks. Follow-up PR
-          // threads per-block height through the bestChain query.
-          const addrs = await discoverCandidateAddresses(this.config, discoveryWindow);
-          candidates = addrs.map((address) => ({ address, deployBlock: latestHeight }));
+          candidates = await discoverCandidateAddresses(this.config, discoveryWindow);
         }
         const failureCount = await this.processCandidateAddresses(candidates);
         if (this.config.discoveryBackend === 'archive' && failureCount === 0) {
@@ -268,10 +264,9 @@ export class MinaGuardIndexer {
    * logic stays in one place.
    *
    * `deployBlock` is persisted as `discoveredAtBlock` so `rescanUnreadyContracts`
-   * scans a tight `[deploy_block, latestHeight]` window. For archive discovery
-   * this is the actual on-chain deploy block (from MIN(blocks.height) in the
-   * SQL); for daemon discovery it's the tick's chain tip — close enough since
-   * bestChain horizon caps the imprecision at ~290 blocks.
+   * scans a tight `[deploy_block, latestHeight]` window. Both backends return
+   * the actual on-chain deploy block — archive via MIN(blocks.height) in the
+   * SQL, daemon via the per-block iteration over bestChain.
    *
    * Returns the count of candidates that threw — the archive branch in tick()
    * uses this to decide whether to advance the archive_discovered_height
