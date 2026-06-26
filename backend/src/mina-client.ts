@@ -160,9 +160,14 @@ export async function fetchLatestBlockHeightFromArchive(pool: Pool): Promise<num
 export async function discoverCandidateAddresses(
   config: BackendConfig,
   blockWindow: number
-): Promise<string[]> {
+): Promise<DiscoveryCandidate[]> {
   const query = `{
     bestChain(maxLength: ${blockWindow}) {
+      protocolState {
+        consensusState {
+          blockHeight
+        }
+      }
       transactions {
         zkappCommands {
           zkappCommand {
@@ -184,6 +189,7 @@ export async function discoverCandidateAddresses(
 
   type CandidateResponse = {
     bestChain?: Array<{
+      protocolState?: { consensusState?: { blockHeight?: string | number | null } | null } | null;
       transactions?: {
         zkappCommands?: Array<{
           zkappCommand?: {
@@ -205,20 +211,33 @@ export async function discoverCandidateAddresses(
     config.minaFallbackEndpoint
   );
 
-  const addresses = new Set<string>();
+  // Track the earliest block height per address. A single deploy tx often
+  // has multiple account updates touching the same address (create-account
+  // AU + install-VK AU); the earliest block in the window is the actual
+  // deploy. bestChain iterates oldest→newest so a plain set-if-absent is
+  // enough — but use explicit Math.min to be robust to future ordering
+  // changes.
+  const firstSeenAt = new Map<string, number>();
   for (const block of data.bestChain ?? []) {
+    const heightRaw = block.protocolState?.consensusState?.blockHeight;
+    if (heightRaw == null) continue;
+    const height = Number(heightRaw);
+    if (!Number.isFinite(height)) continue;
     for (const cmd of block.transactions?.zkappCommands ?? []) {
       for (const update of cmd.zkappCommand?.accountUpdates ?? []) {
         const body = update.body;
         if (!body?.publicKey) continue;
         if (body.update?.verificationKey?.hash) {
-          addresses.add(body.publicKey);
+          const prev = firstSeenAt.get(body.publicKey);
+          if (prev === undefined || height < prev) {
+            firstSeenAt.set(body.publicKey, height);
+          }
         }
       }
     }
   }
 
-  return [...addresses];
+  return [...firstSeenAt.entries()].map(([address, deployBlock]) => ({ address, deployBlock }));
 }
 
 /**
