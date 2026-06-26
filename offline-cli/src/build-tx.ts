@@ -123,6 +123,7 @@ export interface OfflineProposeBundle extends BundleBase {
     childMultiSigEnable?: boolean;
     createChildConfigHash?: string;
     expirySlot?: number;
+    memo?: string;
     childPrivateKey?: string;
     childOwners?: string[];
     childThreshold?: number;
@@ -163,6 +164,8 @@ interface BundleProposal {
   destination: string | null;
   childAccount: string | null;
   memoHash: string | null;
+  /** Plaintext tx memo (cosmetic, shown on the explorer); rides along from the backend Proposal record. */
+  memo?: string | null;
   receivers: BundleReceiver[];
   [key: string]: unknown;
 }
@@ -544,47 +547,64 @@ function injectAccounts(bundle: BundleBase) {
 // Fee payer signing with mina-signer
 // ---------------------------------------------------------------------------
 
-function signFeePayer(txJson: string, privateKey: string, network: 'testnet' | 'mainnet'): string {
-  const client = new Client({ network });
-  const parsed = typeof txJson === 'string' ? JSON.parse(txJson) : txJson;
-  const { fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
-  const signed = client.signFields([BigInt(fullCommitment)], privateKey);
-  parsed.feePayer.authorization = signed.signature;
-
-  // Also sign any account updates owned by the fee payer that require a signature
-  const feePayerPk = parsed.feePayer.body.publicKey;
-  for (const update of parsed.accountUpdates ?? []) {
-    if (
-      update.body?.publicKey === feePayerPk &&
-      update.body?.authorizationKind?.isSigned === true &&
-      update.body?.useFullCommitment === true
-    ) {
-      update.authorization = { signature: signed.signature };
-    }
-  }
-
-  return JSON.stringify(parsed);
+// Builds the flattened { feePayer, zkappCommand } wrapper that the public
+// Client.signZkappCommand expects, from a tx.toJSON() Json.ZkappCommand.
+// The wrapper re-derives the memo from PLAINTEXT (Memo.toBase58(Memo.fromString(memo))),
+// so we decode parsed.memo back to plaintext to avoid double-encoding — the round-trip is
+// byte-identical, so the resulting commitment matches what o1js built.
+function toSignWrapper(parsed: any) {
+  return {
+    feePayer: {
+      feePayer: parsed.feePayer.body.publicKey,
+      fee: parsed.feePayer.body.fee,
+      nonce: parsed.feePayer.body.nonce,
+      validUntil: parsed.feePayer.body.validUntil,
+      memo: decodeTxMemo(parsed.memo),
+    },
+    zkappCommand: parsed,
+  };
 }
 
-/** Signs a child zkApp's deploy account update using its private key. */
-function signChildAccount(txJson: string, childKey: InstanceType<typeof PrivateKey>, network: 'testnet' | 'mainnet'): string {
+// Signs the fee payer (and any signed account updates owned by the fee payer) using the
+// network-aware public signZkappCommand. Unlike the old signFields path — which is hardcoded
+// to the 'devnet' domain — this signs with the Client's configured network, so signatures
+// verify on the Mina node for both testnet and mainnet.
+export function signFeePayer(txJson: string, privateKey: string, network: 'testnet' | 'mainnet'): string {
+  const client = new Client({ network });
+  const parsed = typeof txJson === 'string' ? JSON.parse(txJson) : txJson;
+  const signed = client.signZkappCommand(toSignWrapper(parsed), privateKey);
+  return JSON.stringify(signed.data.zkappCommand);
+}
+
+/**
+ * Signs a child zkApp's deploy account update using its private key, chained after
+ * signFeePayer.
+ *
+ * The public signZkappCommand rebuilds feePayer.authorization to '' and only re-signs it when
+ * the signing key matches the fee payer (mina-signer.ts). Signing with the child key would
+ * therefore WIPE the fee-payer authorization that signFeePayer just produced. To avoid that,
+ * we run signZkappCommand to compute the child's signature(s), then graft only the child
+ * account updates' authorizations back onto the original `parsed` (which still carries the
+ * fee-payer authorization). signZkappCommand signs every isSigned update owned by the child
+ * key, so all child-owned updates are covered.
+ */
+export function signChildAccount(txJson: string, childKey: InstanceType<typeof PrivateKey>, network: 'testnet' | 'mainnet'): string {
+  const client = new Client({ network });
   const parsed = JSON.parse(txJson);
   const childPk = childKey.toPublicKey().toBase58();
-  const client = new Client({ network });
-  const { commitment, fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
+  const signed = client.signZkappCommand(toSignWrapper(parsed), childKey.toBase58());
+  const signedUpdates: any[] = signed.data.zkappCommand.accountUpdates ?? [];
+
   let applied = false;
-  for (const update of parsed.accountUpdates ?? []) {
-    if (
-      update.body?.publicKey === childPk &&
-      update.body?.authorizationKind?.isSigned === true
-    ) {
-      const usedCommitment = update.body.useFullCommitment ? fullCommitment : commitment;
-      const signed = client.signFields([BigInt(usedCommitment)], childKey.toBase58());
-      update.authorization = { signature: signed.signature };
+  for (let i = 0; i < (parsed.accountUpdates?.length ?? 0); i++) {
+    const update = parsed.accountUpdates[i];
+    if (update.body?.publicKey === childPk && update.body?.authorizationKind?.isSigned === true) {
+      update.authorization = signedUpdates[i]?.authorization;
       applied = true;
     }
   }
   if (!applied) throw new Error('signChildAccount: no matching deploy account update found');
+
   return JSON.stringify(parsed);
 }
 
@@ -592,14 +612,63 @@ function signChildAccount(txJson: string, childKey: InstanceType<typeof PrivateK
 // Transaction sender helper
 // ---------------------------------------------------------------------------
 
-function txSender(pub: InstanceType<typeof PublicKey>) {
-  return { sender: pub, fee: ZKAPP_TX_FEE };
+function txSender(pub: InstanceType<typeof PublicKey>, memo?: string) {
+  return memo !== undefined
+    ? { sender: pub, fee: ZKAPP_TX_FEE, memo }
+    : { sender: pub, fee: ZKAPP_TX_FEE };
 }
 
 /** Safely serializes tx.toJSON() regardless of whether it returns a string or object. */
 function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
   const json = tx.toJSON();
   return typeof json === 'string' ? json : JSON.stringify(json);
+}
+
+// ---------------------------------------------------------------------------
+// Memo decoding — copied verbatim from contracts/src/memo.ts to keep offline-cli
+// self-contained (mirrors the duplicated NewProposalInput convention above).
+// ---------------------------------------------------------------------------
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function base58Decode(input: string): Uint8Array {
+  const base = BASE58_ALPHABET.length;
+  const bytes: number[] = [0];
+  for (const char of input) {
+    const idx = BASE58_ALPHABET.indexOf(char);
+    if (idx < 0) throw new Error(`Invalid base58 character: ${char}`);
+    let carry = idx;
+    for (let j = 0; j < bytes.length; j++) {
+      carry += bytes[j] * base;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  for (const char of input) {
+    if (char !== '1') break;
+    bytes.push(0);
+  }
+  return new Uint8Array(bytes.reverse());
+}
+
+// Mina memo base58check layout: version (1B) + tag (1B) + length (1B) + content (32B) + checksum (4B)
+// Tag 0x01 = user memo. See MinaProtocol/mina signed_command_memo.ml L49-61.
+export function decodeTxMemo(base58Memo: string): string {
+  const raw = base58Decode(base58Memo);
+  const payload = raw.slice(1, raw.length - 4); // strip version byte + 4-byte base58check checksum
+  if (payload.length !== 34) {
+    throw new Error(`decodeTxMemo: expected 34-byte payload, got ${payload.length}`);
+  }
+  const contentLength = payload[1];
+  if (contentLength > 32) {
+    throw new Error(`decodeTxMemo: invalid content length ${contentLength}`);
+  }
+  const contentBytes = payload.slice(2, 2 + contentLength);
+  return new TextDecoder().decode(contentBytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -689,7 +758,11 @@ export async function handlePropose(
   const hashStr = proposalHash.toString();
   log(`Proposal hash: ${hashStr}`);
 
-  // Sign the proposal hash with mina-signer
+  // Sign the proposal hash with mina-signer.
+  // NOTE: signFields' hardcoded 'devnet' domain is CORRECT here and must stay. This signature
+  // is verified in-circuit via Signature.verify, which always uses the 'devnet' prefix
+  // regardless of network (o1js lib/provable/crypto/signature.ts). Do not make it
+  // network-aware — that would break on-chain proposal verification.
   log('Signing proposal hash...');
   const client = new Client({ network: bundle.minaNetwork });
   const signedFields = client.signFields([BigInt(hashStr)], privateKey);
@@ -718,7 +791,7 @@ export async function handlePropose(
   const contractAddress = PublicKey.fromBase58(bundle.contractAddress);
   const contract = new MinaGuard(contractAddress);
 
-  const tx = await Mina.transaction(txSender(proposer), async () => {
+  const tx = await Mina.transaction(txSender(proposer, input.memo), async () => {
     if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
       const childAddress = childKey.toPublicKey();
       const childZkApp = new MinaGuard(childAddress);
@@ -798,7 +871,11 @@ export async function handleApprove(
   const hashStr = proposalHash.toString();
   log(`Proposal hash: ${hashStr}`);
 
-  // Sign the proposal hash
+  // Sign the proposal hash.
+  // NOTE: signFields' hardcoded 'devnet' domain is CORRECT here and must stay. This signature
+  // is verified in-circuit via Signature.verify, which always uses the 'devnet' prefix
+  // regardless of network (o1js lib/provable/crypto/signature.ts). Do not make it
+  // network-aware — that would break on-chain proposal verification.
   log('Signing proposal hash...');
   const client = new Client({ network: bundle.minaNetwork });
   const signedFields = client.signFields([BigInt(hashStr)], privateKey);
@@ -973,7 +1050,8 @@ export async function handleExecute(
     const childZkApp = new MinaGuard(PublicKey.fromBase58(childAddr));
 
     log('Building transaction...');
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    const childMemo = bundle.proposal.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(executor, childMemo), async () => {
       if (txType === 'reclaimChild') {
         const amount = UInt64.from(bundle.proposal.data ?? '0');
         await childZkApp.executeReclaimToParent(
@@ -1032,7 +1110,8 @@ export async function handleExecute(
   log('Building transaction...');
   const contract = new MinaGuard(PublicKey.fromBase58(bundle.contractAddress));
 
-  const tx = await Mina.transaction(txSender(executor), async () => {
+  const proposalMemo = bundle.proposal.memo ?? undefined;
+  const tx = await Mina.transaction(txSender(executor, proposalMemo), async () => {
     if (newAccountCount > 0) {
       AccountUpdate.fundNewAccount(executor, newAccountCount);
     }
