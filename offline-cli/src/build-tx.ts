@@ -61,7 +61,7 @@ import {
 /** Must match the fee used by the web worker. */
 const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
 
-const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+export const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
 
 // ---------------------------------------------------------------------------
 // Bundle types
@@ -217,7 +217,7 @@ type LogFn = (msg: string) => void;
 // TxType helpers (duplicated from worker to stay self-contained)
 // ---------------------------------------------------------------------------
 
-type TxType =
+export type TxType =
   | 'transfer'
   | 'addOwner'
   | 'removeOwner'
@@ -234,7 +234,7 @@ const TX_TYPE_NAME_SET: ReadonlySet<string> = new Set([
   'createChild', 'allocateChild', 'reclaimChild', 'destroyChild', 'enableChildMultiSig',
 ]);
 
-function normalizeTxType(value: string | null | undefined): TxType | null {
+export function normalizeTxType(value: string | null | undefined): TxType | null {
   if (!value) return null;
   if (TX_TYPE_NAME_SET.has(value)) return value as TxType;
   // Numeric form
@@ -289,7 +289,7 @@ function governanceTargetAddress(input: NewProposalInput): string | null {
   return null;
 }
 
-function buildTransferReceivers(
+export function buildTransferReceivers(
   receivers: BundleReceiver[],
 ): InstanceType<typeof Receiver>[] {
   const normalized = receivers.map((r) => new Receiver({
@@ -303,6 +303,29 @@ function buildTransferReceivers(
     normalized.push(Receiver.empty());
   }
   return normalized.slice(0, MAX_RECEIVERS);
+}
+
+/**
+ * Counts how many canonical receivers need on-chain account creation, for
+ * AccountUpdate.fundNewAccount. Derives strictly from the hash-bound
+ * proposalStruct.receivers (already sliced to MAX_RECEIVERS) so untrusted rows
+ * beyond the contract limit cannot inflate the executor-signed fee. The proposal
+ * the owners approved only ever creates accounts for these receivers, so the fee
+ * must be counted from exactly this set — never from the raw bundle array.
+ *
+ * `accountExists(addr)` returns true if the account already exists on-chain
+ * (existing accounts don't incur the account-creation fee).
+ */
+export function countNewReceiverAccounts(
+  receivers: InstanceType<typeof Receiver>[],
+  accountExists: (addr: string) => boolean,
+): number {
+  let count = 0;
+  for (const r of receivers) {
+    if (r.address.isEmpty().toBoolean()) continue;
+    if (!accountExists(r.address.toBase58())) count += 1;
+  }
+  return count;
 }
 
 function buildReceiversForProposal(input: NewProposalInput): InstanceType<typeof Receiver>[] {
@@ -1093,15 +1116,17 @@ export async function handleExecute(
 
   // -- Local execution (transfer, governance, allocate, delegate) --
 
-  // Count new accounts for fundNewAccount
+  // Count new accounts for fundNewAccount. Derive strictly from the canonical,
+  // hash-bound receivers (proposalStruct.receivers, sliced to MAX_RECEIVERS) so
+  // untrusted bundle rows beyond the contract limit cannot inflate the
+  // executor-signed account-creation fee. An address absent from / false in the
+  // bundle's receiverAccountExists map is treated as not-yet-existing.
   let newAccountCount = 0;
   if (txType === 'transfer' || txType === 'allocateChild') {
-    for (const r of bundle.proposal.receivers ?? []) {
-      if (!r.address || r.address === EMPTY_PUBKEY_B58) continue;
-      if (bundle.receiverAccountExists[r.address] === false) {
-        newAccountCount += 1;
-      }
-    }
+    newAccountCount = countNewReceiverAccounts(
+      proposalStruct.receivers,
+      (addr) => bundle.receiverAccountExists[addr] === true,
+    );
     if (newAccountCount > 0) {
       log(`${newAccountCount} new account(s) will be funded`);
     }

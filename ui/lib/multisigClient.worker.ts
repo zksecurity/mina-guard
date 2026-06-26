@@ -1098,11 +1098,16 @@ const workerApi = {
     // chain costs 1 MINA of account-creation fee. Without an explicit
     // AccountUpdate.fundNewAccount(executor, N) inside the tx, the node
     // rejects with Invalid_fee_excess.
+    //
+    // Count strictly from the canonical, hash-bound receivers
+    // (proposalStruct.receivers, sliced to MAX_RECEIVERS) — never from the raw
+    // backend array — so untrusted rows beyond the contract limit cannot inflate
+    // the executor-signed account-creation fee.
     let newAccountCount = 0;
     if (txType === 'transfer' || txType === 'allocateChild') {
-      for (const r of params.proposal.receivers ?? []) {
-        if (!r.address || r.address === EMPTY_PUBKEY_B58) continue;
-        const { account } = await fetchAccount({ publicKey: PublicKey.fromBase58(r.address) });
+      for (const r of proposalStruct.receivers) {
+        if (r.address.isEmpty().toBoolean()) continue;
+        const { account } = await fetchAccount({ publicKey: r.address });
         if (!account) newAccountCount += 1;
       }
     }
