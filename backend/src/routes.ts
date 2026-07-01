@@ -55,6 +55,19 @@ const submissionBodySchema = z.object({
   txHash: z.string().min(1).max(200),
 });
 
+/// Body of POST /api/submissions — mirrors ui/lib/storage.ts's PendingTx
+/// shape so the client can construct it from the same record it puts into
+/// localStorage. `broadcastedAt` is the client's Date at broadcast time,
+/// serialized as ISO-8601 (the UI's `new Date().toISOString()` output).
+const broadcastSubmissionBodySchema = z.object({
+  kind: z.enum(['create', 'approve', 'execute', 'deploy']),
+  txHash: z.string().min(1).max(200),
+  contractAddress: z.string().min(1).max(200),
+  proposalHash: z.string().min(1).max(200),
+  signerPubkey: z.string().min(1).max(200),
+  broadcastedAt: z.string().datetime(),
+});
+
 type OwnersQuery = z.infer<typeof ownersQuerySchema>;
 type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
 type EventsQuery = z.infer<typeof eventsQuerySchema>;
@@ -341,6 +354,48 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       res.json({ ok: true });
     })
   );
+
+  /** Records the moment a client broadcast a signed tx. Mirrors what the UI
+   *  writes into localStorage via `savePendingTx`, so the server has a
+   *  timeline from UI-click through inclusion. Called fire-and-forget from
+   *  the UI — failures here do not affect the client (the pending-tx entry
+   *  still lives in localStorage). Idempotent on `txHash`: re-posting the
+   *  same hash returns the existing row.
+   *
+   *  Not to be confused with the per-proposal submissions route above, which
+   *  updates `Proposal.lastApproveTxHash` / `lastExecuteTxHash` for the
+   *  cross-signer execute lock. That route stays as-is; this one is the
+   *  broadcast-timeline record. */
+  router.post('/api/submissions', safe(async (req, res) => {
+    const parsed = broadcastSubmissionBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid submission payload', details: parsed.error.flatten() });
+      return;
+    }
+    const data = { ...parsed.data, broadcastedAt: new Date(parsed.data.broadcastedAt) };
+
+    const existing = await prisma.submission.findUnique({ where: { txHash: data.txHash } });
+    if (existing) {
+      res.json(existing);
+      return;
+    }
+
+    try {
+      const created = await prisma.submission.create({ data });
+      res.status(201).json(created);
+    } catch (err: unknown) {
+      // Handle the race where two requests for the same txHash arrive
+      // simultaneously and both pass the findUnique check.
+      if (err instanceof Error && err.message.includes('Unique constraint')) {
+        const existing2 = await prisma.submission.findUnique({ where: { txHash: data.txHash } });
+        if (existing2) {
+          res.json(existing2);
+          return;
+        }
+      }
+      throw err;
+    }
+  }));
 
   /** Lists per-approver records for a given proposal hash. */
   router.get(

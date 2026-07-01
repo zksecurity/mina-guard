@@ -187,3 +187,32 @@ model IndexerCursor {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/// Records the moment a client broadcast a signed tx to the network, so the
+/// server has a timeline from UI-click through chain inclusion. Written by the
+/// UI immediately after `savePendingTx` (fire-and-forget); nothing blocks on
+/// this succeeding — the pending-tx entry in localStorage is the source of
+/// truth for the tx's identity, this row is just the server-visible slice.
+///
+/// One row per tx (unique on txHash). For deploys, `proposalHash` mirrors
+/// `contractAddress` — the same sentinel the client-side PendingTx type uses,
+/// since a deploy has no on-chain proposal identity.
+model Submission {
+  id              Int      @id @default(autoincrement())
+  /// "create" | "approve" | "execute" | "deploy" — mirrors ui/lib/storage.ts's
+  /// PendingTxKind union. String rather than enum so a UI shipping a new kind
+  /// doesn't force a coordinated schema migration.
+  kind            String
+  txHash          String   @unique
+  contractAddress String
+  proposalHash    String
+  signerPubkey    String
+  /// Client's Date.now() at broadcast — what the user actually cares about
+  /// ("when did I click"), as opposed to `createdAt` which is server receive.
+  broadcastedAt   DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([contractAddress, kind])
+  @@index([signerPubkey])
+  @@index([broadcastedAt])
+}

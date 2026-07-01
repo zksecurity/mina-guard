@@ -164,12 +164,45 @@ export function getPendingTx(
   );
 }
 
-/** Inserts or replaces a pending tx record keyed by (contract, proposal, kind, signer). */
+/** Inserts or replaces a pending tx record keyed by (contract, proposal, kind, signer).
+ *  Also fires a fire-and-forget POST to the backend so the server has a
+ *  broadcast-timestamp record of every UI-broadcast tx (see
+ *  `POST /api/submissions` on the backend and the `Submission` model). Server
+ *  sync failures do not affect the client — localStorage is still the
+ *  in-flight source of truth for the UI. */
 export function savePendingTx(record: PendingTx): void {
   const next = readPendingTxsRaw().filter((r) => pendingTxKey(r) !== pendingTxKey(record));
   next.push(record);
   writePendingTxs(pruneStale(next));
   notifyPendingTxsChanged();
+  void syncSubmissionToServer(record);
+}
+
+/** Mirrors a broadcast record to the backend's `Submission` table. Runs after
+ *  localStorage is already updated, so failures here are safe to swallow —
+ *  the UI still shows the pending banner from the local record. Not exported;
+ *  the only invocation is from `savePendingTx` above. */
+async function syncSubmissionToServer(record: PendingTx): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
+  try {
+    await fetch(`${API_BASE}/api/submissions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: record.kind,
+        txHash: record.txHash,
+        contractAddress: record.contractAddress,
+        proposalHash: record.proposalHash,
+        signerPubkey: record.signerPubkey,
+        broadcastedAt: record.createdAt,
+      }),
+    });
+  } catch {
+    // best-effort: server may be temporarily unavailable, localStorage still
+    // has the record, and the pending-tx entry will get pruned by TTL on the
+    // client independent of whether the server sync succeeded.
+  }
 }
 
 /** Removes any record matching the (contract, proposal, kind[, signer]) key. */
