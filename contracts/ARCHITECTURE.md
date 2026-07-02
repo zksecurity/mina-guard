@@ -269,11 +269,30 @@ REMOTE proposals never touch the parent's `approvalRoot` — the parent never ru
 
 Cross-child safety: because `proposalHash` includes `childAccount`, a REMOTE proposal for child A produces a different hash than one for child B even with otherwise identical fields. A proposal approved on the parent and targeted at child A cannot execute on child B — each child asserts `proposal.childAccount == this.address`.
 
+### reserveForParent
+
+`reserveForParent(parentAddress, proposalHash, ownersCommitment, threshold, numOwners, initialOwners)` — Runs on the **child** contract in the same transaction as `deploy()` + parent `propose()` for a `CREATE_CHILD` proposal. Sets `this.parent` to the parent address and emits `CreateChildConfigEvent` + 20 `CreateChildOwnerEvent`s on-chain so the child's intended owner list is publicly available before `executeSetupChild` runs. (The indexer stores these as raw events but does not parse them; the UI and offline CLI fetch and parse them directly.)
+
+**Why this method exists:** `executeSetupChild` requires the child's owner list, threshold, and owners commitment as arguments. Without `reserveForParent`, the `ProposalEvent` only contains a `data` hash (`Poseidon([ownersCommitment, threshold, numOwners])`) — the individual owner addresses are not recoverable from the hash. The executor would need the original proposer to share the child config out-of-band. By emitting the full owner list on the child at propose time, any user can retrieve the config from on-chain events and execute `setupChild` without coordinating with the proposer.
+
+**Anti-front-running:** Setting `this.parent` at propose time prevents attackers from calling `setup()` on the uninitialized child between deploy and execute. `setup()` asserts `this.parent == PublicKey.empty()`, which fails once `reserveForParent` has run. `executeSetupChild` verifies `this.parent == proposal.guardAddress`, ensuring only the designated parent can initialize the child.
+
+Guards:
+- **Uninitialized only**: asserts `this.ownersCommitment == 0` — prevents calling on already-set-up contracts (which would let an attacker bind a live root vault to a hostile parent).
+- **One-time only**: asserts `this.parent == PublicKey.empty()` — cannot be called twice.
+- **Non-empty parent**: asserts `parentAddress != PublicKey.empty()`.
+
+No owner authentication is needed because the child address comes from a freshly generated keypair whose private key is required to sign the deploy account update in the same transaction. An attacker cannot deploy or reserve the child without the private key.
+
+The `initialOwners` array is not verified against `ownersCommitment` on-chain — since the proposer controls the entire propose transaction, they could announce mismatched owner addresses in the events. This would not affect on-chain security (`executeSetupChild` validates the commitment independently), but would cause the indexer to display incorrect pending owner lists.
+
+Both the UI worker (`executeSetupChildOnchain`) and the offline CLI (`handleExecute` for createChild) validate the announced config before building the execute transaction: they compute `Poseidon([ownersCommitment, threshold, numOwners])` from the announced owner list and assert it matches the proposal's `data` field. A mismatch throws an error before proof generation, preventing wasted computation on tampered event data.
+
 ### Child lifecycle methods
 
 All four child-lifecycle `@method`s run on the child, take parent-approval inputs `(parentApprovalWitness, parentApprovalCount)`, and emit `ExecutionEvent` alongside their specific event.
 
-- **`executeSetupChild(ownersCommitment, threshold, numOwners, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Must be batched into the **same Mina transaction** as the child's `deploy()`. Between deploy and setup, the child sits with `ownersCommitment == 0`, and any account in the mempool could call `executeSetupChild` with a proposal bound to an attacker-controlled "parent", permanently binding the child to a hostile parent. Asserts `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, `proposal.nonce == 0`, and `proposal.data == Poseidon([ownersCommitment, threshold, numOwners])`. Verifies the parent approval state inline (since `this.parent` isn't persisted yet, the parent address comes from `proposal.guardAddress`). Uses `proposal.networkId` as the child's `networkId` — `assertParentApprovalState` pins the parent's `networkId` as an AccountUpdate precondition, so `proposal.networkId` is the parent-approved value and an attacker can't supply a mismatched id via this path. Initializes all state with `nonce = 1` and `parentNonce = 1`, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
+- **`executeSetupChild(ownersCommitment, threshold, numOwners, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Called on a child that was already deployed and reserved (via `reserveForParent`) at propose time but not yet fully initialized. Asserts `this.parent == proposal.guardAddress` (verifying the reservation matches), `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, `proposal.nonce == 0`, and `proposal.data == Poseidon([ownersCommitment, threshold, numOwners])`. Uses `proposal.networkId` as the child's `networkId` — `assertParentApprovalState` pins the parent's `networkId` as an AccountUpdate precondition, so `proposal.networkId` is the parent-approved value and an attacker can't supply a mismatched id via this path. Initializes all state with `nonce = 1` and `parentNonce = 1`, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
 - **`executeReclaimToParent(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, amount)`** — Sends `amount` MINA back to `this.parent`. Asserts `proposal.data == amount.value`, `proposal.nonce == this.parentNonce + 1`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `ReclaimChildEvent { proposalHash, parentAddress, amount }`. Does **not** check `childMultiSigEnabled` — this is a deliberate recovery path that works even when the child is disabled.
 - **`executeDestroy(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness)`** — Sends the full child balance to the parent, sets `childMultiSigEnabled = 0`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. The child can later be re-enabled by `executeEnableChildMultiSig`; nonce state is preserved across disable/enable cycles. Reuses `ReclaimChildEvent` (same "MINA flowed child → parent" semantics — `ExecutionEvent.txType == DESTROY_CHILD` disambiguates from a partial reclaim).
 - **`executeEnableChildMultiSig(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, enabled)`** — Asserts `proposal.data == enabled`, `enabled ∈ {0, 1}`, and `proposal.nonce == this.parentNonce + 1`. Sets `childMultiSigEnabled`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `EnableChildMultiSigEvent { proposalHash, parentAddress, enabled }`.
@@ -294,6 +313,8 @@ All event structs are defined in `MinaGuard.ts` and registered on `this.events`.
 | `OwnerChangeEvent` | `proposalHash, newNumOwners, configNonce` | `executeOwnerChange` (the added/removed owner key is in `ReceiverEvent` slot 0; `added` is in `ProposalEvent.txType`) |
 | `ThresholdChangeEvent` | `proposalHash, oldThreshold, configNonce` | `executeThresholdChange` (the new threshold is in `ProposalEvent.data`) |
 | `DelegateEvent` | `proposalHash` | `executeDelegate` (the delegate is in `ReceiverEvent` slot 0; empty means undelegate to self) |
+| `CreateChildConfigEvent` | `proposalHash, childAccount, ownersCommitment, threshold, numOwners` | `reserveForParent` on child (one per `CREATE_CHILD` propose) |
+| `CreateChildOwnerEvent` | `proposalHash, owner, index` | `reserveForParent` on child (one per `MAX_OWNERS` slot) |
 | `CreateChildEvent` | `proposalHash, parentAddress` | `executeSetupChild` (config fields duplicated in the sibling `SetupEvent`) |
 | `ReclaimChildEvent` | `proposalHash, parentAddress, amount` | `executeReclaimToParent`, `executeDestroy` |
 | `EnableChildMultiSigEvent` | `proposalHash, parentAddress, enabled` | `executeEnableChildMultiSig`, `executeDestroy` (destroy emits this with `enabled: 0` so a single event carries the state flip for both flows) |
@@ -324,7 +345,7 @@ Every contract state field is reconstructable from events alone — no on-chain 
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |
 | Cross-child replay prevented | `childAccount` is inside `proposalHash`; children assert `proposal.childAccount == this.address` |
 | Parent state drift invalidates REMOTE approvals | Child reads `configNonce`/`ownersCommitment`/`approvalRoot`/`threshold` as AccountUpdate preconditions; any parent change aborts the child tx |
-| Deploy-time race closed | `deploy` + `executeSetupChild` batched in one Mina transaction |
+| Child reserved at deploy time | `reserveForParent()` asserts `ownersCommitment == 0` and `parent == empty`, then sets `this.parent` atomically with deploy — blocking `setup()` hijack, attacker-parent binding, and reservation of initialized root vaults |
 | Hierarchy depth capped at 2 | `propose` rejects REMOTE proposals on any guard whose `parent != PublicKey.empty()`, so children can never raise `CREATE_CHILD` |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
 | Reclaim and destroy are recovery paths | Child-lifecycle methods bypass `childMultiSigEnabled`; the parent can always retrieve funds |
@@ -379,10 +400,32 @@ Disabled buttons are rendered greyed-out with a tooltip rather than removed, so 
 
 Deploying a subaccount requires two separate Mina transactions:
 
-1. **Propose** — `/accounts/new?parent=…` generates a fresh keypair for the child, computes `Poseidon.hash([ownersCommitment, threshold, numOwners])` for the proposal `data`, builds a `CREATE_CHILD` REMOTE proposal, and submits it to the parent via the parent's `propose()`. The generated keypair plus child config is persisted to `localStorage` keyed by `<parentAddress>:<childAddress>`.
-2. **Finalize** — once the parent's CREATE_CHILD proposal has reached threshold approvals, the parent detail page shows a "Pending Subaccounts" banner with a **Finalize deployment** button. Clicking it loads the stashed keypair + config, then runs `executeSetupChild` on the child address (deploy + setup in a single transaction so the deployed-but-unconfigured child cannot be hijacked).
+1. **Propose + Deploy** — `/accounts/new?parent=…` generates a fresh keypair for the child, deploys the child contract, computes `Poseidon.hash([ownersCommitment, threshold, numOwners])` for the proposal `data`, and submits a `CREATE_CHILD` REMOTE proposal to the parent via the parent's `propose()`. The child contract is deployed in this step but left uninitialized (`ownersCommitment == 0`). The child config (owners, threshold, address) is persisted to `localStorage` keyed by `<parentAddress>:<childAddress>`.
+2. **Execute** — once the parent's CREATE_CHILD proposal has reached threshold approvals, any user can execute it from the `/transactions/[id]` page. Execution calls `executeSetupChild` on the already-deployed child address, initializing it with the approved config and binding it to the parent.
 
 `localStorage` records are auto-pruned once the child's `SetupEvent` has been indexed (the parent detail page drops any record whose child address now appears in the contract list).
+
+#### Security: child reservation
+
+At propose time, `reserveForParent()` is called on the child in the same transaction as `deploy()`, setting `this.parent` to the parent address. This blocks both historical attack vectors:
+
+1. **`setup()` hijack** — `setup()` asserts `this.parent == PublicKey.empty()`, which fails once `reserveForParent` has run.
+2. **`executeSetupChild()` with an attacker-controlled parent** — `executeSetupChild` asserts `this.parent == proposal.guardAddress`, so only the designated parent can initialize the child.
+
+No authorization check is needed in `reserveForParent` because the child address comes from a freshly generated keypair whose private key is required to sign the deploy account update in the same atomic transaction.
+
+### Offline signing support for CREATE_CHILD
+
+The offline CLI supports all three phases of the CREATE_CHILD lifecycle:
+
+- **Propose** — The bundle includes a `childPrivateKey` field containing the freshly generated child keypair. The CLI deploys the child contract and submits the `propose()` call in a single transaction, signing the child's deploy account update with the bundled private key. The child private key is generated by the UI at export time and included in the bundle — the air-gapped machine needs it to sign the deploy.
+- **Approve** — Standard approval flow, no special handling. The bundle includes the child account snapshot so the CLI can read `parentNonce` for nonce freshness checks.
+- **Execute** — The bundle includes the child account snapshot and child events. The CLI calls `executeSetupChild` on the already-deployed child, providing the parent approval witness and child config. No child private key needed at this stage.
+
+Bundle format additions for propose:
+- `input.childPrivateKey: string` — base58-encoded private key for the child contract (propose only)
+- `input.childOwners: string[]` — child owner addresses
+- `input.childThreshold: number` — child signing threshold
 
 ### REMOTE proposal execution routing
 
@@ -390,4 +433,4 @@ Deploying a subaccount requires two separate Mina transactions:
 
 - `destination === 'local'` → `executeProposalOnchain` (calls `executeTransfer`/`executeOwnerChange`/`executeThresholdChange`/`executeDelegate`/`executeAllocateToChildren` on the parent).
 - `destination === 'remote'` and `txType ∈ {reclaimChild, destroyChild, enableChildMultiSig}` → `executeChildLifecycleOnchain` (calls the matching `execute*` method on the **child** guard, with parent approval witness + child execution witness assembled client-side from indexed events).
-- `txType === 'createChild'` → no-op from this page; the user is directed to the parent detail page's Pending Subaccounts banner for the explicit two-step finalization.
+- `txType === 'createChild'` → `executeSetupChildOnchain` (calls `executeSetupChild` on the child, with parent approval witness. Any user can trigger this once threshold is met).

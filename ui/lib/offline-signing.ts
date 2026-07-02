@@ -1,3 +1,4 @@
+import { parseChildConfigFromEvents } from './api';
 import { resolveZkappFee } from './mempoolFee';
 
 export const OFFLINE_BUNDLE_VERSION = 1;
@@ -60,6 +61,9 @@ export interface OfflineProposeBundle extends BundleBase {
     createChildConfigHash?: string;
     expirySlot?: number;
     memo?: string;
+    childPrivateKey?: string;
+    childOwners?: string[];
+    childThreshold?: number;
   };
   configNonce: number;
   networkId: string;
@@ -93,6 +97,8 @@ export interface OfflineExecuteBundle extends BundleBase {
   receiverAccountExists: Record<string, boolean>;
   childAddress?: string;
   childEvents?: Array<{ eventType: string; payload: unknown }>;
+  childOwners?: string[];
+  childThreshold?: number;
 }
 
 export type OfflineRequestBundle =
@@ -290,12 +296,31 @@ export async function buildOfflineExecuteBundle(params: {
 
   let childAddress = params.childAddress;
   let childEvents = params.childEvents;
+  let childOwners: string[] | undefined;
+  let childThreshold: number | undefined;
+
+  const isCreateChild = params.proposal.txType === 'createChild';
   const isChildLifecycle = params.proposal.txType === 'reclaimChild' ||
     params.proposal.txType === 'destroyChild' ||
     params.proposal.txType === 'enableChildMultiSig';
+
   if (isChildLifecycle && childAddr && !childEvents) {
     childAddress = childAddr;
     childEvents = await fetchAllEvents(childAddress);
+  }
+
+  if (isCreateChild && childAddr) {
+    childAddress = childAddr;
+    childEvents = await fetchAllEvents(childAddress);
+    const config = parseChildConfigFromEvents(childEvents, params.proposal.proposalHash);
+    if (!config) {
+      throw new Error(
+        'SubVault config events not found for this proposal. ' +
+        'The createChildConfig events may not have been indexed yet — try again shortly.',
+      );
+    }
+    childOwners = config.owners;
+    childThreshold = config.threshold;
   }
 
   return {
@@ -311,5 +336,7 @@ export async function buildOfflineExecuteBundle(params: {
     receiverAccountExists,
     childAddress,
     childEvents,
+    childOwners,
+    childThreshold,
   };
 }

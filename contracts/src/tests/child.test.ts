@@ -123,13 +123,24 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const setupOwners = toFixedSetupOwners(childOwners);
 
-      // Atomic deploy + executeSetupChild, matching the safe pattern.
+      // Reserve the child for the parent first.
+      const reserveTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          proposal.hash(),
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await reserveTxn.prove();
+      await reserveTxn.sign([parentCtx.deployerKey, childKey]).send();
+
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
-          await childZkApp.deploy();
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -139,7 +150,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           );
         });
         await txn.prove();
-        await txn.sign([parentCtx.deployerKey, childKey]).send();
+        await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Insufficient approvals');
     });
 
@@ -157,7 +168,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -206,12 +216,24 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const setupOwners = toFixedSetupOwners(childOwners);
 
+      // Reserve the child for the parent first (deploy + reserveForParent).
+      const reserveTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          badProposal.hash(),
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await reserveTxn.prove();
+      await reserveTxn.sign([parentCtx.deployerKey, childKey]).send();
+
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
-          await childZkApp.deploy();
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -221,7 +243,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           );
         });
         await txn.prove();
-        await txn.sign([parentCtx.deployerKey, childKey]).send();
+        await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Child config mismatch');
     });
 
@@ -262,6 +284,26 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(
         proposeTransaction(childCtx, proposal, 0),
       ).rejects.toThrow('Remote destination proposals must be proposed on a root guard');
+    });
+
+    it('rejects reserveForParent on an already-initialized root vault', async () => {
+      const attackerKey = PrivateKey.random();
+      const attackerAddress = attackerKey.toPublicKey();
+      const childOwners = parentCtx.owners.map((o) => o.pub);
+      const ownersCommitment = computeOwnerChain(childOwners);
+      const setupOwners = toFixedSetupOwners(childOwners);
+
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await parentCtx.zkApp.reserveForParent(
+          attackerAddress,
+          Field(999),
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await txn.prove();
+      await expect(txn.sign([parentCtx.deployerKey]).send()).rejects.toThrow();
     });
   });
 

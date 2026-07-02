@@ -213,19 +213,18 @@ export default function WalletConnect({
     );
   }
 
-  // Show wallet selection buttons when both options are available
-  if (auroInstalled && ledgerSupported) {
-    return (
-      <div className="flex items-center gap-2">
-        <button
-          onClick={onConnectAuro}
-          className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 hover:brightness-110 transition-all"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-          Connect Auro
-        </button>
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={auroInstalled ? onConnectAuro : onConnect}
+        className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 hover:brightness-110 transition-all"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+        {auroInstalled ? 'Connect Auro' : 'Install Auro'}
+      </button>
+      {ledgerSupported && (
         <button
           onClick={() => setShowLedgerModal(true)}
           className="flex items-center gap-2 bg-safe-gray border border-safe-border text-white font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-safe-hover transition-colors"
@@ -235,29 +234,16 @@ export default function WalletConnect({
           </svg>
           Connect Ledger
         </button>
-        {showLedgerModal && (
-          <LedgerConnectModal
-            onConfirm={(accountIndex) => {
-              setShowLedgerModal(false);
-              onConnectLedger(accountIndex);
-            }}
-            onClose={() => setShowLedgerModal(false)}
-          />
-        )}
-      </div>
-    );
-  }
-
-  // Fallback: single connect button (Auro only or install prompt)
-  return (
-    <button
-      onClick={onConnect}
-      className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 hover:brightness-110 transition-all"
-    >
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-      </svg>
-      {auroInstalled ? 'Connect Wallet' : 'Install Auro'}
-    </button>
+      )}
+      {showLedgerModal && (
+        <LedgerConnectModal
+          onConfirm={(accountIndex) => {
+            setShowLedgerModal(false);
+            onConnectLedger(accountIndex);
+          }}
+          onClose={() => setShowLedgerModal(false)}
+        />
+      )}
+    </div>
   );
 }

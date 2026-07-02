@@ -3,9 +3,14 @@
 // remove this TODO.
 const TOP_N = 12;
 
-interface PooledZkappCommand {
-  feePayer: { body: { fee: string } };
-  accountUpdates: unknown[];
+// The daemon wraps each pooled command in a result object; the raw command
+// JSON (mina-signer wire format, fee in nanomina) lives under `zkappCommand`
+// — same convention as block `zkappCommands` and the sendZkapp response.
+interface PooledZkappCommandResult {
+  zkappCommand: {
+    feePayer: { body: { fee: string } };
+    accountUpdates: unknown[];
+  };
 }
 
 export interface FeeEstimate {
@@ -16,8 +21,10 @@ export interface FeeEstimate {
 
 const QUERY = `{
   pooledZkappCommands {
-    feePayer { body { fee } }
-    accountUpdates { body { publicKey } }
+    zkappCommand {
+      feePayer { body { fee } }
+      accountUpdates { body { publicKey } }
+    }
   }
 }`;
 
@@ -62,13 +69,14 @@ export async function estimateZkappFee(
   if (json.errors) {
     throw new Error(`mempool query errors: ${JSON.stringify(json.errors)}`);
   }
-  const pool: PooledZkappCommand[] = json.data?.pooledZkappCommands ?? [];
+  const pool: PooledZkappCommandResult[] = json.data?.pooledZkappCommands ?? [];
 
   const feePerAU: number[] = [];
   for (const entry of pool) {
-    const auCount = entry.accountUpdates?.length ?? 0;
+    const cmd = entry.zkappCommand;
+    const auCount = cmd?.accountUpdates?.length ?? 0;
     if (auCount === 0) continue;
-    const fee = Number(entry.feePayer?.body?.fee);
+    const fee = Number(cmd?.feePayer?.body?.fee);
     if (!Number.isFinite(fee) || fee < 0) continue;
     feePerAU.push(fee / auCount);
   }
@@ -89,12 +97,15 @@ export async function estimateZkappFee(
 
 // Mina spec minimum fee per account update, per mina-signer's
 // getAccountUpdateMinimumFee docstring ("0.001 according to the Mina spec").
-// 0.001 MINA = 1e6 nanomina. Used as a floor on the mempool-derived estimate.
+// 0.001 MINA = 1e6 nanomina.
 export const MIN_FEE_PER_AU = 1e6;
 
-// Flat fallback used when the mempool is empty or the query fails. 0.01 MINA
-// covers up to 10 AUs at the spec minimum, which is above the realistic
-// ceiling for multisig txs here.
+// Flat fallback when the mempool is empty or the query fails, and the floor
+// under any mempool-derived estimate. 0.01 MINA covers 10 AUs at the spec
+// minimum. The floor deliberately assumes 10 AUs rather than
+// DEFAULT_AU_ESTIMATE: the estimate multiplies by an *assumed* AU count, but
+// the built tx can carry more (per-row receivers, fundNewAccount, child
+// setup) — flooring at 4 AUs could yield a sub-minimum fee the pool rejects.
 // TODO: revisit if a multisig tx ever exceeds 10 AUs.
 export const EMPTY_MEMPOOL_FALLBACK_FEE = 1e7;
 
@@ -104,13 +115,12 @@ export const DEFAULT_AU_ESTIMATE = 4;
 
 /** High-level wrapper around estimateZkappFee for callers that just want a
  *  ready-to-use fee value: returns the mempool-derived estimate floored at
- *  MIN_FEE_PER_AU × DEFAULT_AU_ESTIMATE, or EMPTY_MEMPOOL_FALLBACK_FEE on any
- *  failure. Does not log; callers add their own logging if they want. */
+ *  EMPTY_MEMPOOL_FALLBACK_FEE, which is also returned on any failure.
+ *  Does not log; callers add their own logging if they want. */
 export async function resolveZkappFee(graphqlEndpoint: string): Promise<number> {
-  const floor = Math.ceil(MIN_FEE_PER_AU * DEFAULT_AU_ESTIMATE);
   try {
     const estimate = await estimateZkappFee(graphqlEndpoint, DEFAULT_AU_ESTIMATE);
-    return Math.max(estimate.fee, floor);
+    return Math.max(estimate.fee, EMPTY_MEMPOOL_FALLBACK_FEE);
   } catch {
     return EMPTY_MEMPOOL_FALLBACK_FEE;
   }

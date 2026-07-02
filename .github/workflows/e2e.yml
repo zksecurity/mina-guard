@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: e2e-runner
   cancel-in-progress: true
 
 jobs:
@@ -14,62 +14,23 @@ jobs:
     timeout-minutes: 60
     runs-on: [self-hosted, e2e]
 
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: minaguard
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      mina-local-network:
-        # Mesa (develop-3.0) binary — MinaGuard now uses 11 on-chain state
-        # slots, exceeding the 8-slot cap of the older compatible-latest
-        # protocol. Mesa exposes GraphQL on 8080 instead of 3085.
-        image: o1labs/mina-local-network:mesa-latest-lightnet
-        env:
-          NETWORK_TYPE: 'single-node'
-          PROOF_LEVEL: 'none'
-          LOG_LEVEL: 'Info'
-          # 3s slot time matches preview-env/docker-compose.e2e.yml and lines
-          # up with settlementWaitMs/expirySlotOffset in network-config.ts.
-          SLOT_TIME: '3000'
-        ports:
-          - 8080:8080
-          - 8181:8181
-          - 8282:8282
-        volumes:
-          - /tmp:/root/logs
-
     steps:
-      - name: Wait for Mina network readiness
-        uses: o1-labs/wait-for-mina-network-action@v1
-        with:
-          mina-graphql-port: 8080
-          max-attempts: 120
-          polling-interval-ms: 10000
-
-      - name: Debug container status
-        if: failure()
-        run: |
-          echo "=== Docker containers ==="
-          docker ps -a
-          echo ""
-          echo "=== Mina container logs (last 100 lines) ==="
-          docker logs $(docker ps -aq --filter "ancestor=o1labs/mina-local-network:mesa-latest-lightnet") 2>&1 | tail -100
-
       - name: Git checkout
         uses: actions/checkout@v6
         with:
           submodules: true
+
+      # The self-hosted e2e runner has Docker Engine but not the Compose v2
+      # plugin (`docker compose`), so every compose step below fails with
+      # "unknown shorthand flag: 'f'". The official action installs the plugin
+      # into the runner's CLI plugin dir (handles arch/caching/integrity).
+      - name: Ensure Docker Compose v2
+        uses: docker/setup-compose-action@v1
+        with:
+          version: v2.29.7
+
+      - name: Clean up previous run
+        run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v --remove-orphans 2>/dev/null || true
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
@@ -82,44 +43,20 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build contracts
-        run: bun run --filter contracts build
-
       - name: Install Playwright browsers
         run: cd e2e && npx playwright install chromium --with-deps
 
-      - name: Reset database
-        run: bunx prisma db push
-        working-directory: backend
+      - name: Start compose stack
+        run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait --wait-timeout 600
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/minaguard
-
-      - name: Start backend
-        run: bun run --filter backend dev &
-        env:
-          PORT: '4000'
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/minaguard
-          MINA_ENDPOINT: http://localhost:8080/graphql
-          ARCHIVE_ENDPOINT: http://localhost:8282
-          LIGHTNET_ACCOUNT_MANAGER: http://localhost:8181
-          INDEX_POLL_INTERVAL_MS: '5000'
-
-      - name: Start frontend
-        run: bun run --filter ui dev &
-        working-directory: ui
-        env:
-          NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
-          NEXT_PUBLIC_MINA_ENDPOINT: http://localhost:8080/graphql
-          NEXT_PUBLIC_ARCHIVE_ENDPOINT: http://localhost:8282
-          NEXT_PUBLIC_E2E_TEST: 'true'
-          NEXT_PUBLIC_POLL_INTERVAL_MS: '3000'
+          MINAGUARD_VK_HASH: "skip"
 
       - name: Wait for services
         run: |
           echo "Waiting for backend..."
-          timeout 60 bash -c 'until curl -sf http://localhost:4000/health; do sleep 2; done'
+          timeout 60 bash -c 'until curl -sf http://localhost:14000/health; do sleep 2; done'
           echo "Waiting for frontend..."
-          timeout 600 bash -c 'until curl -sf http://localhost:3000; do sleep 2; done'
+          timeout 120 bash -c 'until curl -sf http://localhost:13000; do sleep 2; done'
           echo "Services ready"
 
       - name: Run e2e tests
@@ -127,6 +64,13 @@ jobs:
         env:
           CI: true
           TMPDIR: ${{ github.workspace }}/.tmp
+          # Point the harness at the isolated host ports published by
+          # docker-compose.e2e-ci.yml (1xxxx range avoids runner collisions).
+          E2E_MINA_ENDPOINT: http://127.0.0.1:18080/graphql
+          E2E_ARCHIVE_ENDPOINT: http://127.0.0.1:18282
+          E2E_ACCOUNT_MANAGER: http://127.0.0.1:18181
+          E2E_BACKEND_URL: http://localhost:14000
+          E2E_FRONTEND_URL: http://localhost:13000
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -138,12 +82,18 @@ jobs:
             e2e/playwright-report/
           retention-days: 7
 
-      - name: Upload Mina logs
+      - name: Collect container logs
+        if: failure()
+        run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e logs --tail=200 > /tmp/compose-e2e-logs.txt 2>&1 || true
+
+      - name: Upload container logs
         uses: actions/upload-artifact@v4
-        continue-on-error: true
         if: failure()
         with:
-          if-no-files-found: ignore
-          name: mina-logs
-          path: /tmp/*.log
+          name: compose-e2e-logs
+          path: /tmp/compose-e2e-logs.txt
           retention-days: 5
+
+      - name: Teardown compose stack
+        if: always()
+        run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v --remove-orphans

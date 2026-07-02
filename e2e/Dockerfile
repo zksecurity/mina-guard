@@ -25,6 +25,7 @@ COPY contracts/package.json contracts/
 COPY backend/package.json backend/
 COPY ui/package.json ui/
 COPY ui/deps/ ui/deps/
+COPY offline-cli/package.json offline-cli/
 COPY dev-helpers/package.json dev-helpers/
 COPY e2e/package.json e2e/
 
@@ -57,7 +58,7 @@ ENV NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
 ENV NEXT_PUBLIC_MINA_ENDPOINT=http://lightnet:8080/graphql
 ENV NEXT_PUBLIC_ARCHIVE_ENDPOINT=http://lightnet:8282
 ENV NEXT_PUBLIC_E2E_TEST=true
-ENV NEXT_PUBLIC_POLL_INTERVAL_MS=3000
+ENV NEXT_PUBLIC_POLL_INTERVAL_MS=1000
 RUN cd ui && bun run build
 
 # Prisma client must be generated in-image; `bun run --filter backend dev`

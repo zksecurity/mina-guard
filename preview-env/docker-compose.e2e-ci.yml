@@ -1,0 +1,89 @@
+# E2E CI stack for the self-hosted runner.
+#
+# Playwright runs on the host; all infrastructure lives in containers.
+# Ports are published to 127.0.0.1 only (self-hosted runner has a public IP).
+#
+# Host ports are published in an isolated 1xxxx range (container ports unchanged)
+# so the stack never collides with other long-lived services on the shared
+# self-hosted runner (e.g. host postgres on 5432, other apps on 8080/8282).
+# The host-facing endpoints are passed to the test harness via E2E_* env vars
+# in .github/workflows/e2e.yml; internal service-to-service URLs are unchanged.
+#
+# Usage:
+#   MINAGUARD_VK_HASH=skip docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait
+#   docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v
+
+services:
+  lightnet:
+    image: o1labs/mina-local-network:mesa-latest-lightnet
+    restart: "no"
+    environment:
+      - SLOT_TIME=3000
+      - PROOF_LEVEL=none
+      - RUN_ARCHIVE_NODE=true
+      - NETWORK_TYPE=single-node
+      - LOG_LEVEL=Info
+    ports:
+      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:18181:8181"
+      - "127.0.0.1:18282:8282"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"query\":\"{ syncStatus }\"}' http://localhost:8080/graphql"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
+  db:
+    image: postgres:17
+    restart: "no"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=minaguard
+    ports:
+      - "127.0.0.1:15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: preview-env/Dockerfile.backend
+      args:
+        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-skip}
+    restart: "no"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/minaguard
+      - MINA_ENDPOINT=http://lightnet:8080/graphql
+      - ARCHIVE_ENDPOINT=http://lightnet:8282
+      - LIGHTNET_ACCOUNT_MANAGER=http://lightnet:8181
+      - PORT=4000
+      - INDEX_POLL_INTERVAL_MS=5000
+    ports:
+      - "127.0.0.1:14000:4000"
+    depends_on:
+      lightnet:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: preview-env/Dockerfile.frontend
+      args:
+        - NEXT_PUBLIC_API_BASE_URL=http://localhost:14000
+        - NEXT_PUBLIC_MINA_ENDPOINT=http://localhost:18080/graphql
+        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=http://localhost:18282
+        - NEXT_PUBLIC_E2E_TEST=true
+        - NEXT_PUBLIC_POLL_INTERVAL_MS=3000
+        - NEXT_PUBLIC_MINA_NETWORK=testnet
+    restart: "no"
+    ports:
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      - backend

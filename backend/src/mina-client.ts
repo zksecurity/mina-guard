@@ -1,5 +1,6 @@
 import { Mina, PublicKey, fetchAccount, UInt32 } from 'o1js';
 import { MinaGuard } from 'contracts';
+import type { Pool } from 'pg';
 import type { BackendConfig, } from './config.js';
 
 const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
@@ -139,6 +140,20 @@ export async function fetchLatestBlockHeight(config: BackendConfig): Promise<num
 }
 
 /**
+ * Same as fetchLatestBlockHeight but reads directly from the archive postgres
+ * (when DISCOVERY_BACKEND=archive). Bypasses archive-node-api, which has been
+ * observed to return generic "Unexpected error." responses on the networkState
+ * query when the underlying daemon is mid-block; postgres always has the
+ * latest persisted block height.
+ */
+export async function fetchLatestBlockHeightFromArchive(pool: Pool): Promise<number> {
+  const result = await pool.query<{ max: string | null }>(
+    `SELECT MAX(height)::text AS max FROM blocks WHERE chain_status <> 'orphaned'`,
+  );
+  return Number(result.rows[0]?.max ?? '0');
+}
+
+/**
  * Discovers candidate zkApp addresses by scanning recent best-chain zkApp account updates.
  * Candidates are later verified via verification key hash.
  */
@@ -204,6 +219,75 @@ export async function discoverCandidateAddresses(
   }
 
   return [...addresses];
+}
+
+/**
+ * Discovers candidate zkApp addresses by querying the Mina archive postgres directly,
+ * filtered to account updates that install MinaGuard's verification key. Unlike the
+ * daemon's bestChain scan (capped at 290 blocks), this reaches arbitrary history.
+ *
+ * Returns addresses from blocks where:
+ *   - chain_status != 'orphaned'  (canonical OR pending — see TODO below)
+ *   - the account update set a verification_key whose hash matches vkHash
+ *   - the containing zkapp_command was applied (not failed)
+ *   - the block height is in [fromHeight, toHeight] inclusive
+ *
+ * TODO(reorg-safety): we include `chain_status = 'pending'` so freshly-deployed
+ * contracts (the last ~k blocks) become discoverable without waiting for them
+ * to finalize. But `detectAndRollbackReorg` only rewinds event rows, not the
+ * Contract table — so if a pending block later orphans, its Contract row is
+ * never cleaned up and the indexer ends up tracking a deploy that didn't
+ * happen. Acceptable on mesa-mut (reorg risk ~0 on a low-stakes testnet);
+ * UNSAFE on mainnet. Before a mainnet deploy: either restrict to
+ * `chain_status = 'canonical'` (and accept a ~k-block discovery lag), or
+ * add a periodic reconciliation that deletes Contract rows whose
+ * discoveredAtBlock has since orphaned.
+ *
+ * The join shape matches the upstream Mina archive schema verified against the
+ * mesa-mut archive (45-table layout, zkapp_verification_key_hashes split from
+ * zkapp_verification_keys). If the archive schema shifts in a future Mina release,
+ * this query needs revisiting.
+ */
+export interface DiscoveryCandidate {
+  address: string;
+  /** Block height attributed to this address's discovery — used as the
+   *  contract's discoveredAtBlock so rescan windows are tight around the
+   *  deploy. The archive backend populates this with the actual on-chain
+   *  deploy block (MIN(blocks.height) from the SQL); the daemon backend
+   *  currently approximates it as the tick's chain tip (precise enough
+   *  for the rescan since bestChain's ~290-block horizon bounds the
+   *  imprecision). */
+  deployBlock: number;
+}
+
+export async function discoverCandidateAddressesFromArchive(
+  pool: Pool,
+  vkHash: string,
+  fromHeight: number,
+  toHeight: number,
+): Promise<DiscoveryCandidate[]> {
+  const result = await pool.query<{ address: string; deploy_block: string }>(
+    `
+    SELECT pk.value AS address, MIN(b.height)::text AS deploy_block
+    FROM zkapp_account_update_body zaub
+    JOIN zkapp_updates zu ON zu.id = zaub.update_id
+    JOIN zkapp_verification_keys vk ON vk.id = zu.verification_key_id
+    JOIN zkapp_verification_key_hashes vkh ON vkh.id = vk.hash_id
+    JOIN account_identifiers ai ON ai.id = zaub.account_identifier_id
+    JOIN public_keys pk ON pk.id = ai.public_key_id
+    JOIN zkapp_account_update zau ON zau.body_id = zaub.id
+    JOIN zkapp_commands zc ON zau.id = ANY(zc.zkapp_account_updates_ids)
+    JOIN blocks_zkapp_commands bzc
+      ON bzc.zkapp_command_id = zc.id AND bzc.status = 'applied'
+    JOIN blocks b ON b.id = bzc.block_id
+    WHERE vkh.value = $1
+      AND b.chain_status <> 'orphaned'
+      AND b.height BETWEEN $2 AND $3
+    GROUP BY pk.value
+    `,
+    [vkHash, fromHeight, toHeight],
+  );
+  return result.rows.map((r) => ({ address: r.address, deployBlock: Number(r.deploy_block) }));
 }
 
 /** Reads the current verification key hash for an account if present. */

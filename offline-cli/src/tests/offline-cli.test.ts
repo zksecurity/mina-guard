@@ -79,7 +79,7 @@ describe('offline-cli', () => {
     expect(result.stderr).toContain('Unknown bundle action');
   }, 30_000);
 
-  it('rejects createChild action', async () => {
+  it('rejects createChild propose without childPrivateKey', async () => {
     const bundlePath = join(tmpDir, 'create-child.json');
     writeFileSync(bundlePath, JSON.stringify({
       version: 1,
@@ -96,7 +96,7 @@ describe('offline-cli', () => {
     const key = PrivateKey.random().toBase58();
     const result = await runCLI(bundlePath, key);
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain('createChild');
+    expect(result.stderr).toContain('childPrivateKey');
   }, 30_000);
 
   // -- Store rebuilding (in-process, uses internal logic) --
@@ -135,7 +135,6 @@ describe('offline-cli', () => {
     const setupOwners = toFixedOwners(owners.map((o) => o.pub));
     const setupTx = await Mina.transaction(deployer.pub, async () => {
       await zkApp.setup(
-        ownersCommitment,
         Field(2),
         Field(owners.length),
         Field(1),

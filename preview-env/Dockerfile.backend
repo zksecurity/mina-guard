@@ -30,7 +30,10 @@ RUN cd contracts && bun run build
 # and threaded it through. The o1js circuit compile peaks well above the
 # memory available inside a typical CI Docker build, OOM-killing the step.
 ARG MINAGUARD_VK_HASH=
-RUN if [ -n "$MINAGUARD_VK_HASH" ]; then \
+RUN if [ "$MINAGUARD_VK_HASH" = "skip" ]; then \
+      echo "MINAGUARD_VK_HASH=skip — skipping VK filter (indexer accepts all contracts)"; \
+      echo "" > /app/.vk-hash; \
+    elif [ -n "$MINAGUARD_VK_HASH" ]; then \
       echo "Using prebuilt MINAGUARD_VK_HASH: $MINAGUARD_VK_HASH"; \
       echo "$MINAGUARD_VK_HASH" > /app/.vk-hash; \
     else \
