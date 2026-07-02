@@ -26,9 +26,9 @@ import {
   EMPTY_MERKLE_MAP_ROOT,
   TxType,
   Destination,
-} from './constants';
+} from './constants.js';
 
-import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners } from './list-commitment';
+import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners } from './list-commitment.js';
 
 // -- Types -------------------------------------------------------------------
 

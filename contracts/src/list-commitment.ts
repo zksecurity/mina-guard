@@ -1,5 +1,5 @@
 import { Option, Poseidon, Field, Provable, PublicKey, Bool, Struct } from "o1js";
-import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from "./constants";
+import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from "./constants.js";
 
 class PublicKeyOption extends Option(PublicKey) { }
 const OwnerWitnessArray = Provable.Array(PublicKeyOption, MAX_OWNERS);

@@ -102,6 +102,43 @@ export async function fetchBalance(address: string): Promise<string | null> {
   return data?.balance ?? null;
 }
 
+export type SubscribeResult =
+  | { ok: true }
+  | { ok: false; status: number | null; error: string | null };
+
+/** Subscribes the lite-mode indexer to a contract address. Idempotent server-side. */
+export async function subscribeAddress(
+  address: string,
+  fromBlock?: number,
+): Promise<SubscribeResult> {
+  try {
+    const response = await fetch(`${API_BASE}/api/subscribe`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify(
+        fromBlock === undefined ? { address } : { address, fromBlock },
+      ),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[api] subscribeAddress(${address}) returned ${response.status}:`, text);
+      let error: string | null = null;
+      try {
+        const parsed = JSON.parse(text) as { error?: unknown };
+        if (typeof parsed.error === 'string') error = parsed.error;
+      } catch {
+        // non-JSON body; leave error as null
+      }
+      return { ok: false, status: response.status, error };
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error(`[api] subscribeAddress(${address}) failed:`, err);
+    return { ok: false, status: null, error: null };
+  }
+}
+
 /** Pulls the tx hash out of the worker's success message. The worker uses a
  *  few different prefixes — "Transaction submitted", "Approval submitted",
  *  "Deploy submitted", "SubVault setup submitted" (CREATE_CHILD execute),

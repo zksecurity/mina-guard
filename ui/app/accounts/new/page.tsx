@@ -13,7 +13,8 @@ import {
   generateKeypair,
 } from '@/lib/multisigClient';
 import { saveAccountName, savePendingTx } from '@/lib/storage';
-import { extractTxHash } from '@/lib/api';
+import { extractTxHash, subscribeAddress } from '@/lib/api';
+import { resolveIndexerMode } from '@/lib/indexer-mode';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', networkId: '0', enabled: true },
@@ -38,6 +39,7 @@ function CreateAccountWizard() {
   const {
     wallet,
     contracts,
+    indexerStatus,
     allContractOwners,
     startOperation,
     isOperating,
@@ -177,6 +179,10 @@ function CreateAccountWizard() {
           createdAt: new Date().toISOString(),
         });
         broadcasted = true;
+        if (resolveIndexerMode(indexerStatus) === 'lite') {
+          onProgress('Subscribing indexer…');
+          await subscribeAddress(deployedAddress);
+        }
       }
       return result;
     });
