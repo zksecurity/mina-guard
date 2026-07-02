@@ -93,14 +93,23 @@ jobs:
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
         timeout-minutes: 20
 
+  # Verifies contracts/.vk-hash semantically: when VK-affecting paths change,
+  # compile MinaGuard and compare the real VK hash against the committed file.
+  # Cosmetic contract edits (imports, comments, formatting) that don't alter
+  # the circuit pass without requiring a .vk-hash bump; genuine drift fails
+  # even if .vk-hash was updated (to the wrong value). The diff detection only
+  # decides whether to spend the compile minutes.
   check-vk-hash:
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          submodules: true
 
-      - name: Fail if VK-affecting files changed without updating contracts/.vk-hash
+      - name: Detect VK-affecting changes
+        id: detect
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
@@ -110,7 +119,15 @@ jobs:
 
           # Skip on initial push (before SHA is all-zeros)
           if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-            echo "Initial push — skipping VK hash drift check."
+            echo "Initial push — skipping VK hash check."
+            echo "verify=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Force-pushes can make BASE unresolvable; verify unconditionally then.
+          if ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo "Base commit $BASE not available locally — verifying VK hash to be safe."
+            echo "verify=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -121,14 +138,51 @@ jobs:
           TRIGGER=""
           [ -n "$SRC_CHANGED" ] && TRIGGER="contracts/src changed"
           [ -n "$O1JS_CHANGED" ] && TRIGGER="${TRIGGER:+$TRIGGER; }o1js version changed in bun.lock"
+          [ -n "$HASH_CHANGED" ] && TRIGGER="${TRIGGER:+$TRIGGER; }contracts/.vk-hash changed"
 
-          if [ -n "$TRIGGER" ] && [ -z "$HASH_CHANGED" ]; then
-            echo "::error::$TRIGGER but contracts/.vk-hash was not updated."
-            echo "Regenerate: bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile"
+          if [ -n "$TRIGGER" ]; then
+            echo "$TRIGGER — will compile and compare against contracts/.vk-hash."
+            echo "verify=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No VK-affecting changes — skipping compile."
+            echo "verify=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Bun
+        if: steps.detect.outputs.verify == 'true'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        if: steps.detect.outputs.verify == 'true'
+        run: bun install --ignore-scripts
+
+      - name: Compile contracts and compare VK hash
+        if: steps.detect.outputs.verify == 'true'
+        run: |
+          # The dev-helpers CLI statically imports the contracts package at
+          # startup, so the build output must exist before the CLI runs (its
+          # own rebuild happens too late for that first import).
+          bun run --filter contracts build
+
+          bun run dev-helpers/cli.ts vk-hash compile 2>&1 | tee vk-compile.log
+          COMPUTED=$(grep '^vkHash: ' vk-compile.log | tail -1 | awk '{print $2}' || true)
+          COMMITTED=$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')
+
+          echo "computed:  ${COMPUTED:-<none>}"
+          echo "committed: $COMMITTED"
+
+          if [ -z "$COMPUTED" ]; then
+            echo "::error::Could not extract a VK hash from 'vk-hash compile' output."
             exit 1
           fi
 
-          echo "VK hash drift check passed."
+          if [ "$COMPUTED" != "$COMMITTED" ]; then
+            echo "::error::contracts/.vk-hash is stale: compiled VK hash is $COMPUTED but the committed file says $COMMITTED."
+            echo "Regenerate: bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile — then put the printed hash in contracts/.vk-hash."
+            exit 1
+          fi
+
+          echo "VK hash matches contracts/.vk-hash."
 
   test-offline-cli-windows:
     timeout-minutes: 30
