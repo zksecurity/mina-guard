@@ -38,6 +38,12 @@ export default function TransactionCard({
       ? proposal.lastExecuteError ?? proposal.lastApproveError
       : null;
   const attemptErrorKind = proposal.lastExecuteError ? 'Execute' : 'Approve';
+  const isLocalPending = proposal._localPending === true;
+  const executeInFlight =
+    !isLocalPending &&
+    proposal.status === 'pending' &&
+    proposal.lastExecuteTxHash != null &&
+    proposal.lastExecuteError == null;
   const isRemote = proposal.destination === 'remote';
   const isDelete = isDeleteProposal(proposal);
   const nonceLabel = proposal.nonce != null ? `#${proposal.nonce}` : '#?';
@@ -50,9 +56,9 @@ export default function TransactionCard({
       : 'Invalidates another proposal'
     : isRemote
       ? proposal.childAccount
-        ? `Executes on subaccount ${truncateAddress(proposal.childAccount)}`
-        : 'Executes on subaccount'
-      : 'Executes on this account';
+        ? `Executes on SubVault ${truncateAddress(proposal.childAccount)}`
+        : 'Executes on SubVault'
+      : 'Executes on this Vault';
 
   return (
     <Link href={`/transactions/${proposal.proposalHash}`}>
@@ -74,6 +80,16 @@ export default function TransactionCard({
                     title={`${attemptErrorKind}: ${attemptError}`}
                   >
                     last attempt failed
+                  </span>
+                )}
+                {isLocalPending && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full text-yellow-200 bg-yellow-400/10 border border-yellow-400/30">
+                    creation pending
+                  </span>
+                )}
+                {executeInFlight && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full text-amber-200 bg-amber-400/10 border border-amber-400/30">
+                    execute pending
                   </span>
                 )}
               </div>

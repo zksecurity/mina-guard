@@ -1,0 +1,14 @@
+# Canonical MinaGuard verification-key hash (decimal Field value).
+#
+# This is the hash MinaGuard.compile() produces from the CURRENT contracts/src.
+# The backend indexer filters on-chain zkApp events to this VK (via the
+# MINAGUARD_VK_HASH env var) so it only records genuine MinaGuard vaults.
+#
+# Node and the browser produce the SAME hash for the same source — there is no
+# environment divergence. A mismatch means contracts/build was stale when the
+# hash was computed. Regenerate after ANY change under contracts/src:
+#
+#     bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile
+#
+# Consumers strip these comment lines and read the bare number below.
+21510415504841094700648059646337071671238963722199074193956279965382014938242

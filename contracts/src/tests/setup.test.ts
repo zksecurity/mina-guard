@@ -48,7 +48,6 @@ describe('MinaGuard - Setup', () => {
     await expect(async () => {
       const txn = await Mina.transaction(ctx.deployerAccount, async () => {
         await ctx.zkApp.setup(
-          getOwnersCommitment(ctx),
           Field(2),
           Field(3),
           Field(1),
@@ -64,7 +63,6 @@ describe('MinaGuard - Setup', () => {
 
   it('should reject threshold = 0', async () => {
     const { zkApp, zkAppKey, deployerKey, deployerAccount } = ctx;
-    const ownersCommitment = getOwnersCommitment(ctx);
 
     // Deploy only
     const deployTxn = await Mina.transaction(deployerAccount, async () => {
@@ -77,7 +75,6 @@ describe('MinaGuard - Setup', () => {
     await expect(async () => {
       const txn = await Mina.transaction(deployerAccount, async () => {
         await zkApp.setup(
-          ownersCommitment,
           Field(0),
           Field(3),
           Field(1),
@@ -93,7 +90,6 @@ describe('MinaGuard - Setup', () => {
 
   it('should reject numOwners < threshold', async () => {
     const { zkApp, zkAppKey, deployerKey, deployerAccount } = ctx;
-    const ownersCommitment = getOwnersCommitment(ctx);
 
     const deployTxn = await Mina.transaction(deployerAccount, async () => {
       AccountUpdate.fundNewAccount(deployerAccount);
@@ -105,7 +101,6 @@ describe('MinaGuard - Setup', () => {
     await expect(async () => {
       const txn = await Mina.transaction(deployerAccount, async () => {
         await zkApp.setup(
-          ownersCommitment,
           Field(5),
           Field(3),
           Field(1),

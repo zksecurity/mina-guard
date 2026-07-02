@@ -26,7 +26,7 @@ export default function LedgerConnectModal({ onConfirm, onClose }: LedgerConnect
         </div>
 
         <label className="block space-y-1">
-          <span className="text-xs text-safe-text">Account Index</span>
+          <span className="text-xs text-safe-text">Vault Index</span>
           <input
             type="number"
             min={0}

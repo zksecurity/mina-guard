@@ -139,12 +139,34 @@ export async function subscribeAddress(
   }
 }
 
-/** Pulls the tx hash out of the worker's "Transaction submitted: HASH" /
- *  "Approval submitted: HASH" success message. Returns null if absent. */
+/** Pulls the tx hash out of the worker's success message. The worker uses a
+ *  few different prefixes — "Transaction submitted", "Approval submitted",
+ *  "Deploy submitted", "SubVault setup submitted" (CREATE_CHILD execute),
+ *  "SubVault action submitted" (child lifecycle txs) — but the shape is
+ *  always `<phrase> submitted: <hash>`. */
 export function extractTxHash(message: string | null): string | null {
   if (!message) return null;
-  const match = message.match(/(?:Transaction|Approval|Deploy)\s+submitted:\s*(\S+)/);
+  const match = message.match(/(?:Transaction|Approval|Deploy|SubVault (?:action|setup))\s+submitted:\s*(\S+)/);
   return match ? match[1] : null;
+}
+
+/** Looks up a submitted zkApp tx hash on the daemon's bestChain. Used by the
+ *  reconciliation observer to detect failed/dropped CREATE submissions, which
+ *  have no Proposal row to attach the failure to server-side. */
+export async function fetchTxStatus(
+  txHash: string,
+): Promise<{ status: 'pending' | 'included' | 'failed'; reason?: string } | null> {
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/tx-status?hash=${encodeURIComponent(txHash)}`,
+      { cache: 'no-store' },
+    );
+    if (!response.ok) return null;
+    return (await response.json()) as { status: 'pending' | 'included' | 'failed'; reason?: string };
+  } catch (err) {
+    console.warn('[api] fetchTxStatus failed', err);
+    return null;
+  }
 }
 
 /** Best-effort: tells the backend about a freshly-submitted approve/execute tx
@@ -219,9 +241,13 @@ function toProposal(input: Record<string, unknown>): Proposal {
     data: asNullableString(input.data),
     nonce: asNullableString(input.nonce) ?? asNullableString(input.uid),
     configNonce: asNullableString(input.configNonce),
-    expiryBlock: asNullableString(input.expiryBlock),
+    expirySlot: asNullableString(input.expirySlot),
     networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
+    memo: asNullableString(input.memo),
+    memoHash: asNullableString(input.memoHash),
+    proposalMemoMatch: asMemoMatch(input.proposalMemoMatch),
+    memoExecutionMatch: asMemoMatch(input.memoExecutionMatch),
     destination: normalizeDestination(asNullableString(input.destination)),
     childAccount: asNullableString(input.childAccount),
     status: asProposalStatus(input.status),
@@ -229,6 +255,8 @@ function toProposal(input: Record<string, unknown>): Proposal {
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
+    lastApproveTxHash: asNullableString(input.lastApproveTxHash),
+    lastExecuteTxHash: asNullableString(input.lastExecuteTxHash),
     lastApproveError: asNullableString(input.lastApproveError),
     lastExecuteError: asNullableString(input.lastExecuteError),
     createdAt: asString(input.createdAt) ?? new Date(0).toISOString(),
@@ -298,6 +326,11 @@ function asProposalStatus(value: unknown): Proposal['status'] {
   return 'pending';
 }
 
+function asMemoMatch(value: unknown): boolean | null {
+  if (value === true || value === false) return value;
+  return null;
+}
+
 function asReceivers(value: unknown): ProposalReceiver[] {
   if (!Array.isArray(value)) return [];
   return value.map((item, index) => {
@@ -343,6 +376,64 @@ export async function fetchAllEvents(contractAddress: string): Promise<Array<{ e
   }
 
   return events.reverse();
+}
+
+/**
+ * Parses child vault config from createChildConfig/createChildOwner events.
+ * Pure function — used by both the online UI (api.ts) and offline bundle builder.
+ */
+export function parseChildConfigFromEvents(
+  events: ReadonlyArray<{ eventType: string; payload: unknown }>,
+  proposalHash: string,
+): { owners: string[]; threshold: number } | null {
+  const EMPTY_KEY = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+
+  const configEvent = events.find(
+    (e) =>
+      e.eventType === 'createChildConfig' &&
+      (e.payload as Record<string, unknown>)?.proposalHash === proposalHash,
+  );
+  if (!configEvent) return null;
+  const configPayload = configEvent.payload as Record<string, unknown>;
+  const threshold = Number(configPayload.threshold ?? '0');
+  const numOwners = Number(configPayload.numOwners ?? '0');
+
+  const ownerEvents = events
+    .filter(
+      (e) =>
+        e.eventType === 'createChildOwner' &&
+        (e.payload as Record<string, unknown>)?.proposalHash === proposalHash,
+    )
+    .sort((a, b) => {
+      const ai = Number((a.payload as Record<string, unknown>)?.index ?? '0');
+      const bi = Number((b.payload as Record<string, unknown>)?.index ?? '0');
+      return ai - bi;
+    });
+
+  const owners = ownerEvents
+    .slice(0, numOwners)
+    .map((e) => (e.payload as Record<string, unknown>)?.owner as string)
+    .filter((addr) => typeof addr === 'string' && addr.length > 10 && addr !== EMPTY_KEY);
+
+  if (owners.length === 0) return null;
+  if (owners.length !== numOwners) {
+    throw new Error(
+      `SubVault owner event data is corrupt: expected ${numOwners} owners but found ${owners.length}`,
+    );
+  }
+  return { owners, threshold };
+}
+
+/**
+ * Fetches the child vault configuration for a CREATE_CHILD proposal
+ * from the child's createChildConfig/createChildOwner events.
+ */
+export async function fetchChildConfigFromEvents(
+  childAddress: string,
+  proposalHash: string,
+): Promise<{ owners: string[]; threshold: number } | null> {
+  const events = await fetchAllEvents(childAddress);
+  return parseChildConfigFromEvents(events, proposalHash);
 }
 
 /** Parses JSON strings defensively when backend stores raw payload text. */

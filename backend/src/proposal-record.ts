@@ -1,10 +1,13 @@
 import type { Proposal, ProposalReceiver } from './generated/prisma/index.js';
+import { memoToField } from 'contracts';
 
 export interface ProposalReceiverRecord {
   index: number;
   address: string;
   amount: string;
 }
+
+export type MemoMatch = boolean | null;
 
 export type InvalidReason = 'config_nonce_stale' | 'proposal_nonce_stale';
 
@@ -26,9 +29,13 @@ export interface SerializedProposalRecord {
   data: string | null;
   nonce: string | null;
   configNonce: string | null;
-  expiryBlock: string | null;
+  expirySlot: string | null;
   networkId: string | null;
   guardAddress: string | null;
+  memo: string | null;
+  memoHash: string | null;
+  proposalMemoMatch: MemoMatch;
+  memoExecutionMatch: MemoMatch;
   destination: string | null;
   childAccount: string | null;
   status: string;
@@ -36,6 +43,8 @@ export interface SerializedProposalRecord {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  lastApproveTxHash: string | null;
+  lastExecuteTxHash: string | null;
   lastApproveError: string | null;
   lastExecuteError: string | null;
   createdAt: Date;
@@ -95,27 +104,45 @@ export function deriveInvalidReason(
 /**
  * Derives proposal status from the append-only schema plus read-time checks.
  *
- * Precedence: `executed` (ProposalExecution row) > `invalidated`
- * (deriveInvalidReason returned non-null) > `expired` (latestHeight past
- * expiryBlock) > `pending`.
+ * Precedence: `executed` (ProposalExecution row) > `expired` (latestSlot
+ * past expirySlot) > `invalidated` (deriveInvalidReason returned non-null)
+ * > `pending`.
  */
 function deriveStatus(
   proposal: Proposal,
   executed: boolean,
-  latestHeight: number,
+  latestSlot: number,
   invalidReason: InvalidReason | null,
 ): string {
   if (executed) return 'executed';
+  const expiry = Number(proposal.expirySlot ?? '0');
+  if (Number.isFinite(expiry) && expiry > 0 && latestSlot > expiry) return 'expired';
   if (invalidReason !== null) return 'invalidated';
-  const expiry = Number(proposal.expiryBlock ?? '0');
-  if (Number.isFinite(expiry) && expiry > 0 && latestHeight > expiry) return 'expired';
   return 'pending';
+}
+
+function computeProposalMemoMatch(
+  memo: string | null,
+  memoHash: string | null,
+): MemoMatch {
+  if (memo == null || memoHash == null) return null;
+  if (memoHash === '0') return null;
+  return memoToField(memo).toString() === memoHash;
+}
+
+function computeMemoExecutionMatch(
+  memoHash: string | null,
+  executionMemoHash: string | null,
+): MemoMatch {
+  if (executionMemoHash == null) return null;
+  if (memoHash == null) return null;
+  return memoHash === executionMemoHash;
 }
 
 /** Converts Prisma proposal rows into the API shape expected by the UI. */
 export function serializeProposalRecord(
   proposal: ProposalWithDerived,
-  latestHeight: number,
+  latestSlot: number,
   parentState: ContractState | null = null,
   childState: ContractState | null = null,
 ): SerializedProposalRecord {
@@ -134,7 +161,7 @@ export function serializeProposalRecord(
 
   const execution = proposal.executions[0] ?? null;
   const invalidReason = deriveInvalidReason(proposal, parentState, childState);
-  const status = deriveStatus(proposal, execution !== null, latestHeight, invalidReason);
+  const status = deriveStatus(proposal, execution !== null, latestSlot, invalidReason);
 
   return {
     proposalHash: proposal.proposalHash,
@@ -145,9 +172,13 @@ export function serializeProposalRecord(
     data: proposal.data,
     nonce: proposal.nonce,
     configNonce: proposal.configNonce,
-    expiryBlock: proposal.expiryBlock,
+    expirySlot: proposal.expirySlot,
     networkId: proposal.networkId,
     guardAddress: proposal.guardAddress,
+    memo: proposal.memo,
+    memoHash: proposal.memoHash,
+    proposalMemoMatch: computeProposalMemoMatch(proposal.memo, proposal.memoHash),
+    memoExecutionMatch: computeMemoExecutionMatch(proposal.memoHash, proposal.executionMemoHash),
     destination: proposal.destination,
     childAccount: proposal.childAccount,
     status,
@@ -155,6 +186,8 @@ export function serializeProposalRecord(
     approvalCount: proposal._count.approvals,
     createdAtBlock: proposal.createdAtBlock,
     executedAtBlock: execution?.blockHeight ?? null,
+    lastApproveTxHash: proposal.lastApproveTxHash,
+    lastExecuteTxHash: proposal.lastExecuteTxHash,
     lastApproveError: proposal.lastApproveError,
     lastExecuteError: proposal.lastExecuteError,
     createdAt: proposal.createdAt,

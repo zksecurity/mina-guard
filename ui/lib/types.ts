@@ -36,9 +36,13 @@ export interface Proposal {
   data: string | null;
   nonce: string | null;
   configNonce: string | null;
-  expiryBlock: string | null;
+  expirySlot: string | null;
   networkId: string | null;
   guardAddress: string | null;
+  memo: string | null;
+  memoHash: string | null;
+  proposalMemoMatch: boolean | null;
+  memoExecutionMatch: boolean | null;
   destination: ProposalDestination | null;
   childAccount: string | null;
   status: ProposalStatus;
@@ -46,6 +50,8 @@ export interface Proposal {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  lastApproveTxHash: string | null;
+  lastExecuteTxHash: string | null;
   lastApproveError: string | null;
   lastExecuteError: string | null;
   createdAt: string;
@@ -53,6 +59,10 @@ export interface Proposal {
   receivers: ProposalReceiver[];
   recipientCount: number;
   totalAmount: string | null;
+  /** True when this row was synthesized from a local PendingTx record before
+   *  the indexer surfaced the proposal. UI can use it to differentiate the
+   *  "submitted, awaiting inclusion" state from a real on-chain proposal. */
+  _localPending?: boolean;
 }
 
 /** Indexed owner membership record for one MinaGuard contract. */
@@ -122,7 +132,8 @@ export interface NewProposalInput {
   newThreshold?: number;
   delegate?: string;
   undelegate?: boolean;
-  expiryBlock?: number;
+  expirySlot?: number;
+  memo?: string;
   /** Subaccount the proposal targets (REMOTE proposals or pre-known child for CREATE/ALLOCATE). */
   childAccount?: string;
   /** Reclaim amount (nanomina) for reclaimChild. */
@@ -139,11 +150,11 @@ export const TX_TYPE_LABELS: Record<TxType, string> = {
   removeOwner: 'Remove Owner',
   changeThreshold: 'Change Threshold',
   setDelegate: 'Set Delegate',
-  createChild: 'Create Subaccount',
-  allocateChild: 'Allocate to Subaccounts',
-  reclaimChild: 'Reclaim from Subaccount',
-  destroyChild: 'Destroy Subaccount',
-  enableChildMultiSig: 'Toggle Subaccount Multi-sig',
+  createChild: 'Create SubVault',
+  allocateChild: 'Allocate to SubVaults',
+  reclaimChild: 'Reclaim from SubVault',
+  destroyChild: 'Destroy SubVault',
+  enableChildMultiSig: 'Toggle SubVault Multi-sig',
 };
 
 export type TxTypeOption = { value: TxType; label: string; icon: string };
@@ -159,11 +170,11 @@ export const LOCAL_TX_TYPES: TxTypeOption[] = [
 
 /** Subaccount-management actions — only shown on root (parent) account detail pages. */
 export const CHILD_TX_TYPES: TxTypeOption[] = [
-  { value: 'createChild', label: 'Create Subaccount', icon: 'plus-circle' },
-  { value: 'allocateChild', label: 'Allocate to Subaccounts', icon: 'share' },
-  { value: 'reclaimChild', label: 'Reclaim from Subaccount', icon: 'arrow-down' },
-  { value: 'destroyChild', label: 'Destroy Subaccount', icon: 'trash' },
-  { value: 'enableChildMultiSig', label: 'Toggle Subaccount Multi-sig', icon: 'toggle' },
+  { value: 'createChild', label: 'Create SubVault', icon: 'plus-circle' },
+  { value: 'allocateChild', label: 'Allocate to SubVaults', icon: 'share' },
+  { value: 'reclaimChild', label: 'Reclaim from SubVault', icon: 'arrow-down' },
+  { value: 'destroyChild', label: 'Destroy SubVault', icon: 'trash' },
+  { value: 'enableChildMultiSig', label: 'Toggle SubVault Multi-sig', icon: 'toggle' },
 ];
 
 /** Truncates long addresses for compact UI chips and labels. */

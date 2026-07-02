@@ -123,13 +123,24 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const setupOwners = toFixedSetupOwners(childOwners);
 
-      // Atomic deploy + executeSetupChild, matching the safe pattern.
+      // Reserve the child for the parent first.
+      const reserveTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          proposal.hash(),
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await reserveTxn.prove();
+      await reserveTxn.sign([parentCtx.deployerKey, childKey]).send();
+
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
-          await childZkApp.deploy();
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -139,7 +150,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           );
         });
         await txn.prove();
-        await txn.sign([parentCtx.deployerKey, childKey]).send();
+        await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Insufficient approvals');
     });
 
@@ -157,7 +168,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -191,9 +201,10 @@ describe('MinaGuard - Child Lifecycle', () => {
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
         data: Field(99999), // wrong — should be Poseidon([ownersCommitment, threshold, numOwners])
+        memoHash: Field(0),
         nonce: Field(0),
         configNonce: Field(0),
-        expiryBlock: Field(0),
+        expirySlot: Field(0),
         networkId: parentCtx.networkId,
         guardAddress: parentCtx.zkAppAddress,
         destination: Destination.REMOTE,
@@ -205,12 +216,24 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const setupOwners = toFixedSetupOwners(childOwners);
 
+      // Reserve the child for the parent first (deploy + reserveForParent).
+      const reserveTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          badProposal.hash(),
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await reserveTxn.prove();
+      await reserveTxn.sign([parentCtx.deployerKey, childKey]).send();
+
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
-          await childZkApp.deploy();
           await childZkApp.executeSetupChild(
-            ownersCommitment,
             Field(2),
             Field(3),
             new SetupOwnersInput({ owners: setupOwners }),
@@ -220,7 +243,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           );
         });
         await txn.prove();
-        await txn.sign([parentCtx.deployerKey, childKey]).send();
+        await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Child config mismatch');
     });
 
@@ -261,6 +284,26 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(
         proposeTransaction(childCtx, proposal, 0),
       ).rejects.toThrow('Remote destination proposals must be proposed on a root guard');
+    });
+
+    it('rejects reserveForParent on an already-initialized root vault', async () => {
+      const attackerKey = PrivateKey.random();
+      const attackerAddress = attackerKey.toPublicKey();
+      const childOwners = parentCtx.owners.map((o) => o.pub);
+      const ownersCommitment = computeOwnerChain(childOwners);
+      const setupOwners = toFixedSetupOwners(childOwners);
+
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await parentCtx.zkApp.reserveForParent(
+          attackerAddress,
+          Field(999),
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await txn.prove();
+      await expect(txn.sign([parentCtx.deployerKey]).send()).rejects.toThrow();
     });
   });
 
@@ -414,7 +457,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const reclaimAmount = UInt64.from(1_000_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(reclaimAmount, Field(2));
+        await approveReclaim(reclaimAmount, Field(1));
 
       const parentBalanceBefore = getBalance(parentCtx.zkAppAddress);
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
@@ -441,7 +484,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const amount = UInt64.from(500_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(amount, Field(2));
+        await approveReclaim(amount, Field(1));
 
       // First execution succeeds.
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
@@ -481,7 +524,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const amount = UInt64.from(500_000_000);
       const proposal = createReclaimChildProposal(
         amount,
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -514,7 +557,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // Disable the child's multisig first.
       const disableProposal = createEnableChildMultiSigProposal(
         Field(0),
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -543,7 +586,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // Reclaim should still work — child-lifecycle methods bypass the flag.
       const amount = UInt64.from(1_000_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(amount, Field(3));
+        await approveReclaim(amount, Field(2));
 
       const parentBalanceBefore = getBalance(parentCtx.zkAppAddress);
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
@@ -570,7 +613,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const approvedAmount = UInt64.from(1_000_000_000);
       const wrongAmount = UInt64.from(2_000_000_000);
       const { proposal, proposalHash, parentApprovalWitness, parentApprovalCount } =
-        await approveReclaim(approvedAmount, Field(2));
+        await approveReclaim(approvedAmount, Field(1));
 
       const childExecutionWitness = childExecutionWitnessFor(proposalHash);
 
@@ -597,7 +640,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -635,7 +678,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -676,7 +719,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -739,7 +782,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const proposal = createEnableChildMultiSigProposal(
         Field(0), // data = disable
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -770,7 +813,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const proposal = createEnableChildMultiSigProposal(
         Field(0),
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -816,7 +859,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       // Disable.
-      await runEnable(Field(0), Field(2));
+      await runEnable(Field(0), Field(1));
       expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(0));
 
       // assertChildMultiSigEnabledIfChild() is the first check in every gated
@@ -911,7 +954,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       }
 
       // Re-enable; every gated method must now reach past the disable check.
-      await runEnable(Field(1), Field(3));
+      await runEnable(Field(1), Field(2));
       expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(1));
 
       // Helper: calls `fn` and asserts any thrown error is NOT the gate error.
@@ -1016,7 +1059,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const amount = UInt64.from(1_000_000);
       const proposalForA = createReclaimChildProposal(
         amount,
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -1055,7 +1098,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const amount = UInt64.from(500_000_000);
       const reclaim = createReclaimChildProposal(
         amount,
-        Field(2),
+        Field(1),
         Field(0), // parent configNonce at time of propose
         parentCtx.zkAppAddress,
         Field(0),
@@ -1120,7 +1163,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // for ENABLE_CHILD_MULTI_SIG, so the proposal is accepted on the parent.
       const proposal = createEnableChildMultiSigProposal(
         Field(2),
-        Field(2),
+        Field(1),
         Field(0),
         parentCtx.zkAppAddress,
         Field(0),
@@ -1155,7 +1198,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const amount = UInt64.from(1_000_000_000);
       const reclaim = createReclaimChildProposal(
-        amount, Field(2), Field(0), parentCtx.zkAppAddress,
+        amount, Field(1), Field(0), parentCtx.zkAppAddress,
         Field(0), parentCtx.networkId, childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
@@ -1205,7 +1248,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await setupChildWithParentOwners();
 
       const destroyProposal = createDestroyChildProposal(
-        Field(2), Field(0), parentCtx.zkAppAddress,
+        Field(1), Field(0), parentCtx.zkAppAddress,
         Field(0), parentCtx.networkId, childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =

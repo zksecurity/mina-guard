@@ -25,4 +25,4 @@ stop_if_running "zkao-postgres-dev"
 stop_if_running "local-lightnet-1"
 
 echo "Starting zk lightnet (mesa)..."
-zk lightnet start --mina-branch=mesa --pull=false
+zk lightnet start --mina-branch=mesa --pull=false --slot-time 3000

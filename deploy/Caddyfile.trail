@@ -1,0 +1,111 @@
+# Caddyfile for the MinaGuard Mesa Trail (mesa-mut) inner Caddy.
+#
+# Mounted at /etc/caddy/Caddyfile inside the `caddy` service of the
+# `minaguard-trail` compose project. Listens on port 80 inside the container;
+# the host publishes port 10001 → container port 80.
+#
+# This compose project runs on the prod-facing box (the same box as the
+# existing /app/* localnet deploy and the PR previews). The outer host Caddy
+# on that box reverse-proxies /trail, /trail/* to localhost:10001
+# (see deploy-trail.sh add_caddy_route).
+#
+# Upstream targets:
+#   - backend:4000  / frontend:3000   → services in the same compose project
+#                                       (resolved on the compose network)
+#   - {$MESA_NODE_HOST}:3085          → daemon GraphQL (standalone Mesa Trail
+#                                       node stack on a separate box)
+#   - {$MESA_NODE_HOST}:8282          → archive-node-api (same node-stack box)
+#
+# MESA_NODE_HOST is read from the caddy container's environment, populated
+# by the compose file from MESA_NODE_HOST in the deploying shell. Required —
+# `docker compose up` fails if unset (see deploy/.env.example).
+#
+# Both cross-host hops use plaintext HTTP over the public internet, gated by
+# ufw on the node-stack box (allow inbound 3085/8282 only from prod IP).
+# Sibling file `deploy/Caddyfile` documents the equivalent `/app/*` routes.
+
+:80 {
+    # Backend health
+    handle /trail/health {
+        uri strip_prefix /trail
+        reverse_proxy backend:4000
+    }
+
+    # Backend API
+    handle /trail/api/* {
+        uri strip_prefix /trail
+        reverse_proxy backend:4000
+    }
+
+    # Daemon GraphQL — proxied across the network to the standalone Mesa Trail
+    # node stack at {$MESA_NODE_HOST}:3085.
+    handle /trail/graphql {
+        uri strip_prefix /trail
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        @options method OPTIONS
+        respond @options 204
+        reverse_proxy {$MESA_NODE_HOST}:3085 {
+            header_down -Access-Control-Allow-Origin
+            header_down -Access-Control-Allow-Methods
+            header_down -Access-Control-Allow-Headers
+        }
+    }
+
+    # Archive-node-api — also proxied across the network to the node-stack box.
+    handle /trail/archive {
+        uri strip_prefix /trail
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+        @options method OPTIONS
+        respond @options 204
+        reverse_proxy {$MESA_NODE_HOST}:8282 {
+            header_down -Access-Control-Allow-Origin
+            header_down -Access-Control-Allow-Methods
+            header_down -Access-Control-Allow-Headers
+        }
+    }
+
+    # Block explorer
+    handle /trail/explorer/* {
+        reverse_proxy explorer:3000
+    }
+    handle /trail/explorer {
+        reverse_proxy explorer:3000
+    }
+
+    # Static assets (content-hashed filenames, safe to cache long-term).
+    # COOP/COEP set here too so cross-origin-isolated requirements (needed
+    # by the o1js worker's SharedArrayBuffer) are consistent across assets.
+    handle /trail/_next/static/* {
+        reverse_proxy frontend:3000
+        header Cross-Origin-Opener-Policy "same-origin"
+        header Cross-Origin-Embedder-Policy "credentialless"
+    }
+
+    # Frontend (catch-all under /trail). The COOP/COEP headers cross-origin-
+    # isolate the document so o1js can use SharedArrayBuffer for proof
+    # generation in its web worker. In the prod deploy the outer host Caddy
+    # also sets these (see deploy-trail.sh add_caddy_route) and explicitly
+    # `delete`s them from the upstream response, so setting them here is a
+    # no-op there — but it's necessary for any deploy that hits the inner
+    # Caddy directly (e.g. local testing on the node-stack box).
+    handle /trail/* {
+        reverse_proxy frontend:3000 {
+            header_down -Cache-Control
+        }
+        header Cache-Control "no-cache"
+        header Cross-Origin-Opener-Policy "same-origin"
+        header Cross-Origin-Embedder-Policy "credentialless"
+    }
+    handle /trail {
+        reverse_proxy frontend:3000 {
+            header_down -Cache-Control
+        }
+        header Cache-Control "no-cache"
+        header Cross-Origin-Opener-Policy "same-origin"
+        header Cross-Origin-Embedder-Policy "credentialless"
+    }
+}

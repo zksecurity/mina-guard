@@ -49,7 +49,7 @@ export interface NetworkConfig {
   bannerTimeoutMs: number;
   testStepTimeoutMs: number;
   settlementWaitMs: number;
-  expiryBlockOffset: number;
+  expirySlotOffset: number;
   skipProofs: boolean;
 }
 
@@ -78,9 +78,9 @@ const LIGHTNET_CONFIG: NetworkConfig = {
   // propagate. 12s = 4 blocks at SLOT_TIME=3s, still comfortably above
   // physical settlement floor, and saves ~18s per approve/execute pair.
   settlementWaitMs: 12_000,
-  // Offset is in blocks; at 3s blocks this gives us ~15s of live window
+  // Offset is in slots; at 3s slots this gives us ~15s of live window
   // for the propose-with-expiry test before it expires.
-  expiryBlockOffset: 5,
+  expirySlotOffset: 5,
   skipProofs: true,
 };
 
@@ -102,7 +102,7 @@ function buildDevnetConfig(): NetworkConfig {
     bannerTimeoutMs: 1_800_000,
     testStepTimeoutMs: 45 * 60 * 1_000,
     settlementWaitMs: 300_000,
-    expiryBlockOffset: 10,
+    expirySlotOffset: 10,
     skipProofs: false,
     };
 }

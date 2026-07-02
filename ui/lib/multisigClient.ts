@@ -72,7 +72,7 @@ export async function assertLedgerReady(signer?: SignerConfig): Promise<void> {
 /** Proxied Auro sendTransaction callback for use inside the worker. Returns null for Ledger. */
 function proxiedSendTx(signer?: SignerConfig) {
   if (signer?.type === 'ledger') return null;
-  return Comlink.proxy((txJson: string) => sendTransaction(txJson));
+  return Comlink.proxy((txJson: string, memo?: string) => sendTransaction(txJson, undefined, memo));
 }
 
 /** Proxied Ledger fee payer signing callback. Returns undefined for Auro. */
@@ -186,14 +186,19 @@ export async function deployAndSetupContract(params: {
   return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
-/** Creates an on-chain proposal via zkApp.propose(). Returns the proposalHash on success. */
+/** Creates an on-chain proposal via zkApp.propose(). Returns the proposalHash and
+ *  the broadcast Mina tx hash on success so callers can persist a pending-create entry.
+ *  For CREATE_CHILD: also deploys the child contract and announces its config. */
 export async function createOnchainProposal(params: {
   contractAddress: string;
   proposerAddress: string;
   input: NewProposalInput;
   configNonce: number;
   networkId: string;
-}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  childPrivateKey?: string;
+  childOwners?: string[];
+  childThreshold?: number;
+}, onProgress?: OnProgress, signer?: SignerConfig): Promise<{ proposalHash: string; txHash: string } | null> {
   await assertLedgerReady(signer);
   return getWorkerApi().createOnchainProposal(
     params,
@@ -236,9 +241,8 @@ export async function executeProposalOnchain(params: {
 }
 
 /**
- * Computes the createChild proposal data hash + generates a fresh child keypair.
- * Returns everything the wizard needs to (a) submit a CREATE_CHILD proposal
- * on the parent, then (b) finalize via deployAndSetupChild later.
+ * Computes the createChild proposal data hash.
+ * Returns the ownersCommitment and configHash needed for the CREATE_CHILD proposal.
  */
 export async function computeCreateChildConfigHash(params: {
   childOwners: string[];
@@ -246,26 +250,24 @@ export async function computeCreateChildConfigHash(params: {
 }): Promise<{
   ownersCommitment: string;
   configHash: string;
-  childAddressKeypair: { privateKey: string; publicKey: string };
 }> {
   return getWorkerApi().computeCreateChildConfigHash(params);
 }
 
 /**
- * Deploys a new child guard at `childPrivateKey` and runs `executeSetupChild`
- * in the same transaction. Used to finalize a CREATE_CHILD proposal once the
- * parent has reached threshold.
+ * Calls executeSetupChild on an already-deployed child contract.
+ * Used to execute a CREATE_CHILD proposal once the parent has reached threshold.
  */
-export async function deployAndSetupChildOnchain(params: {
+export async function executeSetupChildOnchain(params: {
   parentAddress: string;
-  childPrivateKeyBase58: string;
-  feePayerAddress: string;
+  childAddress: string;
+  executorAddress: string;
   childOwners: string[];
   childThreshold: number;
   proposal: Proposal;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
-  return getWorkerApi().deployAndSetupChildOnchain(
+  return getWorkerApi().executeSetupChildOnchain(
     params,
     proxiedSendTx(signer),
     proxiedProgress(onProgress),

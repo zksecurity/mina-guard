@@ -155,6 +155,7 @@ export async function waitForIndexer(
   log(`Waiting: ${description}`);
   const start = Date.now();
   let dots = 0;
+  let lastError: string | null = null;
   while (Date.now() - start < timeoutMs) {
     const ok = await check();
     if (ok) {
@@ -163,10 +164,18 @@ export async function waitForIndexer(
     }
     dots++;
     if (dots % 5 === 0) {
-      log(`  Still waiting... (${((Date.now() - start) / 1000).toFixed(0)}s)`);
+      const status = await getIndexerStatus();
+      const err = status?.lastError;
+      if (err && err !== lastError) {
+        log(`  ⚠ Indexer error: ${err}`);
+        lastError = err;
+      }
+      log(`  Still waiting... (${((Date.now() - start) / 1000).toFixed(0)}s) [height=${status?.indexedHeight ?? '?'}]`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
+  const finalStatus = await getIndexerStatus();
+  log(`  Indexer status at timeout: ${JSON.stringify(finalStatus)}`);
   throw new Error(
     `Timed out after ${(timeoutMs / 1000).toFixed(0)}s waiting: ${description}`
   );
@@ -463,6 +472,21 @@ export async function waitForBanner(
   const text = await bannerEl.textContent();
   log(`  Banner: ${text?.trim()}`);
   return text?.trim() ?? '';
+}
+
+/**
+ * Fills the recipients section of the new-proposal form using its Bulk mode
+ * (one `address,amount` per line). The form defaults to per-row inputs; tests
+ * predate that change and rely on the legacy comma-separated format, so this
+ * helper switches to Bulk mode if needed before writing.
+ */
+export async function fillRecipients(page: Page, content: string): Promise<void> {
+  const textarea = page.locator('textarea').first();
+  if (!(await textarea.isVisible().catch(() => false))) {
+    await page.getByRole('button', { name: 'Bulk', exact: true }).click();
+    await textarea.waitFor({ state: 'visible', timeout: 5_000 });
+  }
+  await textarea.fill(content);
 }
 
 /** Waits for the operating spinner to disappear. */

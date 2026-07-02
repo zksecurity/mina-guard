@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { existsSync, mkdirSync, createReadStream } from 'fs';
+import { execSync } from 'child_process';
+import { join } from 'path';
 import { PublicKey, fetchAccount } from 'o1js';
 
 import { prisma } from './db.js';
 import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
-import { fetchLatestBlockHeight, fetchVerificationKeyHash } from './mina-client.js';
+import { fetchLatestBlockHeight, fetchVerificationKeyHash, fetchZkappTxStatus } from './mina-client.js';
 import { serializeProposalRecord, type ContractState } from './proposal-record.js';
 import {
   acquireLightnetAccount,
@@ -70,6 +73,23 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   /** Returns current polling indexer status and latest sync metadata. */
   router.get('/api/indexer/status', safe(async (_req, res) => {
     res.json({ ...indexer.getStatus(), indexerMode: config?.indexerMode ?? 'full' });
+  }));
+
+  /** Looks up a submitted zkApp tx hash on the daemon's bestChain. Used by the
+   *  UI to detect failed/dropped pending CREATE proposals (which have no
+   *  Proposal row yet, so `pollPendingSubmissions` can't surface their state). */
+  router.get('/api/tx-status', safe(async (req, res) => {
+    if (!config) {
+      res.status(503).json({ error: 'Backend config unavailable' });
+      return;
+    }
+    const hash = typeof req.query.hash === 'string' ? req.query.hash.trim() : '';
+    if (!hash) {
+      res.status(400).json({ error: 'Missing or empty hash query param' });
+      return;
+    }
+    const result = await fetchZkappTxStatus(config, hash);
+    res.json(result);
   }));
 
   /** Lists tracked contracts with derived config + aggregate counts. */
@@ -190,7 +210,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      const latestHeight = indexer.getStatus().latestChainHeight;
+      const latestSlot = indexer.getStatus().latestSlot;
 
       // Status is derived at read time from ProposalExecution existence +
       // expiry + nonce/config staleness vs current ContractConfig. The status
@@ -219,7 +239,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       const serialized = proposals.map((p) =>
         serializeProposalRecord(
           p,
-          latestHeight,
+          latestSlot,
           parentState,
           p.childAccount ? childStateByAddress.get(p.childAccount) ?? null : null,
         ),
@@ -271,14 +291,14 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      const latestHeight = indexer.getStatus().latestChainHeight;
+      const latestSlot = indexer.getStatus().latestSlot;
       const parentState = toContractState(await latestContractConfig(contract.id));
       const childState =
         proposal.destination === 'remote' && proposal.txType !== '5' && proposal.childAccount
           ? await resolveChildState(proposal.childAccount)
           : null;
 
-      res.json(serializeProposalRecord(proposal, latestHeight, parentState, childState));
+      res.json(serializeProposalRecord(proposal, latestSlot, parentState, childState));
     })
   );
 
@@ -424,11 +444,18 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     }
 
     const json = (await response.json()) as {
-      data?: { account?: { balance?: { total?: string } } };
+      data?: { account?: { balance?: { total?: string } } | null };
     };
 
-    const totalNano = json.data?.account?.balance?.total ?? '0';
-    res.json({ balance: totalNano });
+    // Distinguish "account not found" (daemon returns account=null) from
+    // "balance is 0". The UI fail-opens on null but gates on a real "0", so
+    // collapsing both to "0" lets undercollateralised executes slip through.
+    const account = json.data?.account;
+    if (account == null) {
+      res.json({ balance: null });
+      return;
+    }
+    res.json({ balance: account.balance?.total ?? '0' });
   }));
 
   /** Funds an account on lightnet by acquiring a pre-funded keypair from the account manager. */
@@ -614,6 +641,45 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     }
     await deleteContract(contract.id);
     res.json({ ok: true });
+  }));
+
+  const CLI_SRC_DIR = join(process.cwd(), '..', 'offline-cli');
+  const CLI_DIST_DIR = join(CLI_SRC_DIR, 'dist');
+
+  const PLATFORM_TARGETS: Record<string, string> = {
+    'macos-arm64': 'bun-darwin-arm64',
+    'macos-x64': 'bun-darwin-x64',
+    'linux-x64': 'bun-linux-x64',
+    'linux-arm64': 'bun-linux-arm64',
+    'windows-x64': 'bun-windows-x64',
+  };
+
+  router.get('/api/offline-cli/:platform', safe(async (req, res) => {
+    const platform = req.params.platform;
+    const target = PLATFORM_TARGETS[platform];
+    if (!target) {
+      res.status(400).json({ error: 'Invalid platform' });
+      return;
+    }
+    const filename = `mina-guard-cli-${platform}`;
+    const filePath = join(CLI_DIST_DIR, filename);
+
+    if (!existsSync(filePath)) {
+      if (!existsSync(join(CLI_SRC_DIR, 'src', 'index.ts'))) {
+        res.status(404).json({ error: 'offline-cli source not found' });
+        return;
+      }
+      mkdirSync(CLI_DIST_DIR, { recursive: true });
+      console.log(`[offline-cli] Building ${filename} (target: ${target})...`);
+      execSync(
+        `bun build --compile --target=${target} src/index.ts --outfile dist/${filename} --define 'process.versions.node=""'`,
+        { cwd: CLI_SRC_DIR, stdio: 'inherit' },
+      );
+    }
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    createReadStream(filePath).pipe(res);
   }));
 
   router.use((error: unknown, req: any, res: any, _next: any) => {

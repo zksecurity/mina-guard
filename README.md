@@ -15,12 +15,18 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with session-only zkApp private key usage.
 
+## o1js dependency
+
+The runtime o1js library comes from `o1js@3.0.0-mesa.final` on npm — the canonical Mesa-network release.
+
+The `ui/deps/o1js/` submodule is still required, but only for `mina-signer` — the `ui` and `offline-cli` workspaces import it via `file:` workspace deps (mina-signer is a Mina-specific browser-side signing package shipped as a subpackage inside the o1js repo). The submodule points at [`graikos/o1js#develop-3.0`](https://github.com/graikos/o1js/tree/develop-3.0) (currently tip `a252f8bb`); its mina-signer source is byte-identical to what `o1js@3.0.0-mesa.final` ships in `node_modules/o1js/src/mina-signer/`, so there's no protocol-level divergence. A follow-up could drop the submodule entirely by switching to the standalone [`mina-signer`](https://www.npmjs.com/package/mina-signer) npm package.
+
 ## Development
 
 ### First-time setup
 
 ```bash
-# Fetch submodule (fork of o1js, for now)
+# Fetch submodule (o1js source, needed for mina-signer browser build)
 git submodule update --init
 
 bun install

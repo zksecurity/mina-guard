@@ -355,9 +355,10 @@ describe('MinaGuard - Governance', () => {
         tokenId: Field(0),
         txType: TxType.TRANSFER,
         data: Field(0),
+        memoHash: Field(0),
         nonce: Field(1),
         configNonce: Field(0), // old configNonce
-        expiryBlock: Field(0),
+        expirySlot: Field(0),
         networkId: Field(1),
         guardAddress: ctx.zkAppAddress,
         destination: Destination.LOCAL,

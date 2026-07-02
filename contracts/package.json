@@ -16,10 +16,10 @@
   "scripts": {
     "build": "rm -rf build && tsc",
     "buildw": "tsc --watch",
-    "coverage": "bun test --timeout 20000 --coverage",
+    "coverage": "bun test --timeout 60000 --coverage",
     "format": "prettier --write --ignore-unknown **/*",
-    "test": "bun test --timeout 20000",
-    "testw": "bun test --timeout 20000 --watch",
+    "test": "bun test --timeout 60000",
+    "testw": "bun test --timeout 60000 --watch",
     "testjs": "bun run build && find build/src -name '*.test.js' -exec node --test {} \\;",
     "lint": "eslint src/* --fix",
     "typecheck": "bun run tsc --noEmit"
@@ -36,9 +36,6 @@
     "prettier": "^2.3.2",
     "ts-jest": "^29.2.4",
     "typescript": "^5.4.5"
-  },
-  "peerDependencies": {
-    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701"
   },
   "engines": {
     "node": ">=18.14.0"

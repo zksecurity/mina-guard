@@ -1,0 +1,75 @@
+# Auto-deploys the Mesa Trail webapp stack to prod when main is pushed
+# (e.g., when a PR merges). Mirrors deploy.yml's pattern for the localnet
+# /app/* deploy but targets the trail compose project + /trail/* routes.
+#
+# Self-hosted runner is on the prod-facing box; the actual deploy happens
+# there. No SSH credentials needed in GHA secrets — the workflow runs on
+# the box.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#
+#   - MESA_NODE_HOST       IP/host of the standalone Mesa Trail node stack
+#                          REQUIRED — docker-compose.trail.yml asserts it.
+#   - ARCHIVE_DB_PASSWORD  Password for the read-only `minaguard_ro` role
+#                          on the node-stack box's archive postgres. REQUIRED —
+#                          docker-compose.trail.yml asserts it.
+#
+# The MinaGuard VK hash is NOT a secret — it's committed at
+# contracts/.vk-hash and read automatically by deploy-trail.sh.
+#
+# To bootstrap: add the secrets above, then merge a PR to main (or trigger
+# via `gh workflow run deploy-trail.yml`).
+#
+# To tighten later: add a `paths:` filter under `on.push` so this only
+# fires when trail-relevant files change. Today it fires on every main
+# push for consistency with deploy.yml.
+
+name: Deploy Mesa Trail
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-trail
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, deploy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Deploy
+        # `down` wipes the app DB volume before `up` rebuilds. Mirrors the
+        # main deploy's reasoning: the MinaGuard contract changes per PR
+        # merge, the VK hash changes with it, and the indexer filters
+        # discovery by VK hash — so any previously-indexed Contract rows
+        # point at addresses deployed with the old VK that the new
+        # indexer would skip anyway. Wiping is cleaner than carrying dead
+        # rows forward. When the contract stabilizes, switch back to
+        # `up`-only to get persistence.
+        env:
+          MESA_NODE_HOST: ${{ secrets.MESA_NODE_HOST }}
+          ARCHIVE_DB_PASSWORD: ${{ secrets.ARCHIVE_DB_PASSWORD }}
+        run: |
+          chmod +x deploy/deploy-trail.sh
+          ./deploy/deploy-trail.sh down
+          ./deploy/deploy-trail.sh up
+
+      - name: Wait for trail backend
+        run: |
+          echo "Waiting for trail backend to be ready..."
+          for i in $(seq 1 36); do
+            if curl -sf "http://localhost:10001/trail/health" > /dev/null 2>&1; then
+              echo "Trail backend is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/36: not ready yet..."
+            sleep 5
+          done
+          echo "::error::Trail backend failed to become ready within timeout"
+          exit 1

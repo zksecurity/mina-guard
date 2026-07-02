@@ -31,11 +31,22 @@ jobs:
   deploy:
     # Only run on PRs from the same repo (not forks) to prevent arbitrary code execution on the server
     if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: [self-hosted, deploy]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # bun + workspace deps are needed on the host so preview.sh can compute
+      # the MinaGuard verification key hash before invoking docker compose
+      # build. Doing the o1js circuit compile inside the docker build OOM-kills
+      # on this runner — done on the host it has the full machine's memory.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1'
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
 
       - name: Deploy preview
         # `down` first wipes volumes + lightnet chain so every commit to the
@@ -69,6 +80,25 @@ jobs:
           done
           echo "Backend failed to become ready within timeout"
           exit 1
+
+      # # TEMPORARY (UI scaling PR only — remove before merging): seeds bulk
+      # # synthetic vault/proposal data into the preview's Postgres so reviewers
+      # # can exercise pagination, search, and the card grid at realistic counts.
+      # # Each wallet listed below is added as an owner of every seeded vault, so
+      # # connecting with any of them on the preview shows the full set.
+      # - name: Seed UI scaling fixtures
+      #   env:
+      #     PR_NUMBER: ${{ github.event.number }}
+      #   run: |
+      #     # Add/remove wallet pubkeys here to test with multiple wallets.
+      #     WALLETS=(
+      #       "B62qpJgZSnx9dGFAqh45SehhK9TsxTnKia9vgnYzSXnCxwQQxixrnL1"
+      #       "B62qqgtCy8FAmPtrHbQfLunyMaXTNrutgpApaSGEM8zFLN4ypspQqo4"
+      #     )
+      #     args=()
+      #     for w in "${WALLETS[@]}"; do args+=(--wallet "$w"); done
+      #     docker compose -p "pr-${PR_NUMBER}" exec -T -w /app/backend backend \
+      #       bun scripts/seed-fixtures.ts "${args[@]}" --clean
 
       - name: Comment PR with preview URL
         uses: actions/github-script@v7
@@ -113,7 +143,7 @@ jobs:
 
   teardown:
     if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: [self-hosted, deploy]
     steps:
       - uses: actions/checkout@v4
 

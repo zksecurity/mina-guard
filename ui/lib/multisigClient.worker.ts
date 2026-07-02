@@ -1,6 +1,7 @@
 // -- Multisig Contract Worker ------------------------------------------
 // Runs o1js compilation and proof generation off the main thread.
 
+import './disable-wasm-finalizers';
 import * as Comlink from 'comlink';
 
 import {
@@ -17,6 +18,8 @@ import {
   Bool,
   MerkleMap,
   Poseidon,
+  Proof,
+  Void,
 } from 'o1js';
 
 import Client from 'mina-signer';
@@ -35,6 +38,7 @@ import {
   ApprovalStore,
   PublicKeyOption,
   Destination,
+  memoToField,
 } from 'contracts';
 
 import {
@@ -48,7 +52,7 @@ import {
 } from './api';
 
 /** Callback type for sending a signed transaction via Auro wallet on the main thread. */
-type SendTxFn = (txJson: string) => Promise<string | null>;
+type SendTxFn = (txJson: string, memo?: string) => Promise<string | null>;
 
 /** Callback type for requesting a field signature from Auro or Ledger on the main thread.
  *  Auro returns a base58 signature string; Ledger returns {field, scalar} decimal strings. */
@@ -87,9 +91,39 @@ let compilePromise: Promise<void> | null = null;
 let testPrivateKey: InstanceType<typeof PrivateKey> | null = null;
 let skipProofs = false;
 
+class DummyProof extends Proof<void, void> {
+  static publicInputType = Void;
+  static publicOutputType = Void;
+}
+
+let _dummyProofBase64: string | null = null;
+
+async function getDummyProofBase64(): Promise<string> {
+  if (_dummyProofBase64) return _dummyProofBase64;
+  const p = await DummyProof.dummy(undefined, undefined, 2);
+  _dummyProofBase64 = p.toJSON().proof;
+  return _dummyProofBase64;
+}
+
+async function maybeProve(tx: Awaited<ReturnType<typeof Mina.transaction>>) {
+  if (!skipProofs) {
+    await tx.prove();
+    return;
+  }
+  const dummyProof = await getDummyProofBase64();
+  for (const au of (tx as any).transaction.accountUpdates) {
+    if (au.lazyAuthorization?.kind === 'lazy-proof') {
+      au.authorization = { proof: dummyProof };
+      au.lazyAuthorization = undefined;
+    }
+  }
+}
+
 /** Returns Mina.transaction sender arg — includes fee since we always set it explicitly. */
-function txSender(pub: InstanceType<typeof PublicKey>) {
-  return { sender: pub, fee: ZKAPP_TX_FEE };
+function txSender(pub: InstanceType<typeof PublicKey>, memo?: string) {
+  return memo !== undefined
+    ? { sender: pub, fee: ZKAPP_TX_FEE, memo }
+    : { sender: pub, fee: ZKAPP_TX_FEE };
 }
 
 /**
@@ -135,6 +169,7 @@ async function configureNetwork() {
 }
 
 let compileSucceeded = false;
+let idbCache: Awaited<ReturnType<typeof import('./idb-compile-cache').createIndexedDBCache>> | null = null;
 
 async function compileContract(): Promise<boolean> {
   if (compileSucceeded) return true;
@@ -144,8 +179,14 @@ async function compileContract(): Promise<boolean> {
       console.log('[MultisigWorker] MinaGuard.compile() starting');
       const t0 = performance.now();
       await configureNetwork();
-      await MinaGuard.compile();
-      console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+      if (!idbCache) {
+        const { createIndexedDBCache } = await import('./idb-compile-cache');
+        idbCache = await createIndexedDBCache();
+      }
+      await MinaGuard.compile({ cache: idbCache });
+      const { getCompileCacheSize } = await import('./idb-compile-cache');
+      const size = await getCompileCacheSize();
+      console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s — cache: ${(size.bytes / 1024 / 1024).toFixed(0)}MB (${size.entries} entries)`);
     })();
   }
 
@@ -369,7 +410,7 @@ function logProposeDiagnostics(args: {
     proposalDestination: proposal.destination.toString(),
     proposalTxType: proposal.txType.toString(),
     proposalData: proposal.data.toString(),
-    proposalExpiryBlock: proposal.expiryBlock.toString(),
+    proposalExpirySlot: proposal.expirySlot.toString(),
     proposalReceiver0: proposal.receivers[0].address.toBase58(),
     onchainOwnersCommitment: contract.ownersCommitment.get().toString(),
     storeOwnersCommitment: ownerStore.getCommitment().toString(),
@@ -511,7 +552,7 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'nonce' | 'configNonce' | 'expiryBlock' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'memoHash' | 'nonce' | 'configNonce' | 'expirySlot' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
@@ -525,9 +566,10 @@ function buildProposalStruct(
     tokenId: Field(proposal.tokenId ?? '0'),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
+    memoHash: Field(proposal.memoHash ?? '0'),
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
-    expiryBlock: Field(proposal.expiryBlock ?? '0'),
+    expirySlot: Field(proposal.expirySlot ?? '0'),
     networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
@@ -557,10 +599,8 @@ async function broadcastWithLedgerSig(
   signFeePayerFn: SignFeePayerFn
 ): Promise<string | null> {
   const parsed = JSON.parse(txJson);
-  // mina-signer expects { feePayer, zkappCommand } wrapper; parsed is the raw tx JSON
-  const wrapped = { feePayer: parsed.feePayer, zkappCommand: parsed };
   const client = await getSignerClient();
-  const { fullCommitment } = client.getZkappCommandCommitmentsNoCheck(wrapped);
+  const { fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
   const sig = await signFeePayerFn(fullCommitment.toString());
   if (!sig) return null;
 
@@ -601,7 +641,8 @@ async function submitTx(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
   sendFn: SendTxFn | null,
   signFeePayerFn?: SignFeePayerFn,
-  extraKeys: InstanceType<typeof PrivateKey>[] = []
+  extraKeys: InstanceType<typeof PrivateKey>[] = [],
+  memo?: string
 ): Promise<string | null> {
   // E2E test mode: sign and send directly
   if (testPrivateKey) {
@@ -618,7 +659,7 @@ async function submitTx(
   }
   // Auro path: send via Auro wallet
   if (sendFn) {
-    return sendFn(txJson);
+    return sendFn(txJson, memo);
   }
   return null;
 }
@@ -680,13 +721,14 @@ const workerApi = {
     console.log('mina transaction constructed');
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     console.log('proof done');
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const deployHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
     console.log('[MultisigWorker] deploy tx result:', deployHash);
+    if (!deployHash) return null;
     return `Transaction submitted: ${deployHash}`;
   },
 
@@ -707,6 +749,7 @@ const workerApi = {
     const ok = await compileContract();
     if (!ok) return null;
 
+    await configureNetwork();
     progressFn('Building transaction...');
     const feePayer = PublicKey.fromBase58(params.feePayerAddress);
     const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
@@ -728,7 +771,6 @@ const workerApi = {
       AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
       await zkApp.setup(
-        ownerStore.getCommitment(),
         Field(params.threshold),
         Field(ownerKeys.length),
         Field(params.networkId),
@@ -737,10 +779,11 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
+    if (!txHash) return null;
     return `Transaction submitted: ${txHash}`;
   },
 
@@ -778,7 +821,6 @@ const workerApi = {
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
       await zkApp.setup(
-        ownerStore.getCommitment(),
         Field(params.threshold),
         Field(ownerStore.length),
         Field(params.networkId),
@@ -789,17 +831,23 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn);
     console.log('[MultisigWorker] setup tx result:', txHash);
+    if (!txHash) return null;
     return `Transaction submitted: ${txHash}`;
   },
 
   /**
    * Creates an on-chain proposal via zkApp.propose(). Auto-approves the proposer.
-   * Returns the proposalHash on success so the UI can route to the detail page.
+   * Returns both proposalHash and the broadcast tx hash so the UI can route to
+   * the detail page AND persist a pending-create entry for the in-flight tx.
+   *
+   * For CREATE_CHILD proposals, the same transaction also deploys the child
+   * contract and calls reserveForParent() on the child to reserve it and
+   * publish the owner list for later execution.
    */
   async createOnchainProposal(
     params: {
@@ -808,35 +856,43 @@ const workerApi = {
       input: NewProposalInput;
       configNonce: number;
       networkId: string;
+      childPrivateKey?: string;
+      childOwners?: string[];
+      childThreshold?: number;
     },
     signFn: SignFieldsFn,
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
     signFeePayerFn?: SignFeePayerFn
-  ): Promise<string | null> {
+  ): Promise<{ proposalHash: string; txHash: string } | null> {
     progressFn('Compiling contract...');
     await configureNetwork();
     const ok = await compileContract();
     if (!ok) return null;
+
+    const isCreateChild = params.input.txType === 'createChild';
 
     const receivers = buildReceiversForProposal(params.input);
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input);
 
     const isRemote =
-      params.input.txType === 'createChild' ||
+      isCreateChild ||
       params.input.txType === 'reclaimChild' ||
       params.input.txType === 'destroyChild' ||
       params.input.txType === 'enableChildMultiSig';
+
+    const memoHash = memoToField(params.input.memo ?? '');
 
     const proposal = new TransactionProposal({
       receivers,
       tokenId: Field(0),
       txType,
       data,
+      memoHash,
       nonce: Field(params.input.nonce),
       configNonce: Field(params.configNonce),
-      expiryBlock: Field(params.input.expiryBlock ?? 0),
+      expirySlot: Field(params.input.expirySlot ?? 0),
       networkId: Field(params.networkId),
       guardAddress: PublicKey.fromBase58(params.contractAddress),
       destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
@@ -860,17 +916,37 @@ const workerApi = {
     const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer);
     const approvalWitness = approvalStore.getWitness(proposalHash);
 
+    // Prepare child deployment data if this is a CREATE_CHILD proposal
+    let childKey: InstanceType<typeof PrivateKey> | null = null;
+    let childOwnerStore: InstanceType<typeof OwnerStore> | null = null;
+    let childPaddedOwners: InstanceType<typeof PublicKey>[] | null = null;
+    if (isCreateChild) {
+      if (!params.childPrivateKey || !params.childOwners || params.childThreshold == null) {
+        throw new Error('createChild proposal requires childPrivateKey, childOwners, and childThreshold');
+      }
+      childKey = PrivateKey.fromBase58(params.childPrivateKey);
+      childOwnerStore = new OwnerStore();
+      for (const addr of params.childOwners) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
+      childPaddedOwners = [...childOwnerStore.owners];
+      while (childPaddedOwners.length < MAX_OWNERS) childPaddedOwners.push(PublicKey.empty());
+    }
+
     progressFn('Building transaction...');
     const contractAddress = PublicKey.fromBase58(params.contractAddress);
     const contract = new MinaGuard(contractAddress);
-    // The circuit reads ownersCommitment / voteNullifierRoot / approvalRoot /
-    // configNonce / networkId / nonce via getAndRequireEquals(); without a
-    // fresh fetch of the zkApp account, o1js sees Field(0) and the circuit
-    // traps with a WASM `unreachable` during prove.
-    await Promise.all([
+    const fetches: Promise<any>[] = [
       fetchAccount({ publicKey: proposer }),
       fetchAccount({ publicKey: contractAddress }),
-    ]);
+    ];
+    // REMOTE non-create proposals read child state (parentNonce, ownersCommitment,
+    // parent) via getAndRequireEquals() inside propose(). For createChild, the
+    // child doesn't exist yet, but assertFreshProposalNonce reads the parent's
+    // own state instead (isRemoteCreate branch).
+    const childAccount = proposal.childAccount;
+    if (!childAccount.equals(PublicKey.empty()).toBoolean() && !isCreateChild) {
+      fetches.push(fetchAccount({ publicKey: childAccount }));
+    }
+    await Promise.all(fetches);
 
     logProposeDiagnostics({
       contract,
@@ -885,7 +961,23 @@ const workerApi = {
     });
 
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(proposer), async () => {
+    const proposalMemo = params.input.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(proposer, proposalMemo), async () => {
+      // For CREATE_CHILD: deploy + reserve child in the same tx
+      if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
+        const childAddress = childKey.toPublicKey();
+        const childZkApp = new MinaGuard(childAddress);
+        AccountUpdate.fundNewAccount(proposer);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          contractAddress,
+          proposalHash,
+          Field(params.childThreshold!),
+          Field(params.childOwners!.length),
+          new SetupOwnersInput({ owners: childPaddedOwners.slice(0, MAX_OWNERS) }),
+        );
+      }
+
       await contract.propose(
         proposal,
         ownerWitness,
@@ -896,11 +988,6 @@ const workerApi = {
       );
     });
 
-    // Rayon's thread pool inside o1js requires SharedArrayBuffer, which is
-    // only available when the worker scope is cross-origin isolated. If
-    // isolation is broken (e.g. missing CORP header on _next/static/*),
-    // prove() traps with WASM `unreachable` during pool startup. Logging
-    // this makes header regressions obvious.
     console.log('[prove env] ' + JSON.stringify({
       crossOriginIsolated: (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated ?? null,
       sharedArrayBuffer: typeof SharedArrayBuffer,
@@ -908,12 +995,13 @@ const workerApi = {
     }));
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const extraKeys = childKey ? [childKey] : [];
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn, extraKeys, proposalMemo);
     if (!txHash) return null;
-    return hashStr;
+    return { proposalHash: hashStr, txHash };
   },
 
   /**
@@ -980,7 +1068,7 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn);
@@ -1046,7 +1134,8 @@ const workerApi = {
     }
 
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    const proposalMemo = params.proposal.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(executor, proposalMemo), async () => {
       if (newAccountCount > 0) {
         AccountUpdate.fundNewAccount(executor, newAccountCount);
       }
@@ -1090,30 +1179,27 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const executeHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const executeHash = await submitTx(tx, sendFn, signFeePayerFn, [], proposalMemo);
     if (!executeHash) return null;
     return `Transaction submitted: ${executeHash}`;
   },
 
   /**
-   * Deploys a fresh MinaGuard at `childPrivateKey` and runs `executeSetupChild`
-   * in the same transaction. Used to finalize a CREATE_CHILD parent proposal
-   * once it has reached threshold.
-   *
-   * Single-tx so a deployed-but-unconfigured child can't be hijacked by an
-   * attacker calling `executeSetupChild` with a different proposal.
+   * Calls `executeSetupChild` on an already-deployed child contract.
+   * The child was deployed at propose time; this initializes it with the
+   * approved config from the parent's CREATE_CHILD proposal.
    */
-  async deployAndSetupChildOnchain(
+  async executeSetupChildOnchain(
     params: {
       parentAddress: string;
-      childPrivateKeyBase58: string;
-      feePayerAddress: string;
+      childAddress: string;
+      executorAddress: string;
       childOwners: string[];
       childThreshold: number;
-      proposal: Proposal; // the parent's CREATE_CHILD proposal
+      proposal: Proposal;
     },
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
@@ -1127,9 +1213,8 @@ const workerApi = {
     progressFn('Rebuilding parent stores...');
     const { approvalStore } = await rebuildStoresFromBackend(params.parentAddress);
 
-    const childKey = PrivateKey.fromBase58(params.childPrivateKeyBase58);
-    const childAddress = childKey.toPublicKey();
-    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
+    const childAddress = PublicKey.fromBase58(params.childAddress);
+    const executor = PublicKey.fromBase58(params.executorAddress);
 
     const ownerStore = new OwnerStore();
     const ownerKeys = params.childOwners.map((address) => PublicKey.fromBase58(address));
@@ -1141,10 +1226,17 @@ const workerApi = {
     const numOwners = Field(ownerKeys.length);
     const threshold = Field(params.childThreshold);
 
-    // Build the REMOTE proposal struct exactly as it was hashed on the parent.
+    const expectedData = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    if (expectedData.toString() !== (params.proposal.data ?? '0')) {
+      throw new Error(
+        'SubVault config mismatch: announced owners/threshold do not match the proposal data hash. ' +
+        'The on-chain config events may have been tampered with.',
+      );
+    }
+
     const proposalStruct = buildProposalStruct({
       ...params.proposal,
-      childAccount: params.proposal.childAccount ?? childAddress.toBase58(),
+      childAccount: params.proposal.childAccount ?? params.childAddress,
       destination: 'remote',
     }, params.parentAddress);
     const proposalHash = proposalStruct.hash();
@@ -1154,13 +1246,21 @@ const workerApi = {
     const childZkApp = new MinaGuard(childAddress);
 
     progressFn('Building transaction...');
-    await fetchAccount({ publicKey: feePayer });
+    await fetchAccount({ publicKey: executor });
+    await fetchAccount({ publicKey: childAddress });
+    await fetchAccount({ publicKey: PublicKey.fromBase58(params.parentAddress) });
+
+    const childCommitment = childZkApp.ownersCommitment.get();
+    if (childCommitment.toString() !== '0') {
+      throw new Error(
+        'This SubVault has already been initialized. ' +
+        'executeSetupChild is idempotent on-chain — no further action needed.',
+      );
+    }
+
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(feePayer), async () => {
-      AccountUpdate.fundNewAccount(feePayer);
-      await childZkApp.deploy();
+    const tx = await Mina.transaction(txSender(executor), async () => {
       await childZkApp.executeSetupChild(
-        ownersCommitment,
         threshold,
         numOwners,
         new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) }),
@@ -1171,12 +1271,12 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [childKey]);
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
     if (!txHash) return null;
-    return `Subaccount deployed: ${txHash}`;
+    return `SubVault setup submitted: ${txHash}`;
   },
 
   /**
@@ -1236,7 +1336,8 @@ const workerApi = {
     await fetchAccount({ publicKey: PublicKey.fromBase58(params.childAddress) });
     await fetchAccount({ publicKey: PublicKey.fromBase58(params.parentAddress) });
     clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    const childMemo = params.proposal.memo ?? undefined;
+    const tx = await Mina.transaction(txSender(executor, childMemo), async () => {
       if (txType === 'reclaimChild') {
         const amount = UInt64.from(params.proposal.data ?? '0');
         await childZkApp.executeReclaimToParent(
@@ -1269,12 +1370,12 @@ const workerApi = {
     });
 
     progressFn('Generating proof...');
-    await tx.prove();
+    await maybeProve(tx);
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [], childMemo);
     if (!txHash) return null;
-    return `Subaccount action submitted: ${txHash}`;
+    return `SubVault action submitted: ${txHash}`;
   },
 
   /**
@@ -1284,7 +1385,7 @@ const workerApi = {
   computeCreateChildConfigHash(params: {
     childOwners: string[];
     childThreshold: number;
-  }): { ownersCommitment: string; configHash: string; childAddressKeypair: { privateKey: string; publicKey: string } } {
+  }): { ownersCommitment: string; configHash: string } {
     const ownerStore = new OwnerStore();
     for (const addr of params.childOwners) {
       ownerStore.addSorted(PublicKey.fromBase58(addr));
@@ -1293,14 +1394,9 @@ const workerApi = {
     const numOwners = Field(params.childOwners.length);
     const threshold = Field(params.childThreshold);
     const configHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
-    const childKey = PrivateKey.random();
     return {
       ownersCommitment: ownersCommitment.toString(),
       configHash: configHash.toString(),
-      childAddressKeypair: {
-        privateKey: childKey.toBase58(),
-        publicKey: childKey.toPublicKey().toBase58(),
-      },
     };
   },
 };

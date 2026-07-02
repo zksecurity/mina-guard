@@ -16,6 +16,8 @@ export {
   CreateChildEvent,
   ReclaimChildEvent,
   EnableChildMultiSigEvent,
+  CreateChildConfigEvent,
+  CreateChildOwnerEvent,
 } from './MinaGuard.js';
 
 export {
@@ -24,6 +26,7 @@ export {
   EXECUTED_MARKER,
   EMPTY_MERKLE_MAP_ROOT,
   PROPOSED_MARKER,
+  INITIAL_OWNER_CHAIN,
   MAX_OWNERS,
   MAX_RECEIVERS,
 } from './constants.js';
@@ -33,3 +36,5 @@ export { OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership
 export { ownerKey } from './utils.js';
 
 export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';
+
+export { memoToField, decodeTxMemo } from './memo.js';

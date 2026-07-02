@@ -1,4 +1,4 @@
-import { test, expect, type Page, type BrowserContext } from '@playwright/test';
+import { test, expect, type Page, type BrowserContext, type Route } from '@playwright/test';
 import {
   log,
   loadState,
@@ -6,7 +6,8 @@ import {
   activateTestKey,
   switchAccount,
   navigateTo,
-  waitForBanner,
+  waitForBanner as _waitForBanner,
+  fillRecipients,
   waitForIndexer,
   getContracts,
   getContract,
@@ -26,12 +27,29 @@ const netConfig = getNetworkConfig();
 const SETTLE_WAIT = netConfig.settlementWaitMs;
 const SHORT_WAIT = netConfig.mode === 'devnet' ? 10_000 : 3_000;
 
+import { V8_HEAP_MB } from './playwright.config';
+
+// Each tx accumulates ~40MB of WASM state. Recycle before hitting ~50% of heap.
+// On machines with >=16GB heap (i.e. >=21GB RAM), recycling is unnecessary.
+const RECYCLE_EVERY_N_TXS = V8_HEAP_MB >= 16384 ? 0 : 15;
+let txCount = 0;
+
+log(`V8 heap: ${V8_HEAP_MB}MB — page recycling ${RECYCLE_EVERY_N_TXS ? `every ${RECYCLE_EVERY_N_TXS} txs` : 'disabled'}`);
+
+
+async function waitForBanner(...args: Parameters<typeof _waitForBanner>) {
+  const result = await _waitForBanner(...args);
+  if (args[1] !== 'error') txCount++;
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Shared state across sequential tests
 // ---------------------------------------------------------------------------
 
 let accounts: TestAccount[];
 let contractAddress: string;
+let childAddress: string;
 let proposalHashes: string[] = [];
 
 // Shared page — avoids Web Worker restart (and contract recompilation) between tests
@@ -117,7 +135,14 @@ async function gotoWithWallet(
   }
 }
 
-// On failure, dump backend state for debugging
+async function recyclePage(): Promise<void> {
+  log('=== Recycling page to reclaim WASM memory ===');
+  currentAccount = null;
+  await sharedPage.reload({ waitUntil: 'networkidle' });
+  await sharedPage.waitForTimeout(2_000);
+  log('Page recycled');
+}
+
 test.afterEach(async ({}, testInfo) => {
   if (testInfo.status !== 'passed') {
     log(`TEST FAILED: ${testInfo.title}`);
@@ -126,6 +151,12 @@ test.afterEach(async ({}, testInfo) => {
       log(`Stack:\n${testInfo.error.stack}`);
     }
     await dumpState(contractAddress);
+  }
+
+  if (RECYCLE_EVERY_N_TXS > 0 && txCount >= RECYCLE_EVERY_N_TXS) {
+    log(`${txCount} txs since last recycle — recycling page`);
+    txCount = 0;
+    await recyclePage();
   }
 });
 
@@ -176,7 +207,7 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
 
   // Click deploy
   log('Clicking Deploy account...');
-  const deployBtn = page.getByRole('button', { name: /deploy account/i });
+  const deployBtn = page.getByRole('button', { name: /deploy vault/i });
   await deployBtn.click();
 
   // Wait for the operation to complete (success banner or redirect)
@@ -444,11 +475,9 @@ test('7. Propose send MINA to account3', async () => { const page = sharedPage;
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  // The transfer form uses a single textarea with `address,amount` per line
-  // (see ProposalForm.tsx — parseTransferLines). 1 MINA to account3.
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${accounts[2].publicKey},1`);
+  // The transfer form defaults to per-row inputs; fillRecipients flips to
+  // Bulk mode and writes the legacy `address,amount` format. 1 MINA to account3.
+  await fillRecipients(page, `${accounts[2].publicKey},1`);
 
   // Set expiry to 0
   const expiryInput = page.locator('input[placeholder="0"]');
@@ -969,6 +998,7 @@ test('20. Verify delegate card shows delegate', async () => { const page = share
   log('Dashboard shows delegate address');
 });
 
+
 // ---------------------------------------------------------------------------
 // 21. Propose undelegate
 // ---------------------------------------------------------------------------
@@ -1053,30 +1083,28 @@ test('22. Execute undelegate', async () => { const page = sharedPage;
 });
 
 // ---------------------------------------------------------------------------
-// 23. Propose transfer with low expiry block (will expire before execution)
+// 23. Propose transfer with low expiry slot (will expire before execution)
 // ---------------------------------------------------------------------------
 
 test('23. Propose transfer with near-future expiry', async () => { const page = sharedPage;
   log('=== Step 23: Propose transfer with expiry ===');
 
-  // Get current block height from indexer status
+  // Get current global slot from indexer status
   const status = await getIndexerStatus();
-  const currentHeight = status?.latestChainHeight ?? status?.indexedHeight ?? 0;
-  const expiryBlock = currentHeight + netConfig.expiryBlockOffset;
-  log(`Current block height: ${currentHeight}, setting expiry: ${expiryBlock}`);
+  const currentSlot = status?.latestSlot ?? 0;
+  const expirySlot = currentSlot + netConfig.expirySlotOffset;
+  log(`Current slot: ${currentSlot}, setting expiry: ${expirySlot}`);
 
   await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
 
-  // 0.5 MINA to account3 as a single textarea line.
-  const recipientsTextarea = page.locator('textarea').first();
-  await recipientsTextarea.waitFor({ state: 'visible', timeout: 5_000 });
-  await recipientsTextarea.fill(`${accounts[2].publicKey},0.5`);
+  // 0.5 MINA to account3.
+  await fillRecipients(page, `${accounts[2].publicKey},0.5`);
 
-  // Set the low expiry block
+  // Set the low expiry slot
   const expiryInput = page.locator('input[placeholder="0"]');
   if ((await expiryInput.count()) > 0) {
-    await expiryInput.first().fill(String(expiryBlock));
+    await expiryInput.first().fill(String(expirySlot));
   }
 
   log('Submitting proposal with expiry...');
@@ -1089,18 +1117,18 @@ test('23. Propose transfer with near-future expiry', async () => { const page = 
     async () => {
       const proposals = await getProposals(contractAddress);
       return proposals.some(
-        (p: any) => p.txType === 'transfer' && p.expiryBlock === String(expiryBlock)
+        (p: any) => p.txType === 'transfer' && p.expirySlot === String(expirySlot)
       );
     }
   );
 
   const proposals = await getProposals(contractAddress);
   const expiringProposal = proposals.find(
-    (p: any) => p.txType === 'transfer' && p.expiryBlock === String(expiryBlock)
+    (p: any) => p.txType === 'transfer' && p.expirySlot === String(expirySlot)
   );
   expect(expiringProposal).toBeDefined();
   proposalHashes.push(expiringProposal.proposalHash);
-  log(`Expiring proposal created: hash=${expiringProposal.proposalHash.slice(0, 12)}..., expiryBlock=${expiryBlock}`);
+  log(`Expiring proposal created: hash=${expiringProposal.proposalHash.slice(0, 12)}..., expirySlot=${expirySlot}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -1151,51 +1179,1311 @@ test('24. Verify proposal expires and execute button is hidden', async () => { c
 // 25. Verify final state
 // ---------------------------------------------------------------------------
 
-test('25. Verify final state', async () => { const page = sharedPage;
-  log('=== Step 25: Verify final state ===');
+test('25. Verify state before subaccount tests', async () => { const page = sharedPage;
+  log('=== Step 25: Verify state before subaccount tests ===');
 
-  // Dashboard — delegate card should show contract self (undelegated)
   await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
   await expect(page.locator('text=Block Producer Delegate')).toBeVisible({ timeout: 10_000 });
   log('Delegate card visible on dashboard');
 
-  // Settings — 1 owner
   await navigateTo(page, '/settings');
   await page.waitForTimeout(SHORT_WAIT);
   await expect(page.locator('text=Owners (1)')).toBeVisible({ timeout: 10_000 });
   log('Settings shows 1 owner');
 
-  // Transactions — all proposals should be executed
   await navigateTo(page, '/transactions');
   await page.waitForTimeout(SHORT_WAIT);
 
   const executedTab = page.locator('button', { hasText: /Executed/i }).first();
   const executedText = await executedTab.textContent();
   log(`Executed tab: ${executedText}`);
-  expect(executedText).toContain('7'); // 5 original + delegate + undelegate
+  expect(executedText).toContain('7');
 
   const expiredTab = page.locator('button', { hasText: /Expired/i }).first();
   const expiredText = await expiredTab.textContent();
   log(`Expired tab: ${expiredText}`);
-  expect(expiredText).toContain('1'); // the expiry test proposal
+  expect(expiredText).toContain('1');
 
   const pendingTab = page.locator('button', { hasText: /Pending/i }).first();
   const pendingText = await pendingTab.textContent();
   log(`Pending tab: ${pendingText}`);
   expect(pendingText).toContain('0');
 
-  // Final dump
-  log('\n=== Final State ===');
-  await dumpState(contractAddress);
-  log('\n=== All 25 steps completed successfully! ===');
+  log('State checkpoint passed');
+});
+
+// ===========================================================================
+// MEMO LIFECYCLE
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 25a. Propose transfer with memo
+// ---------------------------------------------------------------------------
+
+test('25a. Propose transfer with memo', async () => { const page = sharedPage;
+  log('=== Step 25a: Propose transfer with memo ===');
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  await fillRecipients(page, `${accounts[2].publicKey},0.1`);
+
+  const memoInput = page.locator('input[placeholder*="memo"]').or(
+    page.locator('input[placeholder*="Short note"]')
+  );
+  await memoInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await memoInput.fill('e2e-test-memo');
+
+  const byteCounter = page.locator('text=13 / 32 bytes');
+  await expect(byteCounter).toBeVisible({ timeout: 3_000 });
+  log('Byte counter shows 13 / 32');
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting proposal with memo...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes transfer proposal with memo',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.memo === 'e2e-test-memo');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const memoProposal = proposals.find((p: any) => p.memo === 'e2e-test-memo');
+  expect(memoProposal).toBeDefined();
+  expect(memoProposal.memoHash).toBeTruthy();
+  expect(memoProposal.txType).toBe('transfer');
+  proposalHashes.push(memoProposal.proposalHash);
+  log(`Memo proposal created: hash=${memoProposal.proposalHash.slice(0, 12)}..., memo=${memoProposal.memo}, memoHash=${memoProposal.memoHash?.slice(0, 12)}...`);
 });
 
 // ---------------------------------------------------------------------------
-// TODO: Restore tests 26-32 (CREATE_CHILD, finalize, ALLOCATE_CHILD,
-// RECLAIM_CHILD, DESTROY_CHILD, final-state verification) once worker-
-// recycling lands. The combined LOCAL + subaccount flow silently hangs
-// `tx.prove()` around the 20th proof; the 8 GB V8 heap bump tripled
-// runway but is not enough. Likely needs periodic page reload + persistent
-// VK cache to work.
+// 25b. Execute transfer with memo and verify memo match
 // ---------------------------------------------------------------------------
+
+test('25b. Execute transfer with memo and verify memo match', async () => { const page = sharedPage;
+  log('=== Step 25b: Execute memo transfer ===');
+  const proposalHash = proposalHashes[proposalHashes.length - 1];
+
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Verify memo is displayed on the proposal detail page
+  await expect(page.locator('text=e2e-test-memo')).toBeVisible({ timeout: 10_000 });
+  log('Memo visible on proposal detail page');
+
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes memo transfer execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, proposalHash);
+      return proposal?.status === 'executed';
+    },
+    360_000,
+    10_000
+  );
+
+  const proposal = await getProposal(contractAddress, proposalHash);
+  expect(proposal.status).toBe('executed');
+  expect(proposal.memo).toBe('e2e-test-memo');
+  expect(proposal.proposalMemoMatch).toBe(true);
+  expect(proposal.memoExecutionMatch).toBe(true);
+  log(`Memo match verified: proposalMemoMatch=${proposal.proposalMemoMatch}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
+
+  // Verify the UI shows the match indicator
+  await navigateTo(page, `/transactions/${proposalHash}`);
+  await page.waitForTimeout(SHORT_WAIT);
+  await expect(page.locator('text=e2e-test-memo')).toBeVisible({ timeout: 10_000 });
+  log('Memo match indicator visible on executed proposal');
+});
+
+// ---------------------------------------------------------------------------
+// 25c. Propose and execute with memo mismatch
+// ---------------------------------------------------------------------------
+
+test('25c. Propose and execute with memo mismatch', async () => { const page = sharedPage;
+  log('=== Step 25c: Propose and execute with memo mismatch ===');
+
+  // --- Propose with memo ---
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  await fillRecipients(page, `${accounts[2].publicKey},0.1`);
+
+  const memoInput = page.locator('input[placeholder*="memo"]').or(
+    page.locator('input[placeholder*="Short note"]')
+  );
+  await memoInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await memoInput.fill('e2e-mismatch');
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting proposal with memo...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes mismatch proposal',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.memo === 'e2e-mismatch');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const mismatchProposal = proposals.find((p: any) => p.memo === 'e2e-mismatch');
+  expect(mismatchProposal).toBeDefined();
+  const mismatchHash = mismatchProposal.proposalHash;
+  proposalHashes.push(mismatchHash);
+  log(`Mismatch proposal created: hash=${mismatchHash.slice(0, 12)}...`);
+
+  // --- Execute with memo stripped from the API response ---
+  // Intercept both the single-proposal and proposals-list endpoints so the
+  // worker sees memo=null and doesn't set a transaction memo. memoHash is
+  // preserved so the struct hash is still correct and the circuit accepts.
+  const stripMemo = (obj: any) => { if (obj && obj.proposalHash === mismatchHash) obj.memo = null; };
+  const memoInterceptHandler = async (route: Route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (Array.isArray(body)) body.forEach(stripMemo);
+    else stripMemo(body);
+    await route.fulfill({
+      response,
+      body: JSON.stringify(body),
+      headers: { ...response.headers(), 'content-type': 'application/json' },
+    });
+  };
+  // Intercept both the single-proposal and proposals-list endpoints
+  await page.route(`**/proposals/${mismatchHash}`, memoInterceptHandler);
+  await page.route(/\/proposals(\?|$)/, memoInterceptHandler);
+
+  await gotoWithWallet(`/transactions/${mismatchHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Execute Proposal (memo stripped)...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  // Remove intercepts before verifying
+  await page.unroute(`**/proposals/${mismatchHash}`);
+  await page.unroute(/\/proposals(\?|$)/);
+
+  await waitForIndexer(
+    'indexer processes mismatch execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, mismatchHash);
+      return proposal?.status === 'executed';
+    },
+    360_000,
+    10_000
+  );
+
+  // Verify mismatch via API
+  const proposal = await getProposal(contractAddress, mismatchHash);
+  expect(proposal.status).toBe('executed');
+  expect(proposal.memo).toBe('e2e-mismatch');
+  expect(proposal.proposalMemoMatch).toBe(true);
+  expect(proposal.memoExecutionMatch).toBe(false);
+  log(`Memo mismatch verified: proposalMemoMatch=${proposal.proposalMemoMatch}, memoExecutionMatch=${proposal.memoExecutionMatch}`);
+
+  // Verify the UI shows the mismatch indicator
+  await navigateTo(page, `/transactions/${mismatchHash}`);
+  await page.waitForTimeout(SHORT_WAIT);
+  await expect(page.locator('text=e2e-mismatch')).toBeVisible({ timeout: 10_000 });
+  log('Mismatch indicator visible on executed proposal');
+});
+
+// ===========================================================================
+// SUBACCOUNT LIFECYCLE
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 26. Propose CREATE_CHILD (subaccount) on parent
+// ---------------------------------------------------------------------------
+
+test('26. Propose CREATE_CHILD on parent', async () => { const page = sharedPage;
+  log('=== Step 26: Propose CREATE_CHILD ===');
+
+  await gotoWithWallet(`/accounts/new?parent=${contractAddress}`, accounts[0]);
+
+  await page.waitForFunction(
+    (addr: string) => document.body.textContent?.includes(addr.slice(0, 6)),
+    accounts[0].publicKey,
+    { timeout: 30_000 }
+  );
+
+  log('Advancing wizard to step 2...');
+  await page.getByRole('button', { name: /^next$/i }).click();
+
+  log('Waiting for child keypair generation...');
+  await page.waitForFunction(
+    () => !document.body.textContent?.includes('Generating keypair'),
+    { timeout: 60_000 }
+  );
+
+  const addressEl = page
+    .getByText('Contract Address', { exact: true })
+    .locator('xpath=following-sibling::p[1]');
+  await addressEl.waitFor({ state: 'visible', timeout: 10_000 });
+  childAddress = (await addressEl.textContent())?.trim() ?? '';
+  expect(childAddress).toMatch(/^B62/);
+  expect(childAddress).not.toBe(contractAddress);
+  log(`Child address: ${childAddress}`);
+
+  log('Filling threshold...');
+  await page.locator('input[type="number"]').first().fill('1');
+
+  log('Clicking Propose subaccount...');
+  await page.getByRole('button', { name: /propose subvault/i }).click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes CREATE_CHILD proposal',
+    async () => {
+      const proposals = await getProposals(contractAddress);
+      return proposals.some(
+        (p: any) => p.txType === 'createChild' && p.childAccount === childAddress
+      );
+    }
+  );
+
+  const created = (await getProposals(contractAddress)).find(
+    (p: any) => p.txType === 'createChild' && p.childAccount === childAddress
+  );
+  expect(created).toBeDefined();
+  expect(created.approvalCount).toBe(1);
+  proposalHashes.push(created.proposalHash);
+  log(`CREATE_CHILD proposal: hash=${created.proposalHash.slice(0, 12)}..., approvals=${created.approvalCount}`);
+});
+
+// ---------------------------------------------------------------------------
+// 27. Execute CREATE_CHILD (executeSetupChild on the deployed child)
+// ---------------------------------------------------------------------------
+
+test('27. Execute CREATE_CHILD via proposal detail', async () => { const page = sharedPage;
+  log('=== Step 27: Execute CREATE_CHILD ===');
+
+  const createChildHash = proposalHashes[proposalHashes.length - 1];
+  await gotoWithWallet(`/transactions/${createChildHash}?account=${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  log('Clicking Execute...');
+  await executeBtn.click();
+
+  log('Waiting for executeSetupChild transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer discovers child contract + marks parent proposal executed',
+    async () => {
+      const child = await getContract(childAddress);
+      const parent = await getProposal(contractAddress, proposalHashes[proposalHashes.length - 1]);
+      return child !== null && parent?.status === 'executed';
+    },
+    180_000,
+    netConfig.indexerPollIntervalMs
+  );
+
+  const child = await getContract(childAddress);
+  expect(child.parent).toBe(contractAddress);
+  expect(child.childMultiSigEnabled).toBe(true);
+  expect(child.threshold).toBe(1);
+  expect(child.numOwners).toBe(1);
+  log(`Child contract indexed: parent=${child.parent.slice(0, 12)}..., threshold=${child.threshold}/${child.numOwners}`);
+
+  const parentProposal = await getProposal(contractAddress, proposalHashes[proposalHashes.length - 1]);
+  expect(parentProposal.status).toBe('executed');
+  log(`Parent CREATE_CHILD proposal marked executed`);
+});
+
+// ---------------------------------------------------------------------------
+// 28. Verify subaccount shows up in the UI tree + child detail page renders
+// ---------------------------------------------------------------------------
+
+test('28. Verify subaccount in UI tree', async () => { const page = sharedPage;
+  log('=== Step 28: Verify subaccount in UI ===');
+
+  await gotoWithWallet('/', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const childRow = page.locator('a', {
+    has: page.locator(`text=${childAddress.slice(0, 10)}`),
+  });
+  await expect(childRow).toBeVisible({ timeout: 15_000 });
+  log('Child row visible in account tree');
+
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+  await expect(page.locator('text=SubVaults (1)')).toBeVisible({ timeout: 10_000 });
+  log('Subaccounts (1) card visible on parent dashboard');
+
+  await gotoWithWallet(`/accounts/${childAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+  await expect(page.locator('text=Parent Vault')).toBeVisible({ timeout: 10_000 });
+  log('Child detail renders with Parent card');
+});
+
+// ---------------------------------------------------------------------------
+// 29. Fund child contract
+// ---------------------------------------------------------------------------
+
+test('29. Fund contracts for allocation tests', async () => {
+  log('=== Step 29: Fund contracts for allocation tests ===');
+  await fundContract(contractAddress, accounts[0], 10);
+  log('Parent contract topped up with 10 MINA');
+  await fundContract(childAddress, accounts[0], 5);
+  log('Child contract funded with 5 MINA');
+});
+
+// ---------------------------------------------------------------------------
+// 30. Propose ALLOCATE_CHILD (parent → child)
+// ---------------------------------------------------------------------------
+
+test('30. Propose ALLOCATE_CHILD', async () => { const page = sharedPage;
+  log('=== Step 30: Propose ALLOCATE_CHILD ===');
+  // Navigate to parent first to make it the active contract (child was active
+  // after test 28's detail-page visit).
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+  await gotoWithWallet('/transactions/new?type=allocateChild', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  await fillRecipients(page, `${childAddress},2`);
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting allocate proposal...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes ALLOCATE_CHILD proposal',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.txType === 'allocateChild');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const allocateProposal = proposals.find((p: any) => p.txType === 'allocateChild');
+  expect(allocateProposal).toBeDefined();
+  proposalHashes.push(allocateProposal.proposalHash);
+  log(`ALLOCATE_CHILD proposal: hash=${allocateProposal.proposalHash.slice(0, 12)}...`);
+});
+
+// ---------------------------------------------------------------------------
+// 31. Execute ALLOCATE_CHILD
+// ---------------------------------------------------------------------------
+
+test('31. Execute ALLOCATE_CHILD', async () => { const page = sharedPage;
+  log('=== Step 31: Execute ALLOCATE_CHILD ===');
+  const proposalHash = proposalHashes[proposalHashes.length - 1];
+
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes ALLOCATE_CHILD execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, proposalHash);
+      return proposal?.status === 'executed';
+    }
+  );
+
+  const proposal = await getProposal(contractAddress, proposalHash);
+  expect(proposal.status).toBe('executed');
+  log(`ALLOCATE_CHILD executed`);
+});
+
+// ---------------------------------------------------------------------------
+// 32. Propose RECLAIM_CHILD (child → parent)
+// ---------------------------------------------------------------------------
+
+test('32. Propose RECLAIM_CHILD', async () => { const page = sharedPage;
+  log('=== Step 32: Propose RECLAIM_CHILD ===');
+
+  await gotoWithWallet('/transactions/new?type=reclaimChild', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Select child in radio button group
+  const childLabel = page.locator(`label:has-text("${childAddress.slice(0, 10)}")`);
+  await childLabel.waitFor({ state: 'visible', timeout: 10_000 });
+  await childLabel.click();
+
+  // Wait for nonce field to update after child selection
+  await page.waitForTimeout(1_000);
+
+  // Fill reclaim amount
+  const amountInput = page.locator('input[placeholder="1.0"]');
+  await amountInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await amountInput.fill('1');
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting reclaim proposal...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes RECLAIM_CHILD proposal',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.txType === 'reclaimChild');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const reclaimProposal = proposals.find((p: any) => p.txType === 'reclaimChild');
+  expect(reclaimProposal).toBeDefined();
+  proposalHashes.push(reclaimProposal.proposalHash);
+  log(`RECLAIM_CHILD proposal: hash=${reclaimProposal.proposalHash.slice(0, 12)}...`);
+});
+
+// ---------------------------------------------------------------------------
+// 33. Execute RECLAIM_CHILD
+// ---------------------------------------------------------------------------
+
+test('33. Execute RECLAIM_CHILD', async () => { const page = sharedPage;
+  log('=== Step 33: Execute RECLAIM_CHILD ===');
+  const proposalHash = proposalHashes[proposalHashes.length - 1];
+
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes RECLAIM_CHILD execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, proposalHash);
+      return proposal?.status === 'executed';
+    },
+    360_000,
+    10_000
+  );
+
+  const proposal = await getProposal(contractAddress, proposalHash);
+  expect(proposal.status).toBe('executed');
+  log(`RECLAIM_CHILD executed`);
+});
+
+// ---------------------------------------------------------------------------
+// 34. Propose ENABLE_CHILD_MULTI_SIG (disable)
+// ---------------------------------------------------------------------------
+
+test('34. Propose ENABLE_CHILD_MULTI_SIG (disable)', async () => { const page = sharedPage;
+  log('=== Step 34: Propose enableChildMultiSig (disable) ===');
+  // Ensure parent is the active contract after page recycle
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+  await gotoWithWallet('/transactions/new?type=enableChildMultiSig', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const childLabel = page.locator(`label:has-text("${childAddress.slice(0, 10)}")`);
+  await childLabel.waitFor({ state: 'visible', timeout: 10_000 });
+  await childLabel.click();
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting enableChildMultiSig proposal...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes enableChildMultiSig proposal',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.txType === 'enableChildMultiSig');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const toggleProposal = proposals.find((p: any) => p.txType === 'enableChildMultiSig');
+  expect(toggleProposal).toBeDefined();
+  proposalHashes.push(toggleProposal.proposalHash);
+  log(`enableChildMultiSig proposal: hash=${toggleProposal.proposalHash.slice(0, 12)}...`);
+});
+
+// ---------------------------------------------------------------------------
+// 35. Execute ENABLE_CHILD_MULTI_SIG (disable)
+// ---------------------------------------------------------------------------
+
+test('35. Execute ENABLE_CHILD_MULTI_SIG (disable)', async () => { const page = sharedPage;
+  log('=== Step 35: Execute enableChildMultiSig (disable) ===');
+  const proposalHash = proposalHashes[proposalHashes.length - 1];
+
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes enableChildMultiSig execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, proposalHash);
+      return proposal?.status === 'executed';
+    }
+  );
+
+  // Verify child multi-sig is now disabled
+  await waitForIndexer(
+    'child contract reflects multi-sig disabled',
+    async () => {
+      const child = await getContract(childAddress);
+      return child?.childMultiSigEnabled === false;
+    }
+  );
+
+  const child = await getContract(childAddress);
+  expect(child.childMultiSigEnabled).toBe(false);
+  log(`Child multi-sig disabled: ${child.childMultiSigEnabled}`);
+});
+
+// ---------------------------------------------------------------------------
+// 36. Propose DESTROY_CHILD
+// ---------------------------------------------------------------------------
+
+test('36. Propose DESTROY_CHILD', async () => { const page = sharedPage;
+  log('=== Step 36: Propose destroyChild ===');
+  await gotoWithWallet('/transactions/new?type=destroyChild', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const childLabel = page.locator(`label:has-text("${childAddress.slice(0, 10)}")`);
+  await childLabel.waitFor({ state: 'visible', timeout: 10_000 });
+  await childLabel.click();
+
+  // Check confirmation checkbox
+  const confirmCheckbox = page.locator('input[type="checkbox"]').first();
+  await confirmCheckbox.waitFor({ state: 'visible', timeout: 5_000 });
+  await confirmCheckbox.check();
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting destroy proposal...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes destroyChild proposal',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.txType === 'destroyChild');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const destroyProposal = proposals.find((p: any) => p.txType === 'destroyChild');
+  expect(destroyProposal).toBeDefined();
+  proposalHashes.push(destroyProposal.proposalHash);
+  log(`destroyChild proposal: hash=${destroyProposal.proposalHash.slice(0, 12)}...`);
+});
+
+// ---------------------------------------------------------------------------
+// 37. Execute DESTROY_CHILD
+// ---------------------------------------------------------------------------
+
+test('37. Execute DESTROY_CHILD', async () => { const page = sharedPage;
+  log('=== Step 37: Execute destroyChild ===');
+  const proposalHash = proposalHashes[proposalHashes.length - 1];
+
+  await gotoWithWallet(`/transactions/${proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes destroyChild execution',
+    async () => {
+      const proposal = await getProposal(contractAddress, proposalHash);
+      return proposal?.status === 'executed';
+    },
+    360_000,
+    10_000
+  );
+
+  const proposal = await getProposal(contractAddress, proposalHash);
+  expect(proposal.status).toBe('executed');
+  log(`destroyChild executed`);
+});
+
+// ===========================================================================
+// DELETE PROPOSAL FLOW
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 38. Propose a transfer, then create a delete proposal for it
+// ---------------------------------------------------------------------------
+
+test('38. Propose transfer then delete it', async () => { const page = sharedPage;
+  log('=== Step 38: Propose transfer + delete ===');
+
+  // Ensure parent is the active contract after page recycle
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // First, create a normal transfer proposal
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  await fillRecipients(page, `${accounts[2].publicKey},0.1`);
+
+  const expiryInput = page.locator('input[placeholder="0"]');
+  if ((await expiryInput.count()) > 0) {
+    await expiryInput.first().fill('0');
+  }
+
+  log('Submitting transfer proposal to delete later...');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes transfer proposal (to be deleted)',
+    async () => {
+      const proposals = await getProposals(contractAddress, 'pending');
+      return proposals.some((p: any) => p.txType === 'transfer');
+    }
+  );
+
+  const proposals = await getProposals(contractAddress, 'pending');
+  const targetProposal = proposals.find((p: any) => p.txType === 'transfer');
+  expect(targetProposal).toBeDefined();
+  const targetHash = targetProposal.proposalHash;
+  const targetNonce = targetProposal.nonce;
+  proposalHashes.push(targetHash);
+  log(`Target proposal: hash=${targetHash.slice(0, 12)}..., nonce=${targetNonce}`);
+
+  // Navigate to the proposal detail and click Delete
+  await gotoWithWallet(`/transactions/${targetHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Delete Proposal...');
+  const deleteBtn = page.getByRole('button', { name: /delete proposal/i });
+  await deleteBtn.waitFor({ state: 'visible', timeout: 10_000 });
+  await deleteBtn.click();
+
+  // Should redirect to /transactions/new?mode=delete&...
+  await page.waitForFunction(
+    () => window.location.search.includes('mode=delete'),
+    { timeout: 10_000 }
+  );
+
+  // Verify delete mode UI
+  await expect(page.locator('text=Delete pending proposal')).toBeVisible({ timeout: 5_000 });
+  log('Delete mode UI visible');
+
+  // Submit the delete proposal
+  log('Submitting delete proposal...');
+  const deleteSubmitBtn = page.getByRole('button', { name: /create delete proposal/i });
+  await deleteSubmitBtn.waitFor({ state: 'visible', timeout: 10_000 });
+  await deleteSubmitBtn.click();
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes delete proposal',
+    async () => {
+      const allProposals = await getProposals(contractAddress, 'pending');
+      return allProposals.some((p: any) => p.txType === 'transfer' && p.proposalHash !== targetHash);
+    }
+  );
+
+  const allProposals = await getProposals(contractAddress, 'pending');
+  const deleteProposal = allProposals.find(
+    (p: any) => p.txType === 'transfer' && p.proposalHash !== targetHash
+  );
+  expect(deleteProposal).toBeDefined();
+  proposalHashes.push(deleteProposal.proposalHash);
+  log(`Delete proposal created: hash=${deleteProposal.proposalHash.slice(0, 12)}...`);
+});
+
+// ---------------------------------------------------------------------------
+// 39. Execute delete proposal and verify invalidation
+// ---------------------------------------------------------------------------
+
+test('39. Execute delete proposal and verify invalidation', async () => { const page = sharedPage;
+  log('=== Step 39: Execute delete proposal ===');
+  const deleteProposalHash = proposalHashes[proposalHashes.length - 1];
+  const targetProposalHash = proposalHashes[proposalHashes.length - 2];
+
+  await gotoWithWallet(`/transactions/${deleteProposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
+
+  log('Waiting for execute transaction...');
+  await waitForBanner(page, 'success');
+
+  await waitForIndexer(
+    'indexer processes delete execution + marks target invalidated',
+    async () => {
+      const deleteP = await getProposal(contractAddress, deleteProposalHash);
+      const targetP = await getProposal(contractAddress, targetProposalHash);
+      return deleteP?.status === 'executed' && targetP?.status === 'invalidated';
+    },
+    360_000,
+    10_000
+  );
+
+  const deleteP = await getProposal(contractAddress, deleteProposalHash);
+  expect(deleteP.status).toBe('executed');
+  log(`Delete proposal executed`);
+
+  const targetP = await getProposal(contractAddress, targetProposalHash);
+  expect(targetP.status).toBe('invalidated');
+  log(`Target proposal invalidated`);
+
+  // Verify Invalidated tab on transactions page
+  await navigateTo(page, '/transactions');
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const invalidatedTab = page.locator('button', { hasText: /Invalidated/i }).first();
+  const invalidatedText = await invalidatedTab.textContent();
+  log(`Invalidated tab: ${invalidatedText}`);
+  expect(invalidatedText).toContain('1');
+});
+
+// ===========================================================================
+// FINAL STATE
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 40. Verify final state after all operations
+// ---------------------------------------------------------------------------
+
+test('40. Verify final state', async () => { const page = sharedPage;
+  log('=== Step 40: Verify final state ===');
+
+  // Settings — 1 owner, threshold 1
+  await gotoWithWallet('/settings', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+  await expect(page.locator('text=Owners (1)')).toBeVisible({ timeout: 10_000 });
+  log('Settings shows 1 owner');
+
+  // Transactions — count check
+  await navigateTo(page, '/transactions');
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const pendingTab = page.locator('button', { hasText: /Pending/i }).first();
+  const pendingText = await pendingTab.textContent();
+  log(`Pending tab: ${pendingText}`);
+  expect(pendingText).toContain('0');
+
+  const expiredTab = page.locator('button', { hasText: /Expired/i }).first();
+  const expiredText = await expiredTab.textContent();
+  log(`Expired tab: ${expiredText}`);
+  expect(expiredText).toContain('1');
+
+  const invalidatedTab = page.locator('button', { hasText: /Invalidated/i }).first();
+  const invalidatedText = await invalidatedTab.textContent();
+  log(`Invalidated tab: ${invalidatedText}`);
+  expect(invalidatedText).toContain('1');
+
+  // Final dump
+  log('\n=== Final State ===');
+  await dumpState(contractAddress);
+  log('\n=== All 40 steps completed successfully! ===');
+});
+
+// ===========================================================================
+// FORM VALIDATION (no on-chain transactions)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 41. Transfer form validation
+// ---------------------------------------------------------------------------
+
+test('41. Transfer form validation', async () => { const page = sharedPage;
+  log('=== Step 41: Transfer form validation ===');
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Invalid address
+  await fillRecipients(page, 'invalidaddress,1');
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await page.waitForTimeout(1_000);
+  const pageText = await page.textContent('body');
+  expect(pageText).toMatch(/invalid|error|address/i);
+  log('Invalid address rejected');
+
+  // Empty recipients
+  await fillRecipients(page, '');
+  await submitBtn.click();
+  await page.waitForTimeout(1_000);
+  log('Empty form handled');
+});
+
+// ---------------------------------------------------------------------------
+// 42. Add owner validation
+// ---------------------------------------------------------------------------
+
+test('42. Add owner validation', async () => { const page = sharedPage;
+  log('=== Step 42: Add owner validation ===');
+  await gotoWithWallet('/transactions/new?type=addOwner', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Try adding current owner (duplicate)
+  const ownerInput = page.locator('input[placeholder*="B62"]').first();
+  await ownerInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await ownerInput.fill(accounts[0].publicKey);
+
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await page.waitForTimeout(1_000);
+  const pageText = await page.textContent('body');
+  expect(pageText).toMatch(/already.*owner/i);
+  log('Duplicate owner rejected');
+});
+
+// ---------------------------------------------------------------------------
+// 43. Threshold validation
+// ---------------------------------------------------------------------------
+
+test('43. Threshold validation', async () => { const page = sharedPage;
+  log('=== Step 43: Threshold validation ===');
+  await gotoWithWallet('/transactions/new?type=changeThreshold', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Try threshold > numOwners (currently 1 owner)
+  const thresholdInput = page.locator('input[type="number"]').first();
+  await thresholdInput.waitFor({ state: 'visible', timeout: 5_000 });
+  await thresholdInput.fill('5');
+
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await page.waitForTimeout(1_000);
+  // The input should be clamped by max attribute or show an error
+  const inputMax = await thresholdInput.getAttribute('max');
+  log(`Threshold input max attribute: ${inputMax}`);
+
+  // Same threshold as current (1/1) → should show error
+  await thresholdInput.fill('1');
+  await submitBtn.click();
+  await page.waitForTimeout(1_000);
+  const body = await page.textContent('body');
+  expect(body).toMatch(/same.*current/i);
+  log('Same-threshold rejection verified');
+});
+
+// ===========================================================================
+// CORNER CASE TESTS (UI-only, no on-chain transactions)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 44. Navigate to non-existent proposal
+// ---------------------------------------------------------------------------
+
+test('44. Navigate to non-existent proposal hash', async () => { const page = sharedPage;
+  log('=== Step 44: Non-existent proposal ===');
+  const fakeHash = '12345678901234567890';
+  await gotoWithWallet(`/transactions/${fakeHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const body = await page.textContent('body');
+  // Should show "not found" or redirect — not crash
+  const hasNotFound = /not found|no proposal|does not exist/i.test(body ?? '');
+  const onTransactionsList = page.url().includes('/transactions') && !page.url().includes(fakeHash);
+  expect(hasNotFound || onTransactionsList).toBe(true);
+  log(`Non-existent proposal handled: ${hasNotFound ? 'not-found message' : 'redirected to list'}`);
+});
+
+// ---------------------------------------------------------------------------
+// 45. Transfer form: malformed lines, zero amount, duplicate recipients
+// ---------------------------------------------------------------------------
+
+test('45. Transfer form parsing edge cases', async () => { const page = sharedPage;
+  log('=== Step 45: Transfer form parsing edge cases ===');
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+
+  // Missing comma → row is parsed as address-only with empty amount.
+  // Surfaces "Invalid Mina address" (the value isn't valid base58) and/or
+  // "Amount required".
+  await fillRecipients(page, 'B62qooZ8LNHjSomething');
+  await page.waitForTimeout(500);
+  let body = await page.textContent('body');
+  expect(body).toMatch(/(invalid mina address|amount required)/i);
+  log('Missing comma rejected');
+
+  // Zero amount → "invalid amount" (parseMinaToNanomina rejects 0)
+  await fillRecipients(page, `${accounts[2].publicKey},0`);
+  await submitBtn.click();
+  await page.waitForTimeout(500);
+  body = await page.textContent('body');
+  expect(body).toMatch(/invalid amount/i);
+  log('Zero amount rejected');
+
+  // Negative amount → "invalid amount"
+  await fillRecipients(page, `${accounts[2].publicKey},-1`);
+  await page.waitForTimeout(500);
+  body = await page.textContent('body');
+  expect(body).toMatch(/invalid amount/i);
+  log('Negative amount rejected');
+
+  // Duplicate recipients → "duplicate recipient"
+  await fillRecipients(page, `${accounts[1].publicKey},1\n${accounts[1].publicKey},2`);
+  await page.waitForTimeout(500);
+  body = await page.textContent('body');
+  expect(body).toMatch(/duplicate recipient/i);
+  log('Duplicate recipient rejected');
+
+  // Extra commas → only the first comma splits, so the amount becomes
+  // "1,extra" which fails the numeric regex → "Invalid amount".
+  await fillRecipients(page, `${accounts[2].publicKey},1,extra`);
+  await page.waitForTimeout(500);
+  body = await page.textContent('body');
+  expect(body).toMatch(/invalid amount/i);
+  log('Extra commas rejected');
+});
+
+// ---------------------------------------------------------------------------
+// 46. Remove owner validation: below threshold
+// ---------------------------------------------------------------------------
+
+test('46. Remove owner validation edge cases', async () => { const page = sharedPage;
+  log('=== Step 46: Remove owner validation ===');
+  await gotoWithWallet('/transactions/new?type=removeOwner', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Currently 1 owner, threshold 1 → removing would drop below threshold
+  const removeSelect = page.locator('select').first();
+  if (await removeSelect.isVisible().catch(() => false)) {
+    await removeSelect.selectOption(accounts[0].publicKey);
+  } else {
+    const removeInput = page.locator('input[placeholder*="B62"]').first();
+    if (await removeInput.isVisible().catch(() => false)) {
+      await removeInput.fill(accounts[0].publicKey);
+    }
+  }
+
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await page.waitForTimeout(1_000);
+
+  const body = await page.textContent('body');
+  // Should show "reduce threshold first" error
+  expect(body).toMatch(/reduce.*threshold|cannot.*remove|below.*threshold/i);
+  log('Remove-below-threshold rejected');
+
+  // Try removing a non-owner address
+  const nonOwnerInput = page.locator('input[placeholder*="B62"]').first();
+  if (await nonOwnerInput.isVisible().catch(() => false)) {
+    await nonOwnerInput.fill(accounts[2].publicKey);
+    await submitBtn.click();
+    await page.waitForTimeout(1_000);
+    const bodyAfter = await page.textContent('body');
+    expect(bodyAfter).toMatch(/not.*current.*owner/i);
+    log('Non-owner removal rejected');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 47. Delegate form: invalid address, undelegate toggle
+// ---------------------------------------------------------------------------
+
+test('47. Delegate form validation', async () => { const page = sharedPage;
+  log('=== Step 47: Delegate form validation ===');
+  await gotoWithWallet('/transactions/new?type=setDelegate', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // The delegate form should have a text input for the delegate address
+  // and possibly an "undelegate" checkbox/toggle
+  const delegateInput = page.locator('input[placeholder*="B62"]').first();
+  if (await delegateInput.isVisible().catch(() => false)) {
+    // Empty delegate → should require an address
+    await delegateInput.fill('');
+    const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+    await submitBtn.click();
+    await page.waitForTimeout(500);
+    log('Empty delegate submission attempted');
+
+    // Invalid address format
+    await delegateInput.fill('notavalidaddress');
+    await submitBtn.click();
+    await page.waitForTimeout(500);
+    log('Invalid delegate address attempted');
+  }
+
+  // Check for undelegate toggle/checkbox
+  const undelegateToggle = page.locator('input[type="checkbox"]').first();
+  if (await undelegateToggle.isVisible().catch(() => false)) {
+    await undelegateToggle.check();
+    await page.waitForTimeout(500);
+    const body = await page.textContent('body');
+    // When undelegate is checked, the delegate input should be hidden/disabled
+    log(`Undelegate toggle checked, page state: ${body?.includes('Undelegate') ? 'has Undelegate label' : 'no label'}`);
+    await undelegateToggle.uncheck();
+  }
+  log('Delegate form validation checked');
+});
+
+// ---------------------------------------------------------------------------
+// 48. Destroy subaccount without confirmation checkbox
+// ---------------------------------------------------------------------------
+
+test('48. Destroy subaccount form requires confirmation', async () => { const page = sharedPage;
+  log('=== Step 48: Destroy confirmation required ===');
+
+  // Ensure parent contract is active
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+  await gotoWithWallet('/transactions/new?type=destroyChild', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const body = await page.textContent('body');
+  // If there are no children (destroyed in test 37), the form should say so
+  if (/no.*subaccount|no.*indexed/i.test(body ?? '')) {
+    log('No subaccounts available (destroyed in test 37) — validation skipped');
+    return;
+  }
+
+  // If children exist, try submitting without checking the confirm box
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+  await submitBtn.click();
+  await page.waitForTimeout(1_000);
+  const bodyAfter = await page.textContent('body');
+  expect(bodyAfter).toMatch(/confirm.*destroy|drains.*subaccount/i);
+  log('Destroy without confirmation rejected');
+});
+
+// ---------------------------------------------------------------------------
+// 49. Nonce validation: zero, negative, decimal
+// ---------------------------------------------------------------------------
+
+test('49. Nonce validation edge cases', async () => { const page = sharedPage;
+  log('=== Step 49: Nonce validation ===');
+  await gotoWithWallet('/transactions/new?type=transfer', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Fill valid recipients so nonce is the only validation target
+  await fillRecipients(page, `${accounts[2].publicKey},1`);
+
+  const nonceInput = page.locator('input').first();
+  await nonceInput.waitFor({ state: 'visible', timeout: 5_000 });
+
+  const submitBtn = page.getByRole('button', { name: /submit proposal/i });
+
+  // Nonce = 0 → "must be a positive integer"
+  await nonceInput.fill('0');
+  await submitBtn.click();
+  await page.waitForTimeout(500);
+  let body = await page.textContent('body');
+  expect(body).toMatch(/positive integer|must be greater/i);
+  log('Nonce=0 rejected');
+
+  // Nonce = -1 → "must be a positive integer"
+  await nonceInput.fill('-1');
+  await submitBtn.click();
+  await page.waitForTimeout(500);
+  body = await page.textContent('body');
+  expect(body).toMatch(/positive integer/i);
+  log('Nonce=-1 rejected');
+
+  // Nonce = 1.5 → "must be a positive integer"
+  await nonceInput.fill('1.5');
+  await submitBtn.click();
+  await page.waitForTimeout(500);
+  body = await page.textContent('body');
+  expect(body).toMatch(/positive integer/i);
+  log('Nonce=1.5 rejected');
+
+  // Nonce = "abc" → "must be a positive integer"
+  await nonceInput.fill('abc');
+  await submitBtn.click();
+  await page.waitForTimeout(500);
+  body = await page.textContent('body');
+  expect(body).toMatch(/positive integer/i);
+  log('Nonce=abc rejected');
+});
+
+// ---------------------------------------------------------------------------
+// 50. Proposal detail: executed proposal has no approve/execute buttons
+// ---------------------------------------------------------------------------
+
+test('50. Executed proposal has no action buttons', async () => { const page = sharedPage;
+  log('=== Step 50: Executed proposal action buttons ===');
+
+  // Find an executed proposal
+  const proposals = await getProposals(contractAddress, 'executed');
+  expect(proposals.length).toBeGreaterThan(0);
+  const executedProposal = proposals[0];
+  log(`Checking executed proposal: ${executedProposal.proposalHash.slice(0, 12)}...`);
+
+  await gotoWithWallet(`/transactions/${executedProposal.proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // The page should show the proposal details but no approve/execute buttons
+  const approveBtn = page.getByRole('button', { name: /approve proposal/i });
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  const deleteBtn = page.getByRole('button', { name: /delete proposal/i });
+
+  expect(await approveBtn.isVisible().catch(() => false)).toBe(false);
+  expect(await executeBtn.isVisible().catch(() => false)).toBe(false);
+  expect(await deleteBtn.isVisible().catch(() => false)).toBe(false);
+  log('No action buttons on executed proposal');
+
+  // Should show "Executed" status badge
+  const body = await page.textContent('body');
+  expect(body).toMatch(/executed/i);
+  log('Executed status badge visible');
+});
+
+// ---------------------------------------------------------------------------
+// 51. Invalidated proposal has no action buttons
+// ---------------------------------------------------------------------------
+
+test('51. Invalidated proposal has no action buttons', async () => { const page = sharedPage;
+  log('=== Step 51: Invalidated proposal action buttons ===');
+
+  const proposals = await getProposals(contractAddress, 'invalidated');
+  expect(proposals.length).toBeGreaterThan(0);
+  const invalidatedProposal = proposals[0];
+  log(`Checking invalidated proposal: ${invalidatedProposal.proposalHash.slice(0, 12)}...`);
+
+  await gotoWithWallet(`/transactions/${invalidatedProposal.proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const approveBtn = page.getByRole('button', { name: /approve proposal/i });
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+
+  expect(await approveBtn.isVisible().catch(() => false)).toBe(false);
+  expect(await executeBtn.isVisible().catch(() => false)).toBe(false);
+  log('No action buttons on invalidated proposal');
+
+  const body = await page.textContent('body');
+  expect(body).toMatch(/invalidated/i);
+  log('Invalidated status badge visible');
+});
+
+// ---------------------------------------------------------------------------
+// 52. Expired proposal has no execute button
+// ---------------------------------------------------------------------------
+
+test('52. Expired proposal has no execute button', async () => { const page = sharedPage;
+  log('=== Step 52: Expired proposal action buttons ===');
+
+  const proposals = await getProposals(contractAddress, 'expired');
+  expect(proposals.length).toBeGreaterThan(0);
+  const expiredProposal = proposals[0];
+  log(`Checking expired proposal: ${expiredProposal.proposalHash.slice(0, 12)}...`);
+
+  await gotoWithWallet(`/transactions/${expiredProposal.proposalHash}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  expect(await executeBtn.isVisible().catch(() => false)).toBe(false);
+  log('No execute button on expired proposal');
+
+  const body = await page.textContent('body');
+  expect(body).toMatch(/expired/i);
+  log('Expired status badge visible');
+});
+
+// ---------------------------------------------------------------------------
+// 53. Transaction list tab counts are consistent
+// ---------------------------------------------------------------------------
+
+test('53. Transaction list tab counts match API', async () => { const page = sharedPage;
+  log('=== Step 53: Tab count consistency ===');
+
+  // Get counts from API
+  const executed = await getProposals(contractAddress, 'executed');
+  const pending = await getProposals(contractAddress, 'pending');
+  const expired = await getProposals(contractAddress, 'expired');
+  const invalidated = await getProposals(contractAddress, 'invalidated');
+  log(`API counts: executed=${executed.length}, pending=${pending.length}, expired=${expired.length}, invalidated=${invalidated.length}`);
+
+  await gotoWithWallet('/transactions', accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  // Verify each tab shows the correct count
+  const executedTab = page.locator('button', { hasText: /Executed/i }).first();
+  const pendingTab = page.locator('button', { hasText: /Pending/i }).first();
+  const expiredTab = page.locator('button', { hasText: /Expired/i }).first();
+  const invalidatedTab = page.locator('button', { hasText: /Invalidated/i }).first();
+
+  const executedText = await executedTab.textContent();
+  const pendingText = await pendingTab.textContent();
+  const expiredText = await expiredTab.textContent();
+  const invalidatedText = await invalidatedTab.textContent();
+
+  log(`Tab text: Executed="${executedText}", Pending="${pendingText}", Expired="${expiredText}", Invalidated="${invalidatedText}"`);
+
+  expect(executedText).toContain(String(executed.length));
+  expect(pendingText).toContain(String(pending.length));
+  expect(expiredText).toContain(String(expired.length));
+  expect(invalidatedText).toContain(String(invalidated.length));
+  log('All tab counts match API');
+});

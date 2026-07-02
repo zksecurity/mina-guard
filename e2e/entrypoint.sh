@@ -26,7 +26,7 @@ log "Resetting backend database at $DATABASE_URL"
 if [ -z "${MINAGUARD_VK_HASH:-}" ] && [ -f /app/.vk-hash ]; then
   MINAGUARD_VK_HASH=$(cat /app/.vk-hash)
   export MINAGUARD_VK_HASH
-  log "Loaded VK hash from build: ${MINAGUARD_VK_HASH:0:20}..."
+  log "Loaded VK hash from build: $(printf '%.20s' "$MINAGUARD_VK_HASH")..."
 fi
 
 log "Starting backend on :4000"

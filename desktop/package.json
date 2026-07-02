@@ -19,7 +19,7 @@
     "@prisma/client": "6.12.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "o1js": "https://pkg.pr.new/o1-labs/o1js@2701",
+    "o1js": "3.0.0-mesa.final",
     "zod": "^3.25"
   },
   "devDependencies": {
