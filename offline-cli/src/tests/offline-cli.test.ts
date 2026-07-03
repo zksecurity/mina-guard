@@ -26,7 +26,8 @@ import {
   MAX_OWNERS,
   MAX_RECEIVERS,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58 } from '../build-tx.ts';
+import { renderBundleSummary } from '../summary.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
 
@@ -210,6 +211,50 @@ describe('offline-cli', () => {
     expect(proposal.hash().toString()).toBe(proposalHash.toString());
   }, 60_000);
 
+  // -- Account-creation fee counting (canonical, hash-bound receivers) --
+
+  describe('countNewReceiverAccounts', () => {
+    const real = (i: number) =>
+      new Receiver({ address: PrivateKey.random().toPublicKey(), amount: UInt64.from(1_000_000 + i) });
+
+    it('skips empty/padded slots and counts only non-existent real receivers', () => {
+      const receivers = [real(0), real(1)];
+      while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
+      // none exist on-chain -> both real ones counted, empties ignored
+      expect(countNewReceiverAccounts(receivers, () => false)).toBe(2);
+    });
+
+    it('does not count receivers that already exist on-chain', () => {
+      const existing = real(0);
+      const fresh = real(1);
+      const receivers = [existing, fresh];
+      while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
+      const existingAddr = existing.address.toBase58();
+      expect(
+        countNewReceiverAccounts(receivers, (addr) => addr === existingAddr),
+      ).toBe(1); // only `fresh` is new
+    });
+
+    // SECURITY REGRESSION: extra receiver rows beyond MAX_RECEIVERS must not be
+    // able to inflate the account-creation fee. buildTransferReceivers slices to
+    // MAX_RECEIVERS, so >MAX_RECEIVERS source rows collapse to the canonical set
+    // and the count can never exceed MAX_RECEIVERS — regardless of how many extra
+    // rows an untrusted bundle/backend appended.
+    it('cannot exceed MAX_RECEIVERS even with extra untrusted rows', () => {
+      const extraRows = Array.from({ length: MAX_RECEIVERS + 25 }, (_, i) => ({
+        address: PrivateKey.random().toPublicKey().toBase58(),
+        amount: String(1_000_000 + i),
+      }));
+      const canonical = buildTransferReceivers(extraRows);
+      expect(canonical.length).toBe(MAX_RECEIVERS);
+      // Even if EVERY canonical receiver is reported non-existent, the count is
+      // bounded by the canonical slice — the 25 extra rows are simply gone.
+      const count = countNewReceiverAccounts(canonical, () => false);
+      expect(count).toBe(MAX_RECEIVERS);
+      expect(count).toBeLessThanOrEqual(MAX_RECEIVERS);
+    });
+  });
+
   // -- Fee payer signing --
 
   it('signFeePayer produces valid authorization', async () => {
@@ -305,5 +350,120 @@ describe('offline-cli', () => {
       const signed = signFeePayer(txJson, feePayerKey.toBase58(), 'testnet');
       expect(decodeTxMemo(JSON.parse(signed).memo)).toBe(proposalMemo);
     }, 20_000);
+  });
+
+  // -- Human-readable summary (rendered before signing) --
+
+  describe('renderBundleSummary', () => {
+    const REAL_ADDR = 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY';
+    const CONTRACT = 'B62qoG5Yk4iVxpyczUrBNpwtx2xunhL48dydN53A2VjoRwF8NUjtL3';
+    const FEEPAYER = 'B62qpge4uMq4Vv5Rvc8Gw9qSquUYd6xoW1pz7HQkMSHm6h1o7itViy';
+
+    function base(overrides: Record<string, unknown> = {}) {
+      return {
+        version: 1 as const,
+        contractAddress: CONTRACT,
+        feePayerAddress: FEEPAYER,
+        accounts: {},
+        events: [],
+        ...overrides,
+      };
+    }
+
+    it('renders a transfer propose: amounts, total, network, skips empty rows', () => {
+      const bundle = {
+        ...base(),
+        action: 'propose' as const,
+        minaNetwork: 'testnet' as const,
+        configNonce: 0,
+        networkId: '1',
+        input: {
+          txType: 'transfer',
+          nonce: 3,
+          memo: 'rent',
+          receivers: [
+            { address: REAL_ADDR, amount: '2500000000' }, // 2.5 MINA
+            { address: EMPTY_PUBKEY_B58, amount: '0' },
+          ],
+        },
+      };
+      const out = renderBundleSummary(bundle as any);
+      expect(out).toContain('Send');
+      expect(out).toContain(REAL_ADDR);
+      expect(out).toContain('2.5 MINA');
+      expect(out).toContain('Total');
+      expect(out).toContain('0.1 MINA'); // fee line, from ZKAPP_TX_FEE
+      expect(out).toContain('testnet');
+      expect(out).toContain(CONTRACT);
+      expect(out).toContain(FEEPAYER);
+      expect(out).toContain('rent');
+      // padding receiver must not leak into the summary
+      expect(out).not.toContain(EMPTY_PUBKEY_B58);
+    });
+
+    it('renders an approve governance action; handles numeric and string txType', () => {
+      for (const txType of ['addOwner', '1']) {
+        const bundle = {
+          ...base(),
+          action: 'approve' as const,
+          minaNetwork: 'testnet' as const,
+          proposal: {
+            proposalHash: '123456789',
+            txType,
+            data: '0',
+            nonce: '7',
+            receivers: [
+              { address: REAL_ADDR, amount: '0' },
+              { address: EMPTY_PUBKEY_B58, amount: '0' },
+            ],
+          },
+        };
+        const out = renderBundleSummary(bundle as any);
+        expect(out).toContain('Add Owner');
+        expect(out).toContain('123456789'); // proposal hash
+        expect(out).toContain(REAL_ADDR); // target owner from receivers[0]
+      }
+    });
+
+    it('renders a setDelegate approve: empty receivers[0] as undelegate, real target as delegate-to', () => {
+      function delegateBundle(receiverAddr: string) {
+        return {
+          ...base(),
+          action: 'approve' as const,
+          minaNetwork: 'testnet' as const,
+          proposal: {
+            proposalHash: '987654321',
+            txType: 'setDelegate',
+            data: '0',
+            nonce: '9',
+            receivers: [{ address: receiverAddr, amount: '0' }],
+          },
+        };
+      }
+
+      const undelegated = renderBundleSummary(delegateBundle(EMPTY_PUBKEY_B58) as any);
+      expect(undelegated).toContain('undelegate (clear)');
+      expect(undelegated).not.toContain('(unknown)');
+
+      const delegated = renderBundleSummary(delegateBundle(REAL_ADDR) as any);
+      expect(delegated).toContain('Delegate to');
+      expect(delegated).toContain(REAL_ADDR);
+      expect(delegated).not.toContain('undelegate');
+    });
+
+    it('flags mainnet prominently', () => {
+      const bundle = {
+        ...base(),
+        action: 'propose' as const,
+        minaNetwork: 'mainnet' as const,
+        configNonce: 0,
+        networkId: '0',
+        input: { txType: 'changeThreshold', nonce: 1, newThreshold: 2 },
+      };
+      const out = renderBundleSummary(bundle as any);
+      expect(out).toContain('MAINNET');
+      expect(out).toContain('Change Threshold');
+      expect(out).toContain('2');
+    });
   });
 });

@@ -743,6 +743,8 @@ export default function TransactionDetailPage() {
                   </div>
                   <UploadSignedResponse
                     acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
+                    expectedContractAddress={multisig!.address}
+                    expectedProposalHash={proposal!.proposalHash}
                     onComplete={(response, txHash) => {
                       const kind = response.action as 'approve' | 'execute';
                       void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
