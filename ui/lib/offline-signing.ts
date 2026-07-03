@@ -1,4 +1,5 @@
 import { parseChildConfigFromEvents } from './api';
+import { resolveZkappFee } from './mempoolFee';
 
 export const OFFLINE_BUNDLE_VERSION = 1;
 
@@ -36,6 +37,9 @@ interface BundleBase {
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
   feePayerAddress: string;
+  // Mempool-derived fee in nanomina, computed at bundle-build time.
+  // Locked into the offline signature; cannot be changed at broadcast time.
+  fee: number;
   accounts: Record<string, BundleAccount>;
   events: Array<{ eventType: string; payload: unknown }>;
 }
@@ -198,6 +202,7 @@ export async function buildOfflineProposeBundle(params: {
   }
   const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
   const events = await fetchAllEvents(params.contractAddress);
+  const fee = await resolveZkappFee(MINA_ENDPOINT);
 
   const accounts: Record<string, BundleAccount> = {
     [params.contractAddress]: contractAccount,
@@ -213,6 +218,7 @@ export async function buildOfflineProposeBundle(params: {
     minaNetwork: MINA_NETWORK,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
+    fee,
     accounts,
     events,
     input: params.input,
@@ -234,6 +240,7 @@ export async function buildOfflineApproveBundle(params: {
   if (childAddr) fetches.push(fetchGraphQLAccount(childAddr));
   const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
   const events = await fetchAllEvents(params.contractAddress);
+  const fee = await resolveZkappFee(MINA_ENDPOINT);
 
   const accounts: Record<string, BundleAccount> = {
     [params.contractAddress]: contractAccount,
@@ -247,6 +254,7 @@ export async function buildOfflineApproveBundle(params: {
     minaNetwork: MINA_NETWORK,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
+    fee,
     accounts,
     events,
     proposal: params.proposal,
@@ -268,6 +276,7 @@ export async function buildOfflineExecuteBundle(params: {
   if (childAddr) fetches.push(fetchGraphQLAccount(childAddr));
   const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
   const events = await fetchAllEvents(params.contractAddress);
+  const fee = await resolveZkappFee(MINA_ENDPOINT);
 
   const accounts: Record<string, BundleAccount> = {
     [params.contractAddress]: contractAccount,
@@ -320,6 +329,7 @@ export async function buildOfflineExecuteBundle(params: {
     minaNetwork: MINA_NETWORK,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
+    fee,
     accounts,
     events,
     proposal: params.proposal,
