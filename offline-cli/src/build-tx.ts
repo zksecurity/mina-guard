@@ -885,6 +885,7 @@ export async function handleExecute(
   const isChildLifecycle = txType != null && CHILD_LIFECYCLE_TYPES.has(txType);
 
   const fee = resolveBundleFee(bundle);
+  log(`Fee: ${fee} nanomina (${fee / 1e9} MINA)`);
 
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);

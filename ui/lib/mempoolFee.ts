@@ -3,6 +3,11 @@
 // remove this TODO.
 const TOP_N = 12;
 
+// Mina spec minimum fee per account update, per mina-signer's
+// getAccountUpdateMinimumFee docstring ("0.001 according to the Mina spec").
+// 0.001 MINA = 1e6 nanomina.
+export const MIN_FEE_PER_AU = 1e6;
+
 // The daemon wraps each pooled command in a result object; the raw command
 // JSON (mina-signer wire format, fee in nanomina) lives under `zkappCommand`
 // — same convention as block `zkappCommands` and the sendZkapp response.
@@ -42,12 +47,14 @@ function median(sorted: number[]): number {
  *   1. Query pooledZkappCommands for fee + accountUpdates.
  *   2. Compute fee-per-account-update for each entry.
  *   3. Sort descending, take top TOP_N (= 12).
- *   4. Take the median fee-per-AU.
+ *   4. Take the median fee-per-AU, floored at MIN_FEE_PER_AU.
  *   5. Multiply by `accountUpdateCount` for the caller's tx.
  *
  * NOTE: median-of-top-N from the mempool reflects what is *waiting*, not what is
- * *clearing*. In a quiet mempool this can be near zero; the node's own min-fee
- * check is the only protection. Caller is responsible for any additional floor.
+ * *clearing*. In a quiet mempool the raw median can be near zero, so the per-AU
+ * rate is floored at the spec minimum, the result is always a fee the pool
+ * accepts for `accountUpdateCount` AUs. Callers remain responsible for any
+ * market-level floor (see resolveZkappFee).
  */
 export async function estimateZkappFee(
   graphqlEndpoint: string,
@@ -87,18 +94,14 @@ export async function estimateZkappFee(
   feePerAU.sort((a, b) => b - a);
   const top = feePerAU.slice(0, TOP_N);
   const medianPerAU = median([...top].sort((a, b) => a - b));
+  const flooredPerAU = Math.max(medianPerAU, MIN_FEE_PER_AU);
 
   return {
-    fee: Math.ceil(medianPerAU * accountUpdateCount),
-    feePerAU: medianPerAU,
+    fee: Math.ceil(flooredPerAU * accountUpdateCount),
+    feePerAU: flooredPerAU,
     sampleSize: top.length,
   };
 }
-
-// Mina spec minimum fee per account update, per mina-signer's
-// getAccountUpdateMinimumFee docstring ("0.001 according to the Mina spec").
-// 0.001 MINA = 1e6 nanomina.
-export const MIN_FEE_PER_AU = 1e6;
 
 // Flat fallback when the mempool is empty or the query fails, and the floor
 // under any mempool-derived estimate. 0.01 MINA covers 10 AUs at the spec
