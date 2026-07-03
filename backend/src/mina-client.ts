@@ -248,15 +248,27 @@ export async function discoverCandidateAddresses(
  * zkapp_verification_keys). If the archive schema shifts in a future Mina release,
  * this query needs revisiting.
  */
+export interface DiscoveryCandidate {
+  address: string;
+  /** Block height attributed to this address's discovery — used as the
+   *  contract's discoveredAtBlock so rescan windows are tight around the
+   *  deploy. The archive backend populates this with the actual on-chain
+   *  deploy block (MIN(blocks.height) from the SQL); the daemon backend
+   *  currently approximates it as the tick's chain tip (precise enough
+   *  for the rescan since bestChain's ~290-block horizon bounds the
+   *  imprecision). */
+  deployBlock: number;
+}
+
 export async function discoverCandidateAddressesFromArchive(
   pool: Pool,
   vkHash: string,
   fromHeight: number,
   toHeight: number,
-): Promise<string[]> {
-  const result = await pool.query<{ address: string }>(
+): Promise<DiscoveryCandidate[]> {
+  const result = await pool.query<{ address: string; deploy_block: string }>(
     `
-    SELECT DISTINCT pk.value AS address
+    SELECT pk.value AS address, MIN(b.height)::text AS deploy_block
     FROM zkapp_account_update_body zaub
     JOIN zkapp_updates zu ON zu.id = zaub.update_id
     JOIN zkapp_verification_keys vk ON vk.id = zu.verification_key_id
@@ -271,10 +283,11 @@ export async function discoverCandidateAddressesFromArchive(
     WHERE vkh.value = $1
       AND b.chain_status <> 'orphaned'
       AND b.height BETWEEN $2 AND $3
+    GROUP BY pk.value
     `,
     [vkHash, fromHeight, toHeight],
   );
-  return result.rows.map((r) => r.address);
+  return result.rows.map((r) => ({ address: r.address, deployBlock: Number(r.deploy_block) }));
 }
 
 /** Reads the current verification key hash for an account if present. */

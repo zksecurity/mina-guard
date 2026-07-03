@@ -55,7 +55,11 @@
 
     # Archive-node-api — also proxied across the network to the node-stack box.
     handle /trail/archive {
-        uri strip_prefix /trail
+        # The archive-node-api serves GraphQL only at its root "/", unlike the
+        # daemon (/graphql) and backend (/api). Stripping just "/trail" would
+        # forward "/archive" and the archive-node-api 404s on it. Rewrite the
+        # upstream path to "/" so o1js's archive queries reach the GraphQL root.
+        rewrite * /
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS"
         header Access-Control-Allow-Headers "Content-Type"
