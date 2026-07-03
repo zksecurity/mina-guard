@@ -65,8 +65,13 @@ jobs:
         run: cd offline-cli && bun test
         env:
           SKIP_PROOFS: '1'
-      - name: Build offline-cli binary
+      - name: Build offline-cli binary (linux-x64)
         run: cd offline-cli && bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/mina-guard-cli-linux-x64 --define 'process.versions.node=""'
+      - name: Smoke-test compiled binary (WASM loads without error)
+        run: |
+          output=$(offline-cli/dist/mina-guard-cli-linux-x64 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
 
   test-offline-cli-macos:
     timeout-minutes: 45
@@ -140,7 +145,7 @@ jobs:
           echo "VK hash drift check passed."
 
   test-offline-cli-windows:
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: windows-latest
     steps:
       - name: Install Bun
@@ -163,3 +168,13 @@ jobs:
         working-directory: offline-cli
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
         timeout-minutes: 20
+      - name: Build offline-cli binary (win32-x64)
+        working-directory: offline-cli
+        run: bun build --compile --target=bun-win32-x64 src/index.ts --outfile dist/mina-guard-cli-win32-x64 --define 'process.versions.node=""'
+      - name: Smoke-test compiled binary (WASM loads without error)
+        working-directory: offline-cli
+        shell: bash
+        run: |
+          output=$(./dist/mina-guard-cli-win32-x64.exe 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
