@@ -59,7 +59,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Must match the fee used by the web worker. */
-const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
+export const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
 
 export const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
 

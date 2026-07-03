@@ -392,6 +392,7 @@ describe('offline-cli', () => {
       expect(out).toContain(REAL_ADDR);
       expect(out).toContain('2.5 MINA');
       expect(out).toContain('Total');
+      expect(out).toContain('0.1 MINA'); // fee line, from ZKAPP_TX_FEE
       expect(out).toContain('testnet');
       expect(out).toContain(CONTRACT);
       expect(out).toContain(FEEPAYER);
@@ -422,6 +423,32 @@ describe('offline-cli', () => {
         expect(out).toContain('123456789'); // proposal hash
         expect(out).toContain(REAL_ADDR); // target owner from receivers[0]
       }
+    });
+
+    it('renders a setDelegate approve: empty receivers[0] as undelegate, real target as delegate-to', () => {
+      function delegateBundle(receiverAddr: string) {
+        return {
+          ...base(),
+          action: 'approve' as const,
+          minaNetwork: 'testnet' as const,
+          proposal: {
+            proposalHash: '987654321',
+            txType: 'setDelegate',
+            data: '0',
+            nonce: '9',
+            receivers: [{ address: receiverAddr, amount: '0' }],
+          },
+        };
+      }
+
+      const undelegated = renderBundleSummary(delegateBundle(EMPTY_PUBKEY_B58) as any);
+      expect(undelegated).toContain('undelegate (clear)');
+      expect(undelegated).not.toContain('(unknown)');
+
+      const delegated = renderBundleSummary(delegateBundle(REAL_ADDR) as any);
+      expect(delegated).toContain('Delegate to');
+      expect(delegated).toContain(REAL_ADDR);
+      expect(delegated).not.toContain('undelegate');
     });
 
     it('flags mainnet prominently', () => {

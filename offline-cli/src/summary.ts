@@ -17,6 +17,7 @@ import { openSync, readSync, closeSync } from 'fs';
 import {
   normalizeTxType,
   EMPTY_PUBKEY_B58,
+  ZKAPP_TX_FEE,
   type TxType,
   type OfflineBundle,
   type OfflineProposeBundle,
@@ -183,7 +184,8 @@ function renderHeader(
   }
   out.push(line('Contract', bundle.contractAddress));
   out.push(line('Fee payer', bundle.feePayerAddress));
-  out.push(line('Fee', '0.1 MINA'));
+  // TODO: change this to bundle fee once fee selection logic is in place
+  out.push(line('Fee', `${formatMina(String(ZKAPP_TX_FEE))} MINA`));
   if (extra.nonce != null && extra.nonce !== '') out.push(line('Nonce', extra.nonce));
   out.push(line('Memo', extra.memo && extra.memo.length ? extra.memo : '(none)'));
   if (extra.proposalHash) out.push(line('Proposal hash', extra.proposalHash));
@@ -246,7 +248,7 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
           ownerTarget: target0,
           threshold: p.data ?? null,
           delegate: target0,
-          undelegate: false,
+          undelegate: target0 === null && txType === 'setDelegate',
           childAddress: p.childAccount ?? exec?.childAddress ?? null,
           childOwners: exec?.childOwners ?? null,
           childThreshold: exec?.childThreshold ?? null,
