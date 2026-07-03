@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { RequestHandler } from 'express';
@@ -63,35 +62,56 @@ export async function startEmbeddedBackend(
   ]);
   const { prisma, loadConfig, MinaGuardIndexer, createApiRouter } = bundle;
 
-  if (freshDb) {
-    console.log(`[desktop] creating SQLite schema at ${opts.dbPath}`);
-    const schemaSql = readFileSync(opts.schemaSqlPath, 'utf8');
-    // Prisma's $executeRawUnsafe accepts multi-statement SQL on SQLite.
-    for (const statement of schemaSql.split(/;\s*\n/).map((s) => s.trim()).filter(Boolean)) {
-      await prisma.$executeRawUnsafe(statement);
+  let indexer: { start: () => Promise<void>; stop: () => void } | null = null;
+  try {
+    if (freshDb) {
+      console.log(`[desktop] creating SQLite schema at ${opts.dbPath}`);
+      const schemaSql = readFileSync(opts.schemaSqlPath, 'utf8');
+      // Prisma's $executeRawUnsafe accepts multi-statement SQL on SQLite.
+      for (const statement of schemaSql.split(/;\s*\n/).map((s) => s.trim()).filter(Boolean)) {
+        await prisma.$executeRawUnsafe(statement);
+      }
     }
+
+    await prisma.$connect();
+
+    const config = loadConfig();
+    indexer = new MinaGuardIndexer(config) as { start: () => Promise<void>; stop: () => void };
+    const runningIndexer = indexer;
+
+    const express = (expressMod as unknown as { default: typeof import('express') }).default ?? expressMod;
+    const cors = (corsMod as unknown as { default: typeof import('cors') }).default ?? corsMod;
+    const app = express();
+    app.use(cors());
+    app.use(express.json({ limit: '1mb' }));
+    app.use(createApiRouter(indexer, config));
+
+    await indexer.start();
+    console.log(`[desktop] backend embedded; DB=${opts.dbPath} mode=lite`);
+
+    return {
+      middleware: app as unknown as RequestHandler,
+      stop: async () => {
+        runningIndexer.stop();
+        await prisma.$disconnect();
+      },
+    };
+  } catch (err) {
+    // Leave no half-started state behind: the setup-window recovery flow may
+    // retry with corrected endpoints in this same process, reusing the cached
+    // bundle and its prisma instance.
+    try {
+      indexer?.stop();
+    } catch { /* best effort */ }
+    await Promise.resolve(prisma.$disconnect()).catch(() => {});
+    if (freshDb) {
+      // The DB did not exist when we started, so whatever exists now is a
+      // partial artifact of this failed attempt (possibly with an incomplete
+      // schema) — remove it so the next attempt bootstraps cleanly.
+      for (const suffix of ['', '-journal', '-wal', '-shm']) {
+        rmSync(opts.dbPath + suffix, { force: true });
+      }
+    }
+    throw err;
   }
-
-  await prisma.$connect();
-
-  const config = loadConfig();
-  const indexer = new MinaGuardIndexer(config);
-
-  const express = (expressMod as unknown as { default: typeof import('express') }).default ?? expressMod;
-  const cors = (corsMod as unknown as { default: typeof import('cors') }).default ?? corsMod;
-  const app = express();
-  app.use(cors());
-  app.use(express.json({ limit: '1mb' }));
-  app.use(createApiRouter(indexer, config));
-
-  await indexer.start();
-  console.log(`[desktop] backend embedded; DB=${opts.dbPath} mode=lite`);
-
-  return {
-    middleware: app as unknown as RequestHandler,
-    stop: async () => {
-      indexer.stop();
-      await prisma.$disconnect();
-    },
-  };
 }

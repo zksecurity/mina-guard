@@ -50,7 +50,10 @@ export default function NodeEndpointsModal({ initial, onClose }: Props) {
       // something went wrong.
       setSubmitting(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const raw = err instanceof Error ? err.message : String(err);
+      // ipcRenderer.invoke wraps rejections as
+      // "Error invoking remote method 'config:set-endpoints': Error: <message>".
+      setError(raw.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''));
       setSubmitting(false);
     }
   }

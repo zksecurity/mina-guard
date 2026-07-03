@@ -40,6 +40,12 @@ await build({
   ],
   sourcemap: true,
   logLevel: 'info',
+  // pg (pulled in via indexer.ts since the archive-postgres backend landed)
+  // is CommonJS; esbuild's CJS-to-ESM shim needs a real `require` in scope
+  // for its calls to node builtins (`require('events')` etc.).
+  banner: {
+    js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
+  },
   // Rewrites `import 'contracts'` → the inlined contracts source, because
   // contracts is NOT in the external list.
 });

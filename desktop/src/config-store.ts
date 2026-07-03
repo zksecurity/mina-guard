@@ -18,22 +18,76 @@ export function dbPath(): string {
   return join(app.getPath('userData'), 'minaguard.db');
 }
 
-/** Queries the Mina node for its network ID, falling back to URL heuristics. */
-export async function fetchNetworkId(minaEndpoint: string): Promise<NetworkId> {
+/** Turns a fetch/startup failure into a short human-readable reason. Undici
+ *  wraps the real network error ("getaddrinfo ENOTFOUND …", "connect
+ *  ECONNREFUSED …") in a generic "fetch failed" TypeError whose `cause` chain
+ *  holds the details, so unwrap it. */
+export function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return truncate(String(err));
+  if (err.name === 'TimeoutError' || err.name === 'AbortError') return 'connection timed out';
+  let message = err.message;
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur instanceof Error && cur.cause !== undefined; depth++) {
+    cur = cur.cause;
+    if (cur instanceof AggregateError && cur.errors.length > 0) cur = cur.errors[0];
+    if (cur instanceof Error && cur.message) message = cur.message;
+  }
+  return truncate(message);
+}
+
+function truncate(message: string): string {
+  return message.length > 500 ? `${message.slice(0, 500)}…` : message;
+}
+
+/** POSTs a GraphQL query and returns the response's `data`. Throws a
+ *  user-displayable error when the endpoint is unreachable or does not answer
+ *  like a GraphQL server. */
+async function probeGraphql(
+  label: string,
+  url: string,
+  query: string,
+): Promise<Record<string, unknown> | undefined> {
+  let res: Awaited<ReturnType<typeof fetch>>;
   try {
-    const res = await fetch(minaEndpoint, {
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: '{ networkID }' }),
-      signal: AbortSignal.timeout(5000),
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(10_000),
     });
-    const json = await res.json() as { data?: { networkID?: string } };
-    const raw = json.data?.networkID?.toLowerCase() ?? '';
-    if (raw.includes('mainnet')) return 'mainnet';
-    if (raw.includes('devnet')) return 'devnet';
-    if (raw.includes('testnet')) return 'testnet';
-  } catch { /* node unreachable, fall through */ }
-  // Fallback: guess from the URL
+  } catch (err) {
+    throw new Error(`${label} is unreachable: ${describeError(err)}`);
+  }
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error(`${label} did not return a GraphQL response (HTTP ${res.status})`);
+  }
+  if (typeof json !== 'object' || json === null || (!('data' in json) && !('errors' in json))) {
+    throw new Error(`${label} did not return a GraphQL response (HTTP ${res.status})`);
+  }
+  return (json as { data?: Record<string, unknown> }).data;
+}
+
+/** Verifies both endpoints actually answer GraphQL and detects the network ID
+ *  from the node. Throws with a user-displayable message when either endpoint
+ *  is unreachable — callers must not persist the endpoints in that case. URL
+ *  heuristics are used only when the node is reachable but does not expose
+ *  `networkID`; reachability itself is never guessed. */
+export async function verifyEndpoints(
+  minaEndpoint: string,
+  archiveEndpoint: string,
+): Promise<NetworkId> {
+  const [minaData] = await Promise.all([
+    probeGraphql('Mina endpoint', minaEndpoint, '{ networkID }'),
+    probeGraphql('Archive endpoint', archiveEndpoint, '{ __typename }'),
+  ]);
+  const raw = typeof minaData?.networkID === 'string' ? minaData.networkID.toLowerCase() : '';
+  if (raw.includes('mainnet')) return 'mainnet';
+  if (raw.includes('devnet')) return 'devnet';
+  if (raw.includes('testnet')) return 'testnet';
+  // Node reachable but no usable networkID — guess from the URL.
   const lower = minaEndpoint.toLowerCase();
   if (lower.includes('devnet')) return 'devnet';
   if (lower.includes('testnet') || lower.includes('lightnet') || lower.includes('localhost') || lower.includes('127.0.0.1')) {

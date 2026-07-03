@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { registerConfigIpc } from './config-ipc.js';
 import { handleAuroRoute } from './auro/router.js';
@@ -9,7 +9,8 @@ import { buildPickerScript } from './hid-picker.js';
 import { startEmbeddedBackend, type EmbeddedBackendHandle } from './backend-embed.js';
 import {
   deleteDatabase,
-  fetchNetworkId,
+  describeError,
+  verifyEndpoints,
   dbPath,
   readConfig,
   writeConfig,
@@ -57,14 +58,18 @@ function startNextStandalone(): Promise<void> {
       silent: true,
     });
 
+    let ready = false;
     nextChild.on('error', reject);
     nextChild.on('exit', (code) => {
       if (code !== 0 && code !== null) {
         console.error(`[desktop] next standalone exited with code ${code}`);
       }
+      // Dying before "Ready" would otherwise leave this promise pending
+      // forever and the app hung with no window.
+      if (!ready) {
+        reject(new Error(`UI server exited with code ${code ?? 'null'} before becoming ready`));
+      }
     });
-
-    let ready = false;
     const onData = (chunk: Buffer): void => {
       const text = chunk.toString();
       process.stdout.write(`[next] ${text}`);
@@ -85,7 +90,7 @@ async function startHttpServer(
 ): Promise<void> {
   await startNextStandalone();
 
-  createServer((req, res) => {
+  const server = createServer((req, res) => {
     if (handleAuroRoute(req, res)) return;
     // Express app is itself a (req, res, next) handler. If no /api/* or /health
     // route matches, Express calls next() and we fall through to the Next
@@ -111,15 +116,49 @@ async function startHttpServer(
       });
       req.pipe(upstream);
     });
-  }).listen(PORT, '127.0.0.1', () => {
-    console.log(`[desktop] server listening on http://127.0.0.1:${PORT}`);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(PORT, '127.0.0.1', () => {
+      console.log(`[desktop] server listening on http://127.0.0.1:${PORT}`);
+      resolve();
+    });
   });
 }
 
-/** Runs the first-run setup flow. Resolves with the saved config and a
- *  `close()` callback the caller invokes after the main window is ready, or
- *  null if the user cancelled (in which case the window is already closed). */
-function runFirstRunFlow(): Promise<{ config: UserConfig; close: () => void } | null> {
+/** Boots everything the main window needs: the embedded backend (which talks
+ *  to the configured endpoints) and the local HTTP server serving the UI.
+ *  Throws — with services possibly half-started — when the endpoints are
+ *  unusable; callers recover via stopRunningServices() + the setup window. */
+async function startServices(config: UserConfig): Promise<void> {
+  backend = await startEmbeddedBackend({
+    dbPath: dbPath(),
+    minaEndpoint: config.minaEndpoint,
+    archiveEndpoint: config.archiveEndpoint,
+    schemaSqlPath,
+    backendBundlePath,
+  });
+  await startHttpServer(backend);
+}
+
+/** Runs the setup flow: on first run seeded with defaults, and as the recovery
+ *  path — seeded with the saved endpoints plus the startup error — when the
+ *  app failed to start. Saving verifies the endpoints, persists them, and
+ *  starts the backend while the window is still up, so failures surface
+ *  inline and the user can correct the endpoints and retry. Resolves with the
+ *  running config and a `close()` callback the caller invokes after the main
+ *  window is ready, or null if the user cancelled (in which case the window
+ *  is already closed). */
+function runSetupFlow(
+  initial: { minaEndpoint: string; archiveEndpoint: string },
+  startupError: string | null,
+): Promise<{ config: UserConfig; close: () => void } | null> {
+  setupState = {
+    minaEndpoint: initial.minaEndpoint,
+    archiveEndpoint: initial.archiveEndpoint,
+    error: startupError,
+  };
   return new Promise((resolve) => {
     const win = new BrowserWindow({
       width: 640,
@@ -136,15 +175,37 @@ function runFirstRunFlow(): Promise<{ config: UserConfig; close: () => void } | 
       resolve(value);
     };
 
-    firstRunResolvers = {
+    setupResolvers = {
       save: async (cfg) => {
-        const networkId = await fetchNetworkId(cfg.minaEndpoint);
+        // Reject unreachable endpoints before persisting anything: a bad URL
+        // must never overwrite a working config or wipe the database.
+        const networkId = await verifyEndpoints(cfg.minaEndpoint, cfg.archiveEndpoint);
         const full: UserConfig = { ...cfg, networkId };
+        // Tear down whatever an earlier failed attempt left half-running
+        // before touching the database or starting again.
+        await stopRunningServices();
+        const previous = readConfig();
+        if (
+          previous
+          && (previous.minaEndpoint !== full.minaEndpoint
+            || previous.archiveEndpoint !== full.archiveEndpoint)
+        ) {
+          // Same policy as the in-app settings flow: the local index is only
+          // meaningful for the endpoints it was built against.
+          deleteDatabase();
+        }
         writeConfig(full);
+        try {
+          await startServices(full);
+        } catch (err) {
+          console.error('[desktop] startup failed', err);
+          await stopRunningServices();
+          throw new Error(`Startup failed: ${describeError(err)}`);
+        }
+        currentConfig = full;
         // Hide the setup window but keep it alive until the main window is
         // ready. Closing it here would briefly leave zero windows open,
-        // tripping the `window-all-closed` → `app.quit()` handler while the
-        // backend is still starting.
+        // tripping the `window-all-closed` → `app.quit()` handler.
         win.hide();
         settle({
           config: full,
@@ -160,7 +221,7 @@ function runFirstRunFlow(): Promise<{ config: UserConfig; close: () => void } | 
     };
 
     win.on('closed', () => {
-      firstRunResolvers = null;
+      setupResolvers = null;
       settle(null);
     });
 
@@ -168,8 +229,14 @@ function runFirstRunFlow(): Promise<{ config: UserConfig; close: () => void } | 
   });
 }
 
-let firstRunResolvers: {
-  save: (cfg: { minaEndpoint: string; archiveEndpoint: string }) => void;
+let setupState: {
+  minaEndpoint: string;
+  archiveEndpoint: string;
+  error: string | null;
+} | null = null;
+
+let setupResolvers: {
+  save: (cfg: { minaEndpoint: string; archiveEndpoint: string }) => Promise<void>;
   cancel: () => void;
 } | null = null;
 
@@ -183,14 +250,26 @@ async function stopRunningServices(): Promise<void> {
   } catch (err) {
     console.error('[desktop] backend shutdown failed', err);
   }
-  if (child && !child.killed) child.kill();
+  if (child && !child.killed) {
+    // Wait (briefly) for the child to actually exit so an immediate in-process
+    // restart doesn't race it for the UI port.
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill();
+    await Promise.race([
+      exited,
+      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+    ]);
+  }
 }
 
 async function changeEndpointsAndRelaunch(cfg: {
   minaEndpoint: string;
   archiveEndpoint: string;
 }): Promise<void> {
-  const networkId = await fetchNetworkId(cfg.minaEndpoint);
+  // Reject unreachable endpoints before persisting anything: a bad URL must
+  // never overwrite a working config or wipe the database. The rejection
+  // propagates to the settings modal, which shows it inline.
+  const networkId = await verifyEndpoints(cfg.minaEndpoint, cfg.archiveEndpoint);
   const next: UserConfig = { ...cfg, networkId };
   writeConfig(next);
   await stopRunningServices();
@@ -203,41 +282,67 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
   registerConfigIpc({
     getConfig: () => currentConfig,
-    getDefaults: () => ({
+    getSetupState: () => setupState ?? {
       minaEndpoint: DEFAULT_MINA_ENDPOINT,
       archiveEndpoint: DEFAULT_ARCHIVE_ENDPOINT,
-    }),
-    onFirstRunSave: async (cfg) => {
-      firstRunResolvers?.save(cfg);
+      error: null,
     },
-    onFirstRunCancel: () => {
-      firstRunResolvers?.cancel();
+    onSetupSave: (cfg) => {
+      if (!setupResolvers) throw new Error('Setup is not in progress');
+      return setupResolvers.save(cfg);
+    },
+    onSetupCancel: () => {
+      setupResolvers?.cancel();
     },
     onChangeEndpoints: changeEndpointsAndRelaunch,
   });
 
-  currentConfig = readConfig();
+  const savedConfig = readConfig();
   let closeSetupWindow: (() => void) | null = null;
-  if (!currentConfig) {
-    const result = await runFirstRunFlow();
+
+  if (savedConfig) {
+    currentConfig = savedConfig;
+    try {
+      await startServices(savedConfig);
+    } catch (err) {
+      // The saved config no longer works (endpoint down, moved, or persisted
+      // with a typo). Instead of dying headless with an unhandled rejection,
+      // reopen the setup window seeded with the saved values and the failure
+      // so the endpoints can be fixed in-app.
+      console.error('[desktop] startup with saved config failed', err);
+      await stopRunningServices();
+      const result = await runSetupFlow(savedConfig, `Startup failed: ${describeError(err)}`);
+      if (!result) {
+        app.quit();
+        return;
+      }
+      closeSetupWindow = result.close;
+    }
+  } else {
+    const result = await runSetupFlow(
+      { minaEndpoint: DEFAULT_MINA_ENDPOINT, archiveEndpoint: DEFAULT_ARCHIVE_ENDPOINT },
+      null,
+    );
     if (!result) {
       app.quit();
       return;
     }
-    currentConfig = result.config;
     closeSetupWindow = result.close;
   }
 
-  backend = await startEmbeddedBackend({
-    dbPath: dbPath(),
-    minaEndpoint: currentConfig.minaEndpoint,
-    archiveEndpoint: currentConfig.archiveEndpoint,
-    schemaSqlPath,
-    backendBundlePath,
-  });
+  // Services are up at this point — either started directly from the saved
+  // config, or by the setup window's save flow.
+  openMainWindow(closeSetupWindow);
+}).catch((err) => {
+  // Last-resort backstop for anything the setup-window recovery can't reach
+  // (e.g. broken install). Without it a startup failure is an unhandled
+  // rejection and the app hangs with no window at all.
+  console.error('[desktop] fatal startup error', err);
+  dialog.showErrorBox('MinaGuard failed to start', describeError(err));
+  app.exit(1);
+});
 
-  await startHttpServer(backend);
-
+function openMainWindow(closeSetupWindow: (() => void) | null): void {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -284,7 +389,7 @@ app.whenReady().then(async () => {
   });
 
   win.loadURL(`http://127.0.0.1:${PORT}`);
-});
+}
 
 app.on('window-all-closed', () => {
   app.quit();

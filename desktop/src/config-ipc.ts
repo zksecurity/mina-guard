@@ -2,14 +2,18 @@ import { ipcMain } from 'electron';
 import type { UserConfig } from './config-store.js';
 
 export interface ConfigIpcContext {
-  /** Current effective config (must be non-null after first-run completes). */
+  /** Current effective config (non-null once the backend is running). */
   getConfig: () => UserConfig | null;
-  /** Defaults to prefill the first-run form (mainnet endpoints). */
-  getDefaults: () => { minaEndpoint: string; archiveEndpoint: string };
-  /** Called when the setup window submits its form. */
-  onFirstRunSave: (cfg: { minaEndpoint: string; archiveEndpoint: string }) => Promise<void>;
+  /** Values to prefill the setup form with (defaults on first run, the saved
+   *  config plus the startup error when recovering from a failed start). */
+  getSetupState: () => { minaEndpoint: string; archiveEndpoint: string; error: string | null };
+  /** Called when the setup window submits its form. Resolves once the backend
+   *  is up on the new endpoints; rejects with a user-displayable error when
+   *  validation or startup fails, so the window shows it inline and the user
+   *  can correct the endpoints and retry. */
+  onSetupSave: (cfg: { minaEndpoint: string; archiveEndpoint: string }) => Promise<void>;
   /** Called when the user closes the setup window without saving. */
-  onFirstRunCancel: () => void;
+  onSetupCancel: () => void;
   /** Called from Settings: persist new endpoints, wipe the DB, relaunch the app. */
   onChangeEndpoints: (cfg: { minaEndpoint: string; archiveEndpoint: string }) => Promise<void>;
 }
@@ -54,17 +58,17 @@ export function registerConfigIpc(ctx: ConfigIpcContext): void {
     event.returnValue = ctx.getConfig();
   });
 
-  ipcMain.on('config:get-defaults-sync', (event) => {
-    event.returnValue = ctx.getDefaults();
+  ipcMain.on('config:get-setup-state-sync', (event) => {
+    event.returnValue = ctx.getSetupState();
   });
 
-  ipcMain.handle('config:first-run-save', async (_event, cfg) => {
+  ipcMain.handle('config:setup-save', async (_event, cfg) => {
     const parsed = parseEndpointsPayload(cfg);
-    await ctx.onFirstRunSave(parsed);
+    await ctx.onSetupSave(parsed);
   });
 
-  ipcMain.handle('config:first-run-cancel', () => {
-    ctx.onFirstRunCancel();
+  ipcMain.handle('config:setup-cancel', () => {
+    ctx.onSetupCancel();
   });
 
   ipcMain.handle('config:set-endpoints', async (_event, cfg) => {

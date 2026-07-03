@@ -63,7 +63,7 @@
       cursor: pointer;
     }
     .preset:hover { color: #fff; border-color: var(--green); }
-    .error { color: var(--red); font-size: 0.8125rem; min-height: 1.25rem; margin-top: 1rem; }
+    .error { color: var(--red); font-size: 0.8125rem; min-height: 1.25rem; margin-top: 1rem; overflow-wrap: anywhere; }
     .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
     button.primary {
       flex: 1;
@@ -129,9 +129,16 @@
     const saveBtn = document.getElementById('save');
     const cancelBtn = document.getElementById('cancel');
 
-    const defaults = window.setup.getDefaults();
-    minaInput.value = defaults.minaEndpoint;
-    archiveInput.value = defaults.archiveEndpoint;
+    // First run: defaults to confirm or override. Recovery (the app failed to
+    // start with the saved endpoints): the saved values plus the startup error.
+    const state = window.setup.getState();
+    minaInput.value = state.minaEndpoint;
+    archiveInput.value = state.archiveEndpoint;
+    if (state.error) {
+      document.querySelector('.subtitle').textContent =
+        'MinaGuard could not start with the saved endpoints. Correct them below and save to retry.';
+      errorEl.textContent = state.error;
+    }
 
     document.querySelectorAll('.preset').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -153,6 +160,13 @@
       }
     }
 
+    // ipcRenderer.invoke wraps rejections as
+    // "Error invoking remote method 'config:setup-save': Error: <message>".
+    function displayError(err) {
+      const raw = String((err && err.message) || err);
+      return raw.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+    }
+
     saveBtn.addEventListener('click', async () => {
       errorEl.textContent = '';
       const mina = minaInput.value.trim();
@@ -163,12 +177,18 @@
       const archiveErr = validateUrl(archive);
       if (archiveErr) { errorEl.textContent = `Archive endpoint: ${archiveErr}`; return; }
 
+      // save() resolves only once the backend is fully up on these endpoints;
+      // a rejection means validation or startup failed and it's safe to retry.
       saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      saveBtn.textContent = 'Connecting…';
       try {
         await window.setup.save({ minaEndpoint: mina, archiveEndpoint: archive });
       } catch (err) {
-        errorEl.textContent = err?.message || String(err);
+        errorEl.textContent = displayError(err);
         saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+        saveBtn.textContent = 'Save and continue';
       }
     });
 
