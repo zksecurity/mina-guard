@@ -1,5 +1,17 @@
 #!/usr/bin/env bun
 import './wasm-shim.js';
+import { isMainThread } from 'worker_threads';
+
+// o1js spawns WASM workers by re-running this binary. In worker mode we must
+// import node-backend.js so its !isMainThread block runs (posts ready, then
+// blocks in wbg_rayon_start_worker until the thread pool is done). We must
+// NOT run CLI code — workers have no CLI args and would print Usage and exit.
+if (!isMainThread) {
+  await import(
+    '../../node_modules/o1js/dist/node/bindings/js/node/node-backend.js'
+  );
+  process.exit(0);
+}
 // ---------------------------------------------------------------------------
 // mina-guard-cli — air-gapped CLI for building, proving, and signing
 // Mina Guard multisig transactions.
@@ -18,6 +30,7 @@ import './wasm-shim.js';
 import { readFileSync } from 'fs';
 import { handlePropose, handleApprove, handleExecute } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
+import { renderBundleSummary, confirmOrExit } from './summary.js';
 
 function log(msg: string) {
   process.stderr.write(`[offline-cli] ${msg}\n`);
@@ -30,15 +43,22 @@ function fatal(msg: string): never {
 
 // -- Arg parsing ------------------------------------------------------------
 
-const [bundlePath] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const bundlePath = args.find((a) => !a.startsWith('-'));
+const assumeYes =
+  process.env.MINA_GUARD_ASSUME_YES === '1' ||
+  args.includes('--yes') ||
+  args.includes('-y');
 const rawKey = process.env.MINA_PRIVATE_KEY;
 
 if (!bundlePath || !rawKey) {
   fatal(
-    'Usage: MINA_PRIVATE_KEY=EKE... mina-guard-cli <bundle.json> [> signed.json]\n' +
+    'Usage: MINA_PRIVATE_KEY=EKE... mina-guard-cli <bundle.json> [--yes] [> signed.json]\n' +
     '\n' +
     '  bundle.json        Path to the request bundle exported from the Mina Guard UI\n' +
     '  MINA_PRIVATE_KEY   Mina private key (base58, starts with EKE...)\n' +
+    '  --yes, -y          Skip the interactive sign confirmation\n' +
+    '                     (also via MINA_GUARD_ASSUME_YES=1)\n' +
     '\n' +
     'Output (signed transaction JSON) is written to stdout.\n' +
     'Redirect to a file:  ... mina-guard-cli bundle.json > signed.json',
@@ -67,6 +87,12 @@ if (bundle.version !== 1) {
 // -- Dispatch ---------------------------------------------------------------
 
 async function main() {
+  // Show the operator exactly what they are about to sign, and (on a real
+  // terminal) require explicit confirmation — before any expensive
+  // compile/prove/sign work and before touching the private key.
+  const summary = renderBundleSummary(bundle);
+  confirmOrExit(summary, { assumeYes, stderrIsTty: !!process.stderr.isTTY }, log);
+
   let result: unknown;
 
   switch (bundle.action) {
