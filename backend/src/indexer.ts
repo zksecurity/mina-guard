@@ -1169,6 +1169,10 @@ export class MinaGuardIndexer {
             data: { lastExecuteError: result.reason ?? 'Execution transaction failed on-chain' },
           });
         } else if (
+          // Only mark dropped when BOTH lookups positively succeeded: a genuine
+          // 'pending' (not 'unknown' → bestChain lookup failed) AND a non-null
+          // mempool set. Either lookup failing leaves the tx untouched so a
+          // transient error can't misclassify an included tx as dropped.
           result.status === 'pending' &&
           submissionAgeMs(proposal) > DROPPED_TX_GRACE_MS &&
           mempoolHashes !== null &&
@@ -1189,6 +1193,9 @@ export class MinaGuardIndexer {
             data: { lastApproveError: result.reason ?? 'Approval transaction failed on-chain' },
           });
         } else if (
+          // See execute branch above: both lookups must positively succeed
+          // ('pending' not 'unknown', and a non-null mempool set) before we
+          // treat the tx as dropped.
           result.status === 'pending' &&
           submissionAgeMs(proposal) > DROPPED_TX_GRACE_MS &&
           mempoolHashes !== null &&
