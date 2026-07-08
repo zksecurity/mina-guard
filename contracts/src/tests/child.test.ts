@@ -7,11 +7,12 @@ import {
   Poseidon,
   PrivateKey,
   PublicKey,
+  Signature,
   UInt64,
 } from 'o1js';
 import { MinaGuard, Receiver, SetupOwnersInput, TransactionProposal } from '../MinaGuard.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
-import { EMPTY_MERKLE_MAP_ROOT, EXECUTED_MARKER, TxType, Destination } from '../constants.js';
+import { EMPTY_MERKLE_MAP_ROOT, EXECUTED_MARKER, PROPOSED_MARKER, TxType, Destination } from '../constants.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -245,6 +246,88 @@ describe('MinaGuard - Child Lifecycle', () => {
         await txn.prove();
         await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Child config mismatch');
+    });
+
+    it('rejects execute with a config other than the one reserved (config-swap attack)', async () => {
+      // Attack: reserve a benign config (what events/UI display) while the
+      // approved proposal.data commits to a malicious config the executor then
+      // supplies. The old `data == H(executor owners)` check passes; the
+      // reservedConfigHash bind must reject it.
+      const benignOwners = parentCtx.owners.map((o) => o.pub);       // config B — displayed
+      const maliciousOwners = [                                       // config A — approved+executed
+        PrivateKey.random().toPublicKey(),
+        PrivateKey.random().toPublicKey(),
+      ];
+      const maliciousCommitment = computeOwnerChain(maliciousOwners);
+
+      // Proposal.data commits to the MALICIOUS config; honest owners approve it.
+      const maliciousProposal = createCreateChildProposal(
+        childAddress,
+        maliciousCommitment,
+        Field(2),
+        Field(maliciousOwners.length),
+        Field(0),
+        Field(0),
+        parentCtx.zkAppAddress,
+        Field(0),
+        parentCtx.networkId,
+      );
+      const proposalHash = maliciousProposal.hash();
+
+      // Tx 1: deploy child + reserve the BENIGN config + propose the malicious one.
+      const proposer = parentCtx.owners[0];
+      const ownerWitness = makeOwnerWitness(parentCtx.owners.map((o) => o.pub));
+      const sig = Signature.create(proposer.key, [proposalHash]);
+      const nullifierWitness = parentCtx.nullifierStore.getWitness(proposalHash, proposer.pub);
+      const approvalWitness = parentCtx.approvalStore.getWitness(proposalHash);
+      const parentContract = parentCtx.zkApp;
+
+      const tx1 = await Mina.transaction(proposer.pub, async () => {
+        AccountUpdate.fundNewAccount(proposer.pub);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          proposalHash,
+          Field(2),
+          Field(benignOwners.length),
+          new SetupOwnersInput({ owners: toFixedSetupOwners(benignOwners) }),
+        );
+        await parentContract.propose(
+          maliciousProposal,
+          ownerWitness,
+          proposer.pub,
+          sig,
+          nullifierWitness,
+          approvalWitness,
+        );
+      });
+      await tx1.prove();
+      await tx1.sign([proposer.key, childKey]).send();
+      parentCtx.nullifierStore.nullify(proposalHash, proposer.pub);
+      parentCtx.approvalStore.setCount(proposalHash, PROPOSED_MARKER.add(1));
+
+      // Approve to threshold with a second honest owner.
+      await approveTransaction(parentCtx, maliciousProposal, 1);
+
+      const parentApprovalCount = parentCtx.approvalStore.getCount(proposalHash);
+      const parentApprovalWitness = parentCtx.approvalStore.getWitness(proposalHash);
+
+      // Execute with the MALICIOUS owners: data == H(malicious) passes the first
+      // check, but reservedConfigHash (benign) != H(malicious) must revert here.
+      await expect(async () => {
+        const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+          await childZkApp.executeSetupChild(
+            Field(2),
+            Field(maliciousOwners.length),
+            new SetupOwnersInput({ owners: toFixedSetupOwners(maliciousOwners) }),
+            maliciousProposal,
+            parentApprovalWitness,
+            parentApprovalCount,
+          );
+        });
+        await txn.prove();
+        await txn.sign([parentCtx.deployerKey]).send();
+      }).toThrow('Executed config must match reserved child config');
     });
 
     it('rejects grandchild creation (hierarchy capped at two levels)', async () => {
