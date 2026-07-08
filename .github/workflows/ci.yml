@@ -100,6 +100,22 @@ jobs:
       - name: Build offline-cli binary (darwin-arm64)
         working-directory: offline-cli
         run: bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/mina-guard-cli-darwin-arm64 --define 'process.versions.node=""'
+      - name: Code-sign binary (JIT entitlement required for WASM)
+        working-directory: offline-cli
+        run: |
+          cat > /tmp/entitlements.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key>
+            <true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          codesign -s - --force --entitlements /tmp/entitlements.plist dist/mina-guard-cli-darwin-arm64
       - name: Smoke-test compiled binary (WASM loads without error)
         working-directory: offline-cli
         run: |
