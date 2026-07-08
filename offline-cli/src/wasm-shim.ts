@@ -45,12 +45,15 @@ nodeFs.readFileSync = function (p, ...args) {
 // can trace and embed, and which is per-thread in worker_threads so each
 // thread gets a fresh evaluation). Write a CJS stub to a real temp-dir path
 // that calls this thunk, and redirect Module._resolveFilename to that stub.
-// Belt-and-suspenders: also patch module.createRequire so that the patchedReq
-// function returned to node-backend.js intercepts the kimchi_wasm.cjs load
-// and calls the thunk directly.
 //
 // The thunk is stored in global so the temp-file stub (loaded from real disk)
 // can reach it — global is shared within a single thread's runtime.
+//
+// NOTE: do NOT also patch module.createRequire. Bun calls createRequire
+// internally when bridging ESM → CJS imports (e.g. `await import('*.cjs')`).
+// Returning a wrapper function without the standard .resolve/.cache properties
+// breaks that interop and causes unrelated CJS modules (like o1js_node.bc.cjs)
+// to fail with "Cannot find module '...' from ''".
 
 global.__kimchiRequire = function () {
   return require(
@@ -65,26 +68,10 @@ nodeFs.writeFileSync(_kimchiStubPath, "module.exports = global.__kimchiRequire()
 
 const _nodeModule = require("module");
 
-// Approach A: intercept module.createRequire.
-// Works when node-backend.js's `import { createRequire } from 'module'` reads
-// from the live module namespace at evaluation time (not a bundler snapshot).
-const _origCreateRequire = _nodeModule.createRequire;
-if (typeof _origCreateRequire === "function") {
-  _nodeModule.createRequire = function (url) {
-    const req = _origCreateRequire(url);
-    return function patchedReq(id) {
-      if (typeof id === "string" && id.endsWith("kimchi_wasm.cjs")) {
-        return global.__kimchiRequire();
-      }
-      return req(id);
-    };
-  };
-}
-
-// Approach B: intercept Module._resolveFilename.
-// Only redirect relative requests (the ones from node-backend.js) to avoid a
-// circular loop if the stub itself ever requires kimchi_wasm.cjs by an
-// absolute path.
+// Intercept Module._resolveFilename so that any CJS require() for
+// kimchi_wasm.cjs (relative paths only, to avoid a circular loop when the
+// stub itself is loaded) returns the real-filesystem stub instead of a
+// nonexistent $bunfs path.
 const _origResolveFilename = _nodeModule._resolveFilename;
 _nodeModule._resolveFilename = function (request, parent, isMain, options) {
   if (
