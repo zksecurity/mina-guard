@@ -38,6 +38,7 @@ const standaloneRoot = app.isPackaged
   : join(import.meta.dirname, '..', 'ui-standalone');
 const nextServerEntry = join(standaloneRoot, 'ui', 'server.js');
 const schemaSqlPath = join(import.meta.dirname, 'assets', 'schema.sql');
+const vkHashPath = join(import.meta.dirname, 'assets', '.vk-hash');
 const setupHtmlPath = join(import.meta.dirname, 'assets', 'setup.html');
 const preloadPath = join(import.meta.dirname, 'preload.js');
 const setupPreloadPath = join(import.meta.dirname, 'preload-setup.js');
@@ -137,6 +138,7 @@ async function startServices(config: UserConfig): Promise<void> {
     minaEndpoint: config.minaEndpoint,
     archiveEndpoint: config.archiveEndpoint,
     schemaSqlPath,
+    vkHashPath,
     backendBundlePath,
   });
   await startHttpServer(backend);

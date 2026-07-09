@@ -592,6 +592,22 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
         return;
       }
+      // Reject contracts deployed with a different MinaGuard release: their VK
+      // won't match this app's, so any proof the app later generates would be
+      // rejected on-chain (Pickles dlog_check). Better to fail the add now with
+      // a clear reason than track a vault that can never be executed. Mirrors
+      // the full-mode discovery guard (indexer.ts processCandidateAddresses).
+      // No-op when minaguardVkHash is unset (older builds / missing .vk-hash).
+      if (
+        config?.minaguardVkHash &&
+        verificationKeyHash !== config.minaguardVkHash
+      ) {
+        res.status(400).json({
+          error: 'Contract verification key does not match this app version. '
+            + 'It was likely deployed with a different MinaGuard release.',
+        });
+        return;
+      }
     }
 
     // Safety margin on the default path: the UI calls subscribe right

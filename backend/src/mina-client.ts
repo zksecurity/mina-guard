@@ -127,15 +127,25 @@ export async function fetchGenesisConstants(
 
 /** Fetches latest block height from archive node to stay aligned with event availability. */
 export async function fetchLatestBlockHeight(config: BackendConfig): Promise<number> {
+  // Read the tip height from the daemon's bestChain. The previous
+  // `networkState { maxBlockHeight }` query targeted the archive endpoint, but
+  // that field is part of the *daemon* schema — the archive-node-api rejects it
+  // with a generic "Unexpected error.", which wedged the whole indexer tip
+  // check. bestChain.consensusState.blockHeight is what the daemon actually
+  // exposes (and what fetchBestChainHeaders already relies on).
   const query = `{
-    networkState {
-      maxBlockHeight { pendingMaxBlockHeight }
+    bestChain(maxLength: 1) {
+      protocolState {
+        consensusState { blockHeight }
+      }
     }
   }`;
   const response = await graphqlRequest<{
-    networkState?: { maxBlockHeight?: { pendingMaxBlockHeight?: number } };
-  }>(query, config.archiveEndpoint, config.archiveFallbackEndpoint);
-  const raw = response.networkState?.maxBlockHeight?.pendingMaxBlockHeight;
+    bestChain?: Array<{
+      protocolState?: { consensusState?: { blockHeight?: string | number } };
+    }>;
+  }>(query, config.minaEndpoint, config.minaFallbackEndpoint);
+  const raw = response.bestChain?.[0]?.protocolState?.consensusState?.blockHeight;
   return Number(raw ?? '0');
 }
 

@@ -2248,7 +2248,7 @@
 
     "node-gyp/semver": ["semver@7.7.4", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA=="],
 
-    "offline-cli/mina-signer": ["mina-signer@file:ui/deps/o1js/src/mina-signer", { "dependencies": { "@noble/hashes": "^1.7.1", "blakejs": "^1.2.1" }, "devDependencies": { "pkg-pr-new": "^0.0.9" } }],
+    "offline-cli/mina-signer": ["mina-signer@file:ui/deps/o1js/src/mina-signer", { "dependencies": { "blakejs": "^1.2.1", "js-sha256": "^0.9.0" }, "devDependencies": { "pkg-pr-new": "^0.0.9" } }],
 
     "path-scurry/lru-cache": ["lru-cache@10.4.3", "", {}, "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ=="],
 
@@ -2304,7 +2304,7 @@
 
     "ui/@types/node": ["@types/node@20.19.37", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-8kzdPJ3FsNsVIurqBs7oodNnCEVbni9yUEkaHbgptDACOPW04jimGagZ51E6+lXUwJjgnBw+hyko/lkFWCldqw=="],
 
-    "ui/mina-signer": ["mina-signer@file:ui/deps/o1js/src/mina-signer", { "dependencies": { "@noble/hashes": "^1.7.1", "blakejs": "^1.2.1" }, "devDependencies": { "pkg-pr-new": "^0.0.9" } }],
+    "ui/mina-signer": ["mina-signer@file:ui/deps/o1js/src/mina-signer", { "dependencies": { "blakejs": "^1.2.1", "js-sha256": "^0.9.0" }, "devDependencies": { "pkg-pr-new": "^0.0.9" } }],
 
     "zip-stream/archiver-utils": ["archiver-utils@3.0.4", "", { "dependencies": { "glob": "^7.2.3", "graceful-fs": "^4.2.0", "lazystream": "^1.0.0", "lodash.defaults": "^4.2.0", "lodash.difference": "^4.5.0", "lodash.flatten": "^4.4.0", "lodash.isplainobject": "^4.0.6", "lodash.union": "^4.6.0", "normalize-path": "^3.0.0", "readable-stream": "^3.6.0" } }, "sha512-KVgf4XQVrTjhyWmx6cte4RxonPLR9onExufI1jhvw/MQ4BB6IsZD5gT8Lq+u/+pRkWna/6JoHpiQioaqFP5Rzw=="],
 

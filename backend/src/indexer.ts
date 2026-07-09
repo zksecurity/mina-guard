@@ -251,7 +251,13 @@ export class MinaGuardIndexer {
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
     } catch (error) {
-      this.status.lastError = error instanceof Error ? error.message : 'Unknown indexer error';
+      // Log the raw thrown value before stringifying: o1js and some driver
+      // paths throw non-Error values (plain strings/objects), which otherwise
+      // collapse to the useless "Unknown indexer error" with no stack.
+      console.error('[indexer] tick failed:', error);
+      this.status.lastError = error instanceof Error
+        ? error.message
+        : `Non-Error thrown by indexer tick: ${typeof error === 'string' ? error : JSON.stringify(error)}`;
     }
   }
 

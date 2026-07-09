@@ -17,6 +17,13 @@ export interface EmbeddedBackendOptions {
   /** Path to the bundled schema.sql used to bootstrap a fresh SQLite file. */
   schemaSqlPath: string;
   /**
+   * Path to the bundled contracts/.vk-hash (canonical MinaGuard verification-key
+   * hash). Read into MINAGUARD_VK_HASH so the subscribe route can reject
+   * contracts built with a different MinaGuard release. Optional: when absent or
+   * unparseable, the VK match check becomes a no-op (older behavior).
+   */
+  vkHashPath?: string;
+  /**
    * Absolute path to the esbuild-produced backend bundle (a single .js file
    * exporting prisma/loadConfig/MinaGuardIndexer/createApiRouter). Same path
    * in dev and packaged builds — sits under packaging-stage/backend-bundle.js
@@ -47,6 +54,22 @@ export async function startEmbeddedBackend(
   process.env.MINA_ENDPOINT = opts.minaEndpoint;
   process.env.ARCHIVE_ENDPOINT = opts.archiveEndpoint;
   process.env.INDEX_START_HEIGHT = String(opts.indexStartHeight ?? 0);
+  // Canonical MinaGuard VK hash → MINAGUARD_VK_HASH, so the subscribe route can
+  // reject contracts from a different release. The file (contracts/.vk-hash) is
+  // a comment header followed by a bare decimal number; strip '#' lines and all
+  // whitespace, matching deploy/deploy-trail.sh. Left unset if the file is
+  // missing or parses empty — the VK match check then no-ops rather than the
+  // backend failing to start.
+  if (opts.vkHashPath && existsSync(opts.vkHashPath)) {
+    const vkHash = readFileSync(opts.vkHashPath, 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('')
+      .replace(/\s/g, '');
+    if (vkHash) {
+      process.env.MINAGUARD_VK_HASH = vkHash;
+    }
+  }
   // loadConfig() requireEnv's DATABASE_URL, MINA_ENDPOINT, ARCHIVE_ENDPOINT.
   // All set above.
 
