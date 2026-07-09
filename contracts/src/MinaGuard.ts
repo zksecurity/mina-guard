@@ -256,6 +256,10 @@ export class MinaGuard extends SmartContract {
   @state(Field) parentNonce = State<Field>();
   @state(Field) childExecutionRoot = State<Field>();
   @state(Field) childMultiSigEnabled = State<Field>();
+  // For a CREATE_CHILD child: the config hash reserveForParent() committed from
+  // the emitted owner set. propose() binds the parent-approved proposal.data to
+  // THIS value so the config owners sign == the config displayed via events.
+  @state(Field) reservedConfigHash = State<Field>();
 
   events = {
     deployed: DeployEvent,
@@ -760,6 +764,14 @@ export class MinaGuard extends SmartContract {
     assertCoherentSetupOwners(initialOwners.owners, numOwners);
     const ownersCommitment = computeSetupOwnersChain(initialOwners.owners, numOwners);
 
+    // Persist the config hash over the SAME on-chain-computed commitment the
+    // events below publish. executeSetupChild() binds the initialized config to
+    // this, so what gets deployed can't drift from what these events display.
+    // Write-once: reserve is gated by parent == empty (above), so it can't be
+    // replayed to change this value.
+    const reservedConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    this.reservedConfigHash.set(reservedConfigHash);
+
     this.emitEvent('createChildConfig', {
       proposalHash,
       childAccount: this.address,
@@ -817,6 +829,13 @@ export class MinaGuard extends SmartContract {
     const ownersCommitment = computeSetupOwnersChain(initialOwners.owners, numOwners);
     const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
     proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
+
+    // Bind to the config reserveForParent() committed (== the events shown to
+    // approvers). Without this, an executor could init any config whose hash
+    // equals a malicious proposal.data, drifting from the displayed config.
+    this.reservedConfigHash
+      .getAndRequireEquals()
+      .assertEquals(childConfigHash, 'Executed config must match reserved child config');
 
     // The helper pins the parent's networkId as a precondition, so
     // proposal.networkId is the parent-approved value — use it as the
