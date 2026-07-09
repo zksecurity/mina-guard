@@ -359,11 +359,19 @@ const TX_STATUS_SCAN_BLOCKS = 20;
  *
  *  Uses the daemon rather than the archive because only the daemon's
  *  `ZkappCommandResult.failureReason: [{index, failures: [String]}]` exposes
- *  structured failure reasons; archive-node-api has no per-hash lookup. */
+ *  structured failure reasons; archive-node-api has no per-hash lookup.
+ *
+ *  `'unknown'` means the lookup itself failed (network error, GraphQL error,
+ *  upstream 5xx) on both endpoints — the tx's on-chain state is undetermined,
+ *  NOT confirmed-absent. Callers must distinguish this from `'pending'`: a
+ *  positive `'pending'` means we scanned bestChain and the tx isn't there yet,
+ *  whereas `'unknown'` means we couldn't scan at all. Conflating the two lets a
+ *  tx that was actually included get misclassified as dropped when the (heavier)
+ *  bestChain query fails but a sibling mempool check happens to succeed. */
 export async function fetchZkappTxStatus(
   config: BackendConfig,
   txHash: string
-): Promise<{ status: 'pending' | 'included' | 'failed'; reason?: string }> {
+): Promise<{ status: 'pending' | 'included' | 'failed' | 'unknown'; reason?: string }> {
   const query = `query TxStatus($maxLength: Int!) {
     bestChain(maxLength: $maxLength) {
       transactions {
@@ -403,8 +411,27 @@ export async function fetchZkappTxStatus(
     }
     return { status: 'pending' };
   } catch (err) {
+    // Lookup failed on both primary and fallback endpoints; report 'unknown' so
+    // callers don't treat an undetermined tx as confirmed-absent (see doc above).
     console.warn('[mina-client] fetchZkappTxStatus failed', txHash, err);
-    return { status: 'pending' };
+    return { status: 'unknown' };
+  }
+}
+
+/** Fetches all zkApp tx hashes currently in the daemon's mempool. Returns null
+ *  on network failure so callers can fall back conservatively. */
+export async function fetchMempoolHashes(
+  config: BackendConfig,
+): Promise<Set<string> | null> {
+  const query = `{ pooledZkappCommands { hash } }`;
+  try {
+    const data = await graphqlRequest<{
+      pooledZkappCommands?: Array<{ hash: string }>;
+    }>(query, config.minaEndpoint, config.minaFallbackEndpoint);
+    return new Set((data.pooledZkappCommands ?? []).map((c) => c.hash));
+  } catch (err) {
+    console.warn('[mina-client] fetchMempoolHashes failed', err);
+    return null;
   }
 }
 
