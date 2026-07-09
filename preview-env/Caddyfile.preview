@@ -40,7 +40,10 @@
 
     # Lightnet archive node
     handle /preview/{$PR_NUMBER}/archive {
-        uri strip_prefix /preview/{$PR_NUMBER}
+        # The archive-node-api serves GraphQL only at its root "/", not
+        # "/archive" — stripping just the PR prefix would forward "/archive"
+        # and 404. Rewrite the upstream path to "/" instead.
+        rewrite * /
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS"
         header Access-Control-Allow-Headers "Content-Type"

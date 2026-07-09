@@ -19,6 +19,7 @@ import {
   executeChildLifecycleOnchain,
   executeSetupChildOnchain,
   assertLedgerReady,
+  computeCreateChildConfigHash,
 } from '@/lib/multisigClient';
 import { fetchChildConfigFromEvents } from '@/lib/api';
 import {
@@ -100,6 +101,49 @@ export default function TransactionDetailPage() {
     })();
     return () => { cancelled = true; };
   }, [multisig, proposal, proposalHash, proposalsAddress]);
+
+  // For CREATE_CHILD: recompute the config hash from the owners/threshold the
+  // events display and compare it to the signed proposal.data. A mismatch means
+  // the config shown here is NOT the config being approved — on-chain the
+  // execute would revert, but we warn approvers before they sign. 'unavailable'
+  // = events not indexed yet, so we can't check (not a mismatch).
+  const [childConfigCheck, setChildConfigCheck] =
+    useState<'checking' | 'match' | 'mismatch' | 'unavailable' | null>(null);
+  useEffect(() => {
+    if (!proposal || proposal.txType !== 'createChild') {
+      setChildConfigCheck(null);
+      return;
+    }
+    if (proposal._localPending) return;
+    if (!multisig || proposalsAddress !== multisig.address) return;
+    const childAddr = proposal.childAccount;
+    const signedData = proposal.data;
+    if (!childAddr || !signedData) {
+      setChildConfigCheck('unavailable');
+      return;
+    }
+    let cancelled = false;
+    setChildConfigCheck('checking');
+    (async () => {
+      try {
+        const config = await fetchChildConfigFromEvents(childAddr, proposalHash);
+        if (cancelled) return;
+        if (!config) {
+          setChildConfigCheck('unavailable');
+          return;
+        }
+        const { configHash } = await computeCreateChildConfigHash({
+          childOwners: config.owners,
+          childThreshold: config.threshold,
+        });
+        if (cancelled) return;
+        setChildConfigCheck(configHash === signedData ? 'match' : 'mismatch');
+      } catch {
+        if (!cancelled) setChildConfigCheck('unavailable');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [proposal, proposalHash, multisig, proposalsAddress]);
 
   const isOwner = useMemo(() => {
     return owners.some((owner) => owner.address === wallet.address);
@@ -202,6 +246,10 @@ export default function TransactionDetailPage() {
     isOwner &&
     !hasApproved &&
     !isConfigStale &&
+    // Block approval when the displayed SubVault config provably does not hash
+    // to the signed proposal.data (config-swap). Only a computed mismatch
+    // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
+    childConfigCheck !== 'mismatch' &&
     !myPendingApprove &&
     !contractLock.locked;
   const canExecute =
@@ -523,6 +571,27 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {childConfigCheck === 'mismatch' && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
+            <p className="font-semibold mb-1">SubVault config does not match the signed proposal</p>
+            <p className="opacity-90">
+              The owners and threshold shown for this SubVault do not hash to the config committed in this
+              proposal&apos;s data. The displayed owners are NOT what would be approved — the config being signed
+              differs from what you see. Do not approve this proposal; the on-chain execute would reject it.
+            </p>
+          </div>
+        )}
+
+        {childConfigCheck === 'unavailable' && (
+          <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
+            <p className="font-semibold mb-1">SubVault config could not be verified</p>
+            <p className="opacity-90">
+              The SubVault config events are not indexed yet, so the displayed config could not be checked against
+              the signed proposal data. Wait for indexing to confirm the config before approving.
+            </p>
+          </div>
+        )}
+
         <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
           <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Details</h3>
           <div className="space-y-3">
@@ -666,6 +735,17 @@ export default function TransactionDetailPage() {
                       {isOperating ? 'Waiting for pending transaction...' : 'Approve Proposal'}
                     </button>
                   )}
+                  {/* Config-swap: keep a disabled Approve visible with the reason,
+                      rather than hiding it, so the block is explicit. */}
+                  {childConfigCheck === 'mismatch' && proposal.status === 'pending' && isOwner && !hasApproved && (
+                    <button
+                      disabled
+                      title="Displayed SubVault config does not match the signed proposal data"
+                      className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
+                    >
+                      Approve blocked — config mismatch
+                    </button>
+                  )}
                   {canExecute && (
                     <button
                       onClick={handleExecute}
@@ -714,6 +794,12 @@ export default function TransactionDetailPage() {
                           if (approvalAddresses.includes(offlineFeePayerAddress)) {
                             throw new Error('This address has already approved this proposal');
                           }
+                          if (childConfigCheck === 'mismatch') {
+                            throw new Error(
+                              'SubVault config mismatch: the displayed owners/threshold do not match the ' +
+                              'signed proposal data. Do not approve this proposal.',
+                            );
+                          }
                           const p = proposal!;
                           return buildOfflineApproveBundle({
                             contractAddress: multisig!.address,
@@ -743,6 +829,8 @@ export default function TransactionDetailPage() {
                   </div>
                   <UploadSignedResponse
                     acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
+                    expectedContractAddress={multisig!.address}
+                    expectedProposalHash={proposal!.proposalHash}
                     onComplete={(response, txHash) => {
                       const kind = response.action as 'approve' | 'execute';
                       void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);

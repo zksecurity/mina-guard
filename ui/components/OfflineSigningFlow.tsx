@@ -269,10 +269,14 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
 
 interface UploadSignedResponseProps {
   acceptActions: Array<'propose' | 'approve' | 'execute'>;
+  /** When set, reject signed responses that target a different contract/vault. */
+  expectedContractAddress?: string;
+  /** When set, reject signed responses that target a different proposal hash. */
+  expectedProposalHash?: string;
   onComplete?: (response: OfflineSignedTxResponse, txHash: string) => void;
 }
 
-export function UploadSignedResponse({ acceptActions, onComplete }: UploadSignedResponseProps) {
+export function UploadSignedResponse({ acceptActions, expectedContractAddress, expectedProposalHash, onComplete }: UploadSignedResponseProps) {
   const [broadcasting, setBroadcasting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -310,6 +314,23 @@ export function UploadSignedResponse({ acceptActions, onComplete }: UploadSigned
       }
       if (!response.transaction) {
         throw new Error('Signed response is missing the transaction field. The CLI may have encountered an error during signing.');
+      }
+
+      // Bind the upload to the proposal/vault this page is showing, so a swapped
+      // or tampered signed file for a different proposal/contract cannot be
+      // broadcast here.
+      if (expectedContractAddress && response.contractAddress !== expectedContractAddress) {
+        throw new Error(
+          `This signed transaction is for a different vault (${response.contractAddress}) ` +
+          `than the one open here (${expectedContractAddress}). Not broadcasting.`,
+        );
+      }
+      if (expectedProposalHash && response.proposalHash !== expectedProposalHash) {
+        throw new Error(
+          `This signed transaction is for a different proposal than the one shown. ` +
+          `Expected proposal hash ${expectedProposalHash}, but the file is for ` +
+          `${response.proposalHash}. Not broadcasting.`,
+        );
       }
 
       setBroadcasting(true);

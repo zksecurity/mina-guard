@@ -1,5 +1,5 @@
 # Auto-deploys the Mesa Trail webapp stack to prod when main is pushed
-# (e.g., when a PR merges). Mirrors deploy.yml's pattern for the localnet
+# (e.g., when a PR merges). Mirrors deploy-lightnet.yml's pattern for the localnet
 # /app/* deploy but targets the trail compose project + /trail/* routes.
 #
 # Self-hosted runner is on the prod-facing box; the actual deploy happens
@@ -22,7 +22,7 @@
 #
 # To tighten later: add a `paths:` filter under `on.push` so this only
 # fires when trail-relevant files change. Today it fires on every main
-# push for consistency with deploy.yml.
+# push for consistency with deploy-lightnet.yml.
 
 name: Deploy Mesa Trail
 

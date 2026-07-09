@@ -354,6 +354,7 @@ function NewTransactionPageInner() {
                     />
                     <UploadSignedResponse
                       acceptActions={['propose']}
+                      expectedContractAddress={multisig!.address}
                       onComplete={(response, txHash) => {
                         const hash = response.proposalHash;
                         if (hash && multisig) {
