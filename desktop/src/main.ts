@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, Menu } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { registerConfigIpc } from './config-ipc.js';
 import { handleAuroRoute } from './auro/router.js';
@@ -281,6 +281,11 @@ async function changeEndpointsAndRelaunch(cfg: {
 }
 
 app.whenReady().then(async () => {
+  // No app menu — the default File/Edit/View/Window/Help bar isn't needed.
+  // Applies to every window (setup + main). On macOS this also removes the
+  // in-window menu bar; the app's own top menu bar is left minimal.
+  Menu.setApplicationMenu(null);
+
   registerIpcHandlers();
   registerConfigIpc({
     getConfig: () => currentConfig,
@@ -348,9 +353,16 @@ function openMainWindow(closeSetupWindow: (() => void) | null): void {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    title: 'MinaGuard',
     webPreferences: {
       preload: preloadPath,
     },
+  });
+
+  // The loaded page's <title> ("desktop", from Next.js) would otherwise
+  // replace the window title on every navigation. Pin it to "MinaGuard".
+  win.on('page-title-updated', (event) => {
+    event.preventDefault();
   });
 
   // Keep setup window alive until the main window has a content to show, then
