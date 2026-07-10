@@ -80,9 +80,13 @@ bun run package
 ```
 
 Output lands in `desktop/release/<platform>-unpacked/`. Prisma's native query
-engines for `darwin`, `darwin-arm64`, `windows`, and `debian-openssl-3.0.x`
-are bundled — see `binaryTargets` in the Prisma schemas — and pulled into
-`packaging-stage/generated/prisma/` during `stage`.
+engines for `darwin`, `darwin-arm64`, `windows`, `debian-openssl-3.0.x`
+(Debian/Ubuntu) and `rhel-openssl-3.0.x` (Fedora/RHEL 9) are bundled — see
+`binaryTargets` in the Prisma schemas — and pulled into
+`packaging-stage/generated/prisma/` during `stage`. The two Linux engines let
+one AppImage run on both Debian- and RHEL-family distros; without the matching
+engine Prisma fails at runtime with "could not locate the Query Engine for
+runtime …".
 
 The `asarUnpack` list in `package.json` keeps the Prisma `.node` binaries
 outside the asar archive so they can be executed at runtime.
