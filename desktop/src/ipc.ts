@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 
 const REQUEST_TIMEOUT_MS = 120_000;
 const PORT = 5050;
@@ -47,19 +47,31 @@ export function rejectRequest(id: string, error: string): boolean {
   return true;
 }
 
-function openInChrome(url: string): void {
-  const chrome =
-    process.platform === 'darwin' ? 'open' :
-    process.platform === 'win32' ? 'cmd' :
-    'google-chrome';
+/**
+ * Opens the Auro signing page in a browser. Uses the OS default browser via
+ * shell.openExternal — on the assumption it's a Chromium-family browser with
+ * the Auro extension. The served page shows a "copy this URL into a browser
+ * with Auro" fallback so a user whose default lacks Auro can move it.
+ *
+ * The BROWSER env var forces a specific browser command instead (e.g.
+ * BROWSER=google-chrome, =brave, =chromium). It only matters in dev — a
+ * packaged end user has no way to set it — but it's a useful override there
+ * and harmless in production.
+ */
+function openInBrowser(url: string): void {
+  const browserOverride = process.env.BROWSER;
+  if (browserOverride) {
+    execFile(browserOverride, [url], (err) => {
+      if (err) {
+        console.error(`[desktop] failed to open BROWSER=${browserOverride}:`, err.message);
+      }
+    });
+    return;
+  }
 
-  const args =
-    process.platform === 'darwin' ? ['-a', 'Google Chrome', url] :
-    process.platform === 'win32' ? ['/c', 'start', 'chrome', url] :
-    [url];
-
-  execFile(chrome, args, (err) => {
-    if (err) console.error('[desktop] failed to open Chrome:', err.message);
+  // Default browser, cross-platform.
+  void shell.openExternal(url).catch((err) => {
+    console.error('[desktop] failed to open default browser:', err.message);
   });
 }
 
@@ -67,7 +79,7 @@ function handleAuroRequest(method: string, payload: unknown): Promise<unknown> {
   const id = randomUUID();
   const promise = createRequest(id, payload);
 
-  openInChrome(`http://127.0.0.1:${PORT}/auro/${method}?id=${id}`);
+  openInBrowser(`http://127.0.0.1:${PORT}/auro/${method}?id=${id}`);
 
   return promise;
 }
