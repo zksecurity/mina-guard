@@ -87,6 +87,67 @@ are bundled — see `binaryTargets` in the Prisma schemas — and pulled into
 The `asarUnpack` list in `package.json` keeps the Prisma `.node` binaries
 outside the asar archive so they can be executed at runtime.
 
+## Distributable installers
+
+`bun run package` produces an *unpacked* directory (good for local smoke
+tests). To build actual installers, run:
+
+```bash
+cd desktop
+bun run dist
+```
+
+This runs the full `build` and then `electron-builder --publish never`, using
+the `build` block in `package.json`. Output lands in `desktop/release/`:
+
+| Platform | Artifacts |
+|----------|-----------|
+| macOS    | `.dmg` + `.zip`, both `x64` and `arm64` |
+| Linux    | `.AppImage` + `.deb` (`x64`) |
+| Windows  | NSIS `.exe` installer (`x64`) |
+
+`electron-builder` can only build macOS artifacts on macOS and (reliably)
+Windows artifacts on Windows, so a single machine builds only its own
+platform's installers. Cross-platform builds happen in CI (below).
+
+The app icon is `build/icon.png` (1024×1024); electron-builder derives the
+`.icns`/`.ico` from it. **It is a placeholder** — swap in the real brand icon
+before a public release.
+
+### Releasing via CI
+
+`.github/workflows/desktop-release.yml` builds all three platforms on native
+runners and uploads to a GitHub Release.
+
+- **Cut a release:** push a tag matching `desktop-v*` (e.g. `desktop-v0.1.0`).
+  Each runner builds its platform's installers and publishes them to a
+  **draft** GitHub Release (configured via `publish.releaseType: "draft"` in
+  `package.json`). Review the draft, then publish it manually.
+- **Dry run:** trigger the workflow manually (`workflow_dispatch`) with no
+  tag. It builds all three platforms and uploads the installers as CI
+  artifacts (7-day retention) instead of publishing — use this to smoke-test
+  the build before tagging.
+
+The `owner`/`repo` in the `publish` block must match the GitHub repo the
+release should land on.
+
+### Signing (not done yet)
+
+Released artifacts are **unsigned**. Consequences for users:
+
+- **macOS:** Gatekeeper blocks first launch ("app is damaged / from an
+  unidentified developer"). Users must right-click → **Open** and confirm.
+  Proper fix: an Apple Developer ID cert **and notarization**.
+- **Windows:** SmartScreen shows an "unknown publisher" warning; users click
+  **More info → Run anyway**. Proper fix: an Authenticode (ideally EV) cert.
+- **Linux:** no signing needed.
+
+The workflow explicitly disables signing (`CSC_IDENTITY_AUTO_DISCOVERY=false`,
+`mac.identity: null`) so unsigned builds succeed instead of failing while
+hunting for a certificate. To add signing later, provide the certs as CI
+secrets and wire electron-builder's signing env vars — no structural change to
+this pipeline is required.
+
 ## Troubleshooting
 
 **"The column `main.ContractConfig.X` does not exist"** — the bundled schema

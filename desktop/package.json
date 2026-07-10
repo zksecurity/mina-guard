@@ -2,6 +2,9 @@
   "name": "desktop",
   "version": "0.1.0",
   "private": true,
+  "description": "MinaGuard desktop app — local Electron wrapper around the MinaGuard UI and indexer.",
+  "author": "zkSecurity <hello@zksecurity.xyz>",
+  "homepage": "https://github.com/zksecurity/mina-guard",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
@@ -13,7 +16,8 @@
     "build:electron": "tsc -p tsconfig.json && cp src/preload.js dist/ && cp src/preload-setup.js dist/ && mkdir -p dist/auro dist/assets && cp src/auro/page.html dist/auro/ && cp src/assets/setup.html dist/assets/",
     "build": "bun run prepare:backend && bun run prepare:assets && bun run build:ui && bun run stage && bun run build:electron",
     "dev": "bun run prepare:backend && bun run prepare:assets && bun run build:ui && bun run stage && bun run build:electron && env $(grep -v '^#' .env | grep -v '^$' | xargs) electron --no-sandbox .",
-    "package": "bun run build && electron-builder --dir"
+    "package": "bun run build && electron-builder --dir",
+    "dist": "bun run build && electron-builder --publish never"
   },
   "dependencies": {
     "@prisma/client": "6.12.0",
@@ -35,7 +39,8 @@
     "appId": "xyz.zksecurity.minaguard",
     "productName": "MinaGuard",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "electronLanguages": ["en-US"],
     "files": [
@@ -49,6 +54,42 @@
     "asarUnpack": [
       "packaging-stage/generated/prisma/*.node",
       "dist/assets/**"
-    ]
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "zksecurity",
+        "repo": "mina-guard",
+        "releaseType": "draft"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.finance",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "identity": null,
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "dmg": {
+      "writeUpdateInfo": false
+    },
+    "linux": {
+      "category": "Finance",
+      "target": ["AppImage", "deb"],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
