@@ -2,14 +2,15 @@
 
 import { useRef, useState } from 'react';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
+import { getMinaGuardConfig } from '@/lib/endpoints';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
-const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'http://127.0.0.1:8080/graphql';
 
 async function broadcastSignedTx(txJson: string): Promise<string> {
   const query = `mutation($input: SendZkappInput!) { sendZkapp(input: $input) { zkapp { hash } } }`;
   const zkappCommand = JSON.parse(txJson);
-  const res = await fetch(MINA_ENDPOINT, {
+  // Resolved at call time so the desktop shell's runtime endpoint override applies.
+  const res = await fetch(getMinaGuardConfig().minaEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables: { input: { zkappCommand } } }),
