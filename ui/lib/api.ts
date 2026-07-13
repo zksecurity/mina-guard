@@ -118,14 +118,14 @@ export function extractTxHash(message: string | null): string | null {
  *  have no Proposal row to attach the failure to server-side. */
 export async function fetchTxStatus(
   txHash: string,
-): Promise<{ status: 'pending' | 'included' | 'failed'; reason?: string } | null> {
+): Promise<{ status: 'pending' | 'included' | 'failed' | 'unknown'; reason?: string } | null> {
   try {
     const response = await fetch(
       `${API_BASE}/api/tx-status?hash=${encodeURIComponent(txHash)}`,
       { cache: 'no-store' },
     );
     if (!response.ok) return null;
-    return (await response.json()) as { status: 'pending' | 'included' | 'failed'; reason?: string };
+    return (await response.json()) as { status: 'pending' | 'included' | 'failed' | 'unknown'; reason?: string };
   } catch (err) {
     console.warn('[api] fetchTxStatus failed', err);
     return null;
