@@ -56,6 +56,11 @@ jobs:
         run: cd backend && bunx prisma generate
       - name: Build backend
         run: bun run --filter backend build
+      - name: Run backend tests
+        run: cd backend && bunx prisma db push --skip-generate && bun test
+        env:
+          CI: true
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
       - name: Run contract tests
         run: bun run test
         env:
