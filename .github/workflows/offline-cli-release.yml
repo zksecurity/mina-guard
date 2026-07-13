@@ -84,11 +84,10 @@ jobs:
       - name: Build contracts
         run: bun run --filter contracts build
 
-      # Same compile invocation as docs/offline-signing.md and the backend's
-      # /api/offline-cli route, including its platform → bun-target mapping
-      # (macos-* releases build with bun's darwin targets). Bun appends .exe to
-      # the Windows outfile itself. The --define keeps o1js off Node-specific
-      # code paths that don't exist in the Bun runtime.
+      # Same compile invocation as docs/offline-signing.md; macos-* release
+      # names map to bun's darwin targets, and bun appends .exe to the Windows
+      # outfile itself. The --define keeps o1js off Node-specific code paths
+      # that don't exist in the Bun runtime.
       - name: Compile CLI binaries
         working-directory: offline-cli
         shell: bash
