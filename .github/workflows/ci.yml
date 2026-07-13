@@ -100,7 +100,7 @@ jobs:
   # even if .vk-hash was updated (to the wrong value). The diff detection only
   # decides whether to spend the compile minutes.
   check-vk-hash:
-    timeout-minutes: 20
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -156,33 +156,49 @@ jobs:
         if: steps.detect.outputs.verify == 'true'
         run: bun install --ignore-scripts
 
-      - name: Compile contracts and compare VK hash
+      - name: Compile contracts and compare VK hashes (testnet + mainnet)
         if: steps.detect.outputs.verify == 'true'
         run: |
-          # The dev-helpers CLI statically imports the contracts package at
-          # startup, so the build output must exist before the CLI runs (its
-          # own rebuild happens too late for that first import).
+          # Pre-build once so the dev-helpers CLI's static imports resolve.
+          # The tsc output is network-independent; MINA_NETWORK_DOMAIN is
+          # evaluated at JS runtime when constants.js is imported.
           bun run --filter contracts build
 
-          bun run dev-helpers/cli.ts vk-hash compile 2>&1 | tee vk-compile.log
-          COMPUTED=$(grep '^vkHash: ' vk-compile.log | tail -1 | awk '{print $2}' || true)
-          COMMITTED=$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')
+          check_hash() {
+            local network="$1"
+            local env_prefix="$2"   # empty string or "MINA_NETWORK_DOMAIN=mainnet "
+            local log="vk-${network}.log"
 
-          echo "computed:  ${COMPUTED:-<none>}"
-          echo "committed: $COMMITTED"
+            eval "${env_prefix}bun run dev-helpers/cli.ts vk-hash compile" 2>&1 | tee "$log"
+            local computed
+            computed=$(grep "^vkHash\[${network}\]: " "$log" | tail -1 | awk '{print $2}' || true)
+            local committed
+            committed=$(grep "^${network}=" contracts/.vk-hash | cut -d= -f2 | tr -d '[:space:]')
 
-          if [ -z "$COMPUTED" ]; then
-            echo "::error::Could not extract a VK hash from 'vk-hash compile' output."
-            exit 1
-          fi
+            echo "${network} computed:  ${computed:-<none>}"
+            echo "${network} committed: ${committed:-<none>}"
 
-          if [ "$COMPUTED" != "$COMMITTED" ]; then
-            echo "::error::contracts/.vk-hash is stale: compiled VK hash is $COMPUTED but the committed file says $COMMITTED."
-            echo "Regenerate: bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile — then put the printed hash in contracts/.vk-hash."
-            exit 1
-          fi
+            if [ -z "$computed" ]; then
+              echo "::error::Could not extract ${network} VK hash from 'vk-hash compile' output."
+              return 1
+            fi
+            if [ -z "$committed" ]; then
+              echo "::error::contracts/.vk-hash is missing a '${network}=' line."
+              echo "Add: ${network}=${computed}"
+              return 1
+            fi
+            if [ "$computed" != "$committed" ]; then
+              echo "::error::contracts/.vk-hash ${network} hash is stale: computed ${computed} but committed ${committed}."
+              echo "Regenerate: ${env_prefix}bun run dev-helpers/cli.ts vk-hash compile — then update ${network}= in contracts/.vk-hash."
+              return 1
+            fi
+            echo "${network} VK hash matches."
+          }
 
-          echo "VK hash matches contracts/.vk-hash."
+          FAIL=0
+          check_hash testnet "" || FAIL=1
+          check_hash mainnet "MINA_NETWORK_DOMAIN=mainnet " || FAIL=1
+          exit $FAIL
 
   test-offline-cli-windows:
     timeout-minutes: 30
