@@ -16,9 +16,9 @@ import { saveAccountName, savePendingTx } from '@/lib/storage';
 import { extractTxHash } from '@/lib/api';
 
 const NETWORKS = [
-  { label: 'Testnet', value: 'testnet', networkId: '0', enabled: true },
-  { label: 'Devnet (coming soon)', value: 'devnet', networkId: '0', enabled: false },
-  { label: 'Mainnet (coming soon)', value: 'mainnet', networkId: '1', enabled: false },
+  { label: 'Testnet', value: 'testnet', enabled: true },
+  { label: 'Devnet (coming soon)', value: 'devnet', enabled: false },
+  { label: 'Mainnet (coming soon)', value: 'mainnet', enabled: false },
 ] as const;
 
 export default function CreateAccountWizardPage() {
@@ -59,12 +59,6 @@ function CreateAccountWizard() {
   const [networkValue, setNetworkValue] = useState<typeof NETWORKS[number]['value']>('testnet');
   const network = NETWORKS.find((n) => n.value === networkValue) ?? NETWORKS[0];
 
-  // For subaccounts: lock network to the parent's networkId.
-  useEffect(() => {
-    if (!isSubaccount || !parentContract?.networkId) return;
-    const match = NETWORKS.find((n) => n.networkId === parentContract.networkId);
-    if (match) setNetworkValue(match.value);
-  }, [isSubaccount, parentContract?.networkId]);
 
   // Step 2 fields. Subaccount mode tries to prefill from the parent's owners
   // + threshold so users start from a sensible "same governance as parent"
@@ -146,7 +140,6 @@ function CreateAccountWizard() {
       zkAppPrivateKeyBase58: keypair.privateKey,
       owners: parsedOwners,
       threshold: Number(threshold),
-      networkId: network.networkId,
     };
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
     try {
@@ -188,7 +181,7 @@ function CreateAccountWizard() {
     const error = validateStep2();
     if (error) { setFormError(error); return; }
     if (!wallet.address || !parentAddress || !parentContract || !keypair) return;
-    if (parentContract.configNonce == null || !parentContract.networkId) {
+    if (parentContract.configNonce == null) {
       setFormError('Parent contract not fully indexed yet — try again in a moment.');
       return;
     }
@@ -217,7 +210,6 @@ function CreateAccountWizard() {
         contractAddress: parentAddress,
         proposerAddress: wallet.address!,
         configNonce: parentContract.configNonce!,
-        networkId: parentContract.networkId!,
         input: {
           txType: 'createChild',
           nonce: 0,
