@@ -34,7 +34,7 @@ import {
   TokenId,
 } from 'o1js';
 
-import Client from 'mina-signer';
+import Client from '../../node_modules/o1js/src/mina-signer/mina-signer.ts';
 
 import {
   MinaGuard,

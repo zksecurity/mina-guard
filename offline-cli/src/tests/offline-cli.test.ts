@@ -258,7 +258,7 @@ describe('offline-cli', () => {
   // -- Fee payer signing --
 
   it('signFeePayer produces valid authorization', async () => {
-    const Client = (await import('mina-signer')).default;
+    const Client = (await import('../../../node_modules/o1js/src/mina-signer/mina-signer.ts')).default;
     const client = new Client({ network: 'testnet' });
     const key = PrivateKey.random();
 
@@ -312,7 +312,7 @@ describe('offline-cli', () => {
 
     let ClientCtor: any;
     beforeAll(async () => {
-      ClientCtor = (await import('mina-signer')).default;
+      ClientCtor = (await import('../../../node_modules/o1js/src/mina-signer/mina-signer.ts')).default;
     });
 
     it('mainnet signature verifies under mainnet and FAILS under testnet', async () => {

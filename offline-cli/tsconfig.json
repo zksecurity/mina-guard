@@ -7,10 +7,7 @@
     "strict": true,
     "skipLibCheck": true,
     "types": ["bun-types"],
-    "noEmit": true,
-    "paths": {
-      "mina-signer": ["../../node_modules/o1js/src/mina-signer/mina-signer.ts"]
-    }
+    "noEmit": true
   },
   "include": ["src/**/*.ts"]
 }
