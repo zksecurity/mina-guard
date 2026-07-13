@@ -4,13 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "db:push": "prisma db push --skip-generate",
-    "dev": "bun run db:push && bun --env-file=.env --watch src/server.ts",
+    "db:migrate": "prisma migrate deploy",
+    "dev": "bun run db:migrate && bun --env-file=.env --watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "bun run db:push && bun dist/server.js",
+    "start": "bun run db:migrate && bun dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:push": "prisma db push",
     "seed:fixtures": "bun run scripts/seed-fixtures.ts"
   },
   "dependencies": {
