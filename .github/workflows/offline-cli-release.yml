@@ -85,24 +85,52 @@ jobs:
         run: bun run --filter contracts build
 
       # Same compile invocation as docs/offline-signing.md and the backend's
-      # /api/offline-cli route. The --define keeps o1js off Node-specific code
-      # paths that don't exist in the Bun runtime.
+      # /api/offline-cli route, including its platform → bun-target mapping
+      # (macos-* releases build with bun's darwin targets). Bun appends .exe to
+      # the Windows outfile itself. The --define keeps o1js off Node-specific
+      # code paths that don't exist in the Bun runtime.
       - name: Compile CLI binaries
         working-directory: offline-cli
         shell: bash
         run: |
           for t in ${{ matrix.targets }}; do
-            out="dist/mina-guard-cli-$t"
-            case "$t" in windows-*) out="$out.exe" ;; esac
-            echo "::group::bun-$t"
-            bun build --compile --target="bun-$t" src/index.ts \
-              --outfile "$out" --define 'process.versions.node=""'
+            case "$t" in
+              macos-arm64) bt=bun-darwin-arm64 ;;
+              macos-x64)   bt=bun-darwin-x64 ;;
+              *)           bt="bun-$t" ;;
+            esac
+            echo "::group::$bt"
+            bun build --compile --target="$bt" src/index.ts \
+              --outfile "dist/mina-guard-cli-$t" --define 'process.versions.node=""'
             echo "::endgroup::"
           done
           ls -lh dist/
 
+      # macOS binaries must carry JIT entitlements or the embedded WASM fails
+      # to load at runtime (see PR #87 / the equivalent step in ci.yml). Ad-hoc
+      # signing is enough; the smoke test below would fail without this.
+      - name: Sign macOS binaries with JIT entitlements
+        if: runner.os == 'macOS'
+        working-directory: offline-cli
+        run: |
+          cat > /tmp/entitlements.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key>
+            <true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          for t in ${{ matrix.targets }}; do
+            codesign -s - --force --entitlements /tmp/entitlements.plist "dist/mina-guard-cli-$t"
+          done
+
       # Run the native-arch binary with no arguments: it must reach the usage
-      # message (module init, wasm shim, and arg parsing all execute). A
+      # message (module init, embedded WASM, and arg parsing all execute). A
       # binary that can't even print usage must never ship.
       - name: Smoke test native binary
         working-directory: offline-cli
