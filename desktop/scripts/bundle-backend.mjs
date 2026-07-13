@@ -23,9 +23,9 @@ await build({
   // - @prisma/client: the generated client ships separately with native
   //   engine binaries; bundling would detach it from its engine path resolver.
   // - o1js: ships WASM + native bindings that break when bundled.
-  // - cors / express / zod: pure JS but already in desktop/node_modules,
-  //   and keeping them external avoids duplicate instances (particularly
-  //   matters for express where app vs router identity is important).
+  // - express / zod: pure JS but already in desktop/node_modules, and keeping
+  //   them external avoids duplicate instances (particularly matters for
+  //   express where app vs router identity is important).
   // Also externalize the generated Prisma client (backend/src/db.ts imports
   // it via a relative path ./generated/prisma/index.js). It's CommonJS with
   // dynamic require('node:fs') etc., which esbuild's ESM bundling can't
@@ -33,7 +33,6 @@ await build({
   external: [
     '@prisma/client',
     'o1js',
-    'cors',
     'express',
     'zod',
     '*/generated/prisma/index.js',

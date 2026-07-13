@@ -20,6 +20,11 @@ import {
 const PORT = 5050;
 const NEXT_PORT = 5051;
 
+// Host-header allowlist: the single chokepoint for /auro/*, the API, and the
+// Next proxy. Blocks DNS rebinding — a page rebound to 127.0.0.1 is
+// same-origin (CORS can't help) but can't forge the Host the browser sends.
+const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+
 // Defaults used only to pre-fill the first-run setup form. The app never runs
 // against these silently — the user must confirm (or override) them on first
 // launch, and the result is persisted to config.json.
@@ -92,6 +97,10 @@ async function startHttpServer(
   await startNextStandalone();
 
   const server = createServer((req, res) => {
+    if (!ALLOWED_HOSTS.has(req.headers.host ?? '')) {
+      res.writeHead(403).end();
+      return;
+    }
     if (handleAuroRoute(req, res)) return;
     // Express app is itself a (req, res, next) handler. If no /api/* or /health
     // route matches, Express calls next() and we fall through to the Next

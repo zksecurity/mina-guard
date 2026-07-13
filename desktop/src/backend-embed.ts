@@ -78,10 +78,9 @@ export async function startEmbeddedBackend(
     mkdirSync(dirname(opts.dbPath), { recursive: true });
   }
 
-  const [bundle, expressMod, corsMod] = await Promise.all([
+  const [bundle, expressMod] = await Promise.all([
     import(pathToFileURL(opts.backendBundlePath).href),
     import('express'),
-    import('cors'),
   ]);
   const { prisma, loadConfig, MinaGuardIndexer, createApiRouter } = bundle;
 
@@ -103,9 +102,10 @@ export async function startEmbeddedBackend(
     const runningIndexer = indexer;
 
     const express = (expressMod as unknown as { default: typeof import('express') }).default ?? expressMod;
-    const cors = (corsMod as unknown as { default: typeof import('cors') }).default ?? corsMod;
     const app = express();
-    app.use(cors());
+    // No CORS: same-origin API (behind 127.0.0.1:5050). Cross-origin defense is
+    // the Host-header allowlist in main.ts, which also covers /auro/* and DNS
+    // rebinding.
     app.use(express.json({ limit: '1mb' }));
     app.use(createApiRouter(indexer, config));
 
