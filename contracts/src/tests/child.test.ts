@@ -526,9 +526,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         nonce,
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
@@ -610,9 +608,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, proposal, [0]);
@@ -643,9 +639,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       {
         const { parentApprovalWitness, parentApprovalCount, proposalHash } =
@@ -726,9 +720,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1]);
@@ -764,9 +756,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1]);
@@ -805,9 +795,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, destroyProposal, [0]);
@@ -838,9 +826,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         nonce,
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
@@ -868,9 +854,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
@@ -899,9 +883,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
@@ -1145,9 +1127,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount } =
         await proposeAndApproveOnParent(parentCtx, proposalForA, [0, 1]);
@@ -1184,9 +1164,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0), // parent configNonce at time of propose
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, reclaim, [0, 1]);
@@ -1249,9 +1227,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),
-        parentCtx.networkId,
-        childAddress,
+        Field(0),        childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
@@ -1282,7 +1258,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       const amount = UInt64.from(1_000_000_000);
       const reclaim = createReclaimChildProposal(
         amount, Field(1), Field(0), parentCtx.zkAppAddress,
-        Field(0), parentCtx.networkId, childAddress,
+        Field(0), childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, reclaim, [0, 1]);
@@ -1332,7 +1308,7 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const destroyProposal = createDestroyChildProposal(
         Field(1), Field(0), parentCtx.zkAppAddress,
-        Field(0), parentCtx.networkId, childAddress,
+        Field(0), childAddress,
       );
       const { parentApprovalWitness, parentApprovalCount, proposalHash } =
         await proposeAndApproveOnParent(parentCtx, destroyProposal, [0, 1]);

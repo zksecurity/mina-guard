@@ -50,7 +50,6 @@ describe('MinaGuard - Setup', () => {
         await ctx.zkApp.setup(
           Field(2),
           Field(3),
-          Field(1),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })
@@ -77,7 +76,6 @@ describe('MinaGuard - Setup', () => {
         await zkApp.setup(
           Field(0),
           Field(3),
-          Field(1),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })
@@ -103,7 +101,6 @@ describe('MinaGuard - Setup', () => {
         await zkApp.setup(
           Field(5),
           Field(3),
-          Field(1),
           new SetupOwnersInput({
             owners: toFixedSetupOwners(ctx.owners.map((o) => o.pub)),
           })
