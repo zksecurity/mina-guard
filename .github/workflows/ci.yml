@@ -65,11 +65,16 @@ jobs:
         run: cd offline-cli && bun test
         env:
           SKIP_PROOFS: '1'
-      - name: Build offline-cli binary
+      - name: Build offline-cli binary (linux-x64)
         run: cd offline-cli && bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/mina-guard-cli-linux-x64 --define 'process.versions.node=""'
+      - name: Smoke-test compiled binary (WASM loads without error)
+        run: |
+          output=$(offline-cli/dist/mina-guard-cli-linux-x64 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
 
   test-offline-cli-macos:
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: macos-latest
     steps:
       - name: Install Bun
@@ -92,6 +97,31 @@ jobs:
         working-directory: offline-cli
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
         timeout-minutes: 20
+      - name: Build offline-cli binary (darwin-arm64)
+        working-directory: offline-cli
+        run: bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/mina-guard-cli-darwin-arm64 --define 'process.versions.node=""'
+      - name: Code-sign binary (JIT entitlement required for WASM)
+        working-directory: offline-cli
+        run: |
+          cat > /tmp/entitlements.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key>
+            <true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          codesign -s - --force --entitlements /tmp/entitlements.plist dist/mina-guard-cli-darwin-arm64
+      - name: Smoke-test compiled binary (WASM loads without error)
+        working-directory: offline-cli
+        run: |
+          output=$(./dist/mina-guard-cli-darwin-arm64 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
 
   # Verifies contracts/.vk-hash semantically: when VK-affecting paths change,
   # compile MinaGuard and compare the real VK hash against the committed file.
@@ -185,7 +215,7 @@ jobs:
           echo "VK hash matches contracts/.vk-hash."
 
   test-offline-cli-windows:
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: windows-latest
     steps:
       - name: Install Bun
@@ -208,3 +238,13 @@ jobs:
         working-directory: offline-cli
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
         timeout-minutes: 20
+      - name: Build offline-cli binary (win32-x64)
+        working-directory: offline-cli
+        run: bun build --compile --target=bun-win32-x64 src/index.ts --outfile dist/mina-guard-cli-win32-x64 --define 'process.versions.node=""'
+      - name: Smoke-test compiled binary (WASM loads without error)
+        working-directory: offline-cli
+        shell: bash
+        run: |
+          output=$(./dist/mina-guard-cli-win32-x64.exe 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
