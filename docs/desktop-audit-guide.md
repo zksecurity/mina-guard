@@ -223,8 +223,15 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   (`assets/.vk-hash`) so the `/api/subscribe` route can reject contracts whose
   on-chain verification key does not match this MinaGuard release (a
   *mismatched* VK is rejected on both the manual and auto-subscribe paths; a
-  *missing* one is tolerated only while a just-deployed vault races indexing);
-  if the file is missing the check no-ops rather than blocking startup.
+  *missing* one is tolerated only while a just-deployed vault races indexing).
+  The file carries one hash per network (`testnet=…` / `mainnet=…` lines —
+  the circuit's compile-time `NETWORK_DOMAIN` makes each network's VK
+  structurally distinct); the embed picks the line matching the configured
+  network (`backend-embed.ts:71-87`, devnet sharing the testnet circuit) and
+  still accepts the pre-#93 single-bare-number format. When the file is
+  missing, or a keyed file has no line for the configured network, the check
+  no-ops rather than blocking startup or comparing against a wrong-network
+  hash.
 - **Fresh-DB bootstrap:** when `minaguard.db` does not exist, the bundled
   `assets/schema.sql` (generated from `schema.sqlite.prisma` via
   `prisma migrate diff`) is executed statement-by-statement with
@@ -365,8 +372,8 @@ desktop/
 ├── assets/
 │   ├── schema.sql           # SQLite bootstrap DDL (generated via prisma migrate diff)
 │   └── .vk-hash             # MinaGuard verification-key hashes, one per network
-│   │                        #   (copy of contracts/.vk-hash) → MINAGUARD_VK_HASH
-│   │                        #   (see the parse caveat in "The embedded backend")
+│   │                        #   (copy of contracts/.vk-hash); the configured
+│   │                        #   network's line → MINAGUARD_VK_HASH
 ├── scripts/
 │   ├── stage.mjs            # Stages the built UI + Prisma client into a fully
 │   │                        #   link-free tree (bun symlink-store materialization)
