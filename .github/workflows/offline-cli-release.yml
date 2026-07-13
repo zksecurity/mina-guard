@@ -35,6 +35,13 @@ concurrency:
 permissions:
   contents: write # required to create the GitHub Release
 
+# Exact Bun toolchain for every job here. Provenance of the CLI binary is the
+# whole point of this workflow (see header), so the compiler version must be
+# fixed and reproducible, not floating. Bump intentionally; the release notes
+# echo this so the published artifact records what built it.
+env:
+  BUN_VERSION: 1.3.10
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
@@ -60,8 +67,15 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      # Pin the Bun toolchain exactly (BUN_VERSION at the workflow level). This
+      # binary ends up handling MINA_PRIVATE_KEY, so its provenance is the point
+      # (see header): a floating `@v2` would let the compiler change under us
+      # between runs and make a rebuild of the same tag non-reproducible. The
+      # release notes echo this version so the artifact records what built it.
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Git checkout
         uses: actions/checkout@v6
@@ -83,6 +97,66 @@ jobs:
 
       - name: Build contracts
         run: bun run --filter contracts build
+
+      # Fail the release if the committed contracts/.vk-hash doesn't match the
+      # circuit at THIS tag. ci.yml's check-vk-hash only runs on PRs/main and
+      # only when it detects VK-affecting diffs, so a tag can point at a commit
+      # where it never ran — leaving minaguard-vk-hash.txt (the fingerprint
+      # operators trust to pin a binary to their deployment) unverified against
+      # the source the binary is actually built from. Here it is unconditional:
+      # release builds are rare, so always spend the compile. The Linux leg
+      # already builds contracts + has the deps, so this is nearly free; because
+      # `release` has `needs: build`, a mismatch here blocks release creation.
+      #
+      # Handles both .vk-hash formats: the legacy single bare decimal (verify
+      # the testnet/default circuit) and the per-network `net=hash` lines added
+      # in #93 (compile each network with MINA_NETWORK_DOMAIN set and compare).
+      - name: Verify committed VK hash matches the circuit
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          extract() { # $1 = raw output; prints the trailing decimal on the vkHash line
+            grep -oE 'vkHash(\[[a-z]+\])?: [0-9]+' <<<"$1" | tail -1 | grep -oE '[0-9]+$'
+          }
+          verify_one() { # $1 = network label ('' | testnet | mainnet), $2 = expected hash
+            local net="$1" expected="$2" out computed
+            echo "::group::verify VK (${net:-default})"
+            if [ -n "$net" ]; then
+              out="$(MINA_NETWORK_DOMAIN="$net" bun run dev-helpers/cli.ts vk-hash compile 2>&1)"
+            else
+              out="$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)"
+            fi
+            echo "$out"
+            echo "::endgroup::"
+            computed="$(extract "$out" || true)"
+            if [ -z "$computed" ]; then
+              echo "::error::Could not extract a VK hash from 'vk-hash compile' output (${net:-default})."
+              exit 1
+            fi
+            if [ "$computed" != "$expected" ]; then
+              echo "::error::contracts/.vk-hash is stale for ${net:-default}: circuit computes $computed but the committed file says $expected. This tag must not ship an unverified fingerprint."
+              exit 1
+            fi
+            echo "VK hash matches contracts/.vk-hash (${net:-default}): $computed"
+          }
+
+          # Keyed lines (net=hash) → per-network format; else the single bare decimal.
+          keyed="$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | grep -E '^[[:space:]]*[a-z]+=' || true)"
+          if [ -n "$keyed" ]; then
+            while IFS='=' read -r net hash; do
+              net="$(tr -d '[:space:]' <<<"$net")"
+              hash="$(tr -d '[:space:]' <<<"$hash")"
+              [ -n "$net" ] && verify_one "$net" "$hash"
+            done <<<"$keyed"
+          else
+            single="$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')"
+            if [ -z "$single" ]; then
+              echo "::error::contracts/.vk-hash has no hash value to verify."
+              exit 1
+            fi
+            verify_one "" "$single"
+          fi
 
       # Same compile invocation as docs/offline-signing.md; macos-* release
       # names map to bun's darwin targets, and bun appends .exe to the Windows
@@ -178,6 +252,10 @@ jobs:
           sha256sum mina-guard-cli-* minaguard-vk-hash.txt > SHA256SUMS
           cat SHA256SUMS
 
+      # Record the exact toolchain in the release body: reproducing this binary
+      # from source (the fallback trust story in docs/offline-signing.md)
+      # requires knowing which Bun compiled it. The VK hash was verified against
+      # the tagged circuit in the build job before we got here.
       - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -186,14 +264,16 @@ jobs:
             --draft \
             --verify-tag \
             --title "Offline CLI $GITHUB_REF_NAME" \
-            --notes "$(cat <<'EOF'
-          Air-gapped signing CLI for MinaGuard. Usage and security model: `docs/offline-signing.md`.
+            --notes "$(cat <<EOF
+          Air-gapped signing CLI for MinaGuard. Usage and security model: \`docs/offline-signing.md\`.
 
-          **Verify your download** against `SHA256SUMS` before moving it to the air-gapped machine.
+          **Verify your download** against \`SHA256SUMS\` before moving it to the air-gapped machine.
 
-          **Circuit compatibility:** this binary inlines the MinaGuard circuit; it only produces valid proofs for contracts whose verification-key hash matches `minaguard-vk-hash.txt`.
+          **Circuit compatibility:** this binary inlines the MinaGuard circuit; it only produces valid proofs for contracts whose verification-key hash matches \`minaguard-vk-hash.txt\`.
 
-          macOS: `xattr -d com.apple.quarantine mina-guard-cli-macos-*` then `chmod +x`. Linux: `chmod +x`.
+          **Built with** Bun \`${BUN_VERSION}\` (pin it to reproduce these binaries from source).
+
+          macOS: \`xattr -d com.apple.quarantine mina-guard-cli-macos-*\` then \`chmod +x\`. Linux: \`chmod +x\`.
           EOF
           )" \
             dist/*
