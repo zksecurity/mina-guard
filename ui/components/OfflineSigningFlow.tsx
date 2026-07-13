@@ -3,8 +3,16 @@
 import { useRef, useState } from 'react';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
 const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'http://127.0.0.1:8080/graphql';
+
+// CLI binaries are published per release by the offline-cli-release workflow
+// (binaries + SHA256SUMS + minaguard-vk-hash.txt). Default to the latest
+// published release; deployments should pin a specific release whose VK hash
+// matches their deployed contracts, e.g.
+// NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL=https://github.com/zksecurity/mina-guard/releases/download/offline-cli-v0.1.0
+const CLI_RELEASE_DOWNLOAD_BASE =
+  process.env.NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL ??
+  'https://github.com/zksecurity/mina-guard/releases/latest/download';
 
 async function broadcastSignedTx(txJson: string): Promise<string> {
   const query = `mutation($input: SendZkappInput!) { sendZkapp(input: $input) { zkapp { hash } } }`;
@@ -32,7 +40,8 @@ interface PlatformInfo {
 }
 
 function getPlatformInfo(p: string): PlatformInfo {
-  const filename = `mina-guard-cli-${p}`;
+  // Windows release assets carry the .exe suffix bun appends at compile time.
+  const filename = p.startsWith('windows') ? `mina-guard-cli-${p}.exe` : `mina-guard-cli-${p}`;
   if (p.startsWith('macos')) {
     const arch = p.includes('arm64') ? 'Apple Silicon' : 'Intel';
     return {
@@ -121,12 +130,21 @@ export function DownloadCLILink({ exportedBundleName, onPlatformSelect }: { expo
             <>
               <p className="font-semibold">2. Download the CLI</p>
               <a
-                href={`${API_BASE}/api/offline-cli/${selected.id}`}
-                download
+                href={`${CLI_RELEASE_DOWNLOAD_BASE}/${selected.filename}`}
                 className="inline-block px-4 py-2 rounded-lg border border-safe-green text-safe-green text-xs font-semibold hover:bg-safe-green/10 transition-colors"
               >
                 Download {selected.filename}
               </a>
+              <p className="text-xs text-safe-text/50">
+                Verify the download against{' '}
+                <a
+                  href={`${CLI_RELEASE_DOWNLOAD_BASE}/SHA256SUMS`}
+                  className="underline hover:text-safe-text"
+                >
+                  SHA256SUMS
+                </a>{' '}
+                from the same release before moving it to the air-gapped machine.
+              </p>
 
               {selected.setupSteps.length > 0 && (
                 <>
