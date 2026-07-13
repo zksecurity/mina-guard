@@ -129,7 +129,6 @@ export interface OfflineProposeBundle extends BundleBase {
     childThreshold?: number;
   };
   configNonce: number;
-  networkId: string;
 }
 
 export interface OfflineApproveBundle extends BundleBase {
@@ -159,7 +158,6 @@ interface BundleProposal {
   nonce: string | null;
   configNonce: string | null;
   expirySlot: string | null;
-  networkId: string | null;
   guardAddress: string | null;
   destination: string | null;
   childAccount: string | null;
@@ -365,7 +363,6 @@ function buildProposalStruct(
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expirySlot: Field(proposal.expirySlot ?? '0'),
-    networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
     childAccount,
@@ -783,7 +780,6 @@ export async function handlePropose(
     nonce: Field(input.nonce),
     configNonce: Field(bundle.configNonce),
     expirySlot: Field(input.expirySlot ?? 0),
-    networkId: Field(bundle.networkId),
     guardAddress: PublicKey.fromBase58(bundle.contractAddress),
     destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
     childAccount: input.childAccount

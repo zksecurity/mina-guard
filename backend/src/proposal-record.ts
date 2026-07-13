@@ -30,7 +30,6 @@ export interface SerializedProposalRecord {
   nonce: string | null;
   configNonce: string | null;
   expirySlot: string | null;
-  networkId: string | null;
   guardAddress: string | null;
   memo: string | null;
   memoHash: string | null;
@@ -173,7 +172,6 @@ export function serializeProposalRecord(
     nonce: proposal.nonce,
     configNonce: proposal.configNonce,
     expirySlot: proposal.expirySlot,
-    networkId: proposal.networkId,
     guardAddress: proposal.guardAddress,
     memo: proposal.memo,
     memoHash: proposal.memoHash,

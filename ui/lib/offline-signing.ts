@@ -62,7 +62,6 @@ export interface OfflineProposeBundle extends BundleBase {
     childThreshold?: number;
   };
   configNonce: number;
-  networkId: string;
 }
 
 export interface OfflineApproveBundle extends BundleBase {
@@ -77,7 +76,6 @@ export interface OfflineApproveBundle extends BundleBase {
     nonce: string | null;
     configNonce: string | null;
     expirySlot: string | null;
-    networkId: string | null;
     guardAddress: string | null;
     destination: string | null;
     childAccount: string | null;
@@ -187,7 +185,6 @@ export async function buildOfflineProposeBundle(params: {
   feePayerAddress: string;
   input: OfflineProposeBundle['input'];
   configNonce: number;
-  networkId: string;
 }): Promise<OfflineProposeBundle> {
   const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
@@ -217,7 +214,6 @@ export async function buildOfflineProposeBundle(params: {
     events,
     input: params.input,
     configNonce: params.configNonce,
-    networkId: params.networkId,
   };
 }
 

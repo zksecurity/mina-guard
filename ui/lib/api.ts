@@ -173,7 +173,6 @@ async function getJson<T>(path: string): Promise<T | null> {
 function toContractSummary(input: Record<string, unknown>): ContractSummary {
   return {
     address: asString(input.address) ?? '',
-    networkId: asNullableString(input.networkId),
     ownersCommitment: asNullableString(input.ownersCommitment),
     threshold: asNullableNumber(input.threshold),
     numOwners: asNullableNumber(input.numOwners),
@@ -205,7 +204,6 @@ function toProposal(input: Record<string, unknown>): Proposal {
     nonce: asNullableString(input.nonce) ?? asNullableString(input.uid),
     configNonce: asNullableString(input.configNonce),
     expirySlot: asNullableString(input.expirySlot),
-    networkId: asNullableString(input.networkId),
     guardAddress: asNullableString(input.guardAddress),
     memo: asNullableString(input.memo),
     memoHash: asNullableString(input.memoHash),

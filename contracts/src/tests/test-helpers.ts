@@ -38,7 +38,6 @@ export interface TestContext {
   owners: { key: PrivateKey; pub: PublicKey }[];
   approvalStore: ApprovalStore;
   nullifierStore: VoteNullifierStore;
-  networkId: Field;
 }
 
 // -- Owner Witness Helper ----------------------------------------------------
@@ -109,7 +108,6 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
 
   const approvalStore = new ApprovalStore();
   const nullifierStore = new VoteNullifierStore();
-  const networkId = Field(1);
 
   return {
     zkApp,
@@ -120,7 +118,6 @@ export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> 
     owners,
     approvalStore,
     nullifierStore,
-    networkId,
   };
 }
 
@@ -155,7 +152,6 @@ export async function deployAndSetup(
     await zkApp.setup(
       Field(threshold),
       Field(owners.length),
-      ctx.networkId,
       new SetupOwnersInput({ owners: setupOwners })
     );
   });
@@ -172,7 +168,6 @@ export function createTransferProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
   memoHash = Field(0),
@@ -190,7 +185,6 @@ export function createTransferProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination,
     childAccount,
@@ -214,7 +208,6 @@ export function createAddOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
   memoHash = Field(0),
@@ -228,7 +221,6 @@ export function createAddOwnerProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination,
     childAccount,
@@ -242,7 +234,6 @@ export function createRemoveOwnerProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
   memoHash = Field(0),
@@ -256,7 +247,6 @@ export function createRemoveOwnerProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination,
     childAccount,
@@ -270,7 +260,6 @@ export function createThresholdProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
   memoHash = Field(0),
@@ -284,7 +273,6 @@ export function createThresholdProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination,
     childAccount,
@@ -298,7 +286,6 @@ export function createDelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
   memoHash = Field(0),
@@ -312,7 +299,6 @@ export function createDelegateProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination,
     childAccount,
@@ -325,7 +311,6 @@ export function createUndelegateProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
   memoHash = Field(0),
@@ -339,7 +324,6 @@ export function createUndelegateProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination,
     childAccount,
@@ -356,7 +340,6 @@ export function createDeleteProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
 ): TransactionProposal {
   const receivers = emptyReceivers();
   receivers[0] = new Receiver({ address: PublicKey.empty(), amount: UInt64.zero });
@@ -369,7 +352,6 @@ export function createDeleteProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination: Destination.LOCAL,
     childAccount: PublicKey.empty(),
@@ -392,7 +374,6 @@ export function createCreateChildProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -403,7 +384,6 @@ export function createCreateChildProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination: Destination.REMOTE,
     childAccount,
@@ -420,7 +400,6 @@ export function createAllocateChildProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
 ): TransactionProposal {
   const padded = [...receivers];
   while (padded.length < MAX_RECEIVERS) {
@@ -435,7 +414,6 @@ export function createAllocateChildProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination: Destination.LOCAL,
     childAccount: PublicKey.empty(),
@@ -452,7 +430,6 @@ export function createReclaimChildProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
 ): TransactionProposal {
   return new TransactionProposal({
@@ -464,7 +441,6 @@ export function createReclaimChildProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination: Destination.REMOTE,
     childAccount,
@@ -477,7 +453,6 @@ export function createDestroyChildProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
 ): TransactionProposal {
   return new TransactionProposal({
@@ -489,7 +464,6 @@ export function createDestroyChildProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination: Destination.REMOTE,
     childAccount,
@@ -503,7 +477,6 @@ export function createEnableChildMultiSigProposal(
   configNonce: Field,
   guardAddress: PublicKey,
   expirySlot = Field(0),
-  networkId = Field(1),
   childAccount = PublicKey.empty(),
 ): TransactionProposal {
   return new TransactionProposal({
@@ -515,7 +488,6 @@ export function createEnableChildMultiSigProposal(
     nonce,
     configNonce,
     expirySlot,
-    networkId,
     guardAddress,
     destination: Destination.REMOTE,
     childAccount,
@@ -644,7 +616,7 @@ export async function deployAndSetupChildGuard(
   signerIndices: number[],
   nonce = Field(0),
 ): Promise<{ proposalHash: Field }> {
-  const { deployerAccount, deployerKey, networkId, approvalStore, nullifierStore, owners } = parentCtx;
+  const { deployerAccount, deployerKey, approvalStore, nullifierStore, owners } = parentCtx;
 
   const ownersCommitment = computeOwnerChain(childOwners);
   const thresholdField = Field(childThreshold);
@@ -659,7 +631,6 @@ export async function deployAndSetupChildGuard(
     Field(0),
     parentAddress,
     Field(0),
-    networkId,
   );
 
   const proposalHash = proposal.hash();
