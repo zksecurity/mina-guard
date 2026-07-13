@@ -26,6 +26,7 @@ import {
   EMPTY_MERKLE_MAP_ROOT,
   TxType,
   Destination,
+  NETWORK_DOMAIN,
 } from './constants';
 
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners } from './list-commitment';
@@ -90,6 +91,7 @@ export class TransactionProposal extends Struct({
       ...this.guardAddress.toFields(),
       this.destination,
       ...this.childAccount.toFields(),
+      NETWORK_DOMAIN,
     ]);
   }
 }
