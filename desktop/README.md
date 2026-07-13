@@ -2,7 +2,9 @@
 
 Electron wrapper around the MinaGuard Next.js UI + backend. Runs fully local:
 SQLite DB in the user's app-data directory, lite-mode indexer, Auro signing
-bridged through Chrome. See `ARCHITECTURE.md` for the runtime diagram.
+bridged through the user's browser. See
+[`docs/desktop-audit-guide.md`](../docs/desktop-audit-guide.md) for the runtime
+architecture and security notes.
 
 ## Prerequisites
 
@@ -137,20 +139,31 @@ release should land on.
 
 ### Signing (not done yet)
 
-Released artifacts are **unsigned**. Consequences for users:
+Released artifacts are **unsigned** (no Developer ID / Authenticode).
+Consequences for users:
 
-- **macOS:** Gatekeeper blocks first launch ("app is damaged / from an
-  unidentified developer"). Users must right-click → **Open** and confirm.
+- **macOS:** the packed app is **ad-hoc signed** by the `afterPack` hook
+  (`scripts/adhoc-sign.mjs`). Without it, electron-builder's repack breaks the
+  bundle seal of Electron's shipped ad-hoc signature, and downloaded
+  (quarantined) copies hit Gatekeeper's unbypassable **"MinaGuard is damaged
+  and can't be opened"** — right-click → Open does not work in that state, and
+  macOS 15 removed that bypass for unsigned apps anyway. With the hook, users
+  instead get the recoverable "Apple could not verify…" prompt: approve once
+  via System Settings → Privacy & Security → **Open Anyway**. For copies
+  downloaded from a release built *without* the hook:
+  `xattr -d com.apple.quarantine /Applications/MinaGuard.app`.
   Proper fix: an Apple Developer ID cert **and notarization**.
 - **Windows:** SmartScreen shows an "unknown publisher" warning; users click
   **More info → Run anyway**. Proper fix: an Authenticode (ideally EV) cert.
 - **Linux:** no signing needed.
 
-The workflow explicitly disables signing (`CSC_IDENTITY_AUTO_DISCOVERY=false`,
-`mac.identity: null`) so unsigned builds succeed instead of failing while
-hunting for a certificate. To add signing later, provide the certs as CI
-secrets and wire electron-builder's signing env vars — no structural change to
-this pipeline is required.
+The workflow explicitly disables identity signing
+(`CSC_IDENTITY_AUTO_DISCOVERY=false`, `mac.identity: null`) so unsigned builds
+succeed instead of failing while hunting for a certificate. To add signing
+later, provide the certs as CI secrets and wire electron-builder's signing env
+vars — the ad-hoc hook runs before electron-builder's sign step, so real
+signatures simply overwrite it; no structural change to this pipeline is
+required.
 
 ## Troubleshooting
 

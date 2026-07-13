@@ -3,10 +3,13 @@ name: Desktop release
 # Builds the MinaGuard desktop app (Electron) for macOS, Linux and Windows and
 # uploads the installers to a GitHub Release.
 #
-# Artifacts are UNSIGNED. macOS users get a Gatekeeper warning (right-click →
-# Open), Windows users get a SmartScreen "unknown publisher" prompt. Code
-# signing / notarization is intentionally left out of this pass — see the
-# "Signing" section in desktop/README.md for how to add it later.
+# Artifacts are UNSIGNED (no Developer ID / Authenticode). macOS bundles are
+# ad-hoc signed by the afterPack hook (desktop/scripts/adhoc-sign.mjs) so
+# downloaded copies show Gatekeeper's recoverable "Apple could not verify…"
+# prompt (System Settings → Privacy & Security → Open Anyway) instead of the
+# dead-end "damaged" dialog. Windows users get a SmartScreen "unknown
+# publisher" prompt. Real code signing / notarization is intentionally left
+# out of this pass — see the "Signing" section in desktop/README.md.
 #
 # Triggers:
 #   * push of a tag matching `desktop-v*` (e.g. desktop-v0.1.0) → real release
