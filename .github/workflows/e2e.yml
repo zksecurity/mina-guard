@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: e2e-runner
+  group: e2e-runner-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
