@@ -143,7 +143,6 @@ interface ContractState {
   voteNullifierRoot: string;
   approvalRoot: string;
   configNonce: number;
-  networkId: string;
 }
 
 function configureNetwork() {
@@ -205,7 +204,6 @@ async function fetchContractState(
       voteNullifierRoot: zkApp.voteNullifierRoot.get().toString(),
       approvalRoot: zkApp.approvalRoot.get().toString(),
       configNonce: Number(zkApp.configNonce.get().toString()),
-      networkId: zkApp.networkId.get().toString(),
     };
   } catch (error) {
     console.error('[MultisigWorker] Failed to fetch contract state', error);
@@ -406,8 +404,6 @@ function logProposeDiagnostics(args: {
     proposalNonce: proposal.nonce.toString(),
     onchainConfigNonce: contract.configNonce.get().toString(),
     proposalConfigNonce: proposal.configNonce.toString(),
-    onchainNetworkId: contract.networkId.get().toString(),
-    proposalNetworkId: proposal.networkId.toString(),
     onchainVoteNullifierRoot: contract.voteNullifierRoot.get().toString(),
     storeVoteNullifierRoot: nullifierStore.getRoot().toString(),
     onchainApprovalRoot: contract.approvalRoot.get().toString(),
@@ -540,7 +536,7 @@ function buildTransferReceivers(
 function buildProposalStruct(
   proposal: Pick<
     Proposal,
-    'receivers' | 'tokenId' | 'txType' | 'data' | 'memoHash' | 'nonce' | 'configNonce' | 'expirySlot' | 'networkId' | 'guardAddress' | 'destination' | 'childAccount'
+    'receivers' | 'tokenId' | 'txType' | 'data' | 'memoHash' | 'nonce' | 'configNonce' | 'expirySlot' | 'guardAddress' | 'destination' | 'childAccount'
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
@@ -558,7 +554,6 @@ function buildProposalStruct(
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expirySlot: Field(proposal.expirySlot ?? '0'),
-    networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
     childAccount,
@@ -712,7 +707,6 @@ const workerApi = {
       zkAppPrivateKeyBase58: string;
       owners: string[];
       threshold: number;
-      networkId: string;
     },
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
@@ -747,7 +741,6 @@ const workerApi = {
       await zkApp.setup(
         Field(params.threshold),
         Field(ownerKeys.length),
-        Field(params.networkId),
         new SetupOwnersInput({ owners: paddedOwners.slice(0, MAX_OWNERS) })
       );
     });
@@ -767,7 +760,6 @@ const workerApi = {
       feePayerAddress: string;
       owners: string[];
       threshold: number;
-      networkId: string;
     },
     sendFn: SendTxFn | null,
     progressFn: ProgressFn,
@@ -797,7 +789,6 @@ const workerApi = {
       await zkApp.setup(
         Field(params.threshold),
         Field(ownerStore.length),
-        Field(params.networkId),
         new SetupOwnersInput({
           owners: paddedOwners.slice(0, MAX_OWNERS),
         })
@@ -829,7 +820,6 @@ const workerApi = {
       proposerAddress: string;
       input: NewProposalInput;
       configNonce: number;
-      networkId: string;
       childPrivateKey?: string;
       childOwners?: string[];
       childThreshold?: number;
@@ -867,7 +857,6 @@ const workerApi = {
       nonce: Field(params.input.nonce),
       configNonce: Field(params.configNonce),
       expirySlot: Field(params.input.expirySlot ?? 0),
-      networkId: Field(params.networkId),
       guardAddress: PublicKey.fromBase58(params.contractAddress),
       destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
       childAccount: params.input.childAccount
@@ -1008,7 +997,6 @@ const workerApi = {
     const proposalStruct = buildProposalStruct({
       ...params.proposal,
       configNonce: params.proposal.configNonce ?? String(contractState.configNonce),
-      networkId: params.proposal.networkId ?? contractState.networkId,
       guardAddress: params.proposal.guardAddress ?? params.contractAddress,
     }, params.contractAddress);
 
@@ -1080,7 +1068,6 @@ const workerApi = {
     const proposalStruct = buildProposalStruct({
       ...params.proposal,
       configNonce: params.proposal.configNonce ?? String(contractState.configNonce),
-      networkId: params.proposal.networkId ?? contractState.networkId,
       guardAddress: params.proposal.guardAddress ?? params.contractAddress,
     }, params.contractAddress);
 

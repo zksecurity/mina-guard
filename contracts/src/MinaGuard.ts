@@ -26,6 +26,7 @@ import {
   EMPTY_MERKLE_MAP_ROOT,
   TxType,
   Destination,
+  NETWORK_DOMAIN,
 } from './constants';
 
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners } from './list-commitment';
@@ -66,7 +67,6 @@ export class TransactionProposal extends Struct({
   nonce: Field,
   configNonce: Field,
   expirySlot: Field,
-  networkId: Field,
   guardAddress: PublicKey,
   destination: Field,
   childAccount: PublicKey,
@@ -86,10 +86,10 @@ export class TransactionProposal extends Struct({
       this.nonce,
       this.configNonce,
       this.expirySlot,
-      this.networkId,
       ...this.guardAddress.toFields(),
       this.destination,
       ...this.childAccount.toFields(),
+      NETWORK_DOMAIN,
     ]);
   }
 }
@@ -111,7 +111,6 @@ export class SetupEvent extends Struct({
   ownersCommitment: Field,
   threshold: Field,
   numOwners: Field,
-  networkId: Field,
   parent: PublicKey,
 }) { }
 
@@ -136,7 +135,6 @@ export class ProposalEvent extends Struct({
   nonce: Field,
   configNonce: Field,
   expirySlot: Field,
-  networkId: Field,
   guardAddress: PublicKey,
   destination: Field,
   childAccount: PublicKey,
@@ -251,7 +249,6 @@ export class MinaGuard extends SmartContract {
   @state(Field) voteNullifierRoot = State<Field>();
   @state(Field) approvalRoot = State<Field>();
   @state(Field) configNonce = State<Field>();
-  @state(Field) networkId = State<Field>();
   @state(PublicKey) parent = State<PublicKey>();
   @state(Field) parentNonce = State<Field>();
   @state(Field) childExecutionRoot = State<Field>();
@@ -387,15 +384,13 @@ export class MinaGuard extends SmartContract {
     parent.equals(PublicKey.empty()).assertFalse('Not a child account');
   }
 
-  /** Low-level config/network/guard check against explicit values. */
+  /** Low-level config/guard check against explicit values. */
   private assertValidProposalConfigNetworkAndGuard(
     proposal: TransactionProposal,
     configNonce: Field,
-    networkId: Field,
     guardAddress: PublicKey,
   ): void {
     proposal.configNonce.assertEquals(configNonce, 'Config nonce mismatch - governance changed since proposal');
-    proposal.networkId.assertEquals(networkId, 'Network ID mismatch');
     proposal.guardAddress.equals(guardAddress).assertTrue('Guard address mismatch');
   }
 
@@ -404,11 +399,9 @@ export class MinaGuard extends SmartContract {
     proposal: TransactionProposal,
   ): void {
     const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    const currentNetworkId = this.networkId.getAndRequireEquals();
     this.assertValidProposalConfigNetworkAndGuard(
       proposal,
       currentConfigNonce,
-      currentNetworkId,
       this.address,
     );
   }
@@ -593,14 +586,12 @@ export class MinaGuard extends SmartContract {
     parentOwnersCommitment.assertNotEquals(Field(0), 'Parent not initialized');
 
     const parentConfigNonce = parentGuard.configNonce.getAndRequireEquals();
-    const parentNetworkId = parentGuard.networkId.getAndRequireEquals();
     const parentApprovalRoot = parentGuard.approvalRoot.getAndRequireEquals();
     const parentThreshold = parentGuard.threshold.getAndRequireEquals();
 
     this.assertValidProposalConfigNetworkAndGuard(
       proposal,
       parentConfigNonce,
-      parentNetworkId,
       parentAddress,
     );
     this.assertProposalNotExpired(proposal);
@@ -662,7 +653,6 @@ export class MinaGuard extends SmartContract {
   private initializeState(
     threshold: Field,
     numOwners: Field,
-    networkId: Field,
     parent: PublicKey,
     nonce: Field,
     parentNonce: Field,
@@ -691,13 +681,12 @@ export class MinaGuard extends SmartContract {
     this.nonce.set(nonce);
     this.approvalRoot.set(EMPTY_MERKLE_MAP_ROOT);
     this.voteNullifierRoot.set(EMPTY_MERKLE_MAP_ROOT);
-    this.networkId.set(networkId);
     this.parent.set(parent);
     this.parentNonce.set(parentNonce);
     this.childExecutionRoot.set(EMPTY_MERKLE_MAP_ROOT);
     this.childMultiSigEnabled.set(Field(1));
 
-    this.emitEvent('setup', { ownersCommitment, threshold, numOwners, networkId, parent });
+    this.emitEvent('setup', { ownersCommitment, threshold, numOwners, parent });
 
     for (let i = 0; i < MAX_OWNERS; i++) {
       const index = Field(i);
@@ -721,14 +710,12 @@ export class MinaGuard extends SmartContract {
   @method async setup(
     threshold: Field,
     numOwners: Field,
-    networkId: Field,
     initialOwners: SetupOwnersInput
   ) {
     this.parent.requireEquals(PublicKey.empty());
     this.initializeState(
       threshold,
       numOwners,
-      networkId,
       PublicKey.empty(),
       Field(0),
       Field(0),
@@ -836,10 +823,6 @@ export class MinaGuard extends SmartContract {
     this.reservedConfigHash
       .getAndRequireEquals()
       .assertEquals(childConfigHash, 'Executed config must match reserved child config');
-
-    // The helper pins the parent's networkId as a precondition, so
-    // proposal.networkId is the parent-approved value — use it as the
-    // child's networkId instead of an attacker-supplied method argument.
     const proposalHash = this.assertParentApprovalState(
       proposal,
       parentAddress,
@@ -850,7 +833,6 @@ export class MinaGuard extends SmartContract {
     this.initializeState(
       threshold,
       numOwners,
-      proposal.networkId,
       parentAddress,
       Field(0),
       Field(0),
@@ -989,7 +971,6 @@ export class MinaGuard extends SmartContract {
       nonce: proposal.nonce,
       configNonce: proposal.configNonce,
       expirySlot: proposal.expirySlot,
-      networkId: proposal.networkId,
       guardAddress: proposal.guardAddress,
       destination: proposal.destination,
       childAccount: proposal.childAccount,

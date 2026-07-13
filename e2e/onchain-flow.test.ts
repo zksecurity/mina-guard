@@ -638,7 +638,6 @@ test('10. Verify Settings page', async () => { const page = sharedPage;
   // Verify contract info section labels
   await expect(page.locator('text=Config Nonce')).toBeVisible({ timeout: 10_000 });
   await expect(page.locator('text=Owners Commitment')).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator('text=Network ID')).toBeVisible({ timeout: 10_000 });
   log('Contract info section verified');
 });
 

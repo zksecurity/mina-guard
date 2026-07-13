@@ -158,7 +158,6 @@ function NewTransactionPageInner() {
 
     const contractAddress = multisig.address;
     const proposerAddress = wallet.address;
-    const networkId = multisig.networkId ?? '0';
     const fallbackConfigNonce = multisig.configNonce ?? 0;
     const signer = wallet.type ? { type: wallet.type, ledgerAccountIndex: wallet.ledgerAccountIndex } : undefined;
 
@@ -171,7 +170,6 @@ function NewTransactionPageInner() {
         proposerAddress,
         input: data,
         configNonce,
-        networkId,
       }, onProgress, signer);
       if (!result) return null;
       createdHash = result.proposalHash;
@@ -342,13 +340,11 @@ function NewTransactionPageInner() {
                         const input = getFormInputRef.current!();
                         const fresh = await fetchContract(multisig!.address);
                         const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
-                        const networkId = multisig!.networkId ?? '0';
                         return buildOfflineProposeBundle({
                           contractAddress: multisig!.address,
                           feePayerAddress: offlineFeePayerAddress,
                           input,
                           configNonce,
-                          networkId,
                         });
                       }}
                     />

@@ -1,5 +1,16 @@
 import { MerkleMap, Poseidon, Field } from "o1js";
 
+// Compile-time network domain separator baked into every proposal hash.
+// Produces distinct VKs per network so a proposal signed on testnet cannot be
+// replayed on mainnet (and vice versa) even if the guard address, owner set,
+// and app-level networkId are identical.
+//
+// Set MINA_NETWORK_DOMAIN=mainnet when compiling/running for mainnet.
+// Anything else (or unset) is treated as testnet.
+export const NETWORK_DOMAIN = Field(
+  process.env.MINA_NETWORK_DOMAIN === 'mainnet' ? 1n : 2n
+);
+
 export const MAX_OWNERS = 20;
 
 // Hard limit: each receiver creates an AccountUpdate via this.send(), and Mina's

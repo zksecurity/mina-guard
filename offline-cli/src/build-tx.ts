@@ -129,7 +129,6 @@ export interface OfflineProposeBundle extends BundleBase {
     childThreshold?: number;
   };
   configNonce: number;
-  networkId: string;
 }
 
 export interface OfflineApproveBundle extends BundleBase {
@@ -159,7 +158,6 @@ interface BundleProposal {
   nonce: string | null;
   configNonce: string | null;
   expirySlot: string | null;
-  networkId: string | null;
   guardAddress: string | null;
   destination: string | null;
   childAccount: string | null;
@@ -365,7 +363,6 @@ function buildProposalStruct(
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expirySlot: Field(proposal.expirySlot ?? '0'),
-    networkId: Field(proposal.networkId ?? '0'),
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
     childAccount,
@@ -701,8 +698,23 @@ export function decodeTxMemo(base58Memo: string): string {
 let compiled = false;
 const skipProofs = process.env.SKIP_PROOFS === '1';
 
-async function compileContract(log: LogFn) {
+async function compileContract(bundle: BundleBase, log: LogFn) {
   if (compiled || skipProofs) return;
+
+  // NETWORK_DOMAIN is a compile-time constant baked into the circuit.
+  // A testnet-compiled binary (MINA_NETWORK_DOMAIN unset or != 'mainnet') produces
+  // a different VK than a mainnet-compiled one. Reject mismatched bundles so a
+  // testnet binary can't build proofs for mainnet proposals (and vice versa).
+  const isMainnetBinary = process.env.MINA_NETWORK_DOMAIN === 'mainnet';
+  const isBundleMainnet = bundle.minaNetwork === 'mainnet';
+  if (isMainnetBinary !== isBundleMainnet) {
+    throw new Error(
+      `Network mismatch: binary compiled for ${isMainnetBinary ? 'mainnet' : 'testnet'} ` +
+      `but bundle targets ${bundle.minaNetwork}. ` +
+      `Set MINA_NETWORK_DOMAIN=${bundle.minaNetwork === 'mainnet' ? 'mainnet' : 'testnet'} when running.`
+    );
+  }
+
   log('Compiling MinaGuard contract (this may take a few minutes on first run)...');
   const t0 = performance.now();
   await MinaGuard.compile({ cache: Cache.FileSystem('./cache') });
@@ -744,7 +756,7 @@ export async function handlePropose(
   configureNetwork(bundle);
   injectAccounts(bundle);
 
-  await compileContract(log);
+  await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
   const { ownerStore, approvalStore, nullifierStore } = rebuildStores(bundle.events);
@@ -768,7 +780,6 @@ export async function handlePropose(
     nonce: Field(input.nonce),
     configNonce: Field(bundle.configNonce),
     expirySlot: Field(input.expirySlot ?? 0),
-    networkId: Field(bundle.networkId),
     guardAddress: PublicKey.fromBase58(bundle.contractAddress),
     destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
     childAccount: input.childAccount
@@ -876,7 +887,7 @@ export async function handleApprove(
   configureNetwork(bundle);
   injectAccounts(bundle);
 
-  await compileContract(log);
+  await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
   const { ownerStore, approvalStore, nullifierStore } = rebuildStores(bundle.events);
@@ -965,7 +976,7 @@ export async function handleExecute(
   configureNetwork(bundle);
   injectAccounts(bundle);
 
-  await compileContract(log);
+  await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
   const { ownerStore, approvalStore } = rebuildStores(bundle.events);
