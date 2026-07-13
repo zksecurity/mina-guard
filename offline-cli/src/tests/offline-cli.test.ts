@@ -258,8 +258,7 @@ describe('offline-cli', () => {
   // -- Fee payer signing --
 
   it('signFeePayer produces valid authorization', async () => {
-    // @ts-ignore — ESM bundle built by ui/package.json postinstall
-    const Client = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+    const Client = (await import('mina-signer')).default;
     const client = new Client({ network: 'testnet' });
     const key = PrivateKey.random();
 
@@ -313,8 +312,7 @@ describe('offline-cli', () => {
 
     let ClientCtor: any;
     beforeAll(async () => {
-      // @ts-ignore — ESM bundle built by ui/package.json postinstall
-      ClientCtor = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+      ClientCtor = (await import('mina-signer')).default;
     });
 
     it('mainnet signature verifies under mainnet and FAILS under testnet', async () => {

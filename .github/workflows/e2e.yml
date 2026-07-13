@@ -18,7 +18,6 @@ jobs:
       - name: Git checkout
         uses: actions/checkout@v6
         with:
-          submodules: true
 
       # The self-hosted e2e runner has Docker Engine but not the Compose v2
       # plugin (`docker compose`), so every compose step below fails with

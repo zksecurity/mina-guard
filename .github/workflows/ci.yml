@@ -44,8 +44,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Git checkout
         uses: actions/checkout@v6
-        with:
-          submodules: true
       - name: Install dependencies
         run: bun install
       - name: Build contracts
@@ -76,13 +74,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Git checkout
         uses: actions/checkout@v6
-        with:
-          submodules: true
       - name: Install dependencies
         run: bun install --ignore-scripts
-      - name: Build mina-signer
-        working-directory: ui/deps/o1js/src/mina-signer
-        run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
       - name: Build contracts
         run: bun run --filter contracts build
       - name: Run offline-cli unit tests
@@ -106,7 +99,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          submodules: true
 
       - name: Detect VK-affecting changes
         id: detect
@@ -192,13 +184,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Git checkout
         uses: actions/checkout@v6
-        with:
-          submodules: true
       - name: Install dependencies
         run: bun install --ignore-scripts
-      - name: Build mina-signer
-        working-directory: ui/deps/o1js/src/mina-signer
-        run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
       - name: Build contracts
         run: bun run --filter contracts build
       - name: Run offline-cli unit tests

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "npx esbuild --bundle --minify deps/o1js/src/mina-signer/mina-signer.ts --outfile=deps/o1js/src/mina-signer/dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256"
+    "postinstall": "npx esbuild --bundle --minify node_modules/o1js/src/mina-signer/mina-signer.ts --outfile=src/mina-signer-dist/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256"
   },
   "dependencies": {
     "@ledgerhq/hw-transport": "^6.33.0",
@@ -18,7 +18,6 @@
     "comlink": "^4.4.2",
     "contracts": "workspace:*",
     "js-sha256": "^0.9.0",
-    "mina-signer": "file:deps/o1js/src/mina-signer",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"

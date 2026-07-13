@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "contracts": "workspace:*",
-    "mina-signer": "file:../ui/deps/o1js/src/mina-signer"
+    "contracts": "workspace:*"
   },
   "devDependencies": {
     "bun-types": "latest"

@@ -34,8 +34,7 @@ import {
   TokenId,
 } from 'o1js';
 
-// @ts-ignore — ESM bundle built by ui/package.json postinstall
-import Client from '../../ui/deps/o1js/src/mina-signer/dist/web/index.js';
+import Client from 'mina-signer';
 
 import {
   MinaGuard,

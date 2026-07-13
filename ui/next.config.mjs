@@ -33,13 +33,12 @@ const nextConfig = {
         child_process: false,
       };
     }
-    // Resolve mina-signer directly from the o1js submodule's esbuild output.
-    // bun copies file: deps at install time, so the postinstall-built dist/web/
-    // bundle isn't visible in the cached copy. This alias bypasses that stale copy.
+    // Resolve mina-signer from the postinstall-built esbuild bundle.
+    // The tsconfig paths entry handles TypeScript; this alias handles webpack.
     // Only used client-side (web worker); nothing server-side imports mina-signer.
     config.resolve.alias = {
       ...config.resolve.alias,
-      'mina-signer': path.resolve(__dirname, 'deps/o1js/src/mina-signer/dist/web/index.js'),
+      'mina-signer': path.resolve(__dirname, 'src/mina-signer-dist/index.js'),
     };
     return config;
   },
