@@ -38,6 +38,12 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, deploy]
+    # Gates the deploy behind a second account. The `Production` environment
+    # has required reviewers with `prevent_self_review`, so whoever merged
+    # cannot also approve the rollout. Without this key the environment's
+    # protection rules do not apply at all — they only bind jobs that
+    # reference the environment.
+    environment: Production
     steps:
       - uses: actions/checkout@v4
         with:
