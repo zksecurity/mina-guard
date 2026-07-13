@@ -224,9 +224,9 @@ ensure_vk_hash() {
         fi
         exit 1
     fi
-    hash=$(echo "$output" | awk '/^vkHash:/{print $2}')
+    hash=$(echo "$output" | awk '/^vkHash/{print $2; exit}')
     if [ -z "$hash" ]; then
-        echo "ERROR: vk-hash compile printed no 'vkHash:' line. Full output:" >&2
+        echo "ERROR: vk-hash compile printed no 'vkHash' line. Full output:" >&2
         echo "$output" >&2
         exit 1
     fi
