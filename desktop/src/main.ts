@@ -146,6 +146,7 @@ async function startServices(config: UserConfig): Promise<void> {
     dbPath: dbPath(),
     minaEndpoint: config.minaEndpoint,
     archiveEndpoint: config.archiveEndpoint,
+    networkId: config.networkId,
     schemaSqlPath,
     vkHashPath,
     backendBundlePath,

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { RequestHandler } from 'express';
+import type { NetworkId } from './config-store.js';
 
 export interface EmbeddedBackendHandle {
   /** Mount on the shared HTTP server; delegates to next() when no route matches. */
@@ -13,14 +14,17 @@ export interface EmbeddedBackendOptions {
   dbPath: string;
   minaEndpoint: string;
   archiveEndpoint: string;
+  /** Configured network — selects which line of .vk-hash applies. */
+  networkId: NetworkId;
   indexStartHeight?: number;
   /** Path to the bundled schema.sql used to bootstrap a fresh SQLite file. */
   schemaSqlPath: string;
   /**
-   * Path to the bundled contracts/.vk-hash (canonical MinaGuard verification-key
-   * hash). Read into MINAGUARD_VK_HASH so the subscribe route can reject
-   * contracts built with a different MinaGuard release. Optional: when absent or
-   * unparseable, the VK match check becomes a no-op (older behavior).
+   * Path to the bundled contracts/.vk-hash (MinaGuard verification-key hashes,
+   * one per network). The configured network's hash is read into
+   * MINAGUARD_VK_HASH so the subscribe route can reject contracts built with a
+   * different MinaGuard release. Optional: when absent or unparseable, the VK
+   * match check becomes a no-op (older behavior).
    */
   vkHashPath?: string;
   /**
@@ -54,18 +58,29 @@ export async function startEmbeddedBackend(
   process.env.MINA_ENDPOINT = opts.minaEndpoint;
   process.env.ARCHIVE_ENDPOINT = opts.archiveEndpoint;
   process.env.INDEX_START_HEIGHT = String(opts.indexStartHeight ?? 0);
-  // Canonical MinaGuard VK hash → MINAGUARD_VK_HASH, so the subscribe route can
-  // reject contracts from a different release. The file (contracts/.vk-hash) is
-  // a comment header followed by a bare decimal number; strip '#' lines and all
-  // whitespace, matching deploy/deploy-trail.sh. Left unset if the file is
-  // missing or parses empty — the VK match check then no-ops rather than the
+  // MinaGuard VK hash → MINAGUARD_VK_HASH, so the subscribe route can reject
+  // contracts from a different release. contracts/.vk-hash carries one hash
+  // per network (`testnet=…` / `mainnet=…` lines): the compile-time
+  // NETWORK_DOMAIN gives each network a structurally distinct VK, so the
+  // configured network selects which line applies — devnet shares the testnet
+  // circuit (anything except mainnet does, mirroring contracts/src/constants.ts).
+  // Files predating the per-network format (a comment header + one bare
+  // decimal) parse via the legacy fallback. Left unset if the file is missing
+  // or yields no usable value — the VK match check then no-ops rather than the
   // backend failing to start.
   if (opts.vkHashPath && existsSync(opts.vkHashPath)) {
-    const vkHash = readFileSync(opts.vkHashPath, 'utf8')
+    const lines = readFileSync(opts.vkHashPath, 'utf8')
       .split('\n')
-      .filter((line) => !/^\s*#/.test(line))
-      .join('')
-      .replace(/\s/g, '');
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#'));
+    const keyed = new Map<string, string>();
+    for (const line of lines) {
+      const eq = line.indexOf('=');
+      if (eq > 0) keyed.set(line.slice(0, eq).trim(), line.slice(eq + 1).replace(/\s/g, ''));
+    }
+    const vkHash = keyed.size > 0
+      ? keyed.get(opts.networkId === 'mainnet' ? 'mainnet' : 'testnet') ?? ''
+      : lines.join('').replace(/\s/g, ''); // legacy single-number format
     if (vkHash) {
       process.env.MINAGUARD_VK_HASH = vkHash;
     }
