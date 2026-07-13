@@ -327,8 +327,9 @@ that matters anyway. Broadcasting is not privileged.
 program that will see `MINA_PRIVATE_KEY` and whose summary screen the operator
 trusts — an attacker-supplied binary can lie about what it signs, and the
 elaborate bundle-tamper analysis above is moot. The UI's download links point
-at a **GitHub release** of this repo (`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`,
-defaulting to the latest release), built and draft-published by CI together
+at a **GitHub release** of this repo (`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL` —
+required, deliberately without a default; when unset the download step shows
+setup guidance instead of a link), built and draft-published by CI together
 with a `SHA256SUMS` file and `minaguard-vk-hash.txt` (see Build &
 distribution). This replaces the earlier design where the *backend* compiled
 and served the binary on demand — the party you trust at download time is now
@@ -473,9 +474,14 @@ canonical `SHA256SUMS` plus `minaguard-vk-hash.txt` (a copy of
 everything as a **draft** release for manual review. `workflow_dispatch` runs
 the same build as a dry run with CI artifacts only. The UI's download panel
 links the binary and the `SHA256SUMS` of the release configured via
-`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL` (defaulting to `releases/latest`);
-deployments should pin a release whose VK hash matches their deployed
-contracts. The CLI inlines the circuit, so that hash comparison is what ties
+`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`. There is deliberately **no default
+URL**: `releases/latest` resolves repo-wide and the desktop app releases
+through the same repo, so a `latest` link can stop carrying CLI assets at any
+moment (and can even resolve the binary and checksum links to two different
+releases) — and the right release is a per-deployment choice anyway. Each
+deployment pins the release whose VK hash matches its deployed contracts;
+when the variable is unset, the panel shows setup guidance instead of a
+link. The CLI inlines the circuit, so that hash comparison is what ties
 a downloaded binary to the deployment it can actually produce proofs for.
 
 The `offline-cli/cache/` directory in the repo holds the compile cache so the
