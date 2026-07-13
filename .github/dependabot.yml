@@ -1,0 +1,82 @@
+# Dependabot version updates.
+#
+# Scope note: this covers *version* updates only. Dependabot does not yet support
+# security updates for the bun ecosystem (version updates went GA 2025-02-13), so
+# a CVE in a bun-managed dep will not open an alert-driven PR on its own — it only
+# arrives via the weekly bump below. Security alerts remain enabled repo-wide.
+#
+# Also not covered: end-of-life runtimes. EOL is not a published advisory, so
+# nothing here will tell you that e.g. a pinned Electron major has dropped out of
+# its support window — it surfaces only as an ordinary major-version PR among the
+# rest. That needs a dedicated CI check.
+
+version: 2
+updates:
+  # ---------------------------------------------------------------------------
+  # GitHub Actions. Kept separate and ungrouped: these are few, low-churn, and
+  # each one is worth reading. Actions in the release pipeline run with a
+  # contents:write token, so an unreviewed bump there is a supply-chain event.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # ---------------------------------------------------------------------------
+  # JS/TS deps. The repo is a bun workspace with a single root bun.lock, so one
+  # entry at the root covers every package.json (backend, contracts, ui, e2e,
+  # offline-cli, dev-helpers, desktop).
+  #
+  # Heads-up: Dependabot's bun support has known workspace rough edges — it can
+  # fail to update bun.lock in workspace repos (dependabot-core#14223) and strips
+  # the lockfile's configVersion line (#13623). If PRs land with a broken or
+  # churning lockfile, regenerate with `bun install` before merging.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+    labels:
+      - "dependencies"
+    groups:
+      # Batch the low-risk churn into one PR so the queue stays readable and the
+      # bumps that deserve eyes aren't buried under @types/* noise.
+      dev-tooling:
+        dependency-type: "development"
+        patterns:
+          - "@types/*"
+          - "eslint*"
+          - "prettier"
+          - "typescript"
+          - "vitest*"
+          - "@vitest/*"
+        update-types:
+          - "minor"
+          - "patch"
+      production-minor-patch:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # o1js and the contracts pin must move in lockstep with the deployed
+      # verification key — an unattended bump changes the VK and orphans every
+      # existing on-chain vault. Bump deliberately, with a vk-hash regen.
+      - dependency-name: "o1js"
+      # Electron majors are a deliberate, tested migration (native module ABI:
+      # Prisma engines, Ledger HID). Majors are surfaced, but not auto-grouped
+      # into the routine queue.
+      - dependency-name: "electron"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "electron-builder"
+        update-types: ["version-update:semver-major"]
