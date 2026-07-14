@@ -153,13 +153,17 @@ export function DownloadCLILink({ exportedBundleName, onPlatformSelect }: { expo
                 </>
               ) : (
                 <p className="text-xs text-amber-400">
-                  No CLI release is configured for this deployment. Set{' '}
-                  <code className="bg-safe-dark px-1 rounded">NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL</code>{' '}
-                  to the GitHub release whose{' '}
-                  <code className="bg-safe-dark px-1 rounded">minaguard-vk-hash.txt</code>{' '}
-                  matches the deployed contracts, or build{' '}
+                  Download{' '}
                   <code className="bg-safe-dark px-1 rounded">{selected.filename}</code>{' '}
-                  from source — see docs/offline-signing.md.
+                  from the{' '}
+                  <a
+                    href="https://github.com/zksecurity/mina-guard/releases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-safe-text"
+                  >
+                    MinaGuard releases page
+                  </a>.
                 </p>
               )}
 
