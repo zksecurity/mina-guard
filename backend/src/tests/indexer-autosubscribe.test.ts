@@ -383,6 +383,7 @@ describe('tick: rescanUnreadyContracts', () => {
     let callCount = 0;
     mock.module('../mina-client.js', () => ({
       ...minaClient,
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
       fetchDecodedContractEvents: async () => {
@@ -409,6 +410,7 @@ describe('tick: rescanUnreadyContracts', () => {
 
     mock.module('../mina-client.js', () => ({
       ...minaClient,
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
       // Return a MinaGuard execution event for the unready contract's
@@ -435,6 +437,7 @@ describe('tick: rescanUnreadyContracts', () => {
     const rescanRanges: Array<{ from: number; to: number }> = [];
     mock.module('../mina-client.js', () => ({
       ...minaClient,
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
       fetchDecodedContractEvents: async (_addr: string, from: number, to: number) => {
@@ -461,6 +464,7 @@ describe('tick: rescanUnreadyContracts', () => {
     const calls: string[] = [];
     mock.module('../mina-client.js', () => ({
       ...minaClient,
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
       fetchDecodedContractEvents: async (addr: string) => {

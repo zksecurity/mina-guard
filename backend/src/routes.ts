@@ -866,7 +866,6 @@ function decorateContract<T extends ContractRow & { _count?: Record<string, numb
     delegate: config?.delegate ?? null,
     childMultiSigEnabled: config?.childMultiSigEnabled ?? null,
     ownersCommitment: config?.ownersCommitment ?? null,
-    networkId: config?.networkId ?? null,
     ...(_count !== undefined || ownerCount !== null
       ? {
           _count: {

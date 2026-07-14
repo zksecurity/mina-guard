@@ -54,7 +54,6 @@ type ContractConfigFields = {
   delegate: string | null;
   childMultiSigEnabled: boolean | null;
   ownersCommitment: string | null;
-  networkId: string | null;
 };
 
 /** Partial change set for a config-mutating event. Fields left undefined are copied from the latest row. */
@@ -609,7 +608,6 @@ export class MinaGuardIndexer {
         delegate:             changes.delegate             ?? latest?.delegate             ?? null,
         childMultiSigEnabled: changes.childMultiSigEnabled ?? latest?.childMultiSigEnabled ?? null,
         ownersCommitment:     changes.ownersCommitment     ?? latest?.ownersCommitment     ?? null,
-        networkId:            changes.networkId            ?? latest?.networkId            ?? null,
       },
     });
   }
@@ -641,7 +639,6 @@ export class MinaGuardIndexer {
         nonce: 0,
         parentNonce: 0,
         configNonce: 0,
-        networkId: asString(event.networkId),
         ownersCommitment: asString(event.ownersCommitment),
         childMultiSigEnabled: true,
       },
@@ -690,7 +687,6 @@ export class MinaGuardIndexer {
       {
         threshold: onChain.threshold,
         numOwners: onChain.numOwners,
-        networkId: onChain.networkId,
         ownersCommitment: onChain.ownersCommitment,
       },
     );
@@ -741,7 +737,6 @@ export class MinaGuardIndexer {
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expirySlot: asString(event.expirySlot),
-        networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
         destination: normalizeDestination(asString(event.destination)),
         childAccount: asNullableAddress(asString(event.childAccount)),
@@ -756,7 +751,6 @@ export class MinaGuardIndexer {
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expirySlot: asString(event.expirySlot),
-        networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
         destination: normalizeDestination(asString(event.destination)),
         childAccount: asNullableAddress(asString(event.childAccount)),

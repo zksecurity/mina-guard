@@ -36,18 +36,22 @@ export function clampedIntQuerySchema(
   });
 }
 
-/** Zod query schema for optional block filters that default invalid input to null. */
+/** Zod query schema for optional block filters that default invalid input to null.
+ *  Idempotent: accepts both the raw query string and an already-coerced number,
+ *  so it is safe if applied twice (validateQuery middleware + in-handler parse). */
 export const nullableBlockQuerySchema = z.any().transform((input) => {
-  if (typeof input !== 'string') return null;
-  const value = Number(input);
+  const value =
+    typeof input === 'number' ? input : typeof input === 'string' ? Number(input) : NaN;
   if (!Number.isFinite(value)) return null;
   return Math.max(0, Math.floor(value));
 });
 
-/** Zod query schema for optional boolean filters encoded as true/false strings. */
+/** Zod query schema for optional boolean filters encoded as true/false strings.
+ *  Idempotent: accepts both the raw 'true'/'false' string and an already-coerced
+ *  boolean, so it is safe if applied twice (see nullableBlockQuerySchema). */
 export const optionalBooleanQuerySchema = z.any().transform((input) => {
-  if (input === 'true') return true;
-  if (input === 'false') return false;
+  if (input === true || input === 'true') return true;
+  if (input === false || input === 'false') return false;
   return undefined;
 });
 

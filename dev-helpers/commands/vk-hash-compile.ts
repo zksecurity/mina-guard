@@ -1,18 +1,18 @@
 import { Cache } from "o1js";
 import { execSync } from "node:child_process";
 
-/** Reads MinaGuard verification key hash from local contract compilation output. */
+/** Compiles MinaGuard and prints its VK hash for the current network.
+ *  Set MINA_NETWORK_DOMAIN=mainnet to compile the mainnet VK; otherwise testnet. */
 export async function runVkHashCompile(): Promise<void> {
-  // The VK is derived from the COMPILED contract. contracts/build is gitignored
-  // and is easily stale on a dev machine — it won't reflect contracts/src edits
-  // until rebuilt, which would silently yield a VK hash for OLD contract logic.
-  // (This was the "Node vs browser VK divergence" red herring: really a stale
-  // host build vs a fresh Docker build.) Rebuild from source first so the hash
-  // always matches current contracts/src, in every environment.
-  console.log('Rebuilding contracts from source so the VK matches current contracts/src...');
+  const network = process.env.MINA_NETWORK_DOMAIN === 'mainnet' ? 'mainnet' : 'testnet';
+
+  // Rebuild from source first — contracts/build is gitignored and can be stale.
+  console.log(`Rebuilding contracts (network: ${network})...`);
   execSync('bun run --filter contracts build', { stdio: 'inherit' });
 
   // Dynamic import AFTER the rebuild so we load the freshly-built output.
+  // NETWORK_DOMAIN is evaluated at module load time from MINA_NETWORK_DOMAIN,
+  // so the imported module picks up the correct network constant.
   const { MinaGuard } = await import("contracts");
   if (!MinaGuard || typeof MinaGuard.compile !== 'function') {
     throw new Error(
@@ -20,7 +20,7 @@ export async function runVkHashCompile(): Promise<void> {
     );
   }
 
-  console.log('Compiling MinaGuard to extract verification key hash...');
+  console.log(`Compiling MinaGuard to extract ${network} VK hash...`);
   const cache = Cache.FileSystem('./cache');
   const { verificationKey } = await MinaGuard.compile({ cache });
   const hashText = verificationKey?.hash?.toString?.();
@@ -29,5 +29,5 @@ export async function runVkHashCompile(): Promise<void> {
     throw new Error('Failed to read verification key hash from compile output.');
   }
 
-  console.log(`vkHash: ${hashText}`);
+  console.log(`vkHash[${network}]: ${hashText}`);
 }

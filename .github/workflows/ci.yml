@@ -56,6 +56,11 @@ jobs:
         run: cd backend && bunx prisma generate
       - name: Build backend
         run: bun run --filter backend build
+      - name: Run backend tests
+        run: cd backend && bunx prisma db push --skip-generate && bun test
+        env:
+          CI: true
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
       - name: Run contract tests
         run: bun run test
         env:
@@ -65,11 +70,16 @@ jobs:
         run: cd offline-cli && bun test
         env:
           SKIP_PROOFS: '1'
-      - name: Build offline-cli binary
+      - name: Build offline-cli binary (linux-x64)
         run: cd offline-cli && bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/mina-guard-cli-linux-x64 --define 'process.versions.node=""'
+      - name: Smoke-test compiled binary (WASM loads without error)
+        run: |
+          output=$(offline-cli/dist/mina-guard-cli-linux-x64 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
 
   test-offline-cli-macos:
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: macos-latest
     steps:
       - name: Install Bun
@@ -92,6 +102,31 @@ jobs:
         working-directory: offline-cli
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
         timeout-minutes: 20
+      - name: Build offline-cli binary (darwin-arm64)
+        working-directory: offline-cli
+        run: bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/mina-guard-cli-darwin-arm64 --define 'process.versions.node=""'
+      - name: Code-sign binary (JIT entitlement required for WASM)
+        working-directory: offline-cli
+        run: |
+          cat > /tmp/entitlements.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key>
+            <true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          codesign -s - --force --entitlements /tmp/entitlements.plist dist/mina-guard-cli-darwin-arm64
+      - name: Smoke-test compiled binary (WASM loads without error)
+        working-directory: offline-cli
+        run: |
+          output=$(./dist/mina-guard-cli-darwin-arm64 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
 
   # Verifies contracts/.vk-hash semantically: when VK-affecting paths change,
   # compile MinaGuard and compare the real VK hash against the committed file.
@@ -100,7 +135,7 @@ jobs:
   # even if .vk-hash was updated (to the wrong value). The diff detection only
   # decides whether to spend the compile minutes.
   check-vk-hash:
-    timeout-minutes: 20
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -156,36 +191,52 @@ jobs:
         if: steps.detect.outputs.verify == 'true'
         run: bun install --ignore-scripts
 
-      - name: Compile contracts and compare VK hash
+      - name: Compile contracts and compare VK hashes (testnet + mainnet)
         if: steps.detect.outputs.verify == 'true'
         run: |
-          # The dev-helpers CLI statically imports the contracts package at
-          # startup, so the build output must exist before the CLI runs (its
-          # own rebuild happens too late for that first import).
+          # Pre-build once so the dev-helpers CLI's static imports resolve.
+          # The tsc output is network-independent; MINA_NETWORK_DOMAIN is
+          # evaluated at JS runtime when constants.js is imported.
           bun run --filter contracts build
 
-          bun run dev-helpers/cli.ts vk-hash compile 2>&1 | tee vk-compile.log
-          COMPUTED=$(grep '^vkHash: ' vk-compile.log | tail -1 | awk '{print $2}' || true)
-          COMMITTED=$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')
+          check_hash() {
+            local network="$1"
+            local env_prefix="$2"   # empty string or "MINA_NETWORK_DOMAIN=mainnet "
+            local log="vk-${network}.log"
 
-          echo "computed:  ${COMPUTED:-<none>}"
-          echo "committed: $COMMITTED"
+            eval "${env_prefix}bun run dev-helpers/cli.ts vk-hash compile" 2>&1 | tee "$log"
+            local computed
+            computed=$(grep "^vkHash\[${network}\]: " "$log" | tail -1 | awk '{print $2}' || true)
+            local committed
+            committed=$(grep "^${network}=" contracts/.vk-hash | cut -d= -f2 | tr -d '[:space:]')
 
-          if [ -z "$COMPUTED" ]; then
-            echo "::error::Could not extract a VK hash from 'vk-hash compile' output."
-            exit 1
-          fi
+            echo "${network} computed:  ${computed:-<none>}"
+            echo "${network} committed: ${committed:-<none>}"
 
-          if [ "$COMPUTED" != "$COMMITTED" ]; then
-            echo "::error::contracts/.vk-hash is stale: compiled VK hash is $COMPUTED but the committed file says $COMMITTED."
-            echo "Regenerate: bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile — then put the printed hash in contracts/.vk-hash."
-            exit 1
-          fi
+            if [ -z "$computed" ]; then
+              echo "::error::Could not extract ${network} VK hash from 'vk-hash compile' output."
+              return 1
+            fi
+            if [ -z "$committed" ]; then
+              echo "::error::contracts/.vk-hash is missing a '${network}=' line."
+              echo "Add: ${network}=${computed}"
+              return 1
+            fi
+            if [ "$computed" != "$committed" ]; then
+              echo "::error::contracts/.vk-hash ${network} hash is stale: computed ${computed} but committed ${committed}."
+              echo "Regenerate: ${env_prefix}bun run dev-helpers/cli.ts vk-hash compile — then update ${network}= in contracts/.vk-hash."
+              return 1
+            fi
+            echo "${network} VK hash matches."
+          }
 
-          echo "VK hash matches contracts/.vk-hash."
+          FAIL=0
+          check_hash testnet "" || FAIL=1
+          check_hash mainnet "MINA_NETWORK_DOMAIN=mainnet " || FAIL=1
+          exit $FAIL
 
   test-offline-cli-windows:
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: windows-latest
     steps:
       - name: Install Bun
@@ -208,3 +259,13 @@ jobs:
         working-directory: offline-cli
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
         timeout-minutes: 20
+      - name: Build offline-cli binary (win32-x64)
+        working-directory: offline-cli
+        run: bun build --compile --target=bun-win32-x64 src/index.ts --outfile dist/mina-guard-cli-win32-x64 --define 'process.versions.node=""'
+      - name: Smoke-test compiled binary (WASM loads without error)
+        working-directory: offline-cli
+        shell: bash
+        run: |
+          output=$(./dist/mina-guard-cli-win32-x64.exe 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
