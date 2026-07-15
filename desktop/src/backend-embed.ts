@@ -1,8 +1,48 @@
-import { existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, rmSync, openSync, readSync, closeSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { RequestHandler } from 'express';
 import type { NetworkId } from './config-store.js';
+
+/**
+ * Fingerprint of the bundled schema.sql, stamped into the DB as user_version so
+ * a build whose schema changed can spot a stale DB. Derived from the file rather
+ * than hand-bumped, so it tracks schema edits with no step to forget. Folded to
+ * 31 bits since user_version is a signed int32; 0 is remapped as it doubles as
+ * "never stamped".
+ */
+function schemaVersionOf(schemaSql: string): number {
+  const v = createHash('sha256').update(schemaSql).digest().readUInt32BE(0) & 0x7fffffff;
+  return v === 0 ? 1 : v;
+}
+
+/**
+ * Reads user_version from the SQLite header (bytes 60..63, big-endian) instead
+ * of opening a connection, so the check runs before Prisma pins the file and a
+ * stale DB can just be deleted. Returns null when unreadable, i.e. missing or
+ * truncated, which callers treat as a mismatch.
+ */
+function readUserVersion(dbPath: string): number | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(dbPath, 'r');
+    const buf = Buffer.alloc(4);
+    if (readSync(fd, buf, 0, 4, 60) < 4) return null;
+    return buf.readInt32BE(0);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** Removes the DB file and its journal/WAL sidecars. */
+function removeDbFiles(dbPath: string): void {
+  for (const suffix of ['', '-journal', '-wal', '-shm']) {
+    rmSync(dbPath + suffix, { force: true });
+  }
+}
 
 export interface EmbeddedBackendHandle {
   /** Mount on the shared HTTP server; delegates to next() when no route matches. */
@@ -43,9 +83,10 @@ export interface EmbeddedBackendOptions {
  *   1. Set every env var loadConfig() expects BEFORE importing backend modules.
  *      backend/src/db.ts instantiates PrismaClient at import time, which reads
  *      DATABASE_URL immediately.
- *   2. Ensure the SQLite file + schema exist (idempotent via CREATE TABLE IF
- *      NOT EXISTS in the bundled schema.sql... except prisma migrate diff
- *      emits plain CREATE TABLE. We check file existence instead.)
+ *   2. Ensure the SQLite file + schema exist and match this build's schema.sql
+ *      (schema.sql is plain CREATE TABLE, not IF NOT EXISTS, since prisma
+ *      migrate diff emits it that way, so we gate on file existence plus the
+ *      user_version stamp instead of running it idempotently).
  *   3. Dynamically import backend modules, build an Express app around the
  *      router, start the indexer.
  */
@@ -88,7 +129,20 @@ export async function startEmbeddedBackend(
   // loadConfig() requireEnv's DATABASE_URL, MINA_ENDPOINT, ARCHIVE_ENDPOINT.
   // All set above.
 
-  const freshDb = !existsSync(opts.dbPath);
+  const schemaSql = readFileSync(opts.schemaSqlPath, 'utf8');
+  const schemaVersion = schemaVersionOf(schemaSql);
+
+  // The DB is a re-derivable index of chain state, so a schema change is handled
+  // by rebuilding rather than migrating: cheaper than maintaining SQLite
+  // migrations, and the indexer refills it from INDEX_START_HEIGHT. Subscribed
+  // contracts go with it and must be re-added. DBs predating the stamp read 0,
+  // so they rebuild once.
+  let freshDb = !existsSync(opts.dbPath);
+  if (!freshDb && readUserVersion(opts.dbPath) !== schemaVersion) {
+    console.log('[desktop] schema.sql changed since this DB was built, rebuilding index');
+    removeDbFiles(opts.dbPath);
+    freshDb = true;
+  }
   if (freshDb) {
     mkdirSync(dirname(opts.dbPath), { recursive: true });
   }
@@ -103,11 +157,14 @@ export async function startEmbeddedBackend(
   try {
     if (freshDb) {
       console.log(`[desktop] creating SQLite schema at ${opts.dbPath}`);
-      const schemaSql = readFileSync(opts.schemaSqlPath, 'utf8');
       // Prisma's $executeRawUnsafe accepts multi-statement SQL on SQLite.
       for (const statement of schemaSql.split(/;\s*\n/).map((s) => s.trim()).filter(Boolean)) {
         await prisma.$executeRawUnsafe(statement);
       }
+      // Stamp last: a crash mid-schema leaves user_version at 0, so the next
+      // boot rebuilds rather than trusting a half-built DB. PRAGMA takes no bind
+      // params, and schemaVersion is a locally computed int.
+      await prisma.$executeRawUnsafe(`PRAGMA user_version = ${schemaVersion}`);
     }
 
     await prisma.$connect();
@@ -143,12 +200,10 @@ export async function startEmbeddedBackend(
     } catch { /* best effort */ }
     await Promise.resolve(prisma.$disconnect()).catch(() => {});
     if (freshDb) {
-      // The DB did not exist when we started, so whatever exists now is a
+      // The DB was absent or stale when we started, so whatever exists now is a
       // partial artifact of this failed attempt (possibly with an incomplete
-      // schema) — remove it so the next attempt bootstraps cleanly.
-      for (const suffix of ['', '-journal', '-wal', '-shm']) {
-        rmSync(opts.dbPath + suffix, { force: true });
-      }
+      // schema), remove it so the next attempt bootstraps cleanly.
+      removeDbFiles(opts.dbPath);
     }
     throw err;
   }
