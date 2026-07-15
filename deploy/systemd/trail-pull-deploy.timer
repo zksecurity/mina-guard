@@ -1,0 +1,13 @@
+# Polls GHCR for a new signed trail image every 2 minutes. The deploy script is
+# a no-op when nothing changed, so this is cheap. Deploys land within one
+# interval of a release — preserving the old deploy-on-merge feel, pull-side.
+[Unit]
+Description=Run trail-pull-deploy every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
