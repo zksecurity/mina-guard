@@ -90,6 +90,10 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  // mock.restore() does not undo mock.module registrations — re-register the
+  // real module so the stub doesn't leak into later test files in the same
+  // bun test process (mina-client-tx-status.test.ts imports the real thing).
+  mock.module('../mina-client.js', () => minaClient);
   await clearAll();
   await prisma.$disconnect();
 });
