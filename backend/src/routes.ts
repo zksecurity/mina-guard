@@ -650,7 +650,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     if ((error as { code?: string })?.code === 'P2021') {
       res.status(503).json({
         error: 'Database schema not initialized',
-        hint: 'Run `bun run --filter backend prisma:push` or restart backend to auto-sync schema.',
+        hint: 'Run `bun run --filter backend db:migrate` or restart backend to apply pending migrations.',
       });
       return;
     }
