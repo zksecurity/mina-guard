@@ -1,0 +1,147 @@
+name: Trail release (build · sign · publish)
+
+# Option B, phase 1 (pull-based deploy). Builds the /trail images, pushes them
+# to GHCR by digest, and signs each digest with cosign keyless (GitHub OIDC →
+# Fulcio, logged to Rekor). NOTHING here touches the trail box — the box pulls
+# and verifies these images itself (phase 2). This replaces the self-hosted
+# `deploy` runner path, closing the box-root exposure in
+# mina-guard-ops/architecture.md §10.5 (issue 4).
+#
+# ── BEFORE GO-LIVE (required) ─────────────────────────────────────────────
+#  1. Pin every `uses:` below to a full commit SHA. This is a release pipeline
+#     that SIGNS artifacts users run; mutable tags are a supply-chain hole
+#     (same finding as desktop-release.yml). Dependabot (github-actions
+#     ecosystem, already configured) will then keep the SHAs current.
+#  2. Confirm the `Production` environment has required reviewers with
+#     prevent-self-review. That is the second-account gate — it now lives HERE
+#     (it makes PR #97's gate on the old deploy job redundant; close #97).
+#  3. Make the three GHCR packages readable by the box's pull token
+#     (phase 2 / runbook).
+# ──────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: trail-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write   # push images to GHCR
+  id-token: write   # keyless cosign signing via OIDC
+
+env:
+  IMAGE_PREFIX: ghcr.io/zksecurity/mina-guard/trail
+  # Public build-time config baked into the frontend bundle. Mirrors the values
+  # previously hardcoded in deploy/docker-compose.trail.yml. Change these if the
+  # trail domain moves off mina-nodes.duckdns.org/trail.
+  NEXT_PUBLIC_BASE_PATH: /trail
+  NEXT_PUBLIC_API_BASE_URL: https://mina-nodes.duckdns.org/trail
+  NEXT_PUBLIC_MINA_ENDPOINT: https://mina-nodes.duckdns.org/trail/graphql
+  NEXT_PUBLIC_ARCHIVE_ENDPOINT: https://mina-nodes.duckdns.org/trail/archive
+  NEXT_PUBLIC_MINA_NETWORK: testnet
+  NEXT_PUBLIC_BLOCK_EXPLORER_URL: https://mina-nodes.duckdns.org/trail/explorer
+  NEXT_PUBLIC_POLL_INTERVAL_MS: "1000"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: Production   # second-account approval gate (supersedes #97)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ui/deps/o1js submodule the frontend build needs
+
+      - name: Read MinaGuard VK hash
+        id: vk
+        # A property of the contract source, committed at contracts/.vk-hash;
+        # the backend takes it as a build arg and the indexer filters by it.
+        run: |
+          h=$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')
+          [ -n "$h" ] || { echo "::error::contracts/.vk-hash parsed empty"; exit 1; }
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Build & push — backend
+        id: backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: preview-env/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-backend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-backend:main
+          build-args: |
+            MINAGUARD_VK_HASH=${{ steps.vk.outputs.hash }}
+
+      - name: Build & push — frontend
+        id: frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: preview-env/Dockerfile.frontend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-frontend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-frontend:main
+          build-args: |
+            NEXT_PUBLIC_BASE_PATH=${{ env.NEXT_PUBLIC_BASE_PATH }}
+            NEXT_PUBLIC_API_BASE_URL=${{ env.NEXT_PUBLIC_API_BASE_URL }}
+            NEXT_PUBLIC_MINA_ENDPOINT=${{ env.NEXT_PUBLIC_MINA_ENDPOINT }}
+            NEXT_PUBLIC_ARCHIVE_ENDPOINT=${{ env.NEXT_PUBLIC_ARCHIVE_ENDPOINT }}
+            NEXT_PUBLIC_MINA_NETWORK=${{ env.NEXT_PUBLIC_MINA_NETWORK }}
+            NEXT_PUBLIC_BLOCK_EXPLORER_URL=${{ env.NEXT_PUBLIC_BLOCK_EXPLORER_URL }}
+            NEXT_PUBLIC_POLL_INTERVAL_MS=${{ env.NEXT_PUBLIC_POLL_INTERVAL_MS }}
+            ENABLE_SOURCE_MAPS=false
+
+      - name: Build & push — explorer
+        id: explorer
+        uses: docker/build-push-action@v6
+        with:
+          context: preview-env
+          file: preview-env/Dockerfile.explorer
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-explorer:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-explorer:main
+          build-args: |
+            NEXT_PUBLIC_BASE_PATH=/trail/explorer
+
+      - name: Sign images by digest (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign "${{ env.IMAGE_PREFIX }}-backend@${{ steps.backend.outputs.digest }}"
+          cosign sign "${{ env.IMAGE_PREFIX }}-frontend@${{ steps.frontend.outputs.digest }}"
+          cosign sign "${{ env.IMAGE_PREFIX }}-explorer@${{ steps.explorer.outputs.digest }}"
+
+      - name: Publish digest manifest
+        # The box's pull agent (phase 2) can pull :main and verify, or pin these
+        # exact digests. Emitted as a build artifact for traceability.
+        run: |
+          cat > trail-images.json <<EOF
+          {
+            "backend":  "${{ env.IMAGE_PREFIX }}-backend@${{ steps.backend.outputs.digest }}",
+            "frontend": "${{ env.IMAGE_PREFIX }}-frontend@${{ steps.frontend.outputs.digest }}",
+            "explorer": "${{ env.IMAGE_PREFIX }}-explorer@${{ steps.explorer.outputs.digest }}",
+            "sha": "${{ github.sha }}",
+            "vk_hash": "${{ steps.vk.outputs.hash }}"
+          }
+          EOF
+          cat trail-images.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trail-images
+          path: trail-images.json
