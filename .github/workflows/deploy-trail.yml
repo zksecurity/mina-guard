@@ -27,8 +27,11 @@
 name: Deploy Mesa Trail
 
 on:
-  push:
-    branches: [main]
+  # Auto-deploy on merge is disabled during the three-box migration: the
+  # trail box intentionally runs no self-hosted `deploy` runner, so a
+  # push-triggered job would queue forever with no matching runner. Deploy
+  # manually over SSH for now; restore a trigger when the pull-based deploy
+  # (Option B) lands. See mina-guard-ops architecture.md 10.5.
   workflow_dispatch: {}
 
 concurrency:
