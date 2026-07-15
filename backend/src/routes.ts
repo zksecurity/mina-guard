@@ -583,29 +583,27 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    const verificationKeyHash = await fetchVerificationKeyHash(address);
-    // Existence required only on the manual path (fromBlock supplied). The
-    // auto-subscribe path races the deploy tx, so a null VK stays allowed — the
-    // unready rescan picks it up once it lands.
-    if (fromBlockNum !== null && !verificationKeyHash) {
-      res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
-      return;
-    }
-    // Reject a VK from a different MinaGuard release: its proofs would fail
-    // on-chain, so tracking it is pointless. Enforced on BOTH paths — a
-    // *mismatched* VK is always wrong; only a *missing* one is tolerated during
-    // the deploy race (the `verificationKeyHash &&` guard). No-op when
-    // minaguardVkHash is unset. Mirrors indexer.ts processCandidateAddresses.
-    if (
-      verificationKeyHash &&
-      config?.minaguardVkHash &&
-      verificationKeyHash !== config.minaguardVkHash
-    ) {
-      res.status(400).json({
-        error: 'Contract verification key does not match this app version. '
-          + 'It was likely deployed with a different MinaGuard release.',
-      });
-      return;
+    // VK lookup only on the manual path. The auto-subscribe path races the
+    // deploy tx (account still in mempool → VK null), so we skip it; the
+    // unready rescan validates once the deploy lands.
+    if (fromBlockNum !== null) {
+      const verificationKeyHash = await fetchVerificationKeyHash(address);
+      if (!verificationKeyHash) {
+        res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
+        return;
+      }
+      // Reject a VK from a different MinaGuard release — its proofs fail
+      // on-chain. No-op when minaguardVkHash is unset. Mirrors indexer.ts.
+      if (
+        config?.minaguardVkHash &&
+        verificationKeyHash !== config.minaguardVkHash
+      ) {
+        res.status(400).json({
+          error: 'Contract verification key does not match this app version. '
+            + 'It was likely deployed with a different MinaGuard release.',
+        });
+        return;
+      }
     }
 
     // Safety margin on the default path: the UI calls subscribe right
