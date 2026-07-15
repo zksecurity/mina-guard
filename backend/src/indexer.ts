@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import pg from 'pg';
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
@@ -262,7 +263,7 @@ export class MinaGuardIndexer {
       console.error('[indexer] tick failed:', error);
       this.status.lastError = error instanceof Error
         ? error.message
-        : `Non-Error thrown by indexer tick: ${typeof error === 'string' ? error : JSON.stringify(error)}`;
+        : `Non-Error thrown by indexer tick: ${describeThrown(error)}`;
     }
   }
 
@@ -1281,6 +1282,21 @@ function reverseEventsWithinEachTx(events: ChainEvent[]): ChainEvent[] {
     groups.get(key)!.push(e);
   }
   return keyOrder.flatMap((k) => [...groups.get(k)!].reverse());
+}
+
+/** Renders a thrown non-Error value for a log/status message without ever
+ *  throwing itself. JSON.stringify would blow up on the bigints o1js carries
+ *  and on circular structures; util.inspect handles both. A throw here would
+ *  escape tick()'s catch and, since tick() runs fire-and-forget under
+ *  setInterval, surface as an unhandledRejection that kills the process.
+ *  Exported for unit testing. */
+export function describeThrown(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return inspect(value, { depth: 2, breakLength: Infinity });
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
 }
 
 /** Converts unknown values into nullable string form for DB persistence. */
