@@ -4,6 +4,22 @@ import { useRef, useState } from 'react';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 
+<<<<<<< HEAD
+// CLI binaries are published per release by the offline-cli-release workflow
+// (binaries + SHA256SUMS + minaguard-vk-hash.txt). There is deliberately NO
+// default URL: `releases/latest` resolves repo-wide, and this repo also
+// publishes desktop releases — the moment one of those is newest, a `latest`
+// URL stops carrying CLI assets (404) and can even split the binary and
+// SHA256SUMS links across two releases. The right release is a
+// per-deployment choice anyway: pin the one whose minaguard-vk-hash.txt
+// matches the deployed contracts, e.g.
+// NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL=https://github.com/zksecurity/mina-guard/releases/download/offline-cli-v0.1.0
+// When unset, the download section shows setup guidance instead of a link.
+const CLI_RELEASE_DOWNLOAD_BASE = process.env.NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL;
+=======
+const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'http://127.0.0.1:8080/graphql';
+>>>>>>> main
+
 // CLI binaries are published per release by the offline-cli-release workflow
 // (binaries + SHA256SUMS + minaguard-vk-hash.txt). There is deliberately NO
 // default URL: `releases/latest` resolves repo-wide, and this repo also
@@ -153,13 +169,17 @@ export function DownloadCLILink({ exportedBundleName, onPlatformSelect }: { expo
                 </>
               ) : (
                 <p className="text-xs text-amber-400">
-                  No CLI release is configured for this deployment. Set{' '}
-                  <code className="bg-safe-dark px-1 rounded">NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL</code>{' '}
-                  to the GitHub release whose{' '}
-                  <code className="bg-safe-dark px-1 rounded">minaguard-vk-hash.txt</code>{' '}
-                  matches the deployed contracts, or build{' '}
+                  Download{' '}
                   <code className="bg-safe-dark px-1 rounded">{selected.filename}</code>{' '}
-                  from source — see docs/offline-signing.md.
+                  from the{' '}
+                  <a
+                    href="https://github.com/zksecurity/mina-guard/releases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-safe-text"
+                  >
+                    MinaGuard releases page
+                  </a>.
                 </p>
               )}
 
