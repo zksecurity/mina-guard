@@ -1,4 +1,4 @@
-# Trail pull-based deploy (Option B, phase 2) — DRAFT, not yet enabled.
+# Trail pull-based deploy (phase 2) — DRAFT, not yet enabled.
 # Install to /etc/systemd/system/ (or ~/.config/systemd/user/ for a user unit).
 # Runs on the trail box only. Pairs with trail-pull-deploy.timer.
 [Unit]
