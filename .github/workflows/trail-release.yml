@@ -19,8 +19,9 @@ name: Trail release (build · sign · publish)
 #  2. Confirm the `Production` environment has required reviewers with
 #     prevent-self-review. That is the second-account gate — it now lives HERE
 #     (the required-reviewer gate on the old on-box deploy job is then redundant).
-#  3. Make the three GHCR packages readable by the box's pull token
-#     (phase 2 / runbook).
+#  3. Make the three GHCR packages PUBLIC (after the first run creates them) so
+#     the box pulls anonymously — no pull token to store/rotate. They're built
+#     from open-source code and bake in nothing secret. See the phase-2 runbook.
 # ──────────────────────────────────────────────────────────────────────────
 
 on:
