@@ -1,7 +1,8 @@
 // TODO(migrations): dev currently applies this schema via `prisma db push`.
 // Before prod cutover, initialize `prisma/migrations/` with a baseline and
 // switch the `start` script to `prisma migrate deploy`. Full plan +
-// pre-deploy checklist + Hetzner notes in PRODUCTION_ARCHITECTURE.md § 5.6.
+// pre-deploy checklist + Hetzner notes in the ops repo:
+// mina-guard-ops/architecture.md §5.6.
 
 generator client {
   provider      = "prisma-client-js"

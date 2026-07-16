@@ -11,8 +11,9 @@
 # MESA_NODE_HOST is required — `docker compose up` fails if it's not set in
 # the deploying shell. See deploy/.env.example for the shape of the file
 # deploy-trail.sh sources; or just `export MESA_NODE_HOST=...` before running.
-# ufw on whichever box that resolves to must allow inbound 3085 + 8282 from
-# this server's IP — see MINA_GUARD_PRODUCTION.md §3.
+# The Hetzner Cloud Firewall on whichever box that resolves to must allow
+# inbound 3085/8282/5433 from this server's IP — host ufw is bypassed by
+# Docker-published ports. See the ops repo: mina-guard-ops/architecture.md §3.
 #
 # Usage:
 #   ./deploy/deploy-trail.sh up
@@ -50,8 +51,9 @@ services:
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
-      # The Mesa Trail node stack lives on a separate box. ufw on that box
-      # restricts ports 3085 + 8282 to inbound from this server's IP only.
+      # The Mesa Trail node stack lives on a separate box. Its Hetzner Cloud
+      # Firewall restricts ports 3085 + 8282 to inbound from this server's IP
+      # only (host ufw is bypassed by Docker-published ports).
       - MINA_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:3085/graphql
       - ARCHIVE_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:8282
       # Read-only archive postgres on the node-stack box. Lets the indexer

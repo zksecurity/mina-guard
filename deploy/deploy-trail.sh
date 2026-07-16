@@ -12,12 +12,13 @@
 # port (main=10000, previews=1000N, trail=10001).
 #
 # Cross-host dependency: the application stack here reaches the Mina node
-# stack on $MESA_NODE_HOST (ports 3085 + 8282). Before bringing this up,
-# confirm ufw on the node-stack box allows inbound 3085 + 8282 from this
-# server's public IP:
-#
-#   sudo ufw allow from <this-server's-public-IP> to any port 3085 proto tcp
-#   sudo ufw allow from <this-server's-public-IP> to any port 8282 proto tcp
+# stack on $MESA_NODE_HOST (daemon GraphQL :3085, archive-node-api :8282,
+# read-only archive postgres :5433). Before bringing this up, confirm the
+# node-stack box's Hetzner Cloud Firewall allows inbound 3085/8282/5433
+# from this server's public IP only. Do NOT rely on host ufw for this:
+# Docker publishes ports through its own iptables chains, which bypass ufw
+# entirely — a ufw rule looks right but enforces nothing. Setup details
+# in the ops repo: mina-guard-ops/architecture.md §3.
 #
 # MESA_NODE_HOST is required — fill in deploy/.env (see deploy/.env.example)
 # or `export MESA_NODE_HOST=...` in the deploying shell before invoking this
