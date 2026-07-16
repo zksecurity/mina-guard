@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Trail pull-based deploy — Option B, phase 2.
+# Trail pull-based deploy — phase 2.
 #
 # Pulls the latest SIGNED /trail images from GHCR, verifies each with cosign
 # against the release-workflow identity, and redeploys only when a digest
-# actually changed. Nothing pushes to this box; it pulls. Replaces the
-# self-hosted `deploy` runner path (mina-guard-ops architecture.md §10.5).
+# actually changed. Verification reaches the PUBLIC Sigstore log
+# (rekor.sigstore.dev) at verify time — an external availability dependency.
+# Nothing pushes to this box; it pulls. Replaces the
+# self-hosted `deploy` runner path — nothing pushes to the box.
 # Meant to be run by trail-pull-deploy.timer.
 #
 # ┌─ DRAFT — NOT YET VALIDATED ON THE TRAIL BOX ────────────────────────────┐
