@@ -21,7 +21,8 @@
 # `docker compose up` fails if unset (see deploy/.env.example).
 #
 # Both cross-host hops use plaintext HTTP over the public internet, gated by
-# ufw on the node-stack box (allow inbound 3085/8282 only from prod IP).
+# the node-stack box's Hetzner Cloud Firewall (allow inbound 3085/8282 only
+# from the prod box's IP; host ufw is bypassed by Docker-published ports).
 # Sibling file `deploy/Caddyfile` documents the equivalent `/app/*` routes.
 
 :80 {

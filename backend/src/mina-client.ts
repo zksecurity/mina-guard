@@ -237,21 +237,19 @@ export async function discoverCandidateAddresses(
  * daemon's bestChain scan (capped at 290 blocks), this reaches arbitrary history.
  *
  * Returns addresses from blocks where:
- *   - chain_status != 'orphaned'  (canonical OR pending — see TODO below)
+ *   - chain_status != 'orphaned'  (canonical OR pending — see note below)
  *   - the account update set a verification_key whose hash matches vkHash
  *   - the containing zkapp_command was applied (not failed)
  *   - the block height is in [fromHeight, toHeight] inclusive
  *
- * TODO(reorg-safety): we include `chain_status = 'pending'` so freshly-deployed
- * contracts (the last ~k blocks) become discoverable without waiting for them
- * to finalize. But `detectAndRollbackReorg` only rewinds event rows, not the
- * Contract table — so if a pending block later orphans, its Contract row is
- * never cleaned up and the indexer ends up tracking a deploy that didn't
- * happen. Acceptable on mesa-mut (reorg risk ~0 on a low-stakes testnet);
- * UNSAFE on mainnet. Before a mainnet deploy: either restrict to
- * `chain_status = 'canonical'` (and accept a ~k-block discovery lag), or
- * add a periodic reconciliation that deletes Contract rows whose
- * discoveredAtBlock has since orphaned.
+ * We include `chain_status = 'pending'` so freshly-deployed contracts (the
+ * last ~k blocks) become discoverable without waiting for finalization.
+ * `rollbackAboveFork` (`backend/src/indexer.ts`) already deletes Contract rows
+ * by `discoveredAtBlock` on every reorg tick, so orphaned pending deploys are
+ * cleaned up automatically. Residual risk: a reorg deeper than
+ * REORG_DETECTION_WINDOW (~290 blocks) requires operator intervention
+ * regardless — Mina's finality horizon makes this effectively impossible in
+ * practice.
  *
  * The join shape matches the upstream Mina archive schema verified against the
  * mesa-mut archive (45-table layout, zkapp_verification_key_hashes split from
