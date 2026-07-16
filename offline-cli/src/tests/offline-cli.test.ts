@@ -139,7 +139,6 @@ describe('offline-cli', () => {
       await zkApp.setup(
         Field(2),
         Field(owners.length),
-        Field(1),
         new SetupOwnersInput({ owners: setupOwners }),
       );
     });
@@ -158,7 +157,6 @@ describe('offline-cli', () => {
       nonce: Field(1),
       configNonce: Field(0),
       expirySlot: Field(0),
-      networkId: Field(1),
       guardAddress: zkAppAddress,
       destination: Destination.LOCAL,
       childAccount: PublicKey.empty(),

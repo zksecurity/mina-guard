@@ -317,7 +317,6 @@ export async function fetchOnChainState(
 ): Promise<{
   threshold: number;
   numOwners: number;
-  networkId: string;
   ownersCommitment: string;
   nonce: number;
   configNonce: number;
@@ -332,7 +331,6 @@ export async function fetchOnChainState(
   try {
     const threshold = contract.threshold.get();
     const numOwners = contract.numOwners.get();
-    const networkId = contract.networkId.get();
     const ownersCommitment = contract.ownersCommitment.get();
     const nonce = contract.nonce.get();
     const configNonce = contract.configNonce.get();
@@ -342,7 +340,6 @@ export async function fetchOnChainState(
     return {
       threshold: Number(threshold.toString()),
       numOwners: Number(numOwners.toString()),
-      networkId: networkId.toString(),
       ownersCommitment: ownersCommitment.toString(),
       nonce: Number(nonce.toString()),
       configNonce: Number(configNonce.toString()),

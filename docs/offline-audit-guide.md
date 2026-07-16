@@ -63,38 +63,27 @@ format and the CLI fully support them (relevant for hand-built bundles);
 
 ### 1. Export (`ui/lib/offline-signing.ts`, main thread — no o1js needed)
 
-Three builders, one per action:
-
-- **All bundles** carry `version: 1`, `minaNetwork` (`testnet`/`mainnet`,
-  resolved at call time from the runtime config, devnet mapping to `testnet` —
-  it selects the o1js network id, i.e. the fee-payer signature domain, and the
-  CLI refuses the bundle if it doesn't match the network domain the CLI was
-  started with, see stage 2), the contract address, the typed fee-payer
-  address, **account snapshots** (GraphQL `FetchedAccount` shape, fetched live
-  from the Mina node: the contract, the fee payer, and the child account when
-  relevant), and the contract's **full event history** (paged out of the
-  indexer's `/events` API and reversed to chronological order).
-- **Propose** additionally carries the `input` (the `NewProposalInput` the
-  form built) and a **fresh `configNonce`** (re-fetched from the backend
-  immediately before export, mirroring the online flow's staleness guard).
-- **Execute** additionally carries `receiverAccountExists` (per-receiver
-  existence, probed against the node — determines account-creation funding),
-  and for child actions the child address plus the **child's** event history;
-  for CREATE_CHILD executes it derives `childOwners`/`childThreshold` from the
-  child's `createChildConfig` events (`parseChildConfigFromEvents`).
+One builder per action. Every bundle carries the target network
+(`minaNetwork`, resolved at call time from the runtime config, devnet mapping
+to `testnet`; it selects the fee-payer signature domain and must match the
+domain the CLI runs with), the contract and typed fee-payer addresses, live
+**account snapshots** from the Mina node, and the contract's **full event
+history** from the indexer — everything the CLI needs to stay fully offline.
+Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
+`configNonce`; execute bundles add per-receiver existence
+(`receiverAccountExists`) and, for child actions, the child's address and
+event history. Field-by-field details are in the bundle format reference
+below.
 
 After building, the UI surfaces **pre-transfer warnings** from data already in
-the bundle (fee payer account missing; fee payer balance under 1 MINA;
-receivers needing the 1 MINA account-creation fee) and downloads the bundle as
-`<action>-<id>-<timestamp>.json`.
+the bundle (missing fee-payer account, balance under 1 MINA, account-creation
+fees) and downloads the bundle as `<action>-<id>-<timestamp>.json`.
 
-> Endpoint note: the Mina endpoint used for snapshots/broadcast — and the
-> `minaNetwork` written into bundles, which selects the CLI's fee-payer
-> signature domain — are resolved at call time through `getMinaGuardConfig()`
-> (devnet maps to the `testnet` domain), so the desktop shell's runtime
-> `window.__minaGuardConfig` override applies, same as the worker path. Only
-> the backend `API_BASE` is fixed at build time (`NEXT_PUBLIC_API_BASE_URL`),
-> which the desktop build sets explicitly.
+> Endpoint note: the snapshot/broadcast endpoint and the bundle's
+> `minaNetwork` resolve at call time via `getMinaGuardConfig()`, so the
+> desktop shell's runtime `window.__minaGuardConfig` override applies, same
+> as the worker path. Only the backend `API_BASE` is fixed at build time
+> (`NEXT_PUBLIC_API_BASE_URL`).
 
 ### 2. Sign (`offline-cli/src/`)
 
@@ -104,70 +93,42 @@ MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 
 For mainnet bundles, additionally set `MINA_NETWORK_DOMAIN=mainnet` — it
 selects the circuit's compile-time network domain (unset ⇒ testnet), and the
-CLI rejects a bundle whose `minaNetwork` doesn't match it (step 6 below).
+CLI rejects a bundle whose `minaNetwork` doesn't match it (step 4 below).
 Progress goes to stderr; stdout stays pure JSON. The flow
 (`index.ts` → `summary.ts` → `build-tx.ts`):
 
-1. **Version gate** (`bundle.version === 1`), then **summary + confirmation**
-   *before any compile/prove/sign work and before the key is touched*:
-   `renderBundleSummary` prints the action, a loud `*** MAINNET ***` banner
-   when applicable, contract, fee payer, fee, nonce, memo, proposal hash (for
-   approve/execute), expiry, and the per-type body (receivers with amounts and
-   a total, owner/threshold/delegate targets, sub-vault config). On a real
-   terminal the operator must answer `y`; `--yes` /
-   `MINA_GUARD_ASSUME_YES=1` skips the prompt, and **no attached TTY means it
-   proceeds without asking** (visible in the log) — piped/CI use.
-2. **Network setup** (`configureNetwork`): an o1js `Mina.Network` with dummy
-   endpoints — the CLI never dials out. `getNetworkState` is patched to return
-   defaults so network preconditions are set but only validated at broadcast.
-   `bundle.minaNetwork` selects the o1js network id (mainnet vs testnet
-   fee-payer signature domain).
-3. **Account injection**: every bundled snapshot goes into o1js's account
-   cache via `addCachedAccount` — nonces, balances, zkApp state, verification
-   keys all come from the bundle.
-4. **Merkle store reconstruction** (`rebuildStores`): replays the bundled
-   event history into fresh `OwnerStore` / `ApprovalStore` /
-   `VoteNullifierStore` instances — the same event-sourcing the web worker
-   does from indexer data (`setupOwner` sorted inserts, `ownerChange`
-   add/remove, `proposal` → count + proposer nullifier, `approval` →
-   monotonically-increasing count + nullifier, `execution` → executed marker;
-   child executions feed a separate `childExecutionRoot` map).
-5. **Proposal struct + in-circuit signature**: for *propose* the struct is
-   built from `bundle.input` (mirroring the worker's builders 1:1, including
-   `memoHash = memoToField(input.memo ?? '')`); for *approve*/*execute* it is
-   rebuilt from `bundle.proposal` (including the bundled `memoHash`). The CLI
-   recomputes `proposalHash = proposal.hash()` and signs it with mina-signer's
-   `signFields`. That call uses the **'devnet' signature domain by design and
-   must stay that way** — o1js's in-circuit `Signature.verify` always uses the
-   devnet prefix regardless of network; cross-network replay of proposals is
-   instead prevented by the compile-time `NETWORK_DOMAIN` constant hashed into
-   every proposal (`contracts/src/constants.ts`: `Field(1)` mainnet, `Field(2)`
-   testnet, selected by `MINA_NETWORK_DOMAIN` — appended in
-   `TransactionProposal.hash()`, `MinaGuard.ts:92`), plus the `guardAddress`
-   and `configNonce` fields inside the struct. Because the constant is baked
-   into the circuit, each network also has a **structurally distinct
-   verification key** — a wrong-domain proof fails on-chain, not just in app
-   logic.
-6. **Compile + prove**: before compiling, the CLI **rejects a
-   network-mismatched bundle** — `bundle.minaNetwork` must agree with the
-   `MINA_NETWORK_DOMAIN` the process was started with (unset ⇒ testnet), so a
-   testnet-domain run can't build proofs for mainnet proposals or vice versa
-   (`build-tx.ts:701-716`). Then `MinaGuard.compile` with a filesystem cache
-   (`./cache`, CWD-relative — the repo ships prover/verifier keys + SRS under
-   `offline-cli/cache/` to skip the multi-minute first compile; the binary
-   itself does not embed them). The cache is keyed to the circuit, so each
-   network domain compiles its own entries. Proving takes minutes on typical
-   hardware. `SKIP_PROOFS=1` swaps in dummy proofs (test hook — see focus
-   point 6).
-7. **Fee-payer signing** (`signFeePayer`): the proved tx JSON is wrapped and
-   signed with mina-signer's **network-aware** `signZkappCommand`, which signs
-   the fee payer *and* any fee-payer-owned signed account updates against the
-   full commitment (the memo is round-tripped through `decodeTxMemo` so the
-   commitment matches what o1js built). For CREATE_CHILD proposes,
-   `signChildAccount` then signs the child's deploy update with the bundled
-   child key and **grafts only those authorizations** back, so it can't wipe
-   the fee-payer signature `signZkappCommand` just produced.
-8. Output to stdout:
+1. **Summary + confirmation first** — after a version gate, and *before any
+   compile/prove/sign work or key use*, `renderBundleSummary` renders
+   everything the proposal hash covers (action, contract, fee payer, fee,
+   nonce, memo, expiry, the per-type body, a `*** MAINNET ***` banner when
+   applicable) and asks for `y`; `--yes` / `MINA_GUARD_ASSUME_YES=1` — or no
+   attached TTY — skips the prompt (see focus point 7).
+2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
+   never dials out), the bundled account snapshots injected into o1js's
+   account cache, and the Merkle stores rebuilt by replaying the bundled
+   event history (`rebuildStores`) — the same event-sourcing the web worker
+   does from indexer data, with child executions feeding a separate
+   `childExecutionRoot` map.
+3. **Proposal hash + in-circuit signature** — the proposal struct is built
+   from `bundle.input` (propose) or rebuilt from `bundle.proposal`
+   (approve/execute), mirroring the worker 1:1; the CLI recomputes
+   `proposalHash = proposal.hash()` and signs it with mina-signer's
+   `signFields` — deliberately with the fixed 'devnet' domain that o1js's
+   in-circuit `Signature.verify` always uses. Cross-network replay is
+   prevented instead by the compile-time `NETWORK_DOMAIN` baked into the
+   proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:92`) and into
+   the per-network VK (see focus point 3).
+4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
+   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:701-716`),
+   `MinaGuard.compile` runs against the shipped `offline-cli/cache/`
+   (circuit-keyed, so per-domain; a cold cache regenerates in minutes).
+   Proving takes minutes on typical hardware; `SKIP_PROOFS=1` swaps in dummy
+   proofs (see focus point 6).
+5. **Fee-payer signing + output** — the proved tx is signed with mina-signer's
+   **network-aware** `signZkappCommand` (the fee payer and any fee-payer-owned
+   signed account updates); for CREATE_CHILD proposes the child's deploy
+   update is additionally signed with the bundled child key, without
+   disturbing the fee-payer signature. The signed response goes to stdout:
 
 ```json
 {
@@ -180,37 +141,23 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 }
 ```
 
-Execute handling mirrors the worker per type: local executes count
-`AccountUpdate.fundNewAccount(executor, N)` **from the hash-bound
-`proposalStruct.receivers`** (never the raw bundle array), using
-`receiverAccountExists` to decide which receivers need funding; CREATE_CHILD
-executes re-derive the child config hash and require it to equal
-`proposal.data` (tamper check) and refuse an already-initialized child; child
-lifecycle executes (reclaim/destroy/toggle multisig) run against the child
-with the reconstructed `childExecutionRoot` witness. The broadcast memo on
-executes is the bundle's `proposal.memo` — indexer-derived plaintext, advisory
-only (same three-roles analysis as in the UI guide).
+Execute handling mirrors the worker per type: account-creation funding is
+counted **from the hash-bound `proposalStruct.receivers`**, never the raw
+bundle array; CREATE_CHILD executes re-derive the child config hash against
+`proposal.data` and refuse an already-initialized child. The broadcast memo
+on executes is the bundle's advisory `proposal.memo` (see the UI guide).
 
 ### 3. Broadcast (`UploadSignedResponse`, `ui/components/OfflineSigningFlow.tsx`)
 
-The upload path validates before broadcasting:
-
-- must parse as JSON with `type: 'offline-signed-tx'` (a helpful error tells
-  the user when they uploaded the *bundle* instead of the signed output);
-- `version === 1`; `action` must be in the page's accept-list; `transaction`
-  must be present;
-- **binding checks**: the response's `contractAddress` must equal the vault
-  open on the page, and — on the proposal detail page — `proposalHash` must
-  equal the proposal being viewed. A signed file for a different vault or
-  proposal is rejected outright. (The propose page can only bind by contract:
-  the proposal hash is new by definition.)
-
-It then POSTs the `sendZkapp` mutation straight to the frontend-configured
-Mina endpoint and maps common node rejections to actionable messages
-(`Invalid_signature` → wrong key for the fee-payer address;
-`Invalid_proof` → verification key changed since export, re-export;
-`Insufficient_fee`). On success it records a pending tx (keyed by the typed
-fee-payer address) so the normal pending-tx/lock reconciliation machinery
+The upload path validates the file shape (`type: 'offline-signed-tx'`,
+`version === 1`, an accepted `action`, a `transaction` present) and enforces
+the **binding checks**: the response's `contractAddress` must equal the vault
+open on the page, and on the proposal detail page `proposalHash` must equal
+the proposal being viewed — a signed file for a different vault or proposal
+is rejected. (The propose page can only bind by contract: its hash is new by
+definition.) It then POSTs `sendZkapp` straight to the frontend-configured
+Mina endpoint, maps common node rejections to actionable messages, and on
+success records a pending tx so the normal pending-tx/lock reconciliation
 takes over.
 
 ---
@@ -284,62 +231,41 @@ action differs, and the distinction is the heart of this design:
 
 - **Propose bundles *define* intent.** There is no pre-existing on-chain
   object to check against: whatever `input` says is what gets hashed, proved,
-  and signed. The **only** defense is the CLI's summary + confirmation step —
-  the operator must actually read it. Everything the hash covers is rendered
-  (type, receivers/amounts + total, targets, nonce, expiry, memo, network,
-  contract, fee payer). For propose the displayed memo *is* the string that
+  and signed. The CLI renders everything the hash covers in the summary
+  before signing, and for propose the displayed memo *is* the string that
   gets hashed.
-- **Approve bundles *claim* an existing proposal.** Tampering with any
-  hash-covered field makes the CLI recompute a different `proposalHash`; the
-  contract then fails the approval witness (`Proposal not found`) — the owner
-  cannot be tricked into approving a proposal that doesn't exist. The residual
-  attack is a **consistent swap**: replace the whole `proposal` object with a
-  *different real pending proposal* — the CLI would faithfully produce a valid
-  approval for it. Again the summary is the defense: the operator should
-  verify the rendered contents (and the proposal hash) against what they
-  expect from an out-of-band channel (the UI on the online machine, other
-  owners). One caveat inside that check: the summary's **Memo line for
-  approve/execute is the bundle's advisory plaintext** (`proposal.memo`),
-  which is *not* covered by the hash (`memoHash` is) — a tampered bundle can
-  pair a fabricated memo string with a real proposal's fields. Judge the
-  proposal by its receivers/amounts/type, not its memo (same conclusion as
-  the memo analysis in the UI guide).
-- **Execute bundles** carry the least authority: execution is permissionless
-  on-chain, so the worst a swapped execute bundle achieves is executing a
-  *different fully-approved* proposal — something anyone could do anyway. A
-  lying `receiverAccountExists` map makes the tx fail or misprice the
-  executor-signed account-creation fee (bounded to 1 MINA per receiver slot).
-- **`childPrivateKey` (createChild propose bundles) is the one secret-ish
-  field.** It only has power to sign the child's *deploy* account update —
-  after deployment all child state changes require proofs, not that key — but
-  a bundle carrying it should still be treated as sensitive in transport.
-  (Currently the UI never exports such a bundle; the field matters for
-  hand-built ones.)
+- **Approve bundles *claim* an existing proposal.** The CLI does not trust
+  the bundle's `proposalHash`; it rebuilds the struct from the hash-covered
+  fields and recomputes it, and the contract requires that hash to match a
+  proposal that exists on-chain (`Proposal not found` otherwise). The summary
+  renders the rebuilt proposal's fields for out-of-band comparison; its Memo
+  line is the bundle's advisory plaintext, not the hash-covered `memoHash`
+  (see focus point 2).
+- **Execute bundles.** Execution is permissionless on-chain: anyone can
+  submit a fully-approved proposal. The `receiverAccountExists` map drives the
+  executor-signed account-creation fee (1 MINA per new receiver slot), counted
+  from the hash-bound `proposalStruct.receivers`.
+- **`childPrivateKey` (createChild propose bundles).** It signs the child's
+  *deploy* account update; post-deploy, all child state changes require
+  proofs. The UI never exports such a bundle — the field matters only for
+  hand-built ones.
 
 **Response transport (air gap → online) is also untrusted.** The response is
 a fully signed and proved transaction: any mutation breaks the fee-payer
 signature (it covers the full commitment) or the proof. The UI's binding
-checks (contract + proposal hash) stop a *valid but different* signed file
-from being broadcast in the wrong context, and the node verifies everything
-that matters anyway. Broadcasting is not privileged.
+checks (contract + proposal hash) tie the signed file to the vault/proposal
+open on the page, and the node verifies the signature and proof on receipt.
+Broadcasting is not privileged.
 
-**The CLI binary itself is the sharpest supply-chain point.** It is the very
-program that will see `MINA_PRIVATE_KEY` and whose summary screen the operator
-trusts — an attacker-supplied binary can lie about what it signs, and the
-elaborate bundle-tamper analysis above is moot. The UI's download links point
-at a **GitHub release** of this repo (`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`,
-defaulting to the latest release), built and draft-published by CI together
-with a `SHA256SUMS` file and `minaguard-vk-hash.txt` (see Build &
-distribution). This replaces the earlier design where the *backend* compiled
-and served the binary on demand — the party you trust at download time is now
-the release pipeline (repo maintainers + GitHub Actions) rather than whoever
-operates a backend host. Two caveats keep their teeth: `SHA256SUMS` ships in
-the *same release* as the binaries, so checking it verifies transport
-integrity, not publisher honesty; and the VK-hash fingerprint must match the
-deployment you sign for. For high-assurance use, build the CLI from audited
-source yourself and/or verify hashes out-of-band. Related hygiene: passing
-the key as an inline env var can land in shell history/process listings on
-shared machines.
+**The CLI binary is the trust root of the offline path.** It handles
+`MINA_PRIVATE_KEY` and renders the summary the operator relies on. Binaries
+come from a **GitHub release** of this repo pinned by
+`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL` (see Build & distribution), so
+provenance rests with the release pipeline (maintainers + GitHub Actions)
+rather than a backend operator, as in the earlier build-on-demand design.
+`SHA256SUMS` ships in the same release as the binaries, and the release's
+`minaguard-vk-hash.txt` identifies the deployment its proofs target. The key
+is read from the `MINA_PRIVATE_KEY` environment variable.
 
 #### Suggested focus points
 
@@ -347,17 +273,15 @@ shared machines.
 `build-tx.ts` ↔ `worker.ts` ↔ `contracts`).** The CLI deliberately duplicates
 rather than imports UI logic (`normalizeTxType`, `uiTxTypeToField`,
 `buildReceiversForProposal`, `buildProposalDataField`, a verbatim
-`decodeTxMemo` copy, the `NewProposalInput` mirror, `ZKAPP_TX_FEE` "must match
-the worker"). Any drift between the copies changes what is signed versus what
-is shown/expected — and since the confirmation step is the propose-path's
-entire defense, the summary has to render exactly the fields that feed
-`proposal.hash()` and the outer tx (fee included).
+`decodeTxMemo` copy, the `NewProposalInput` mirror, `ZKAPP_TX_FEE`). The
+summary renders the fields that feed `proposal.hash()` and the outer tx (fee
+included), so these copies sit on the propose path between what is signed and
+what the operator sees.
 
-**2. The approve-swap scenario.** The operator's ability to catch a
-consistent swap rests entirely on the summary — and today the confirmation
-screen prints the bundle's *claimed* `p.proposalHash`, while the recomputed
-hash is only logged after confirmation. That, plus the advisory-memo caveat
-above, bounds what the confirmation step can actually catch.
+**2. What the confirmation screen shows.** The summary prints the bundle's
+*claimed* `p.proposalHash`; the hash the CLI recomputes from the fields is
+logged only after confirmation. The Memo line is the bundle's advisory
+plaintext, not the hash-covered `memoHash`.
 
 **3. Signature-domain split.** In-circuit proposal-hash signatures use
 mina-signer's `signFields` with its fixed devnet domain (the code comments say
@@ -372,34 +296,30 @@ domain (`minaNetwork`) has to match the chain the tx is broadcast to. Note
 the two are set by *different* inputs (an env var vs. a bundle field); the
 gate is what keeps them from silently diverging.
 
-**4. Store reconstruction from bundled events (`rebuildStores`).** Same class
-of concern as the worker's indexer-fed reconstruction (UI guide, focus
-point 3), but the inputs here come from the *bundle file*: malicious or
-reordered events steer owner ordering, approval counts, and nullifier roots.
-The failure mode should always be a failing tx (witness mismatch), never a tx
-against attacker-chosen state.
+**4. Store reconstruction from bundled events (`rebuildStores`).** Same seam
+as the worker's indexer-fed reconstruction (UI guide, focus point 3), but the
+inputs come from the *bundle file*: the replayed events determine owner
+ordering, approval counts, and nullifier roots, which become the witnesses
+the contract checks on-chain.
 
 **5. Fee counting & account snapshots.** `countNewReceiverAccounts` derives
 strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
-`MAX_RECEIVERS` can't inflate the fee). Account snapshots (nonce/balance/VK)
-are attacker-controlled inputs; wrong ones should only be able to yield
-failing transactions, not misdirected ones.
+`MAX_RECEIVERS` don't affect the count). Account snapshots (nonce/balance/VK)
+come from the bundle and feed o1js's account cache; the proved tx is checked
+against real chain state at broadcast.
 
 **6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:699`, dummy-proof path
-`726-737`).** Unlike the web
-UI's compile-time-gated test hooks, this ships in every binary and is enabled
-by an env var. 
+`726-737`).** Unlike the web UI's compile-time-gated test hooks, this ships in
+every binary and is enabled by an env var.
 
-**7. Confirmation policy (`confirmOrExit`).** No TTY ⇒ proceed without
-prompting (with a log line); `--yes`/`MINA_GUARD_ASSUME_YES` skip it; an
-unreadable `/dev/tty` despite a TTY also proceeds. These auto-proceed defaults
-sit in tension with the "operator's last line of defense" role the summary
-plays, especially in scripted setups.
+**7. Confirmation policy (`confirmOrExit`).** No attached TTY ⇒ proceed
+without prompting (with a log line); `--yes`/`MINA_GUARD_ASSUME_YES` skip it;
+an unreadable `/dev/tty` despite a TTY also proceeds.
 
-**8. Upload validation completeness (`UploadSignedResponse`).** The binding
-checks stop cross-vault/cross-proposal broadcast; the propose page can bind
-only by contract, and the UI records `response.proposalHash` into pending-tx
-tracking — a lying value should only be able to desync tracking.
+**8. Upload validation (`UploadSignedResponse`).** The binding checks compare
+the response's `contractAddress`/`proposalHash` against the open
+vault/proposal; the propose page can bind only by contract. The UI records
+`response.proposalHash` into pending-tx tracking.
 
 ---
 
@@ -465,18 +385,19 @@ networks: the circuit's `NETWORK_DOMAIN` is selected per run by the
 
 **Distribution — GitHub releases** (`.github/workflows/offline-cli-release.yml`):
 pushing an `offline-cli-v*` tag builds all five platform binaries **natively**
-on a three-leg runner matrix (each leg smoke-tests its own-arch binary — it
-must reach the usage message, which exercises module init and the embedded
-WASM), signs the macOS ones, then a single aggregation job attaches one
-canonical `SHA256SUMS` plus `minaguard-vk-hash.txt` (a copy of
-`contracts/.vk-hash`, which carries one VK hash per network) and publishes
-everything as a **draft** release for manual review. `workflow_dispatch` runs
-the same build as a dry run with CI artifacts only. The UI's download panel
-links the binary and the `SHA256SUMS` of the release configured via
-`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL` (defaulting to `releases/latest`);
-deployments should pin a release whose VK hash matches their deployed
-contracts. The CLI inlines the circuit, so that hash comparison is what ties
-a downloaded binary to the deployment it can actually produce proofs for.
+on a three-leg runner matrix (each leg smoke-tests its own-arch binary,
+exercising module init and the embedded WASM), signs the macOS ones, and an
+aggregation job attaches one canonical `SHA256SUMS` plus
+`minaguard-vk-hash.txt` (a copy of `contracts/.vk-hash`, one hash per
+network), publishing everything as a **draft** release for manual review
+(`workflow_dispatch` = dry run, CI artifacts only). The UI's download panel
+links the binary and `SHA256SUMS` of the release pinned by
+`NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`. There is deliberately **no default
+URL**: `releases/latest` resolves repo-wide (the desktop app releases through
+the same repo) and can stop carrying CLI assets at any moment — and the right
+release is a per-deployment choice anyway: pin the one whose VK hash matches
+the deployed contracts, since the binary inlines the circuit. When the
+variable is unset, the panel shows setup guidance instead of a link.
 
 The `offline-cli/cache/` directory in the repo holds the compile cache so the
 first run doesn't spend minutes generating keys; the CLI looks for `./cache`

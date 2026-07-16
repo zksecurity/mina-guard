@@ -1,8 +1,5 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { existsSync, mkdirSync, createReadStream } from 'fs';
-import { execSync } from 'child_process';
-import { join } from 'path';
 import { PublicKey, fetchAccount } from 'o1js';
 
 import { prisma } from './db.js';
@@ -586,29 +583,27 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    const verificationKeyHash = await fetchVerificationKeyHash(address);
-    // Existence required only on the manual path (fromBlock supplied). The
-    // auto-subscribe path races the deploy tx, so a null VK stays allowed — the
-    // unready rescan picks it up once it lands.
-    if (fromBlockNum !== null && !verificationKeyHash) {
-      res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
-      return;
-    }
-    // Reject a VK from a different MinaGuard release: its proofs would fail
-    // on-chain, so tracking it is pointless. Enforced on BOTH paths — a
-    // *mismatched* VK is always wrong; only a *missing* one is tolerated during
-    // the deploy race (the `verificationKeyHash &&` guard). No-op when
-    // minaguardVkHash is unset. Mirrors indexer.ts processCandidateAddresses.
-    if (
-      verificationKeyHash &&
-      config?.minaguardVkHash &&
-      verificationKeyHash !== config.minaguardVkHash
-    ) {
-      res.status(400).json({
-        error: 'Contract verification key does not match this app version. '
-          + 'It was likely deployed with a different MinaGuard release.',
-      });
-      return;
+    // VK lookup only on the manual path. The auto-subscribe path races the
+    // deploy tx (account still in mempool → VK null), so we skip it; the
+    // unready rescan validates once the deploy lands.
+    if (fromBlockNum !== null) {
+      const verificationKeyHash = await fetchVerificationKeyHash(address);
+      if (!verificationKeyHash) {
+        res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
+        return;
+      }
+      // Reject a VK from a different MinaGuard release — its proofs fail
+      // on-chain. No-op when minaguardVkHash is unset. Mirrors indexer.ts.
+      if (
+        config?.minaguardVkHash &&
+        verificationKeyHash !== config.minaguardVkHash
+      ) {
+        res.status(400).json({
+          error: 'Contract verification key does not match this app version. '
+            + 'It was likely deployed with a different MinaGuard release.',
+        });
+        return;
+      }
     }
 
     // Safety margin on the default path: the UI calls subscribe right
@@ -660,45 +655,6 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json({ ok: true });
   }));
 
-  const CLI_SRC_DIR = join(process.cwd(), '..', 'offline-cli');
-  const CLI_DIST_DIR = join(CLI_SRC_DIR, 'dist');
-
-  const PLATFORM_TARGETS: Record<string, string> = {
-    'macos-arm64': 'bun-darwin-arm64',
-    'macos-x64': 'bun-darwin-x64',
-    'linux-x64': 'bun-linux-x64',
-    'linux-arm64': 'bun-linux-arm64',
-    'windows-x64': 'bun-windows-x64',
-  };
-
-  router.get('/api/offline-cli/:platform', safe(async (req, res) => {
-    const platform = req.params.platform;
-    const target = PLATFORM_TARGETS[platform];
-    if (!target) {
-      res.status(400).json({ error: 'Invalid platform' });
-      return;
-    }
-    const filename = `mina-guard-cli-${platform}`;
-    const filePath = join(CLI_DIST_DIR, filename);
-
-    if (!existsSync(filePath)) {
-      if (!existsSync(join(CLI_SRC_DIR, 'src', 'index.ts'))) {
-        res.status(404).json({ error: 'offline-cli source not found' });
-        return;
-      }
-      mkdirSync(CLI_DIST_DIR, { recursive: true });
-      console.log(`[offline-cli] Building ${filename} (target: ${target})...`);
-      execSync(
-        `bun build --compile --target=${target} src/index.ts --outfile dist/${filename} --define 'process.versions.node=""'`,
-        { cwd: CLI_SRC_DIR, stdio: 'inherit' },
-      );
-    }
-
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    createReadStream(filePath).pipe(res);
-  }));
-
   router.use((error: unknown, req: any, res: any, _next: any) => {
     const requestId = getRequestId(res);
     console.error(
@@ -709,7 +665,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     if ((error as { code?: string })?.code === 'P2021') {
       res.status(503).json({
         error: 'Database schema not initialized',
-        hint: 'Run `bun run --filter backend prisma:push` or restart backend to auto-sync schema.',
+        hint: 'Run `bun run --filter backend db:migrate` or restart backend to apply pending migrations.',
       });
       return;
     }
@@ -866,7 +822,6 @@ function decorateContract<T extends ContractRow & { _count?: Record<string, numb
     delegate: config?.delegate ?? null,
     childMultiSigEnabled: config?.childMultiSigEnabled ?? null,
     ownersCommitment: config?.ownersCommitment ?? null,
-    networkId: config?.networkId ?? null,
     ...(_count !== undefined || ownerCount !== null
       ? {
           _count: {

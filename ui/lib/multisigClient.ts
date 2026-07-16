@@ -162,13 +162,12 @@ export async function deployContract(params: {
   return getWorkerApi().deployContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
 }
 
-/** Submits setup transaction with fixed-size owner list and threshold/network bootstrap. */
+/** Submits setup transaction with fixed-size owner list and threshold bootstrap. */
 export async function setupContract(params: {
   zkAppAddress: string;
   feePayerAddress: string;
   owners: string[];
   threshold: number;
-  networkId: string;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
   return getWorkerApi().setupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
@@ -180,7 +179,6 @@ export async function deployAndSetupContract(params: {
   zkAppPrivateKeyBase58: string;
   owners: string[];
   threshold: number;
-  networkId: string;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
   return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
@@ -194,7 +192,6 @@ export async function createOnchainProposal(params: {
   proposerAddress: string;
   input: NewProposalInput;
   configNonce: number;
-  networkId: string;
   childPrivateKey?: string;
   childOwners?: string[];
   childThreshold?: number;

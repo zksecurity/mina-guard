@@ -4,6 +4,21 @@ import { app } from 'electron';
 
 export type NetworkId = 'mainnet' | 'devnet' | 'testnet';
 
+/** Proof-domain network this build's UI bundle was compiled for. Must match the
+ *  NEXT_PUBLIC_MINA_NETWORK_DOMAIN passed to `build:ui` in package.json — the
+ *  circuit's NETWORK_DOMAIN is baked in at that build, so a proposal proved here
+ *  only verifies against contracts on this network. Flip both together to cut a
+ *  mainnet build. Mina uses one non-mainnet signature/VK domain, so devnet and
+ *  testnet share the 'testnet' domain (mirrors NETWORK_DOMAIN in
+ *  contracts/src/constants.ts and minaNetwork() in ui/lib/offline-signing.ts). */
+const BUILD_NETWORK_DOMAIN: 'mainnet' | 'testnet' = 'testnet';
+
+/** Collapses a detected network to its proof domain: only mainnet is distinct;
+ *  devnet/testnet/lightnet all resolve to the shared non-mainnet domain. */
+function proofDomainOf(networkId: NetworkId): 'mainnet' | 'testnet' {
+  return networkId === 'mainnet' ? 'mainnet' : 'testnet';
+}
+
 export interface UserConfig {
   minaEndpoint: string;
   archiveEndpoint: string;
@@ -83,11 +98,29 @@ export async function verifyEndpoints(
     probeGraphql('Mina endpoint', minaEndpoint, '{ networkID }'),
     probeGraphql('Archive endpoint', archiveEndpoint, '{ __typename }'),
   ]);
-  const raw = typeof minaData?.networkID === 'string' ? minaData.networkID.toLowerCase() : '';
+  const detected = detectNetwork(minaEndpoint, minaData?.networkID);
+  // This build's proof circuit is compiled for one network (BUILD_NETWORK_DOMAIN);
+  // proposals proved here won't verify against contracts on a different network.
+  // Reject a mismatched node loudly at setup instead of letting proofs fail
+  // cryptically downstream. Endpoints must not be persisted on rejection — the
+  // callers treat a throw here as "do not save / do not wipe the DB".
+  if (proofDomainOf(detected) !== BUILD_NETWORK_DOMAIN) {
+    throw new Error(
+      `Network mismatch: this is a ${BUILD_NETWORK_DOMAIN} build, but the node at ` +
+      `${minaEndpoint} reports ${detected}. Point it at a ${BUILD_NETWORK_DOMAIN} node, ` +
+      `or install the ${proofDomainOf(detected)} build of MinaGuard.`,
+    );
+  }
+  return detected;
+}
+
+/** Resolves the node's network from its reported networkID, falling back to URL
+ *  heuristics when the node is reachable but exposes no usable networkID. */
+function detectNetwork(minaEndpoint: string, networkID: unknown): NetworkId {
+  const raw = typeof networkID === 'string' ? networkID.toLowerCase() : '';
   if (raw.includes('mainnet')) return 'mainnet';
   if (raw.includes('devnet')) return 'devnet';
   if (raw.includes('testnet')) return 'testnet';
-  // Node reachable but no usable networkID — guess from the URL.
   const lower = minaEndpoint.toLowerCase();
   if (lower.includes('devnet')) return 'devnet';
   if (lower.includes('testnet') || lower.includes('lightnet') || lower.includes('localhost') || lower.includes('127.0.0.1')) {

@@ -4,7 +4,7 @@ This document describes the **online web UI** (`ui/`) — the Next.js app that
 MinaGuard owners use to connect a wallet, deploy vaults, and run the propose →
 approve → execute lifecycle against a live Mina network.
 
-The air-gapped path is documented in [`offline-signing.md`](./offline-signing.md), and
+The air-gapped path is documented in [`offline-audit-guide.md`](./offline-audit-guide.md), and
 the self-contained desktop build of this same UI in
 [`desktop-audit-guide.md`](./desktop-audit-guide.md).
 
@@ -56,16 +56,16 @@ transaction, and (3) the **displayed** plaintext the indexer decodes from that t
 Nothing in the circuit ties (2)/(3) to (1), so they can diverge; the indexer compares them and
 the UI flags match/mismatch via `MemoWarningTooltip`. Takeaway: **only a memo whose displayed
 value matches the on-chain hash was actually approved by the multisig** — the plaintext shown or
-broadcast is advisory. (Mechanics and audit checks in focus point 3.)
+broadcast is advisory. (Mechanics in focus point 3.)
 
 **Proposal "deletion" and the `CREATE_CHILD` edge case.** There is no on-chain delete method:
 "deleting" a pending proposal means minting a zero-value proposal that reuses the target's
 nonce and racing it to execution, since a nonce can only be spent once. This can't work for
 `CREATE_CHILD` (pinned to `nonce == 0`), so the UI disables Delete for it
 (`app/transactions/[id]/page.tsx:271-274`). Because the child is already deployed and
-`reserveForParent()`'d (write-once) in the same propose tx, abandoning such a proposal strands
-an **orphaned child account** — creation fee spent, not re-usable and not reclaimable. A
-stranded-funds footgun, not a loss-of-control issue.
+`reserveForParent()`'d (write-once) in the same propose tx, abandoning such a proposal leaves
+an **orphaned child account** — the creation fee is spent, and the account is not reusable or
+reclaimable.
 
 ## Architecture
 
@@ -129,212 +129,104 @@ Assuming that the frontend (UI) is not compromised, the interactions are the fol
     defined in the frontend code. Due to interface restrictions, signatures are again blind.
   - **Offline-CLI.** Used for signing with a key on a different device (e.g. air-gapped). A bundle is exported
     and is assumed to be transported through an *untrusted* medium. Documented in
-    [`offline-signing.md`](./offline-signing.md).
+    [`offline-audit-guide.md`](./offline-audit-guide.md).
 
 
 #### Suggested focus points
 
 **1. The signer boundary (`lib/multisigClient.ts` ↔ `lib/ledgerWallet.ts` / `lib/auroWallet.ts`).**
-This is the single most security-critical seam: it decides *what bytes the user
-authorizes*. The worker (`multisigClient.worker.ts`) constructs every
-transaction and every field/commitment and hands them across a Comlink boundary
-to be signed — the signer sees only the result, never the intent.
-  - **Blind signing is the core risk.** For zkAppCommand field signatures the
-    user sees only a `Field` element (Ledger by interface restriction, Auro by
-    design — see threat model above). The question is whether any path lets the
-    fields/commitment presented to the signer diverge from what the UI displayed.
-    The compromised-frontend case is out of scope by assumption, but a *bug*
-    that mis-derives the commitment is in scope and has the same effect.
-  - **Ledger `signFields` only signs `fields[0]`.** `ledgerWallet.signFields`
-    converts *only the first* field element to bytes and signs it
-    (`ledgerWallet.ts:186-198`); the returned `data` echoes the full input array
-    but the signature covers one field. This is sound only while every call
-    site passes a single-element array (the proposal hash).
-  - **Signature reconstruction across wallets.** Ledger returns `{field, scalar}`
-    decimal strings that are reassembled into an o1js `Signature`
-    (`worker.ts:240-243` in `signProposalHash`, and `worker.ts:602-605` in
-    `broadcastWithLedgerSig`); Auro returns base58. The two paths must produce
-    equivalent, correctly-encoded signatures and fail closed on malformed input
-    (the first site returns `null` via try/catch; the second throws).
-  - **Network-id binding on Ledger.** `ledgerNetworkId` is process-global mutable
-    state set via `setLedgerNetworkId` (`ledgerWallet.ts:10-16`). It has to match
-    the network the transaction is built for — a stale/mismatched id yields a
-    signature valid on the wrong network, or a confusing failure.
-  - **Fee-payer commitment path (Ledger direct broadcast).**
-    `broadcastWithLedgerSig` derives `fullCommitment` from the tx JSON via
-    `mina-signer`, then reuses that one signature for the fee payer *and* for any
-    fee-payer-owned account update with `useFullCommitment` (`worker.ts:592-632`;
-    the reuse loop is `612-620`) — the seam being that this must never attach the
-    fee-payer signature to an update the user didn't intend to authorize.
+The worker (`multisigClient.worker.ts`) constructs every transaction and every
+field/commitment and hands them across a Comlink boundary to be signed; since
+zkApp approvals are blind (a single `Field`), whatever decides what reaches
+the signer decides what the user authorizes. The moving parts:
+  - `ledgerWallet.signFields` signs only `fields[0]` (`ledgerWallet.ts:186-198`)
+    while echoing the full input array back; call sites pass a single-element
+    array (the proposal hash).
+  - Signature reconstruction differs per wallet: Ledger `{field, scalar}`
+    decimals are reassembled into an o1js `Signature` (`worker.ts:240-243`,
+    `602-605`); Auro returns base58.
+  - `ledgerNetworkId` is process-global mutable state (`ledgerWallet.ts:10-16`)
+    that has to match the network the tx is built for.
+  - `broadcastWithLedgerSig` reuses the one fee-payer signature for any
+    fee-payer-owned account update with `useFullCommitment`
+    (`worker.ts:592-632`; reuse loop `612-620`).
 
 **2. Atomicity of deploy + setup, and of CREATE_CHILD.**
-A guard that is deployed but *not yet configured* (no owners/threshold) is a
-hijack window: whoever calls `setup()` first controls it. The UI must never
-leave that gap.
-  - **Top-level vault.** The wizard uses the atomic `deployAndSetupContract`,
-    which bundles `deploy()` + `setup()` in one transaction
-    (`worker.ts:730-781`; the single tx does `fundNewAccount` + `deploy` +
-    `setup` at `764-772`; called from `accounts/new/page.tsx:160`). This is the
-    only creation path the UI exercises today, but the worker also exports
-    **separate** `deployContract` and `setupContract` methods (`worker.ts:693-728`
-    and `783-841`) with **no UI caller** — reachable-but-unused split entry
-    points that could reopen the gap.
-  - **Sub-vault (CREATE_CHILD).** Child creation splits across two transactions
-    by design: the propose tx does `deploy(child)` + `reserveForParent(child)` +
-    `propose(parent)` atomically (`worker.ts:954-978`), and a later execute tx
-    runs `executeSetupChild`. The safety of the gap between them rests on
-    `reserveForParent()` committing to the config hash and blocking a hostile
-    `setup()` on the child (contract-side — `MinaGuard.ts:736-760`: write-once
-    guards at `743-744`, config-hash commit at `759-760`; PR #89). The points of
-    interest: the UI must not be inducible to deploy a child *without* the atomic
-    `reserveForParent`, and the announced owners/threshold must be re-checked
-    against the committed hash before initialization — the worker pre-flights
-    this (`worker.ts:1221-1227`), and the binding check is the contract's
-    (`MinaGuard.ts:818`, `823-825`).
-  - **Account-creation fee counting.** Executes that move funds add
-    `AccountUpdate.fundNewAccount(executor, N)` where `N` is counted **from the
-    hash-bound `proposalStruct.receivers`, never the raw backend array**
-    (`worker.ts:1110-1132`, and the comment there) — so untrusted indexer rows
-    beyond `MAX_RECEIVERS` cannot inflate the executor-signed account-creation
-    fee. The same discipline should hold everywhere a count or amount is derived.
+A guard that is deployed but not yet configured could be controlled by whoever
+calls `setup()` first.
+  - Top-level vaults use the atomic `deployAndSetupContract` — one tx doing
+    `fundNewAccount` + `deploy` + `setup` (`worker.ts:730-781`, tx at
+    `764-772`; called from `accounts/new/page.tsx:160`). Separate
+    `deployContract` / `setupContract` methods exist with no UI caller
+    (`worker.ts:693-728`, `783-841`).
+  - CREATE_CHILD spans two transactions by design: the propose tx does
+    `deploy(child)` + `reserveForParent(child)` + `propose(parent)` atomically
+    (`worker.ts:954-978`); the later `executeSetupChild` is bound on-chain to
+    the config `reserveForParent()` committed (`MinaGuard.ts:736-760`,
+    write-once guards `743-744`, commit `759-760`; binding checks `818`,
+    `823-825`). The worker pre-flights the announced config against
+    `proposal.data` (`worker.ts:1221-1227`).
+  - Account-creation fees on execute are counted from the hash-bound
+    `proposalStruct.receivers`, never the raw backend array
+    (`worker.ts:1110-1132`), so indexer rows beyond `MAX_RECEIVERS` can't
+    inflate the executor-signed fee.
 
 **3. Indexer-supplied data feeding into signed transactions.**
-The backend is untrusted (see threat model), yet its data is used to *rebuild
-Merkle stores and reconstruct proposal structs* that get hashed and signed
-(`rebuildStoresFromBackend`, `buildProposalStruct`). The claimed protection is
-that the contract catches any mismatch. The pressure points:
-  - Whether a malicious indexer can steer witness/store reconstruction
-    (owner set ordering, nullifier/approval roots, `childExecutionRoot`) into a
-    tx that either fails confusingly, or worse, succeeds against attacker-chosen
-    state. Owner ordering in particular is reconstructed by sorting event
-    payloads (`worker.ts:279-292`).
-  - The `executeSetupChild` config-mismatch guard (`worker.ts:1221-1227`) and the
-    `already-initialized` guard (`worker.ts:1245-1251`) — client-side pre-flights;
-    the on-chain anchors are `MinaGuard.ts:818` and `823-825`.
-  - Memo independence (three roles, one enforced). The plaintext memo takes three
-    independent paths and only the first is constrained on-chain:
-    - **Hashed** — the worker computes `memoHash = memoToField(input.memo ?? '')`
-      (`worker.ts:875`; `contracts/memo.ts`: Poseidon over the UTF-8 bytes, empty
-      string → `Field(0)`) and puts it in the proposal struct. It is part of
-      `TransactionProposal.hash()` (`MinaGuard.ts:85`), so it's the only representation
-      owners' signatures cover, and it's re-emitted in `ProposalEvent`.
-    - **Broadcast** — a plaintext string is passed as the transaction's memo via
-      `txSender(pub, memo)` (`worker.ts:123-127`). At **propose** time that is the
-      proposer's own `input.memo` (`worker.ts:953-954`) — the same value that was hashed.
-      At **execute** time it is the **indexer-supplied** `proposal.memo`
-      (`worker.ts:1129-1130`), so the executor's broadcast memo is only as honest as the
-      indexer (that is what `memoExecutionMatch` below is meant to catch). Approve
-      transactions attach no memo. o1js bakes the memo into the serialized zkApp-command
-      JSON (`memo`, base58check-encoded) for **both** wallet paths — so the Ledger path
-      (`broadcastWithLedgerSig`) already carries it and does not take a separate memo
-      argument, while the Auro path *additionally* forwards it as `feePayer.memo`
-      (`submitTx` → `auroWallet.sendTransaction`). It is unconstrained protocol metadata;
-      nothing in the circuit ties it to `memoHash`, and it is covered only by the
-      fee-payer signature/commitment, not by the proposal hash.
-    - **Displayed** — the indexer decodes the memo *from the broadcast tx* with
-      `decodeTxMemo(chainEvent.txMemo)` (`indexer.ts:715`; falls back to storing the raw
-      base58 string if decoding throws) and stores it as `proposal.memo`; the detail page
-      renders it and consumes the backend flags below. `MemoWarningTooltip` shows the match
-      vs. mismatch states.
+The backend is untrusted (see threat model), yet its data rebuilds the Merkle
+stores and proposal structs that get hashed and signed
+(`rebuildStoresFromBackend`, `worker.ts:273`; `buildProposalStruct` — memoHash
+included — `worker.ts:565`; owner ordering reconstructed by sorting event
+payloads, `279-292`). On action paths the recomputed `proposalHash` must key
+into a proposal that exists on-chain and the owner's signature covers it
+(`MinaGuard.ts:1011`, `1014`, `1032`), so the contract re-checks what the
+indexer supplied. The reconstruction paths that feed this — store roots, owner
+ordering, `childExecutionRoot`, the `executeSetupChild` pre-flights
+(`worker.ts:1221-1227`, `1245-1251`, on-chain anchors `MinaGuard.ts:818`,
+`823-825`) — all run from indexer data.
 
-    The `contracts` package owns both `memoToField` (hash) and `decodeTxMemo` (parse Mina's
-    base58check memo layout); length-checking (`MEMO_MAX_BYTES = 32`, the protocol's max
-    memo *content* bytes) is a *separate*, input-only guard in `ui/lib/memo.ts` that never
-    touches the hash. The two match flags are computed **by the untrusted indexer**, not the
-    contract (`backend/src/proposal-record.ts`):
-    - `proposalMemoMatch = memoToField(decodedProposeMemo) === event.memoHash`
-      (`proposal-record.ts:123-130`; `null` when either is absent or `memoHash === '0'`) —
-      meant to catch a proposer whose broadcast plaintext differs from what they hashed into
-      the proposal.
-    - `memoExecutionMatch = event.memoHash === executionMemoHash`
-      (`proposal-record.ts:132-139`; the execute-side hash is computed at
-      `indexer.ts:924-929` and persisted on the proposal row) — meant to catch an executor
-      attaching a memo other than the approved one.
-
-    **Two separate trust surfaces — keep them distinct:**
-
-    - **Action path (approve / execute): contract-protected.** When an owner *acts*, the worker
-      rebuilds the proposal struct — taking `memoHash` from the indexer too
-      (`buildProposalStruct`, `worker.ts:565`) — and computes `proposalHash = proposal.hash()`.
-      The contract then requires that hash to key into a proposal that actually exists on-chain
-      (`assertProposalExists` / `assertApprovalWitnessValue`, `MinaGuard.ts:1014,1032`) and that
-      the approver's signature covers it (`signature.verify(approver, [proposalHash])`,
-      `MinaGuard.ts:1011`). A wrong `memoHash` yields a wrong `proposalHash` → the tx fails. So a
-      lying indexer **cannot induce an approval or execution against a memo other than the real
-      on-chain one.** This is the "contract is the trust anchor" guarantee, and for the memo it
-      holds.
-
-    - **Display path (the badge / the memo you read): NOT verified — the indexer can lie
-      consistently.** Displaying is not a transaction, so nothing on-chain is checked. On this
-      path **both `memo` and `memoHash` come straight from the indexer JSON** (`api.ts:245-246`;
-      the detail row renders `proposal.memo ?? proposal.memoHash`, `page.tsx:628`), and the two
-      match flags are computed by that same indexer. Because `memoHash` itself is
-      indexer-supplied here — the UI never re-derives it from a trusted source — a malicious
-      indexer can serve a **self-consistent** triple (fabricated `memo`, matching fabricated
-      `memoHash`, `proposalMemoMatch: true`) and the UI will show a green ✓ `match`. **There is
-      no client-side workaround as currently built.** The `null`→red fail-safe in the tooltip
-      (`page.tsx:458-469`) applies only on the *executed* branch (`462-465`: anything not
-      strictly `true` renders red); for a still-pending proposal a `null` flag renders **no
-      icon at all** (`467-468`). Either way it only defends against an *honest* indexer that
-      *dropped* the memo; it does not defend against one that *lies*. The damage is bounded to
-      what's **displayed** —
-      per the action-path guarantee above, a display lie can't cross into signing/executing the
-      wrong thing — but the memo a user reads on-screen is strictly advisory.
-
-    **The gap is closable in principle, but leaving it open is a deliberate design choice.**
-    `memoHash` is emitted in the on-chain `ProposalEvent` and is part of the proposal hash, so
-    it *is* independently recoverable from the Mina node — a client that fetched the event
-    itself could re-derive `memoHash` and verify the indexer's `memo` and flags, closing the
-    display surface. This is intentionally **not** done: in this architecture, reading and
-    decoding chain events is the *indexer's* role, and the UI does not query the node for
-    events — duplicating that read path in the browser would complicate the role separation
-    between UI and indexer. The UI's only events source is therefore the indexer's own
-    `fetchAllEvents` (`api.ts:345`), used for store reconstruction, not display verification,
-    and the display-path limitation above is accepted as display-bounded (the action-path
-    guarantee is what actually protects funds). Two supporting facts: at propose time the
-    hashed and broadcast memos derive from the **same** `input.memo` (`worker.ts:875`,
-    `953-954`), and both wallet transports carry that same baked-in memo (Ledger via the tx
-    JSON, Auro via `feePayer.memo`).
+The memo is the worked example (three roles, one enforced — see the overview).
+The **hashed** `memoHash` is the only representation owners' signatures cover
+(`worker.ts:875`; part of `TransactionProposal.hash()`, `MinaGuard.ts:85`).
+The **broadcast** plaintext rides the outer tx as protocol metadata
+(`txSender`, `worker.ts:123-127`) — the proposer's own `input.memo` at propose
+(`953-954`), the indexer-supplied `proposal.memo` at execute (`1129-1130`);
+nothing in the circuit ties it to `memoHash`. The **displayed** plaintext is
+decoded from the broadcast tx by the indexer (`indexer.ts:716`), which also
+computes both match flags (`proposal-record.ts:123-130`, `132-139`;
+execute-side hash at `indexer.ts:925-930`) that `MemoWarningTooltip` renders.
+On the display path, `memo`, `memoHash`, and the flags all come from the same
+indexer JSON (`api.ts:245-246`; rendered at `page.tsx:628`, tooltip logic
+`458-469`), and the UI deliberately does not re-derive `memoHash` from the
+node — reading chain events is the indexer's role, and the UI's only events
+source is `fetchAllEvents` (`api.ts:345`). Net: action paths are
+contract-anchored; the displayed memo and its match badge are advisory.
 
 **4. Concurrency / signer-lock correctness (`hooks/useContractTxLock.ts`,
 `useTransactions.ts`, `lib/storage.ts`).**
-Because each submission rebuilds witnesses from current chain+indexer state, two
-in-flight txs against the same contract collide. The lock prevents that, and
-recent work hardened it against *dropped* transactions permanently wedging a
-signer (PR #67). The release plumbing is split across backend and client: the
-**backend indexer** polls the daemon mempool and, past a grace window, marks a
-vanished approve/execute tx as dropped (`backend/src/indexer.ts:1132-1213`);
-the client reconciles its localStorage pending-tx list off those flags and off
-proposal-state changes (`useTransactions.ts` `reconcilePendingTxs`), and checks
-deploy txs itself via the backend's `/api/tx-status` bestChain lookup. Clearing
-a pending tx fires `PENDING_TXS_CHANGED` (`lib/storage.ts`), which the lock
-listens for. Audit for:
-  - Can the lock be defeated (concurrent tabs, cleared localStorage, cross-signer
-    races) such that a second tx builds against stale state? Note it deliberately
-    ignores `kind='deploy'` (`useContractTxLock.ts:60-79`; the comment explains why).
-  - Can the lock get *stuck on* after a genuinely dropped/failed tx, locking an
-    owner out? The interplay to look at is the backend mempool-poll release vs.
-    the localStorage/`PENDING_TXS_CHANGED` reconciliation.
+Each submission rebuilds witnesses from current chain+indexer state, so two
+in-flight txs against one contract collide; the lock serializes them, and
+PR #67 hardened it against dropped transactions wedging a signer. The release
+plumbing is split: the backend indexer polls the daemon mempool and marks
+vanished approve/execute txs dropped (`backend/src/indexer.ts:1133-1213`); the
+client reconciles its localStorage pending-tx list off those flags and off
+proposal-state changes (`useTransactions.ts` `reconcilePendingTxs`), checks
+deploy txs via `/api/tx-status`, and clearing a pending tx fires
+`PENDING_TXS_CHANGED` (`lib/storage.ts`), which the lock listens for. It
+deliberately ignores `kind='deploy'` (`useContractTxLock.ts:60-79`).
 
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
-(`generateKeypair`), used for a single tx. It should never land in
-`localStorage`, logs, or error messages, nor be retained past the deploy call.
-It should also be **powerless after the deploy tx**: `deploy()` sets the
-account permissions in the same transaction (`MinaGuard.ts:282-295`) —
-`editState`/`send`/`setDelegate` require **proofs**, `setPermissions` and the
-other signature-flavored knobs are `impossible`, `setVerificationKey` is
-`impossibleDuringCurrentVersion` — so a leaked key has no post-deploy
-authority. The same applies to the child key in the CREATE_CHILD propose tx.
-Separately, `lib/storage.ts` should hold only non-secret prefs + pending-tx
-metadata (as the file-tree note claims).
+(`generateKeypair`), generated for a single tx and not persisted. It is
+powerless after deploy: `deploy()` sets proofs-only account permissions in the
+same transaction (`MinaGuard.ts:282-295`). The same applies to the child key
+inside the CREATE_CHILD propose tx. `lib/storage.ts` holds non-secret prefs +
+pending-tx metadata.
 
 **6. Test-only escape hatches.**
-`setTestKey` / `setSkipProofs` enable direct signing and dummy proofs and are
-gated on `NEXT_PUBLIC_E2E_TEST` (`worker.ts:676-691`, `multisigClient.ts:119-138`).
-The gate should be compile-time dead-code-eliminated in production builds, with
-`skipProofs`/`DummyProof` (used in `maybeProve`, `worker.ts:91-120`) unreachable
-without it.
+`setTestKey` / `setSkipProofs` enable direct signing and dummy proofs, gated
+on `NEXT_PUBLIC_E2E_TEST` (`worker.ts:676-691`, `multisigClient.ts:119-138`;
+`skipProofs`/`DummyProof` feed `maybeProve`, `worker.ts:91-120`), which Next
+inlines at build time so the branch is dead code in production.
 
 ---
 
@@ -365,13 +257,13 @@ ui/
 │   ├── LedgerConnectModal.tsx   # Ledger address retrieval UX
 │   ├── LedgerSigningModal.tsx   # "Confirm on device" blocking modal
 │   ├── OfflineSigningFlow.tsx   # Export bundle / import signed response (bridge to
-│   │                            #   the air-gapped path — see offline-signing.md).
+│   │                            #   the air-gapped path — see offline-audit-guide.md).
 │   │                            #   CLI download links point at a GitHub release
 │   │                            #   (NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL) + SHA256SUMS
 │   ├── ProposalForm.tsx         # Builds NewProposalInput (what the user intends to
 │   │                            #   propose)
-│   ├── MemoWarningTooltip.tsx   # Surfaces memo match/mismatch (backend-provided memo
-│   │                            #   flags — worth checking independence)
+│   ├── MemoWarningTooltip.tsx   # Surfaces memo match/mismatch (renders the
+│   │                            #   backend-provided memo flags)
 │   ├── TransactionCard.tsx      # Renders proposal data from the indexer
 │   ├── TransactionList.tsx
 │   ├── ApprovalProgress.tsx     # Threshold progress from indexed approvals
@@ -402,11 +294,11 @@ ui/
 │   │                            #   signer (what actually gets signed)
 │   ├── auroWallet.ts            # Auro provider calls: sendTransaction, signFields,
 │   │                            #   signMessage (see the fee/memo → commitment note
-│   │                            #   at line ~75)
+│   │                            #   at line ~77)
 │   ├── ledgerWallet.ts          # Ledger WebHID: signFields, signFeePayer, address,
 │   │                            #   network id (on-device signing)
 │   ├── offline-signing.ts       # Offline bundle builders + signed-response validation
-│   │                            #   (cross-reference offline-signing.md)
+│   │                            #   (cross-reference offline-audit-guide.md)
 │   ├── api.ts                   # Backend read client + response normalization
 │   │                            #   (trust boundary — all inputs untrusted)
 │   ├── endpoints.ts             # Resolves backend / Mina / archive endpoints:
@@ -414,10 +306,9 @@ ui/
 │   │                            #   else NEXT_PUBLIC_* build-time vars
 │   ├── indexer-mode.ts          # 'full' vs 'lite' indexer mode resolution
 │   ├── types.ts  memo.ts        # Shared types; MEMO_MAX_BYTES input guard
-│   ├── constants.ts             # MAX_OWNERS / MAX_RECEIVERS (UI copy — the worker
-│   │                            #   imports the contracts' definitions; check drift)
-│   ├── storage.ts               # localStorage: prefs + pending-tx tracking (confirm
-│   │                            #   no secrets stored here)
+│   ├── constants.ts             # MAX_OWNERS / MAX_RECEIVERS (UI copy; the worker
+│   │                            #   imports the contracts' definitions)
+│   ├── storage.ts               # localStorage: prefs + pending-tx tracking
 │   ├── app-context.ts           # React context shape
 │   ├── idb-compile-cache.ts     # IndexedDB cache of compiled artifacts
 │   └── disable-wasm-finalizers.ts  # o1js WASM workaround (see KNOWN_ISSUES.md)
@@ -431,7 +322,7 @@ ui/
 │                                #   (COEP: credentialless) for SharedArrayBuffer;
 │                                #   minification DISABLED — minifiers mangle o1js
 │                                #   BigInt ops and silently produce wrong tx
-│                                #   commitments (security-relevant, keep it off)
+│                                #   commitments
 └── .env.local.example / tsconfig / tailwind …
 ```
 
@@ -454,8 +345,7 @@ standard and not discussed.
   in `contracts` but is consumed by the backend indexer, not the UI; the UI's
   `TxType` union is its own in `lib/types.ts`.) This is the most security-critical
   dependency — the UI and the contract must agree on hashing and struct layout,
-  and they do so by importing the *same* source. Audit changes here as contract
-  changes, not UI changes.
+  and they do so by importing the *same* source.
 - **`o1js` (`3.0.0-mesa.final`, hoisted at the repo root)** — the proving system and
   zkApp runtime. The Web Worker uses it to compile `MinaGuard`, generate proofs, and
   build `Mina.transaction`s. Heavy; runs only in the worker.
@@ -471,11 +361,9 @@ standard and not discussed.
   from source. The submodule's mina-signer source is **byte-identical** to the
   mina-signer sources shipped *inside* `o1js@3.0.0-mesa.final`
   (`node_modules/o1js/src/mina-signer/`), so there is no protocol divergence between the
-  signing and proving paths today. **Auditor note:** that guarantee is *identity, not
-  versioning* — re-verify it whenever the submodule or the o1js pin moves (e.g.
-  `diff -r ui/deps/o1js/src/mina-signer node_modules/o1js/src/mina-signer`), since the
-  commitment/signature encoding must match what the proving path and the contract expect.
-  (A follow-up could drop the submodule for the standalone `mina-signer` npm package.)
+  signing and proving paths today. The guarantee is *identity, not versioning*: it holds
+  as long as the submodule and the o1js pin reference the same mina-signer source that the
+  proving path and the contract use.
 
 ### Signing hardware
 
@@ -487,10 +375,10 @@ standard and not discussed.
 
 ### Hashing primitives
 
-- **`@noble/hashes`, `blakejs`, `js-sha256`** — low-level hash functions. Note the
+- **`@noble/hashes`, `blakejs`, `js-sha256`** — low-level hash functions. The
   `postinstall` esbuild marks these (and `crypto`) `--external`, so the browser
-  `mina-signer` bundle resolves them from `node_modules` rather than re-bundling copies —
-  worth confirming a single, current version of each is what actually ships.
+  `mina-signer` bundle resolves them from `node_modules` rather than re-bundling its own
+  copies.
 
 ### Worker boundary
 

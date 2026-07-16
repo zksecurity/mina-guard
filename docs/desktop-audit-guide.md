@@ -8,13 +8,13 @@ It complements [`ui-audit-guide.md`](./ui-audit-guide.md): everything said there
 about the UI (worker proving, signer boundary, memo handling, indexer trust)
 applies unchanged inside the desktop shell, because the desktop app runs the
 *same built UI*. This document covers only what the shell adds or changes. The
-air-gapped path is documented in [`offline-signing.md`](./offline-signing.md).
+air-gapped path is documented in [`offline-audit-guide.md`](./offline-audit-guide.md).
 
 ---
 
 ## Why it exists
 
-The online threat model ends with an uncomfortable dependency: zkApp approvals
+The online threat model ends with a dependency it can't remove: zkApp approvals
 are **blind signatures** over a single `Field`, so the user's safety rests
 entirely on the integrity of the frontend that computed that field. A hosted
 web frontend (and a hosted indexer) is a remote party that must be trusted at
@@ -48,8 +48,9 @@ On launch (`src/main.ts`):
    packaging time, running against **SQLite** (`minaguard.db` in the user-data
    dir) in **lite indexer mode**. Lite mode skips chain-wide contract
    discovery entirely — only vaults the UI explicitly subscribes
-   (`POST /api/subscribe`, e.g. after a deploy or via "add existing account")
-   are indexed, each backfilled from block 0 via the archive endpoint.
+   (`POST /api/subscribe`) are indexed: "add existing account" backfills from
+   block 0 via the archive endpoint, while the auto-subscribe right after a
+   deploy starts a few blocks below the current height.
 3. A **Next.js standalone server** (the pre-built `ui/` app) is forked as a
    child process on `127.0.0.1:5051`.
 4. A **front HTTP server** on `127.0.0.1:5050` multiplexes everything:
@@ -74,7 +75,7 @@ Signing inside the shell:
 - **Ledger** — works in-window over WebHID; Electron requires explicit
   device-selection and permission handlers, which `main.ts` provides.
 - **Offline-CLI** — unchanged; the export/upload UI is the same one documented
-  in [`offline-signing.md`](./offline-signing.md).
+  in [`offline-audit-guide.md`](./offline-audit-guide.md).
 
 ---
 
@@ -164,7 +165,7 @@ Deliberate design details worth knowing before auditing them:
 
 ## Ledger over WebHID
 
-`main.ts:389-412` wires the three handlers Electron needs for WebHID:
+`main.ts:390-413` wires the three handlers Electron needs for WebHID:
 
 - `select-hid-device` — intercepted; a picker overlay is injected into the page
   via `executeJavaScript` (`src/hid-picker.ts`) and the chosen `deviceId` is
@@ -196,11 +197,15 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   strictly (exact two string fields, http/https URLs —
   `src/config-ipc.ts:25-54`) because the renderer is not trusted.
 - **Endpoints are probed before persisting** (`verifyEndpoints`,
-  `src/config-store.ts:78-97`): both must answer a real GraphQL POST within
+  `src/config-store.ts:93-115`): both must answer a real GraphQL POST within
   10 s. The network id is taken from the node's `networkID` field; only if the
-  node doesn't expose one does a URL heuristic guess, defaulting to `mainnet`.
+  node doesn't expose one does a URL heuristic guess, defaulting to `mainnet`
+  (`detectNetwork`, `119-130`). A node whose proof domain doesn't match this
+  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet vs testnet, devnet
+  sharing testnet) is rejected at save time — the bundled circuit can only
+  prove against one domain.
 - **Changing endpoints wipes the local DB and relaunches**
-  (`changeEndpointsAndRelaunch`, `src/main.ts:276-290`): the local index is
+  (`changeEndpointsAndRelaunch`, `src/main.ts:277-291`): the local index is
   only meaningful for the chain it was built against. The same policy applies
   in the setup-recovery flow. A failed save never overwrites a working config.
 - Config writes are atomic (tmp file + rename); DB deletion also removes
@@ -223,14 +228,25 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   (`assets/.vk-hash`) so the `/api/subscribe` route can reject contracts whose
   on-chain verification key does not match this MinaGuard release (a
   *mismatched* VK is rejected on both the manual and auto-subscribe paths; a
-  *missing* one is tolerated only while a just-deployed vault races indexing);
-  if the file is missing the check no-ops rather than blocking startup.
-- **Fresh-DB bootstrap:** when `minaguard.db` does not exist, the bundled
-  `assets/schema.sql` (generated from `schema.sqlite.prisma` via
-  `prisma migrate diff`) is executed statement-by-statement with
-  `$executeRawUnsafe`. There is **no migration story** — schema changes require
-  wiping the DB (documented in `desktop/README.md`). On a failed boot the
-  partially-created DB is deleted so the next attempt bootstraps cleanly.
+  *missing* one is tolerated only while a just-deployed vault races indexing).
+  The file carries one hash per network (`testnet=…` / `mainnet=…` lines —
+  the circuit's compile-time `NETWORK_DOMAIN` makes each network's VK
+  structurally distinct); the embed picks the line matching the configured
+  network (`backend-embed.ts:112-128`, devnet sharing the testnet circuit) and
+  still accepts the pre-#93 single-bare-number format. When the file is
+  missing, or a keyed file has no line for the configured network, the check
+  no-ops rather than blocking startup or comparing against a wrong-network
+  hash.
+- **DB bootstrap & schema versioning:** when `minaguard.db` is missing — or
+  stale — the bundled `assets/schema.sql` (generated from
+  `schema.sqlite.prisma` via `prisma migrate diff`) is executed
+  statement-by-statement with `$executeRawUnsafe`. Staleness is detected via
+  `PRAGMA user_version`, stamped after a successful bootstrap with a 31-bit
+  hash of schema.sql (`schemaVersionOf`/`readUserVersion`,
+  `backend-embed.ts:15-38`): on mismatch the DB is deleted and rebuilt from
+  chain (subscribed vaults must be re-added). The stamp is written last, so a
+  boot that dies mid-schema leaves `user_version = 0` and rebuilds next run;
+  a failed boot likewise deletes the partial DB.
 - The API router is mounted as middleware on the shared front server with **no
   CORS layer at all**: the API is same-origin for the app window, so no
   cross-origin grants are needed, and the cross-origin defense is the front
@@ -261,81 +277,52 @@ indexer could online.
 **1. The renderer bridge × navigation policy (`src/preload.js`, `src/main.ts`).**
 The preload exposes `window.mina` (signing triggers) and
 `minaGuardConfig.setEndpoints` (endpoint rewrite + DB wipe + relaunch) to
-*whatever document is loaded in the main window*, and `main.ts` sets no
-`will-navigate` handler and no `setWindowOpenHandler`. Any non-local page that
-ever loads in that window inherits the bridge — a phishing lever for Auro
-prompts and a way to re-point the app at attacker-chosen endpoints ("speaks
-GraphQL" is the only bar the endpoint probe sets).
+whatever document the main window loads, and `main.ts` sets no `will-navigate`
+handler or `setWindowOpenHandler`, so any document that loads there inherits
+both.
 
 **2. The loopback HTTP surface (`127.0.0.1:5050`).**
-Reachable by every local process, and partially by web pages the user visits.
-Two deliberate hardening choices shape it: the front server **rejects any
-request whose `Host` header isn't `127.0.0.1:5050`/`localhost:5050` with 403**
-(`main.ts:26`, checked first thing at `100-103`) — which kills DNS rebinding,
-since a page rebound to 127.0.0.1 becomes same-origin (CORS can't help) but
-cannot forge the Host the browser sends — and the server emits **no CORS
-headers at all**, so browsers block cross-origin *reads* of every response
-(`GET /auro/payload?id=` included). What remains: cross-origin **"simple"
-POSTs** neither preflight nor need a readable response, and they carry the
-*target's* Host, so they pass the allowlist — `/auro/callback` parses the body
-as JSON regardless of Content-Type, and subscribe/unsubscribe are likewise
-blind-POSTable (local index pollution as a nuisance vector). The only
-authentication anywhere on this surface is therefore still the
-*unguessability of the UUIDv4 request id*, and the id does travel: it rides a
-URL handed to the OS browser (process argv under the `BROWSER` override,
-history/sync, extensions that read tab URLs; local processes can read
-responses too). What a known id buys is bounded — a forged `signFields`
-result fails contract verification, a forged
-`sendTransaction`/`requestAccounts` result corrupts pending-tx tracking or
-spoofs the displayed identity, and a local (non-browser) caller can read the
-pending payload off `GET /auro/payload?id=`.
+Reachable by every local process and, within limits, by web pages the user
+visits. Its defenses: a Host-header allowlist (`main.ts:26`, checked first at
+`100-103`) against DNS rebinding, no CORS headers anywhere (so no cross-origin
+reads), and the UUIDv4 request id as the per-request token. Cross-origin
+"simple" POSTs (`/auro/callback`, subscribe/unsubscribe) satisfy the
+allowlist, and the id rides a URL handed to the OS browser
+(`GET /auro/payload?id=`).
 
 **3. Endpoint lifecycle & network-id detection (`src/config-store.ts`).**
-`verifyEndpoints` never persists unreachable endpoints, but a reachable-and-
-malicious endpoint passes. Network-id detection falls back to URL substring
-heuristics and **defaults to `mainnet`** when nothing matches; a wrong
-`networkId` propagates into `requestNetwork`'s answer, the worker's
-`Mina.Network` id (fee-payer signature domain), and the offline bundles'
-`minaNetwork` field. (The proposal hash itself is no longer network-tagged at
-the app level — since PR #93 cross-network replay is blocked by the
-compile-time `NETWORK_DOMAIN` baked into the circuit and its per-network VK.)
-The DB-wipe-on-change policy is reachable only through the settings-modal and
-setup-window IPC (ties into focus 1).
+Probing requires both endpoints to answer a GraphQL query. The detected network id
+(node-reported, URL-heuristic fallback, `mainnet` default) must clear the
+build's proof domain (`BUILD_NETWORK_DOMAIN`) to be persisted, and from there
+feeds `requestNetwork`, the worker's `Mina.Network` id, the offline bundles'
+`minaNetwork`, and `.vk-hash` line selection. Cross-network proposal replay
+itself is blocked in-circuit (compile-time `NETWORK_DOMAIN` + per-network VK,
+PR #93). Endpoint changes (with their DB wipe) are reachable only through the
+settings-modal and setup-window IPC.
 
 **4. Electron hardening posture (`src/main.ts`).**
 The windows rely on modern Electron defaults (context isolation on, node
 integration off, sandboxed renderers) rather than explicit settings, so the
-posture is only as strong as the defaults of the pinned major (`electron ^43`;
-a Dependabot group bumps the Electron toolchain weekly so the pin can't
-silently fall out of Electron's three-major support window).
-Notable specifics: `setPermissionCheckHandler(() => true)` blanket-approves
-permission *checks* for the local origin; `setDevicePermissionHandler` returns
-`true` for every non-HID device type; the dev script runs
-`electron --no-sandbox` (dev-only); released artifacts carry only an **ad-hoc**
-macOS signature (`scripts/adhoc-sign.mjs` afterPack hook — without it,
-downloaded quarantined copies fail Gatekeeper outright as "damaged"), so users
-are still trained to click through Gatekeeper/SmartScreen prompts (see
-`desktop/README.md`).
+posture tracks the pinned major (`electron ^43`, Dependabot-grouped).
+Deliberate loosenings: `setPermissionCheckHandler(() => true)`,
+`setDevicePermissionHandler` granting every non-HID device type, dev-only
+`electron --no-sandbox`, and ad-hoc-only macOS signing
+(`scripts/adhoc-sign.mjs`; see `desktop/README.md`).
 
-**5. Packaged-content integrity & the local supply chain.**
-The app executes several artifacts staged at build time: the backend bundle,
-`schema.sql` (run through `$executeRawUnsafe` on first launch), the `.vk-hash`
-file, and Prisma's native `.node` engines. `schema.sql`, `.vk-hash` and the
-engines are `asarUnpack`ed — plain files under the install's `resources/`
-directory, modifiable by anything running as the user: equivalent in power to
-replacing the app binary, but a quieter tamper target. The pipeline that
-produces these artifacts is `scripts/stage.mjs` + `scripts/bundle-backend.mjs`
-and the CI release workflow (`.github/workflows/desktop-release.yml`, draft
-GitHub releases).
+**5. Packaged-content integrity.**
+At runtime the app executes artifacts staged at build time: the backend
+bundle, `schema.sql` (run through `$executeRawUnsafe`), `.vk-hash`, and
+Prisma's native engines — the latter three `asarUnpack`ed as plain files under
+the install's `resources/`. The producing pipeline is `scripts/stage.mjs` +
+`scripts/bundle-backend.mjs` and `.github/workflows/desktop-release.yml`
+(draft releases, unsigned artifacts).
 
 **6. Network consistency across the Auro bridge.**
-The desktop believes `config.networkId`; the external browser's Auro has its
-own selected network and node. `requestNetwork` is answered locally from
-config, and `sendTransaction` executes in the external Auro against *its*
-network — nothing reconciles the two. The fee-payer signature's network domain
-and the per-network circuit (`NETWORK_DOMAIN` baked into the proposal hash and
-the VK, PR #93) are what stand between a mismatch and a transaction landing on
-an unintended chain.
+The desktop trusts `config.networkId`; the external browser's Auro has its own
+selected network and node, and nothing reconciles the two — `requestNetwork`
+is answered locally from config, while `sendTransaction` broadcasts through
+Auro's node. The per-network VK and the fee-payer signature domain are what
+constrain a mismatch.
 
 ---
 
@@ -355,7 +342,8 @@ desktop/
 │   ├── config-store.ts      # config.json read/write, endpoint probing, network-id
 │   │                        #   detection, DB deletion
 │   ├── backend-embed.ts     # Boots the bundled backend in-process (SQLite, lite
-│   │                        #   mode, VK-hash env, fresh-DB schema bootstrap)
+│   │                        #   mode, VK-hash env, schema bootstrap + user_version
+│   │                        #   stamp with delete-and-rebuild on mismatch)
 │   ├── hid-picker.ts        # In-page HID device picker (injected script)
 │   ├── auro/
 │   │   ├── router.ts        # /auro/* routes: payload fetch, signing page, callback
@@ -365,8 +353,8 @@ desktop/
 ├── assets/
 │   ├── schema.sql           # SQLite bootstrap DDL (generated via prisma migrate diff)
 │   └── .vk-hash             # MinaGuard verification-key hashes, one per network
-│   │                        #   (copy of contracts/.vk-hash) → MINAGUARD_VK_HASH
-│   │                        #   (see the parse caveat in "The embedded backend")
+│   │                        #   (copy of contracts/.vk-hash); the configured
+│   │                        #   network's line → MINAGUARD_VK_HASH
 ├── scripts/
 │   ├── stage.mjs            # Stages the built UI + Prisma client into a fully
 │   │                        #   link-free tree (bun symlink-store materialization)
@@ -392,9 +380,12 @@ All steps run from `desktop/` (`bun run build` chains them; details in
 2. `prepare:assets` — regenerates `assets/schema.sql` and copies it plus
    `contracts/.vk-hash` into `dist/assets/`.
 3. `build:ui` — builds `../ui` in Next standalone mode with
-   `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050` and
-   `NEXT_PUBLIC_INDEXER_MODE=lite` baked in (plus anything from the
-   git-ignored `desktop/.env`).
+   `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
+   `NEXT_PUBLIC_INDEXER_MODE=lite` and
+   `NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet` baked in (plus anything from the
+   git-ignored `desktop/.env`). The network domain must match
+   `BUILD_NETWORK_DOMAIN` in `config-store.ts` — the two flip together to cut
+   a mainnet build.
 4. `stage` — `stage.mjs` copies the standalone tree into `ui-standalone/`
    resolving every bun-store symlink to a real file (Windows can't ship
    symlinks; naive dereferencing breaks Node module resolution — the script
