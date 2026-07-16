@@ -264,6 +264,13 @@ export default function ProposalForm({
     if (effectiveTxType === 'changeThreshold' && newThreshold === currentThreshold) {
       throw new Error('The new threshold is the same as the current one.');
     }
+    if (
+      effectiveTxType === 'setDelegate'
+      && !undelegate
+      && !/^B62[1-9A-HJ-NP-Za-km-z]+$/.test(delegate.trim())
+    ) {
+      throw new Error('Invalid delegate address.');
+    }
     if (memoOverLimit) {
       throw new Error(`Memo exceeds ${MEMO_MAX_BYTES} UTF-8 bytes.`);
     }

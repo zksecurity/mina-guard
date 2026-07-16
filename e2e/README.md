@@ -107,15 +107,39 @@ All timing and endpoint settings are centralised in [network-config.ts](network-
 
 ```
 e2e/
-├── playwright.config.ts      # Playwright configuration
+├── playwright.config.ts      # Chain suite configuration
+├── playwright.ui.config.ts   # UI suite configuration (chainless, see below)
 ├── network-config.ts         # Network mode, endpoints, and timing
 ├── global-setup.ts           # Starts lightnet/backend/frontend before tests
 ├── global-teardown.ts        # Stops all services after tests
-├── helpers.ts                # Wallet mock, API helpers, indexer polling
-├── onchain-flow.test.ts      # On-chain proposal lifecycle tests
+├── helpers.ts                # API helpers, indexer polling, page setup
+├── wallet-mock.ts            # window.mina mock shared by both suites
+├── onchain-flow.test.ts      # Chain suite: the golden path
+├── ui/                       # UI suite: seeded backend, no chain
+│   ├── fixtures.ts           #   deterministic addresses + expected counts
+│   ├── seed.ts               #   writes the fixture world into the uitest DB
+│   ├── ui-helpers.ts         #   navigation, form, and capture-hook helpers
+│   ├── smoke.test.ts         #   harness sanity + vault list/tab counts
+│   ├── display.test.ts       #   rendering over every derived proposal status
+│   └── forms.test.ts         #   per-tx-type form payloads + validation
 ├── .env.devnet.example       # Template for devnet account keys
 └── .env.devnet               # Your local devnet config (git-ignored)
 ```
+
+## UI test suite (chainless)
+
+`bun run test:ui` (from root or `e2e/`) runs the real Next.js UI against the
+real backend API serving a deterministically seeded Postgres database — no
+lightnet, no indexer, no proving. The backend boots with `INDEXER_DISABLED=true`
+and a fixed `latestSlot`, so proposal statuses (pending/executed/expired/
+invalidated) and memo-match flags are derived by the backend's real serializer
+from seeded inputs. Form tests use the capture hook
+(`__e2eCaptureWorkerCalls`, `ui/lib/multisigClient.ts`) to assert the exact
+payload each form hands the worker without compiling the contract.
+
+Requires a reachable Postgres — defaults to the repo's e2e db container on
+`127.0.0.1:15432` (`docker compose -f preview-env/docker-compose.e2e.yml up db`);
+override with `E2E_UI_DATABASE_URL`. The whole suite runs in ~1-2 minutes.
 
 ## CI
 
@@ -137,65 +161,37 @@ This invokes Playwright directly and streams all `[e2e-setup]`, `[e2e]`, and `[e
 
 ## Test coverage
 
-53 serial tests in `onchain-flow.test.ts`, split into on-chain lifecycle tests and UI validation tests. All run in a single browser page with periodic page recycles to keep WASM memory under the V8 heap limit.
+### Chain suite (`onchain-flow.test.ts`) — the golden path
 
-### Contract lifecycle (tests 1–11)
+14 serial tests, ~14 on-chain transactions, all in a single browser page with
+periodic page recycles to keep WASM memory under the V8 heap limit. One full
+pass through every structurally distinct piece of plumbing:
 
-- Deploy MinaGuard contract and verify initial state (1 owner, threshold 1/1)
-- Add owner → propose, execute
-- Change threshold to 2/2 → propose, execute
-- Transfer MINA → propose, approve (2nd signer), execute
-- Verify Settings and Transactions pages
+- **Single-sig phase (threshold 1/1):** deploy + verify initial state; create
+  a subvault (CREATE_CHILD propose + executeSetupChild); the delete-proposal
+  flow (propose a transfer, propose its deletion, execute, verify invalidation)
+- **Governance phase:** add a second owner; raise the threshold to 2/2
+- **Multi-sig phase:** transfer with memo — propose (owner 1), approve
+  (owner 2), execute — plus memo-match verification end-to-end
+- **Final state checkpoint:** owners, threshold, tab counts
 
-### Owner & threshold management (tests 12–17)
+Everything the chain suite used to cover per tx type lives in faster tiers:
 
-- Lower threshold back to 1/2 → propose, approve, execute
-- Remove owner → propose, execute
-- Verify state after removal
+| Concern | Where it is tested now |
+|---|---|
+| Circuit logic per tx type | `contracts/src/tests/` |
+| Indexer event decoding per type | `backend/src/tests/indexer-event-decode.test.ts` |
+| Status/memo derivation (expiry, invalidation, mismatch) | `backend/src/tests/proposal-record.test.ts` |
+| Form payloads + validation per tx type | `e2e/ui/forms.test.ts` |
+| Display/state rendering per status | `e2e/ui/display.test.ts`, `e2e/ui/smoke.test.ts` |
 
-### Delegation (tests 18–22)
+### UI suite (`ui/*.test.ts`)
 
-- Set delegate → propose, execute, verify delegate card
-- Undelegate → propose, execute
-
-### Proposal expiry (tests 23–25)
-
-- Propose transfer with near-future expiry block
-- Wait for expiry and verify execute button is hidden
-- State checkpoint before subaccount tests
-
-### Subaccount lifecycle (tests 26–37)
-
-- Create child → propose, finalize deployment, verify in UI tree
-- Fund contracts for allocation tests
-- Allocate (parent → child) → propose, execute
-- Reclaim (child → parent) → propose, execute
-- Disable child multi-sig → propose, execute
-- Destroy child → propose, execute
-
-### Delete proposal (tests 38–39)
-
-- Propose a transfer, then create a delete proposal targeting it
-- Execute delete and verify original proposal is invalidated
-
-### Final state (test 40)
-
-- Verify owner count, threshold, transaction counts across all tabs
-
-### Form validation (tests 41–53)
-
-UI-only tests — no on-chain transactions.
-
-- **Transfer**: invalid address, negative/zero amount, missing comma, duplicate recipients, extra commas/whitespace
-- **Add owner**: duplicate owner, invalid B62 address
-- **Threshold**: value exceeding owner count, same-as-current rejection
-- **Non-existent proposal**: 404 handling for invalid proposal hash
-- **Remove owner**: removing below threshold, removing non-owner
-- **Delegate**: empty/invalid address, undelegate toggle
-- **Destroy subaccount**: confirmation checkbox required
-- **Nonce**: zero, negative, decimal, non-numeric values
-- **Action buttons**: executed/invalidated proposals have no actions, expired proposals have no execute button
-- **Tab counts**: transaction list tab counts match API response
+32 tests against the seeded backend (see "UI test suite" above): derived-status
+API sanity, vault list/dashboard/settings rendering, per-status detail pages
+(action buttons, badges, memo match/mismatch indicators), transactions
+filtering and tab counts, per-tx-type form payload capture, and all
+client-side form validation.
 
 ## Compile cache (IndexedDB)
 

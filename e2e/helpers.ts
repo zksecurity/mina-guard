@@ -10,6 +10,7 @@ import {
   fetchAccount,
 } from 'o1js';
 import { getNetworkConfig } from './network-config';
+import { MOCK_WALLET_SCRIPT } from './wallet-mock';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -292,59 +293,6 @@ export async function navigateTo(
 // ---------------------------------------------------------------------------
 // Mock wallet injection
 // ---------------------------------------------------------------------------
-
-/** Script injected into the page before app JS loads. Sets up a fake window.mina. */
-const MOCK_WALLET_SCRIPT = `
-  window.__testActiveAddress = null;
-  window.__testEventHandlers = {};
-
-  window.mina = {
-    requestAccounts() {
-      return Promise.resolve(
-        window.__testActiveAddress ? [window.__testActiveAddress] : []
-      );
-    },
-    getAccounts() {
-      return Promise.resolve(
-        window.__testActiveAddress ? [window.__testActiveAddress] : []
-      );
-    },
-    requestNetwork() {
-      return Promise.resolve({ chainId: 'testnet', name: 'testnet' });
-    },
-    sendTransaction() {
-      // In test mode the worker signs and sends directly; this is a no-op fallback.
-      return Promise.resolve({ hash: 'mock-unused' });
-    },
-    signFields() {
-      return Promise.resolve({ data: [], signature: '' });
-    },
-    signMessage() {
-      return Promise.resolve({
-        publicKey: '', data: '',
-        signature: { field: '0', scalar: '0' },
-      });
-    },
-    on(event, handler) {
-      if (!window.__testEventHandlers[event]) {
-        window.__testEventHandlers[event] = [];
-      }
-      window.__testEventHandlers[event].push(handler);
-    },
-    removeListener(event, handler) {
-      if (window.__testEventHandlers[event]) {
-        window.__testEventHandlers[event] =
-          window.__testEventHandlers[event].filter(function(h) { return h !== handler; });
-      }
-    },
-  };
-
-  window.__testSwitchAccount = function(newAddress) {
-    window.__testActiveAddress = newAddress;
-    var handlers = window.__testEventHandlers['accountsChanged'] || [];
-    handlers.forEach(function(h) { h([newAddress]); });
-  };
-`;
 
 /**
  * Prepares a page for e2e testing:

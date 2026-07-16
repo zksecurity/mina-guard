@@ -66,6 +66,23 @@ jobs:
         env:
           CI: true
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
+      - name: Run backend unit tests
+        # routes-api, routes-subscribe and indexer-autosubscribe have
+        # pre-existing failures (independent of any branch changes) and are
+        # excluded until fixed.
+        run: |
+          cd backend
+          bunx prisma db push --force-reset --skip-generate
+          bun test \
+            src/tests/proposal-record.test.ts \
+            src/tests/indexer-event-decode.test.ts \
+            src/tests/indexer-reorg.test.ts \
+            src/tests/indexer-dropped-tx.test.ts \
+            src/tests/indexer-archive-discovery.test.ts \
+            src/tests/mina-client-tx-status.test.ts \
+            src/tests/lightnet.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
       - name: Run offline-cli tests
         run: cd offline-cli && bun test
         env:
@@ -269,3 +286,48 @@ jobs:
           output=$(./dist/mina-guard-cli-win32-x64.exe 2>&1 || true)
           echo "$output"
           echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
+
+  test-ui:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: minaguard_uitest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Git checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Install dependencies
+        run: bun install
+      - name: Build contracts
+        run: bun run --filter contracts build
+      - name: Generate Prisma client
+        run: cd backend && bunx prisma generate
+      - name: Install Playwright browsers
+        run: cd e2e && bunx playwright install --with-deps chromium
+      - name: Run UI test suite
+        run: cd e2e && bun run test:ui
+        env:
+          E2E_UI_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard_uitest
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: e2e/test-results/

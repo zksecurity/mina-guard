@@ -25,7 +25,11 @@ async function main(): Promise<void> {
 
   // Start the indexer after the HTTP server is listening so the /health
   // endpoint is reachable while the first (potentially slow) tick runs.
-  await indexer.start();
+  if (config.indexerDisabled) {
+    console.log('[backend] indexer disabled (INDEXER_DISABLED=true) — serving API only');
+  } else {
+    await indexer.start();
+  }
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');

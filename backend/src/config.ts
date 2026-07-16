@@ -11,6 +11,13 @@ export interface BackendConfig {
   indexStartHeight: number;
   minaguardVkHash: string | null;
   indexerMode: 'full' | 'lite';
+  /** Test-harness knob: boot the API without starting the polling indexer
+   *  (UI tests run against a pre-seeded DB with no chain behind it). */
+  indexerDisabled: boolean;
+  /** Test-harness knob: with the indexer disabled there is no genesis to
+   *  derive slots from, so status.latestSlot (used for read-time expiry
+   *  derivation) is primed with this fixed value instead. */
+  fixedLatestSlot: number | null;
   /** Where to source candidate addresses for contract discovery.
    *  - 'daemon': scan daemon's bestChain — capped at 290 blocks back.
    *  - 'archive': query Mina archive postgres directly — unbounded history. */
@@ -96,6 +103,11 @@ export function loadConfig(): BackendConfig {
     indexStartHeight: numericEnv('INDEX_START_HEIGHT', 0),
     minaguardVkHash: process.env.MINAGUARD_VK_HASH ?? null,
     indexerMode,
+    indexerDisabled: process.env.INDEXER_DISABLED === 'true',
+    fixedLatestSlot:
+      process.env.INDEXER_FIXED_LATEST_SLOT === undefined
+        ? null
+        : numericEnv('INDEXER_FIXED_LATEST_SLOT', 0),
     discoveryBackend,
     archiveDb,
   };
