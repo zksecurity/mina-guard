@@ -1,13 +1,25 @@
 # Trail pull-based deploy (phase 2) — DRAFT, not yet enabled.
 #
-# Root system service on the ROOTFUL Docker daemon. Run the WHOLE trail
-# deployment rootful (inner stack + outer Caddy + this) so everything is on one
-# daemon — the outer Caddy already must be rootful to bind :443, so consolidating
-# there avoids a rootless/rootful split where the pull would land on a different
-# daemon than the running stack.
+# systemd USER unit — runs as the user that owns the ROOTLESS Docker daemon the
+# trail stack runs on (this box's default). Install + enable:
+#   mkdir -p ~/.config/systemd/user
+#   cp trail-pull-deploy.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now trail-pull-deploy.timer
+#   sudo loginctl enable-linger "$USER"   # ESSENTIAL: keep it running when logged out
 #
-# Install (see setup runbook): copy trail-pull-deploy.sh to /usr/local/bin/ so
-# this path is stable and root-owned — do NOT point ExecStart at a home dir.
+# Why a user unit (not a root system unit): `docker compose -p minaguard-trail`
+# must target the SAME daemon the stack runs on — the rootless one. A root unit
+# hits the rootful daemon: wrong daemon, a second stack, a :10001 collision,
+# $HOME=/root, and no access to the user's cosign/ghcr config. A user unit runs
+# as the right user with the rootless socket + XDG_RUNTIME_DIR already set, and
+# `After=docker.service` correctly means the user's (rootless) docker.
+#
+# Prereqs the user unit needs: cosign on PATH (install to /usr/local/bin, not
+# ~/.local/bin, so the user manager's PATH finds it); `docker login ghcr.io` as
+# this user (or public packages → no login); ExecStart script at /usr/local/bin.
+# (If a box instead runs the stack ROOTFUL, use a root system unit with
+# WantedBy=multi-user.target + EnvironmentFile in /etc — the inverse of this.)
 [Unit]
 Description=MinaGuard trail: pull, verify (cosign), and deploy signed images
 Wants=network-online.target
@@ -15,12 +27,9 @@ After=network-online.target docker.service
 
 [Service]
 Type=oneshot
-# MESA_NODE_HOST + ARCHIVE_DB_PASSWORD live here, root-owned 0600. This is the
-# box-local secret home in the pull model — the secret never transits GitHub.
-EnvironmentFile=/etc/minaguard/trail.env
+# %h = this user's home. Owner-only 0600, readable by the unit's user.
+EnvironmentFile=%h/.config/minaguard/trail.env
 ExecStart=/usr/local/bin/trail-pull-deploy.sh
 # Don't thrash on a transient GHCR/cosign hiccup; the timer will retry.
 TimeoutStartSec=600
-
-[Install]
-WantedBy=multi-user.target
+# (No [Install] — this oneshot is triggered by trail-pull-deploy.timer, not enabled directly.)
