@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node node_modules/@playwright/test/cli.js test"
+    "test": "node node_modules/@playwright/test/cli.js test",
+    "test:ui": "node node_modules/@playwright/test/cli.js test --config playwright.ui.config.ts"
   },
   "dependencies": {
     "contracts": "workspace:*"

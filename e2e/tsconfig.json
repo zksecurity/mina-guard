@@ -6,8 +6,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist",
+    "noEmit": true,
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "ui/*.ts"]
 }

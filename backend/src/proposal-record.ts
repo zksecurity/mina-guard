@@ -107,7 +107,7 @@ export function deriveInvalidReason(
  * past expirySlot) > `invalidated` (deriveInvalidReason returned non-null)
  * > `pending`.
  */
-function deriveStatus(
+export function deriveStatus(
   proposal: Proposal,
   executed: boolean,
   latestSlot: number,
@@ -120,7 +120,7 @@ function deriveStatus(
   return 'pending';
 }
 
-function computeProposalMemoMatch(
+export function computeProposalMemoMatch(
   memo: string | null,
   memoHash: string | null,
 ): MemoMatch {
@@ -129,7 +129,7 @@ function computeProposalMemoMatch(
   return memoToField(memo).toString() === memoHash;
 }
 
-function computeMemoExecutionMatch(
+export function computeMemoExecutionMatch(
   memoHash: string | null,
   executionMemoHash: string | null,
 ): MemoMatch {

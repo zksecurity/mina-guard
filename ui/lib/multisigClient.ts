@@ -125,6 +125,30 @@ export async function setSkipProofs(skip: boolean) {
   return getWorkerApi().setSkipProofs(skip);
 }
 
+// Capture mode for the chainless UI test suite: worker-bound calls are
+// recorded on window.__e2eWorkerCalls and answered with a canned success
+// instead of reaching the worker, so form tests can assert the outgoing
+// payload without compiling the contract or touching a chain. The flag can
+// only be flipped via the __e2e hook below, so this stays inert (and the
+// whole block dead-code eliminated) outside NEXT_PUBLIC_E2E_TEST builds.
+let captureWorkerCalls = false;
+
+function captureWorkerCall<T>(method: string, params: unknown, result: T): { result: T } | null {
+  // Defense in depth: the flag is only settable via a hook that itself only
+  // exists when NEXT_PUBLIC_E2E_TEST is set, so `captureWorkerCalls` can never
+  // be true in a production build — but this explicit guard makes the whole
+  // function trivially tree-shakeable and closes any hypothetical "flag flipped
+  // some other way" foot-gun where canned results would replace real chain
+  // txs.
+  if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') return null;
+  if (!captureWorkerCalls) return null;
+  (window as any).__e2eWorkerCalls.push({ method, params });
+  return { result };
+}
+
+/** Canned results returned in capture mode (mirrored in e2e/ui/fixtures.ts). */
+const CAPTURED_RESULT = { proposalHash: '424242', txHash: '5JuE2ECapturedTx' };
+
 // Expose test helper on window for e2e tests to call via page.evaluate()
 // Next.js inlines NEXT_PUBLIC_* at build time; the block is dead-code eliminated
 // in production builds where the var is not set.
@@ -134,6 +158,11 @@ if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_E2E_TEST === 'true'
   };
   (window as any).__e2eSetSkipProofs = async (skip: boolean) => {
     return getWorkerApi().setSkipProofs(skip);
+  };
+  (window as any).__e2eWorkerCalls = [];
+  (window as any).__e2eCaptureWorkerCalls = (enable: boolean) => {
+    captureWorkerCalls = enable;
+    (window as any).__e2eWorkerCalls = [];
   };
 }
 
@@ -196,6 +225,8 @@ export async function createOnchainProposal(params: {
   childOwners?: string[];
   childThreshold?: number;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<{ proposalHash: string; txHash: string } | null> {
+  const captured = captureWorkerCall('createOnchainProposal', params, CAPTURED_RESULT);
+  if (captured) return captured.result;
   await assertLedgerReady(signer);
   return getWorkerApi().createOnchainProposal(
     params,
@@ -212,6 +243,8 @@ export async function approveProposalOnchain(params: {
   approverAddress: string;
   proposal: Proposal;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  const captured = captureWorkerCall('approveProposalOnchain', params, CAPTURED_RESULT.txHash);
+  if (captured) return captured.result;
   await assertLedgerReady(signer);
   return getWorkerApi().approveProposalOnchain(
     params,
@@ -228,6 +261,8 @@ export async function executeProposalOnchain(params: {
   executorAddress: string;
   proposal: Proposal;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  const captured = captureWorkerCall('executeProposalOnchain', params, CAPTURED_RESULT.txHash);
+  if (captured) return captured.result;
   await assertLedgerReady(signer);
   return getWorkerApi().executeProposalOnchain(
     params,
@@ -263,6 +298,8 @@ export async function executeSetupChildOnchain(params: {
   childThreshold: number;
   proposal: Proposal;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  const captured = captureWorkerCall('executeSetupChildOnchain', params, CAPTURED_RESULT.txHash);
+  if (captured) return captured.result;
   await assertLedgerReady(signer);
   return getWorkerApi().executeSetupChildOnchain(
     params,
@@ -282,6 +319,8 @@ export async function executeChildLifecycleOnchain(params: {
   executorAddress: string;
   proposal: Proposal;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
+  const captured = captureWorkerCall('executeChildLifecycleOnchain', params, CAPTURED_RESULT.txHash);
+  if (captured) return captured.result;
   await assertLedgerReady(signer);
   return getWorkerApi().executeChildLifecycleOnchain(
     params,

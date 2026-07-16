@@ -1,9 +1,13 @@
 # Fully-containerized e2e runner.
 #
 # Usage (run from repo root):
+#   bun run test:e2e:docker
+# which is equivalent to (cleanup FIRST — orphan containers from a previous
+# run of the *other* compose file under the same -p project share this
+# network and race the backend on the shared db):
+#   docker compose -f preview-env/docker-compose.e2e.yml -p mina-guard-e2e down -v --remove-orphans
 #   docker compose -f preview-env/docker-compose.e2e.yml -p mina-guard-e2e up \
 #       --build --abort-on-container-exit --exit-code-from playwright
-#   docker compose -f preview-env/docker-compose.e2e.yml -p mina-guard-e2e down -v
 #
 # Nothing is published to the host — all inter-service traffic goes over the
 # compose-managed default network. The `playwright` service joins that network
@@ -12,6 +16,10 @@
 services:
   db:
     image: postgres:17
+    ports:
+      # Published for the chainless UI suite (e2e/playwright.ui.config.ts
+      # defaults to 127.0.0.1:15432); the in-network e2e services use db:5432.
+      - "127.0.0.1:15432:5432"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres

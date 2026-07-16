@@ -80,6 +80,9 @@ export class MinaGuardIndexer {
   /** Creates a new indexer with network configuration and poll settings. */
   constructor(config: BackendConfig) {
     this.config = config;
+    if (config.fixedLatestSlot != null) {
+      this.status.latestSlot = config.fixedLatestSlot;
+    }
     configureNetwork(config);
   }
 
