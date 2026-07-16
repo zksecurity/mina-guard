@@ -935,6 +935,12 @@ export class MinaGuard extends SmartContract {
     allowsData.or(proposal.data.equals(Field(0)))
       .assertTrue('data must be zero for this txType');
 
+    // Rule 5: only the native MINA token (tokenId 0) is supported. `tokenId` is
+    // part of the signed/approved proposal but executeTransfers always sends on
+    // the default token, so a non-zero tokenId would be approved as a MINA send.
+    // Reject it at proposal time so no such proposal can exist on-chain.
+    proposal.tokenId.assertEquals(Field(0), 'Only the native MINA token (tokenId 0) is supported');
+
     const proposalHash = proposal.hash();
 
     // --- approval logic ---
