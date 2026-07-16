@@ -21,7 +21,7 @@
 # (If a box instead runs the stack ROOTFUL, use a root system unit with
 # WantedBy=multi-user.target + EnvironmentFile in /etc — the inverse of this.)
 [Unit]
-Description=MinaGuard trail: pull, verify (cosign), and deploy signed images
+Description=MinaGuard trail: pull, verify (attestation), and deploy signed images
 Wants=network-online.target
 After=network-online.target docker.service
 
