@@ -65,14 +65,16 @@ If `../backend/prisma/schema.prisma` changes:
 1. Mirror the change into `../backend/prisma/schema.sqlite.prisma` (the
    `check-schema-sync.mjs` helper fails loudly if they drift).
 2. `bun run dev` will auto-regen the SQLite client + `schema.sql`.
-3. **Delete any existing user DB** before re-launching, so the new schema
-   runs against a fresh DB:
-   - Linux:   `rm -f ~/.config/MinaGuard/minaguard.db`
-   - macOS:   `rm -f ~/Library/Application\ Support/MinaGuard/minaguard.db`
-   - Windows: `del %APPDATA%\MinaGuard\minaguard.db`
 
-`backend-embed.ts` only runs `schema.sql` when the DB file doesn't exist.
-There is no incremental migration story yet; schema changes require wiping.
+Existing user DBs are handled automatically: `backend-embed.ts` stamps
+`PRAGMA user_version` with a hash of `schema.sql` at bootstrap, and on
+mismatch deletes the DB and rebuilds it from chain. There are no incremental
+migrations — a schema change costs a re-index, and manually subscribed vaults
+must be re-added. To force a rebuild by hand:
+
+- Linux:   `rm -f ~/.config/MinaGuard/minaguard.db`
+- macOS:   `rm -f ~/Library/Application\ Support/MinaGuard/minaguard.db`
+- Windows: `del %APPDATA%\MinaGuard\minaguard.db`
 
 ## Packaging a release
 
@@ -168,7 +170,9 @@ required.
 ## Troubleshooting
 
 **"The column `main.ContractConfig.X` does not exist"** — the bundled schema
-is newer than the user's DB file. See "Schema changes" above: wipe the DB.
+is newer than the user's DB file. Current builds detect this via the
+`user_version` stamp and rebuild automatically; seeing it means a build
+predating the stamp — wipe the DB manually (paths under "Schema changes").
 
 **"Prisma Client could not be found"** — the SQLite client wasn't regenerated.
 Run `bun run prepare:backend`.

@@ -3,7 +3,7 @@ name: Offline CLI release
 # Builds the air-gapped signing CLI (offline-cli/) for all supported platforms
 # and uploads the binaries to a GitHub Release, so users download one
 # canonical, checksummed artifact instead of trusting a backend-served binary
-# (see docs/offline-signing.md — the CLI is the program that ends up handling
+# (see docs/offline-audit-guide.md — the CLI is the program that ends up handling
 # MINA_PRIVATE_KEY, so its provenance matters more than anything else in the
 # offline flow).
 #
@@ -158,7 +158,7 @@ jobs:
             verify_one "" "$single"
           fi
 
-      # Same compile invocation as docs/offline-signing.md; macos-* release
+      # Same compile invocation as docs/offline-audit-guide.md; macos-* release
       # names map to bun's darwin targets, and bun appends .exe to the Windows
       # outfile itself. The --define keeps o1js off Node-specific code paths
       # that don't exist in the Bun runtime.
@@ -253,7 +253,7 @@ jobs:
           cat SHA256SUMS
 
       # Record the exact toolchain in the release body: reproducing this binary
-      # from source (the fallback trust story in docs/offline-signing.md)
+      # from source (the fallback trust story in docs/offline-audit-guide.md)
       # requires knowing which Bun compiled it. The VK hash was verified against
       # the tagged circuit in the build job before we got here.
       - name: Create draft release
@@ -265,7 +265,7 @@ jobs:
             --verify-tag \
             --title "Offline CLI $GITHUB_REF_NAME" \
             --notes "$(cat <<EOF
-          Air-gapped signing CLI for MinaGuard. Usage and security model: \`docs/offline-signing.md\`.
+          Air-gapped signing CLI for MinaGuard. Usage and security model: \`docs/offline-audit-guide.md\`.
 
           **Verify your download** against \`SHA256SUMS\` before moving it to the air-gapped machine.
 
