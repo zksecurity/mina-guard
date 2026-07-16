@@ -1,6 +1,13 @@
 # Trail pull-based deploy (phase 2) — DRAFT, not yet enabled.
-# Install to /etc/systemd/system/ (or ~/.config/systemd/user/ for a user unit).
-# Runs on the trail box only. Pairs with trail-pull-deploy.timer.
+#
+# Root system service on the ROOTFUL Docker daemon. Run the WHOLE trail
+# deployment rootful (inner stack + outer Caddy + this) so everything is on one
+# daemon — the outer Caddy already must be rootful to bind :443, so consolidating
+# there avoids a rootless/rootful split where the pull would land on a different
+# daemon than the running stack.
+#
+# Install (see setup runbook): copy trail-pull-deploy.sh to /usr/local/bin/ so
+# this path is stable and root-owned — do NOT point ExecStart at a home dir.
 [Unit]
 Description=MinaGuard trail: pull, verify (cosign), and deploy signed images
 Wants=network-online.target
@@ -11,7 +18,7 @@ Type=oneshot
 # MESA_NODE_HOST + ARCHIVE_DB_PASSWORD live here, root-owned 0600. This is the
 # box-local secret home in the pull model — the secret never transits GitHub.
 EnvironmentFile=/etc/minaguard/trail.env
-ExecStart=/home/jason/mina-guard/deploy/trail-pull-deploy.sh
+ExecStart=/usr/local/bin/trail-pull-deploy.sh
 # Don't thrash on a transient GHCR/cosign hiccup; the timer will retry.
 TimeoutStartSec=600
 
