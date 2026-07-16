@@ -45,10 +45,17 @@ fi
 # the comment header) unless explicitly overridden in the environment. The
 # backend image takes it as a build arg; the indexer filters events by it.
 if [ -z "${MINAGUARD_VK_HASH:-}" ] && [ -f contracts/.vk-hash ]; then
-  MINAGUARD_VK_HASH=$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')
+  # trail is a testnet deploy; read-vk-hash.sh is the single validated parser
+  # for the keyed .vk-hash (testnet=… / mainnet=…).
+  MINAGUARD_VK_HASH=$(contracts/scripts/read-vk-hash.sh testnet) || exit 1
   export MINAGUARD_VK_HASH
 fi
-: "${MINAGUARD_VK_HASH:?contracts/.vk-hash parsed to empty — regenerate with: bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile}"
+# A pre-set MINAGUARD_VK_HASH bypasses the helper's validation; still reject
+# empty/garbage and allow the explicit "skip" opt-out (indexer accepts all).
+case "${MINAGUARD_VK_HASH:-}" in
+  skip) ;;
+  ''|*[!0-9]*) echo "MINAGUARD_VK_HASH must be a decimal hash or 'skip' (got '${MINAGUARD_VK_HASH:-}')" >&2; exit 1 ;;
+esac
 
 COMMAND="${1:-}"
 PORT=10001

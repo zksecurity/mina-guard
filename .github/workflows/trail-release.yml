@@ -1,0 +1,168 @@
+name: Trail release (build · sign · publish)
+
+# Pull-based deploy, phase 1. Builds the /trail images, pushes them
+# to GHCR by digest, and attaches a GitHub build-provenance attestation to each
+# digest (actions/attest-build-provenance — keyless, Sigstore-backed: GitHub OIDC
+# → Fulcio → Rekor). The box verifies with `gh attestation verify` before running
+# (phase 2). Signing here and verification on the box are an external availability
+# dependency on the Sigstore/GitHub attestation services.
+# NOTHING here touches the trail box — the box pulls
+# and verifies these images itself (phase 2). This replaces the self-hosted
+# `deploy` runner path: nothing pushes to the box, so no party with repo
+# write access can execute on it via a pushed-branch workflow.
+#
+# ── BEFORE GO-LIVE (required) ─────────────────────────────────────────────
+#  1. Pin every `uses:` below to a full commit SHA. This is a release pipeline
+#     that SIGNS artifacts users run; mutable tags are a supply-chain hole
+#     (same finding as desktop-release.yml). Add the `github-actions` ecosystem
+#     to .github/dependabot.yml (NOT yet configured) to keep the SHAs current.
+#  2. Confirm the `Production` environment has required reviewers with
+#     prevent-self-review. That is the second-account gate — it now lives HERE
+#     (the required-reviewer gate on the old on-box deploy job is then redundant).
+#  3. Make the three GHCR packages PUBLIC (after the first run creates them) so
+#     the box pulls anonymously — no pull token to store/rotate. They're built
+#     from open-source code and bake in nothing secret. See the phase-2 runbook.
+# ──────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: trail-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write       # push images to GHCR
+  id-token: write       # keyless signing via OIDC (Sigstore)
+  attestations: write   # write the build-provenance attestations
+
+env:
+  IMAGE_PREFIX: ghcr.io/zksecurity/mina-guard/trail
+  # Public build-time config baked into the frontend bundle. KEEP IN SYNC with
+  # deploy/docker-compose.trail.yml's frontend build args until the on-box build
+  # is retired (then this workflow is the single source). Change if the trail
+  # domain moves off mina-trail.duckdns.org/trail.
+  NEXT_PUBLIC_BASE_PATH: /trail
+  NEXT_PUBLIC_API_BASE_URL: https://mina-trail.duckdns.org/trail
+  NEXT_PUBLIC_MINA_ENDPOINT: https://mina-trail.duckdns.org/trail/graphql
+  NEXT_PUBLIC_ARCHIVE_ENDPOINT: https://mina-trail.duckdns.org/trail/archive
+  NEXT_PUBLIC_MINA_NETWORK: testnet
+  NEXT_PUBLIC_BLOCK_EXPLORER_URL: https://mina-trail.duckdns.org/trail/explorer
+  NEXT_PUBLIC_POLL_INTERVAL_MS: "1000"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: Production   # second-account approval gate (required reviewer)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ui/deps/o1js submodule the frontend build needs
+
+      - name: Read MinaGuard VK hash
+        id: vk
+        # A property of the contract source, committed at contracts/.vk-hash;
+        # the backend takes it as a build arg and the indexer filters by it.
+        # trail is a testnet deploy (compose: NEXT_PUBLIC_MINA_NETWORK=testnet).
+        # read-vk-hash.sh is the single validated parser for the keyed file.
+        run: |
+          h=$(contracts/scripts/read-vk-hash.sh testnet) || exit 1
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push — backend
+        id: backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: preview-env/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-backend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-backend:main
+          build-args: |
+            MINAGUARD_VK_HASH=${{ steps.vk.outputs.hash }}
+
+      - name: Build & push — frontend
+        id: frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: preview-env/Dockerfile.frontend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-frontend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-frontend:main
+          build-args: |
+            NEXT_PUBLIC_BASE_PATH=${{ env.NEXT_PUBLIC_BASE_PATH }}
+            NEXT_PUBLIC_API_BASE_URL=${{ env.NEXT_PUBLIC_API_BASE_URL }}
+            NEXT_PUBLIC_MINA_ENDPOINT=${{ env.NEXT_PUBLIC_MINA_ENDPOINT }}
+            NEXT_PUBLIC_ARCHIVE_ENDPOINT=${{ env.NEXT_PUBLIC_ARCHIVE_ENDPOINT }}
+            NEXT_PUBLIC_MINA_NETWORK=${{ env.NEXT_PUBLIC_MINA_NETWORK }}
+            NEXT_PUBLIC_BLOCK_EXPLORER_URL=${{ env.NEXT_PUBLIC_BLOCK_EXPLORER_URL }}
+            NEXT_PUBLIC_POLL_INTERVAL_MS=${{ env.NEXT_PUBLIC_POLL_INTERVAL_MS }}
+            ENABLE_SOURCE_MAPS=false
+
+      - name: Build & push — explorer
+        id: explorer
+        uses: docker/build-push-action@v6
+        with:
+          context: preview-env
+          file: preview-env/Dockerfile.explorer
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-explorer:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-explorer:main
+          build-args: |
+            NEXT_PUBLIC_BASE_PATH=/trail/explorer
+
+      # Build-provenance attestations (SLSA), pushed to GHCR as OCI referrers
+      # alongside each image so the box can verify with `gh attestation verify`.
+      - name: Attest — backend
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-backend
+          subject-digest: ${{ steps.backend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest — frontend
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-frontend
+          subject-digest: ${{ steps.frontend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest — explorer
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-explorer
+          subject-digest: ${{ steps.explorer.outputs.digest }}
+          push-to-registry: true
+
+      - name: Publish digest manifest
+        # The box's pull agent (phase 2) can pull :main and verify, or pin these
+        # exact digests. Emitted as a build artifact for traceability.
+        run: |
+          cat > trail-images.json <<EOF
+          {
+            "backend":  "${{ env.IMAGE_PREFIX }}-backend@${{ steps.backend.outputs.digest }}",
+            "frontend": "${{ env.IMAGE_PREFIX }}-frontend@${{ steps.frontend.outputs.digest }}",
+            "explorer": "${{ env.IMAGE_PREFIX }}-explorer@${{ steps.explorer.outputs.digest }}",
+            "sha": "${{ github.sha }}",
+            "vk_hash": "${{ steps.vk.outputs.hash }}"
+          }
+          EOF
+          cat trail-images.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trail-images
+          path: trail-images.json
