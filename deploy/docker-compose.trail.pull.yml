@@ -1,0 +1,78 @@
+# MinaGuard Mesa Trail — PULL-based deploy (phase 2).
+#
+# Same services as docker-compose.trail.yml, but the app images are PULLED from
+# GHCR (signed, verified by trail-pull-deploy.sh) instead of built on-box. The
+# ${TRAIL_*_IMAGE} vars are set by that script to the attestation-verified digest
+# refs, so what runs is exactly what was verified.
+#
+# DRAFT — untested on the trail box. Keep the service shape in sync with
+# docker-compose.trail.yml (env/ports/volumes); only the image source differs.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=minaguard
+      - POSTGRES_PASSWORD=minaguard
+      - POSTGRES_DB=minaguard
+    volumes:
+      - minaguard-trail-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minaguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    image: ${TRAIL_BACKEND_IMAGE:?set by trail-pull-deploy.sh (verified digest)}
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
+      - MINA_ENDPOINT=http://${MESA_NODE_HOST:?}:3085/graphql
+      - ARCHIVE_ENDPOINT=http://${MESA_NODE_HOST:?}:8282
+      - ARCHIVE_DB_HOST=${MESA_NODE_HOST}
+      - ARCHIVE_DB_PORT=5433
+      - ARCHIVE_DB_USER=minaguard_ro
+      - ARCHIVE_DB_PASSWORD=${ARCHIVE_DB_PASSWORD:?}
+      - ARCHIVE_DB_NAME=archive
+      - DISCOVERY_BACKEND=archive
+      - PORT=4000
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    # NEXT_PUBLIC_* are baked at BUILD time (trail-release.yml), not here.
+    image: ${TRAIL_FRONTEND_IMAGE:?set by trail-pull-deploy.sh (verified digest)}
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  explorer:
+    image: ${TRAIL_EXPLORER_IMAGE:?set by trail-pull-deploy.sh (verified digest)}
+    restart: unless-stopped
+    environment:
+      # Supplied at RUNTIME (unlike the frontend's build-time NEXT_PUBLIC_*): the
+      # explorer reads TESTNET_GRAPHQL_URL server-side in its /api/graphql route,
+      # so a runtime override works. The CI image (trail-release.yml) bakes it
+      # empty because CI can't know the box's MESA_NODE_HOST; the interim on-box
+      # compose passed it as a build arg. Without this the explorer runs with an
+      # empty GraphQL URL and can't query the chain.
+      - TESTNET_GRAPHQL_URL=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set}:3085/graphql
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "10001:80"
+    volumes:
+      - ./Caddyfile.trail:/etc/caddy/Caddyfile:ro
+    environment:
+      - MESA_NODE_HOST=${MESA_NODE_HOST:?}
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  minaguard-trail-db:
