@@ -20,14 +20,16 @@ jobs:
         with:
           submodules: true
 
-      # The self-hosted e2e runner has Docker Engine but not the Compose v2
-      # plugin (`docker compose`), so every compose step below fails with
-      # "unknown shorthand flag: 'f'". The official action installs the plugin
-      # into the runner's CLI plugin dir (handles arch/caching/integrity).
-      - name: Ensure Docker Compose v2
-        uses: docker/setup-compose-action@v1
-        with:
-          version: v2.29.7
+      # Runner is expected to have `docker compose` v2 pre-installed
+      # system-wide (`/usr/libexec/docker/cli-plugins/docker-compose`). We
+      # used to install it here via docker/setup-compose-action@v1, but that
+      # action copies the binary to `~/.docker/cli-plugins/docker-compose`
+      # — a per-user path shared between both runners on this box
+      # (deploy-runner and e2e-runner both run as jason). When a concurrent
+      # `docker compose` invocation is executing on the other runner, the
+      # copy fails with ETXTBSY (text file busy). See CI failure 2026-07-16.
+      - name: Verify Docker Compose v2 available
+        run: docker compose version
 
       - name: Clean up previous run
         run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v --remove-orphans 2>/dev/null || true
