@@ -1,0 +1,121 @@
+name: Desktop release
+
+# Builds the MinaGuard desktop app (Electron) for macOS, Linux and Windows and
+# uploads the installers to a GitHub Release.
+#
+# Artifacts are UNSIGNED (no Developer ID / Authenticode). macOS bundles are
+# ad-hoc signed by the afterPack hook (desktop/scripts/adhoc-sign.mjs) so
+# downloaded copies show Gatekeeper's recoverable "Apple could not verify…"
+# prompt (System Settings → Privacy & Security → Open Anyway) instead of the
+# dead-end "damaged" dialog. Windows users get a SmartScreen "unknown
+# publisher" prompt. Real code signing / notarization is intentionally left
+# out of this pass — see the "Signing" section in desktop/README.md.
+#
+# Triggers:
+#   * push of a tag matching `desktop-v*` (e.g. desktop-v0.1.0) → real release
+#   * manual `workflow_dispatch` → dry run that builds all three platforms and
+#     uploads to a draft release, without needing a tag.
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch: {}
+
+# Never cancel a half-finished release build in progress; let each ref's run
+# complete so we don't end up with a partially-populated draft release.
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # required to create/update the GitHub Release
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Git checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true # ui/deps/o1js is a submodule the UI build needs
+
+      # Install with --ignore-scripts: the `ui` package has a postinstall that
+      # builds the mina-signer bundle via `npx esbuild`, which fails under bun's
+      # lifecycle-script shell on Windows ("bunsh: No such file or directory").
+      # ci.yml's macOS/Windows jobs do the same — skip the script here, then run
+      # the mina-signer build explicitly below (with esbuild now installed).
+      - name: Install dependencies
+        run: bun install --ignore-scripts
+
+      # The UI build imports mina-signer from the o1js submodule; its web bundle
+      # is not committed for every platform, so (re)build it here — replacing the
+      # skipped postinstall. Matches the step in ci.yml. Harmless on Linux too,
+      # so we run it unconditionally to keep the three legs identical.
+      - name: Build mina-signer (o1js submodule)
+        working-directory: ui/deps/o1js/src/mina-signer
+        shell: bash
+        run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
+
+      - name: Build contracts
+        run: bun run --filter contracts build
+
+      # The desktop `build` script chains: prepare:backend (sqlite Prisma client
+      # with all platform binaryTargets) → prepare:assets → build:ui (Next.js
+      # standalone) → stage (esbuild backend bundle + copy UI) → build:electron
+      # (tsc). It uses bash-isms (`env $(grep ...)`, `cp -R`, `rm -rf`), so force
+      # bash on every OS — GitHub's windows-latest ships Git Bash.
+      - name: Build desktop bundle
+        working-directory: desktop
+        shell: bash
+        run: bun run build
+
+      # electron-builder reads the `build` block + `publish` config from
+      # desktop/package.json. `--publish always` uploads to the GitHub draft
+      # release configured there. GH_TOKEN authenticates the upload.
+      #
+      # On workflow_dispatch (no tag) there is no release version tag, so we
+      # only build the installers and upload them as CI artifacts instead of
+      # publishing — see the two variants below.
+      - name: Package & publish (tag build)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        working-directory: desktop
+        shell: bash
+        run: bunx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Explicitly no code signing in this pass.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Package only (manual dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/desktop-v') }}
+        working-directory: desktop
+        shell: bash
+        run: bunx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # For the manual dry run, surface the installers as downloadable CI
+      # artifacts so they can be smoke-tested before ever cutting a tag.
+      - name: Upload installers as CI artifacts (dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/desktop-v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: minaguard-desktop-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+            desktop/release/*.exe

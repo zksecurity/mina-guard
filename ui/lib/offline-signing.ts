@@ -1,4 +1,5 @@
 import { parseChildConfigFromEvents } from './api';
+import { getMinaGuardConfig } from './endpoints';
 
 export const OFFLINE_BUNDLE_VERSION = 1;
 
@@ -122,8 +123,19 @@ export function assertValidMinaAddress(address: string): void {
 // ---------------------------------------------------------------------------
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
-const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'http://127.0.0.1:8080/graphql';
-const MINA_NETWORK = (process.env.NEXT_PUBLIC_MINA_NETWORK as 'testnet' | 'mainnet') || 'testnet';
+
+/** Resolved lazily (not at module scope) so the desktop shell's runtime
+ *  window.__minaGuardConfig override applies, matching the worker path. */
+function minaEndpoint(): string {
+  return getMinaGuardConfig().minaEndpoint;
+}
+
+/** Bundle network id — selects the CLI's fee-payer signature domain. Mina uses
+ *  the same non-mainnet domain for devnet and testnet, so devnet maps to
+ *  'testnet' (mirroring how the CLI configures Mina.Network). */
+function minaNetwork(): 'testnet' | 'mainnet' {
+  return getMinaGuardConfig().networkId === 'mainnet' ? 'mainnet' : 'testnet';
+}
 
 async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
   const query = `query($publicKey: PublicKey!) {
@@ -145,7 +157,7 @@ async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
       zkappUri
     }
   }`;
-  const res = await fetch(MINA_ENDPOINT, {
+  const res = await fetch(minaEndpoint(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables: { publicKey: address } }),
@@ -207,7 +219,7 @@ export async function buildOfflineProposeBundle(params: {
   return {
     version: 1,
     action: 'propose',
-    minaNetwork: MINA_NETWORK,
+    minaNetwork: minaNetwork(),
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
@@ -240,7 +252,7 @@ export async function buildOfflineApproveBundle(params: {
   return {
     version: 1,
     action: 'approve',
-    minaNetwork: MINA_NETWORK,
+    minaNetwork: minaNetwork(),
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
@@ -313,7 +325,7 @@ export async function buildOfflineExecuteBundle(params: {
   return {
     version: 1,
     action: 'execute',
-    minaNetwork: MINA_NETWORK,
+    minaNetwork: minaNetwork(),
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,

@@ -2,8 +2,7 @@
 
 import { useRef, useState } from 'react';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
-
-const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'http://127.0.0.1:8080/graphql';
+import { getMinaGuardConfig } from '@/lib/endpoints';
 
 // CLI binaries are published per release by the offline-cli-release workflow
 // (binaries + SHA256SUMS + minaguard-vk-hash.txt). There is deliberately NO
@@ -20,7 +19,8 @@ const CLI_RELEASE_DOWNLOAD_BASE = process.env.NEXT_PUBLIC_OFFLINE_CLI_RELEASE_UR
 async function broadcastSignedTx(txJson: string): Promise<string> {
   const query = `mutation($input: SendZkappInput!) { sendZkapp(input: $input) { zkapp { hash } } }`;
   const zkappCommand = JSON.parse(txJson);
-  const res = await fetch(MINA_ENDPOINT, {
+  // Resolved at call time so the desktop shell's runtime endpoint override applies.
+  const res = await fetch(getMinaGuardConfig().minaEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables: { input: { zkappCommand } } }),

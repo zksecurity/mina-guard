@@ -2,15 +2,18 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import SearchInput from '@/components/SearchInput';
 import LoadMore from '@/components/LoadMore';
 import VaultCard from '@/components/VaultCard';
 import ThresholdBadge from '@/components/ThresholdBadge';
+import AddExistingAccountModal from '@/components/AddExistingAccountModal';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useLoadMore } from '@/hooks/useLoadMore';
 import { useUrlState } from '@/hooks/useUrlState';
 import { fetchBalance } from '@/lib/api';
+import { resolveIndexerMode } from '@/lib/indexer-mode';
 import { formatMina, truncateAddress, type ContractSummary } from '@/lib/types';
 import {
   getAccountName,
@@ -95,7 +98,8 @@ export default function AccountsListPage() {
 }
 
 function AccountsListPageInner() {
-  const { contracts, allContractOwners, wallet } = useAppContext();
+  const { contracts, allContractOwners, wallet, indexerStatus } = useAppContext();
+  const router = useRouter();
 
   const [urlQuery, setUrlQuery] = useUrlState('search');
   const [urlPageSize, setUrlPageSize] = useUrlState('pageSize');
@@ -108,6 +112,8 @@ function AccountsListPageInner() {
   }, [debouncedQuery, setUrlQuery]);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [showAddExisting, setShowAddExisting] = useState(false);
+  const isLiteMode = resolveIndexerMode(indexerStatus) === 'lite';
 
   const forest = useMemo(
     () => buildOwnedForest(contracts, allContractOwners, wallet.address),
@@ -216,12 +222,23 @@ function AccountsListPageInner() {
                 : `${ownedCount} ${ownedCount === 1 ? 'Vault' : 'Vaults'}`}
             </p>
           </div>
-          <Link
-            href="/accounts/new"
-            className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all"
-          >
-            + Create Vault
-          </Link>
+          <div className="flex gap-3">
+            {isLiteMode && (
+              <button
+                type="button"
+                onClick={() => setShowAddExisting(true)}
+                className="bg-safe-gray border border-safe-border text-white font-semibold rounded-lg px-5 py-2.5 text-sm hover:bg-safe-hover transition-colors"
+              >
+                + Add existing
+              </button>
+            )}
+            <Link
+              href="/accounts/new"
+              className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2.5 text-sm hover:brightness-110 transition-all"
+            >
+              + Create Vault
+            </Link>
+          </div>
         </div>
 
         {pendingDeploys.length > 0 && (
@@ -287,6 +304,16 @@ function AccountsListPageInner() {
           </>
         )}
       </div>
+
+      {showAddExisting && (
+        <AddExistingAccountModal
+          onClose={() => setShowAddExisting(false)}
+          onSubmitted={(address) => {
+            setShowAddExisting(false);
+            router.push(`/accounts/${address}?pending=1`);
+          }}
+        />
+      )}
     </div>
   );
 }

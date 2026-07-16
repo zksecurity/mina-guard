@@ -1,0 +1,23 @@
+version: 2
+
+updates:
+  # Keep the desktop Electron shell on a supported major. Electron supports only
+  # the latest three stable majors (~4-month cadence, so a major goes EOL in
+  # roughly 8 months). An unattended caret range silently rots the bundled
+  # Chromium; these PRs surface every new release so the pin can't drift out of
+  # the support window unnoticed. Grouped so the Electron toolchain
+  # (electron + electron-builder + the squirrel peer) bumps together.
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      electron:
+        patterns:
+          - electron
+          - electron-builder
+          - electron-builder-squirrel-windows
+    labels:
+      - dependencies
+      - desktop

@@ -48,6 +48,10 @@ jobs:
           submodules: true
       - name: Install dependencies
         run: bun install
+      # schema.sqlite.prisma (desktop) must mirror schema.prisma (backend).
+      # Drift only breaks the desktop build, which no other job here exercises.
+      - name: Check Prisma schema sync (postgres <-> sqlite)
+        run: bun run --filter backend prisma:check-schema-sync
       - name: Build contracts
         run: bun run --filter contracts build
       - name: Build UI

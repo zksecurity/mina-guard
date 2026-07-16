@@ -66,8 +66,19 @@ type SignFeePayerFn = (commitment: string) => Promise<{ field: string; scalar: s
 /** Callback type for reporting step-based progress to the main thread. */
 type ProgressFn = (step: string) => void;
 
-const MINA_ENDPOINT = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'https://api.minascan.io/node/devnet/v1/graphql';
-const ARCHIVE_ENDPOINT = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
+type NetworkId = 'mainnet' | 'devnet' | 'testnet';
+
+interface RuntimeConfig {
+  minaEndpoint: string;
+  archiveEndpoint: string;
+  networkId: NetworkId;
+}
+
+let runtimeConfig: RuntimeConfig | null = null;
+let configResolve: ((cfg: RuntimeConfig) => void) | null = null;
+const configReady: Promise<RuntimeConfig> = new Promise((resolve) => {
+  configResolve = resolve;
+});
 
 // TODO: make fee configurable per network (e.g. from env or UI input)
 const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
@@ -145,11 +156,12 @@ interface ContractState {
   configNonce: number;
 }
 
-function configureNetwork() {
+async function configureNetwork() {
+  const cfg = runtimeConfig ?? (await configReady);
   const network = Mina.Network({
-    networkId: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
-    mina: MINA_ENDPOINT,
-    archive: ARCHIVE_ENDPOINT,
+    networkId: cfg.networkId,
+    mina: cfg.minaEndpoint,
+    archive: cfg.archiveEndpoint,
   });
   if (skipProofs) network.proofsEnabled = false;
   Mina.setActiveInstance(network);
@@ -165,7 +177,7 @@ async function compileContract(): Promise<boolean> {
     compilePromise = (async () => {
       console.log('[MultisigWorker] MinaGuard.compile() starting');
       const t0 = performance.now();
-      configureNetwork();
+      await configureNetwork();
       if (!idbCache) {
         const { createIndexedDBCache } = await import('./idb-compile-cache');
         idbCache = await createIndexedDBCache();
@@ -192,7 +204,7 @@ async function fetchContractState(
   contractAddress: string
 ): Promise<ContractState | null> {
   try {
-    configureNetwork();
+    await configureNetwork();
     const address = PublicKey.fromBase58(contractAddress);
     await fetchAccount({ publicKey: address });
     const zkApp = new MinaGuard(address);
@@ -566,10 +578,15 @@ function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
   return typeof json === 'string' ? json : JSON.stringify(json);
 }
 
-/** mina-signer client for computing transaction commitments without o1js overhead. */
-const signerClient = new Client({
-  network: (process.env.NEXT_PUBLIC_MINA_NETWORK as 'mainnet' | 'testnet' | 'devnet') || 'testnet',
-});
+/** mina-signer client for computing transaction commitments without o1js overhead.
+ *  Lazily built on first use so it sees the networkId from runtimeConfig. */
+let signerClientInstance: InstanceType<typeof Client> | null = null;
+async function getSignerClient(): Promise<InstanceType<typeof Client>> {
+  if (signerClientInstance) return signerClientInstance;
+  const cfg = runtimeConfig ?? (await configReady);
+  signerClientInstance = new Client({ network: cfg.networkId });
+  return signerClientInstance;
+}
 
 /** Signs the fee payer via Ledger and broadcasts directly to the Mina GraphQL endpoint. */
 async function broadcastWithLedgerSig(
@@ -577,7 +594,8 @@ async function broadcastWithLedgerSig(
   signFeePayerFn: SignFeePayerFn
 ): Promise<string | null> {
   const parsed = JSON.parse(txJson);
-  const { fullCommitment } = signerClient.getZkappCommandCommitmentsFromJSON(parsed);
+  const client = await getSignerClient();
+  const { fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
   const sig = await signFeePayerFn(fullCommitment.toString());
   if (!sig) return null;
 
@@ -646,6 +664,14 @@ async function submitTx(
 // ---------------------------------------------------------------------------
 
 const workerApi = {
+  /** Provides the network endpoints the worker should use. Must be called
+   *  before any method that touches o1js networking (compile, fetch, send). */
+  setConfig(cfg: RuntimeConfig) {
+    runtimeConfig = cfg;
+    configResolve?.(cfg);
+    configResolve = null;
+  },
+
   /** Sets the private key for e2e test mode (direct sign/send, no Auro). */
   setTestKey(privateKeyBase58: string) {
     if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') {
@@ -717,7 +743,7 @@ const workerApi = {
     const ok = await compileContract();
     if (!ok) return null;
 
-    configureNetwork();
+    await configureNetwork();
     progressFn('Building transaction...');
     const feePayer = PublicKey.fromBase58(params.feePayerAddress);
     const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
@@ -830,7 +856,7 @@ const workerApi = {
     signFeePayerFn?: SignFeePayerFn
   ): Promise<{ proposalHash: string; txHash: string } | null> {
     progressFn('Compiling contract...');
-    configureNetwork();
+    await configureNetwork();
     const ok = await compileContract();
     if (!ok) return null;
 
@@ -983,7 +1009,7 @@ const workerApi = {
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     progressFn('Compiling contract...');
-    configureNetwork();
+    await configureNetwork();
     const ok = await compileContract();
     if (!ok) return null;
 
@@ -1053,7 +1079,7 @@ const workerApi = {
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     progressFn('Compiling contract...');
-    configureNetwork();
+    await configureNetwork();
     const ok = await compileContract();
     if (!ok) return null;
 
@@ -1172,7 +1198,7 @@ const workerApi = {
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     progressFn('Compiling contract...');
-    configureNetwork();
+    await configureNetwork();
     const ok = await compileContract();
     if (!ok) return null;
 
@@ -1265,7 +1291,7 @@ const workerApi = {
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     progressFn('Compiling contract...');
-    configureNetwork();
+    await configureNetwork();
     const ok = await compileContract();
     if (!ok) return null;
 

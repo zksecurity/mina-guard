@@ -1,4 +1,4 @@
-import type { Proposal, ProposalReceiver } from '@prisma/client';
+import type { Proposal, ProposalReceiver } from './generated/prisma/index.js';
 import { memoToField } from 'contracts';
 
 export interface ProposalReceiverRecord {

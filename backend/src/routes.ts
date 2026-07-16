@@ -583,10 +583,25 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
+    // VK lookup only on the manual path. The auto-subscribe path races the
+    // deploy tx (account still in mempool → VK null), so we skip it; the
+    // unready rescan validates once the deploy lands.
     if (fromBlockNum !== null) {
       const verificationKeyHash = await fetchVerificationKeyHash(address);
       if (!verificationKeyHash) {
         res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
+        return;
+      }
+      // Reject a VK from a different MinaGuard release — its proofs fail
+      // on-chain. No-op when minaguardVkHash is unset. Mirrors indexer.ts.
+      if (
+        config?.minaguardVkHash &&
+        verificationKeyHash !== config.minaguardVkHash
+      ) {
+        res.status(400).json({
+          error: 'Contract verification key does not match this app version. '
+            + 'It was likely deployed with a different MinaGuard release.',
+        });
         return;
       }
     }

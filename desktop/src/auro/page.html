@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MinaGuard — Auro Signing</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #121312;
+      color: #fff;
+    }
+    #status { font-size: 1.25rem; font-weight: 500; }
+    #detail { color: #A1A3A7; font-size: 0.875rem; }
+    #fallback {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 0.75rem 1rem;
+      border-top: 1px solid #303033;
+      background: #1a1b1a;
+      color: #A1A3A7;
+      font-size: 0.8125rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    #fallback .url-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      max-width: 100%;
+    }
+    #fallback code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #121312;
+      border: 1px solid #303033;
+      border-radius: 4px;
+      padding: 0.25rem 0.5rem;
+      color: #fff;
+      overflow-x: auto;
+      white-space: nowrap;
+      max-width: 60vw;
+    }
+    #fallback button {
+      font: inherit;
+      color: #121312;
+      background: #12FF80;
+      border: none;
+      border-radius: 4px;
+      padding: 0.25rem 0.625rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #fallback button:active { opacity: 0.85; }
+    .spinner {
+      width: 32px; height: 32px;
+      margin-bottom: 1.5rem;
+      border: 3px solid #303033;
+      border-top-color: #12FF80;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .done { color: #12FF80; }
+    .error { color: #ff4444; }
+  </style>
+</head>
+<body>
+  <div id="spinner" class="spinner"></div>
+  <h2 id="status">Waiting for Auro wallet...</h2>
+  <p id="detail"></p>
+
+  <div id="fallback">
+    <span>Not working? Copy this into a browser with the Auro Wallet extension installed:</span>
+    <div class="url-row">
+      <code id="fallback-url"></code>
+      <button id="fallback-copy" type="button">Copy</button>
+    </div>
+  </div>
+
+  <script>
+    // Populate the copy-URL fallback immediately, before (and independent of)
+    // the Auro flow — the user may need it precisely because the flow can't
+    // proceed in this browser (no Auro extension here).
+    (() => {
+      const url = window.location.href;
+      const urlEl = document.getElementById('fallback-url');
+      const copyBtn = document.getElementById('fallback-copy');
+      urlEl.textContent = url;
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          copyBtn.textContent = 'Copied';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+        } catch {
+          // Clipboard API can be blocked; fall back to selecting the text so
+          // the user can copy manually.
+          const range = document.createRange();
+          range.selectNodeContents(urlEl);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      });
+    })();
+  </script>
+
+  <script>
+    (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get('id');
+      const method = window.location.pathname.split('/auro/')[1];
+
+      const payloadRes = await fetch('/auro/payload?id=' + encodeURIComponent(id));
+      const payload = await payloadRes.json();
+
+      const statusEl = document.getElementById('status');
+      const detailEl = document.getElementById('detail');
+
+      // Wait for Auro to inject window.mina — the extension loads asynchronously.
+      function waitForAuro(timeoutMs) {
+        return new Promise((resolve) => {
+          if (window.mina) return resolve(true);
+
+          const onInit = () => { cleanup(); resolve(true); };
+          window.addEventListener('mina#initialized', onInit);
+
+          const poll = setInterval(() => {
+            if (window.mina) { cleanup(); resolve(true); }
+          }, 200);
+
+          const timeout = setTimeout(() => { cleanup(); resolve(false); }, timeoutMs);
+
+          function cleanup() {
+            window.removeEventListener('mina#initialized', onInit);
+            clearInterval(poll);
+            clearTimeout(timeout);
+          }
+        });
+      }
+
+      const spinnerEl = document.getElementById('spinner');
+
+      const found = await waitForAuro(5000);
+      if (!found) {
+        // Do NOT POST an error to /auro/callback here. The request id is a
+        // one-shot key in the main process: the first callback (success OR
+        // error) resolves and DELETES the pending entry. If this browser lacks
+        // Auro and reports "not installed", it consumes the id, so when the user
+        // then pastes the URL into a browser that DOES have Auro, that browser's
+        // success callback finds the entry already gone and is silently dropped —
+        // the app never proceeds. Instead, stay silent and leave the request
+        // pending: the copy-URL fallback above lets the user move to an
+        // Auro-capable browser, whose callback lands on the still-live id. If no
+        // such browser ever responds, the main process times the request out on
+        // its own (REQUEST_TIMEOUT_MS).
+        spinnerEl.style.display = 'none';
+        statusEl.className = 'error';
+        statusEl.textContent = 'Auro wallet not found';
+        detailEl.textContent = 'Use the link below to open this in a browser with the Auro extension.';
+        return;
+      }
+
+      statusEl.textContent = 'Connecting to Auro...';
+      detailEl.textContent = method;
+
+      try {
+        // Re-establish connection before any call — Auro requires an active
+        // connection per page session even if the origin is already approved.
+        if (method !== 'requestAccounts') {
+          await window.mina.requestAccounts();
+        }
+
+        statusEl.textContent = 'Waiting for approval in Auro...';
+
+        let result;
+        switch (method) {
+          case 'requestAccounts':
+            result = await window.mina.requestAccounts();
+            break;
+          case 'signFields':
+            result = await window.mina.signFields(payload);
+            break;
+          case 'signMessage':
+            result = await window.mina.signMessage(payload);
+            break;
+          case 'sendTransaction':
+            result = await window.mina.sendTransaction(payload);
+            break;
+          default:
+            throw new Error('Unknown method: ' + method);
+        }
+
+        await fetch('/auro/callback', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, result }),
+        });
+
+        spinnerEl.style.display = 'none';
+        statusEl.className = 'done';
+        statusEl.textContent = 'Done — you can close this tab.';
+        detailEl.textContent = '';
+      } catch (err) {
+        spinnerEl.style.display = 'none';
+        statusEl.className = 'error';
+        statusEl.textContent = 'Auro request failed';
+        detailEl.textContent = err.message || String(err);
+
+        await fetch('/auro/callback', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, error: err.message || String(err) }),
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
