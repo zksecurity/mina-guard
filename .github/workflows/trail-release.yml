@@ -1,10 +1,12 @@
 name: Trail release (build · sign · publish)
 
 # Pull-based deploy, phase 1. Builds the /trail images, pushes them
-# to GHCR by digest, and signs each digest with cosign keyless (GitHub OIDC →
-# Fulcio, logged to Rekor — the PUBLIC Sigstore services, so signing here and
-# verification on the box are an external availability dependency on
-# fulcio/rekor.sigstore.dev). NOTHING here touches the trail box — the box pulls
+# to GHCR by digest, and attaches a GitHub build-provenance attestation to each
+# digest (actions/attest-build-provenance — keyless, Sigstore-backed: GitHub OIDC
+# → Fulcio → Rekor). The box verifies with `gh attestation verify` before running
+# (phase 2). Signing here and verification on the box are an external availability
+# dependency on the Sigstore/GitHub attestation services.
+# NOTHING here touches the trail box — the box pulls
 # and verifies these images itself (phase 2). This replaces the self-hosted
 # `deploy` runner path: nothing pushes to the box, so no party with repo
 # write access can execute on it via a pushed-branch workflow.
@@ -32,8 +34,9 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write   # push images to GHCR
-  id-token: write   # keyless cosign signing via OIDC
+  packages: write       # push images to GHCR
+  id-token: write       # keyless signing via OIDC (Sigstore)
+  attestations: write   # write the build-provenance attestations
 
 env:
   IMAGE_PREFIX: ghcr.io/zksecurity/mina-guard/trail
@@ -72,8 +75,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: sigstore/cosign-installer@v3
 
       - name: Build & push — backend
         id: backend
@@ -121,13 +122,28 @@ jobs:
           build-args: |
             NEXT_PUBLIC_BASE_PATH=/trail/explorer
 
-      - name: Sign images by digest (keyless)
-        env:
-          COSIGN_YES: "true"
-        run: |
-          cosign sign "${{ env.IMAGE_PREFIX }}-backend@${{ steps.backend.outputs.digest }}"
-          cosign sign "${{ env.IMAGE_PREFIX }}-frontend@${{ steps.frontend.outputs.digest }}"
-          cosign sign "${{ env.IMAGE_PREFIX }}-explorer@${{ steps.explorer.outputs.digest }}"
+      # Build-provenance attestations (SLSA), pushed to GHCR as OCI referrers
+      # alongside each image so the box can verify with `gh attestation verify`.
+      - name: Attest — backend
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-backend
+          subject-digest: ${{ steps.backend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest — frontend
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-frontend
+          subject-digest: ${{ steps.frontend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest — explorer
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-explorer
+          subject-digest: ${{ steps.explorer.outputs.digest }}
+          push-to-registry: true
 
       - name: Publish digest manifest
         # The box's pull agent (phase 2) can pull :main and verify, or pin these
