@@ -1,3 +1,7 @@
+# systemd USER timer — install alongside the .service in ~/.config/systemd/user/
+# and enable with `systemctl --user enable --now trail-pull-deploy.timer`
+# (plus `sudo loginctl enable-linger "$USER"` so it fires while logged out).
+#
 # Polls GHCR for a new signed trail image every 2 minutes. The deploy script is
 # a no-op when nothing changed, so this is cheap. Deploys land within one
 # interval of a release — preserving the old deploy-on-merge feel, pull-side.
