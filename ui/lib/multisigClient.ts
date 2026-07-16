@@ -130,6 +130,13 @@ export async function setSkipProofs(skip: boolean) {
 let captureWorkerCalls = false;
 
 function captureWorkerCall<T>(method: string, params: unknown, result: T): { result: T } | null {
+  // Defense in depth: the flag is only settable via a hook that itself only
+  // exists when NEXT_PUBLIC_E2E_TEST is set, so `captureWorkerCalls` can never
+  // be true in a production build — but this explicit guard makes the whole
+  // function trivially tree-shakeable and closes any hypothetical "flag flipped
+  // some other way" foot-gun where canned results would replace real chain
+  // txs.
+  if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') return null;
   if (!captureWorkerCalls) return null;
   (window as any).__e2eWorkerCalls.push({ method, params });
   return { result };

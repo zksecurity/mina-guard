@@ -520,6 +520,42 @@ test('4. Execute CREATE_CHILD via proposal detail', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// 4b. ALLOCATE_CHILD (parent → child) — golden-path exercise of
+//     executeChildLifecycleOnchain. Every other child-lifecycle branch
+//     (reclaim/destroy/toggle) is covered by contracts/src/tests/ (circuit)
+//     + backend indexer-event-decode (decode) + e2e/ui/forms (payload
+//     shape). This one on-chain execution keeps the worker's tx-type
+//     routing honest against future refactors of the branching logic.
+// ---------------------------------------------------------------------------
+
+test('4b. ALLOCATE_CHILD from parent to subvault (executeChildLifecycleOnchain)', async () => { const page = sharedPage;
+  log('=== Step 4b: Propose + execute ALLOCATE_CHILD ===');
+
+  // Parent may still be active from test 4, but reassert to be safe — the
+  // proposal form derives its nonce space from the active contract.
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
+  const proposal = await proposeViaForm({
+    type: 'allocateChild',
+    fill: () => fillRecipients(page, `${childAddress},1`),
+    match: (p: any) =>
+      p.txType === 'allocateChild' && p.receivers?.some((r: any) => r.address === childAddress),
+    waitDescription: 'indexer processes ALLOCATE_CHILD proposal',
+  });
+  const allocateHash = proposal.proposalHash;
+  log(`ALLOCATE_CHILD proposal: hash=${allocateHash.slice(0, 12)}...`);
+
+  await executeProposal(allocateHash, {
+    waitDescription: 'indexer processes ALLOCATE_CHILD execution',
+  });
+
+  const executed = await getProposal(contractAddress, allocateHash);
+  expect(executed.status).toBe('executed');
+  log(`ALLOCATE_CHILD executed`);
+});
+
+// ---------------------------------------------------------------------------
 // 5. Propose a transfer, then create a delete proposal for it
 // ---------------------------------------------------------------------------
 
