@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Trail pull-based deploy — phase 2.
 #
-# Pulls the latest SIGNED /trail images from GHCR, verifies each with cosign
-# against the release-workflow identity, and redeploys only when a digest
-# actually changed. Verification reaches the PUBLIC Sigstore log
-# (rekor.sigstore.dev) at verify time — an external availability dependency.
-# Nothing pushes to this box; it pulls. Replaces the
-# self-hosted `deploy` runner path — nothing pushes to the box.
+# Pulls the latest /trail images from GHCR, verifies each image's GitHub
+# build-provenance attestation (`gh attestation verify`) against the release-
+# workflow identity, and redeploys only when a digest actually changed.
+# Verification reaches the Sigstore/GitHub attestation services at verify time —
+# an external availability dependency. Nothing pushes to this box; it pulls.
+# Replaces the self-hosted `deploy` runner path.
 # Meant to be run by trail-pull-deploy.timer.
 #
 # ┌─ DRAFT — NOT YET VALIDATED ON THE TRAIL BOX ────────────────────────────┐
-# │ Before enabling: (1) cosign installed, (2) `docker login ghcr.io` with a │
+# │ Before enabling: (1) gh CLI installed + authed, (2) `docker login ghcr.io`│
 # │ read:packages token so the private images pull, (3) the images actually  │
 # │ built + signed by trail-release.yml, (4) MESA_NODE_HOST / ARCHIVE_DB_*   │
 # │ present in the systemd unit's EnvironmentFile. See the setup runbook.     │
@@ -19,11 +19,14 @@ set -euo pipefail
 
 PREFIX="ghcr.io/zksecurity/mina-guard/trail"
 TAG="${TRAIL_TAG:-main}"
-# The image was signed keyless by THIS workflow on THIS ref. Verifying the
-# identity — not a shared key — is the whole point: a rogue build from another
-# branch/workflow has a different identity and fails here.
-IDENTITY="https://github.com/zksecurity/mina-guard/.github/workflows/trail-release.yml@refs/heads/${TAG}"
-ISSUER="https://token.actions.githubusercontent.com"
+# The image's provenance was attested keyless by THIS workflow on THIS ref.
+# Pin BOTH the workflow path AND the ref (@refs/heads/main): a rogue build from
+# another branch/workflow gets a different identity and fails here. (Pinning only
+# the workflow path — e.g. --signer-workflow — would ACCEPT an attacker branch
+# that ships its own trail-release.yml, so the ref pin is load-bearing.)
+SIGNER_REPO="zksecurity/mina-guard"
+CERT_IDENTITY="https://github.com/zksecurity/mina-guard/.github/workflows/trail-release.yml@refs/heads/${TAG}"
+CERT_ISSUER="https://token.actions.githubusercontent.com"
 REPO_DIR="${TRAIL_REPO_DIR:-$HOME/mina-guard}"
 COMPOSE="${REPO_DIR}/deploy/docker-compose.trail.pull.yml"
 STATE_DIR="${TRAIL_STATE_DIR:-$HOME/.trail-deploy}"
@@ -44,12 +47,13 @@ for img in backend frontend explorer; do
   digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$ref" | sed 's/.*@//')
   pinned="${PREFIX}-${img}@${digest}"
 
-  # Verify the signature on THIS digest came from our release workflow.
-  # Fail closed: a verify failure must never deploy.
-  if ! cosign verify "$pinned" \
-        --certificate-identity="$IDENTITY" \
-        --certificate-oidc-issuer="$ISSUER" >/dev/null 2>&1; then
-    log "FATAL: cosign verify FAILED for ${pinned} — refusing to deploy"
+  # Verify the build-provenance attestation on THIS digest came from our release
+  # workflow. Fail closed: a verify failure must never deploy.
+  if ! gh attestation verify "oci://${pinned}" \
+        --repo "$SIGNER_REPO" \
+        --cert-identity "$CERT_IDENTITY" \
+        --cert-oidc-issuer "$CERT_ISSUER" >/dev/null 2>&1; then
+    log "FATAL: attestation verify FAILED for ${pinned} — refusing to deploy"
     exit 1
   fi
 
