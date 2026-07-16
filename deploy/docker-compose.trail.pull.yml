@@ -52,6 +52,14 @@ services:
   explorer:
     image: ${TRAIL_EXPLORER_IMAGE:?set by trail-pull-deploy.sh (verified digest)}
     restart: unless-stopped
+    environment:
+      # Supplied at RUNTIME (unlike the frontend's build-time NEXT_PUBLIC_*): the
+      # explorer reads TESTNET_GRAPHQL_URL server-side in its /api/graphql route,
+      # so a runtime override works. The CI image (trail-release.yml) bakes it
+      # empty because CI can't know the box's MESA_NODE_HOST; the interim on-box
+      # compose passed it as a build arg. Without this the explorer runs with an
+      # empty GraphQL URL and can't query the chain.
+      - TESTNET_GRAPHQL_URL=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set}:3085/graphql
 
   caddy:
     image: caddy:2
