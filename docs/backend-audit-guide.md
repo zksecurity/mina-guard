@@ -261,7 +261,7 @@ bun install                              # install deps (from workspace root)
 bun run --filter backend dev             # run in dev mode
 ```
 
-Dev/start scripts auto-run `prisma db push` before launching the server. Requirements: a Bun or
+Dev/start scripts auto-run `prisma migrate deploy` before launching the server. Requirements: a Bun or
 Node toolchain capable of running workspace scripts, and access to Mina node/archive GraphQL
 endpoints.
 
@@ -394,8 +394,8 @@ Only the security/operationally relevant dependencies are called out; framework 
 (`express`, `tsx`, `typescript`) is standard.
 
 - **`@prisma/client` / `prisma`** — the ORM and schema tool. The append-only data model and its
-  reorg-rollback guarantee live in the schema; migrations are applied via `db push` today
-  (`TODO(migrations)` — [accepted risk #5](./security-audit-guide.md#accepted-risks-and-known-limitations)).
+  reorg-rollback guarantee live in the schema; migrations are applied from the committed
+  baseline in `backend/prisma/migrations/` via `prisma migrate deploy` (PR #95).
 - **`pg`** — direct PostgreSQL driver used **only** for `DISCOVERY_BACKEND=archive` (a read-only
   role against the Mina archive DB). The pool is hardened with connection/statement timeouts so a
   wedged archive DB fails a tick fast rather than hanging it.

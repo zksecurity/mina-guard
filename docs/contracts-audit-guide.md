@@ -9,7 +9,7 @@ It is the reference for the invariant map in
 [`security-audit-guide.md`](./security-audit-guide.md); the clients that build
 the structs this contract verifies are documented in
 [`ui-audit-guide.md`](./ui-audit-guide.md) and
-[`offline-signing.md`](./offline-signing.md).
+[`offline-audit-guide.md`](./offline-audit-guide.md).
 
 ---
 
@@ -576,7 +576,7 @@ security of the gap between the two transactions rests on `reserveForParent` (se
 deploy a child *without* the atomic `reserveForParent`.
 
 **Offline signing support for CREATE_CHILD.** The offline CLI supports all three phases (details in
-[`offline-signing.md`](./offline-signing.md)):
+[`offline-audit-guide.md`](./offline-audit-guide.md)):
 
 - **Propose** — the bundle includes a `childPrivateKey` field with the freshly generated child keypair; the CLI deploys the child and submits `propose()` in one transaction, signing the child's deploy account update with the bundled key.
 - **Approve** — standard approval flow; the bundle includes the child account snapshot so the CLI can read `parentNonce` for nonce freshness.

@@ -12,11 +12,11 @@ The audit-guide series this file heads:
 - [`backend-audit-guide.md`](./backend-audit-guide.md) — the indexer + read API (untrusted for integrity).
 - [`ui-audit-guide.md`](./ui-audit-guide.md) — the online web UI and its blind-signing threat model.
 - [`desktop-audit-guide.md`](./desktop-audit-guide.md) — the self-contained Electron build.
-- [`offline-signing.md`](./offline-signing.md) — the air-gapped signing path (CLI + bundle format).
+- [`offline-audit-guide.md`](./offline-audit-guide.md) — the air-gapped signing path (CLI + bundle format).
 - [`deploy-audit-guide.md`](./deploy-audit-guide.md) — deployment topology and operator-facing surfaces.
 
 Reading order for an audit: this file → [`contracts-audit-guide.md`](./contracts-audit-guide.md) →
-[`backend-audit-guide.md`](./backend-audit-guide.md) → [`offline-signing.md`](./offline-signing.md) →
+[`backend-audit-guide.md`](./backend-audit-guide.md) → [`offline-audit-guide.md`](./offline-audit-guide.md) →
 [`ui-audit-guide.md`](./ui-audit-guide.md) → [`desktop-audit-guide.md`](./desktop-audit-guide.md).
 
 ---
@@ -138,9 +138,8 @@ cannot silently diverge.
 | 2 | **Wallets sign field arrays, not human-readable payloads.** An owner's wallet displays the signature payload (a hash), so payload comprehension depends on the client. Mitigations: client-side hash recomputation (see Trust model), the threshold, and the offline CLI's decoded summary. | Accepted, structural mitigations in place |
 | 3 | **Archive discovery trusts pending blocks.** `DISCOVERY_BACKEND=archive` includes `chain_status = 'pending'` blocks so fresh deploys are discoverable without waiting for finalization. `rollbackAboveFork` (`backend/src/indexer.ts`) already deletes `Contract` rows by `discoveredAtBlock` on every reorg tick, so orphaned pending deploys are cleaned up automatically. Residual risk: a reorg deeper than `REORG_DETECTION_WINDOW` (~290 blocks) requires operator intervention regardless — covered by row 4. | Accepted |
 | 4 | **Reorgs deeper than 290 blocks are not auto-handled** ([`backend-audit-guide.md` § Failure semantics](./backend-audit-guide.md#failure-semantics)). Matches Mina's ~290-block finality horizon; deeper forks require operator intervention. Display-layer only. | Accepted |
-| 5 | **No Prisma migration history** — the backend applies schema via `db push` (`TODO(migrations)`, `backend/prisma/schema.prisma`). The DB is a re-indexable view, so worst case is downtime, not data loss. | Fix before production cutover |
-| 6 | **Memo plaintext is not on-chain.** Only `memoHash` is committed; the plaintext travels as the transaction memo, and a failed base58 decode stores the raw string for display. The hash is always authoritative. | Accepted by design |
-| 7 | **`mina-signer` is built from a pinned o1js fork submodule** (`ui/deps/o1js`), byte-identical to the `o1js@3.0.0-mesa.final` release; the plan is to switch to the standalone npm package. | Accepted; migration planned |
+| 5 | **Memo plaintext is not on-chain.** Only `memoHash` is committed; the plaintext travels as the transaction memo, and a failed base58 decode stores the raw string for display. The hash is always authoritative. | Accepted by design |
+| 6 | **`mina-signer` is built from a pinned o1js fork submodule** (`ui/deps/o1js`), byte-identical to the `o1js@3.0.0-mesa.final` release; the plan is to switch to the standalone npm package. | Accepted; migration planned |
 
 Operational and UI-level quirks (state staleness windows, preview-cache behavior) are tracked in
 [`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md). Infrastructure risks and their mitigations live in the
@@ -149,7 +148,7 @@ private ops repo's risk register.
 ## Scope guidance for auditors
 
 - **In scope (fund safety):** `contracts/src/**`, `ui/lib/multisigClient.worker.ts`,
-  `offline-cli/src/**`, and the bundle format in [`offline-signing.md`](./offline-signing.md).
+  `offline-cli/src/**`, and the bundle format in [`offline-audit-guide.md`](./offline-audit-guide.md).
 - **Context (availability/display):** `backend/**`, remaining `ui/**`.
 - **Out of scope in this repo:** `deploy/`, `preview-env/`, `dev-helpers/`, `e2e/`. Deployment and
   operations are covered by the private ops repo, shared with auditors under the engagement; the
