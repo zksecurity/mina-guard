@@ -66,9 +66,17 @@ jobs:
         id: vk
         # A property of the contract source, committed at contracts/.vk-hash;
         # the backend takes it as a build arg and the indexer filters by it.
+        # .vk-hash is the keyed per-network format (testnet=… / mainnet=…);
+        # trail is a testnet deploy (compose: NEXT_PUBLIC_MINA_NETWORK=testnet),
+        # so select the testnet line. Validate it's a bare decimal — the old
+        # `tr -d` collapsed both lines into "testnet=…mainnet=…" and the [ -n ]
+        # check passed it straight into the image.
         run: |
-          h=$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')
-          [ -n "$h" ] || { echo "::error::contracts/.vk-hash parsed empty"; exit 1; }
+          net=testnet
+          h=$(grep -E "^[[:space:]]*${net}=" contracts/.vk-hash | head -1 | cut -d= -f2- | tr -d '[:space:]')
+          case "$h" in
+            ''|*[!0-9]*) echo "::error::contracts/.vk-hash: '${net}=' hash missing or non-numeric ('$h')"; exit 1 ;;
+          esac
           echo "hash=$h" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
