@@ -434,30 +434,10 @@ export class MinaGuardIndexer {
     // otherwise multi-receiver transfer proposals have receivers stored in
     // reversed idx, which breaks the proposal-hash recomputation on the UI
     // side and causes "Proposal not found" errors on approve.
-    const events = reverseEventsWithinEachTx(rawEvents);
-
-    // Stable sort so 'proposal' events are processed before 'approval' /
-    // 'receiver' / 'execution' within the same batch. The per-tx reversal
-    // above already aligned receiver events with their emission order; the
-    // stable sort preserves that ordering since all receivers share a type.
-    const eventOrder: Record<string, number> = {
-      deployed: 0,
-      setup: 1,
-      setupOwner: 2,
-      proposal: 3,
-      approval: 4,
-      receiver: 5,
-      execution: 6,
-      ownerChange: 7,
-      thresholdChange: 8,
-      delegate: 9,
-      createChild: 10,
-      reclaimChild: 11,
-      enableChildMultiSig: 12,
-      createChildConfig: 13,
-      createChildOwner: 14,
-    };
-    events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
+    // Apply events in canonical chain order: ascending block height, then the
+    // per-tx emission order restored by reverseEventsWithinEachTx. See
+    // orderEventsForApply for why the previous type-priority sort was unsafe.
+    const events = orderEventsForApply(reverseEventsWithinEachTx(rawEvents));
 
     let ingested = false;
     for (let seq = 0; seq < events.length; seq++) {
@@ -1300,6 +1280,32 @@ export function describeThrown(value: unknown): string {
   } catch {
     return Object.prototype.toString.call(value);
   }
+}
+
+/**
+ * Orders a batch of decoded events into canonical chain-application order:
+ * ascending block height, preserving the input order (archive tx order plus the
+ * per-tx emission order restored by reverseEventsWithinEachTx) for events that
+ * share a block.
+ *
+ * Replaces a previous global sort by a hardcoded event-type priority. That sort
+ * discarded block height entirely, so in a multi-block sync batch a later
+ * block's execution (low type rank) was applied before an earlier block's
+ * ownerChange/thresholdChange (high type rank). Because appendContractConfigSnapshot
+ * copies unchanged fields from whatever config is "latest" at apply time, that
+ * misordering wrote stale or future state into the wrong ContractConfig snapshot
+ * (e.g. a config with the new numOwners but the pre-change ownersCommitment).
+ * A proposal is always emitted before its approvals/execution on-chain, so
+ * canonical block order already yields the proposal-before-approval processing
+ * the old type sort was reaching for.
+ *
+ * The explicit index tiebreak keeps the sort stable regardless of engine.
+ */
+export function orderEventsForApply(events: ChainEvent[]): ChainEvent[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort((a, b) => a.event.blockHeight - b.event.blockHeight || a.index - b.index)
+    .map(({ event }) => event);
 }
 
 /** Converts unknown values into nullable string form for DB persistence. */
