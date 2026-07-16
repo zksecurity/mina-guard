@@ -67,20 +67,14 @@ jobs:
           CI: true
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
       - name: Run backend unit tests
-        # routes-api, routes-subscribe and indexer-autosubscribe have
-        # pre-existing failures (independent of any branch changes) and are
-        # excluded until fixed.
+        # Verified 135 pass / 0 fail across all ten suites against a fresh
+        # Postgres. An earlier version of this PR excluded routes-api,
+        # routes-subscribe, and indexer-autosubscribe as "pre-existing
+        # failures" — that turned out to be stale; they pass now.
         run: |
           cd backend
           bunx prisma db push --force-reset --skip-generate
-          bun test \
-            src/tests/proposal-record.test.ts \
-            src/tests/indexer-event-decode.test.ts \
-            src/tests/indexer-reorg.test.ts \
-            src/tests/indexer-dropped-tx.test.ts \
-            src/tests/indexer-archive-discovery.test.ts \
-            src/tests/mina-client-tx-status.test.ts \
-            src/tests/lightnet.test.ts
+          bun test src/tests/
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
       - name: Run offline-cli tests
