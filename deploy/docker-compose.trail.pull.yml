@@ -2,7 +2,7 @@
 #
 # Same services as docker-compose.trail.yml, but the app images are PULLED from
 # GHCR (signed, verified by trail-pull-deploy.sh) instead of built on-box. The
-# ${TRAIL_*_IMAGE} vars are set by that script to the cosign-verified digest
+# ${TRAIL_*_IMAGE} vars are set by that script to the attestation-verified digest
 # refs, so what runs is exactly what was verified.
 #
 # DRAFT — untested on the trail box. Keep the service shape in sync with
