@@ -290,7 +290,32 @@ After execution the contract increments `nonce` and overwrites the approval coun
 
 ### Subaccounts / child lifecycle
 
-![Parent/child guard hierarchy](../contracts/subaccounts-design.png)
+```mermaid
+flowchart TB
+    subgraph LOCAL["Basic multisig &nbsp; — &nbsp; proposal destination = LOCAL"]
+        direction LR
+        LTYPES["TRANSFER · ADD_OWNER · REMOVE_OWNER<br/>CHANGE_THRESHOLD · SET_DELEGATE · ALLOCATE_CHILD"]
+        GUARD(["Guard<br/>(root or child)"])
+        LTYPES -->|"propose → approve × threshold → execute<br/>all on the same guard · execute is permissionless"| GUARD
+    end
+
+    subgraph REMOTE["Child management &nbsp; — &nbsp; proposal destination = REMOTE"]
+        direction TB
+        CREATE["CREATE_CHILD"]
+        RTYPES["RECLAIM_CHILD · DESTROY_CHILD<br/>ENABLE_CHILD_MULTI_SIG"]
+        PARENT(["Parent"])
+        CHILD(["Child"])
+        CREATE -->|"1. propose + approve on parent — the propose tx atomically does<br/>deploy(child) + reserveForParent(child) + propose(parent),<br/>writing the write-once reservedConfigHash"| PARENT
+        RTYPES -->|"1. propose + approve on parent<br/>(child already deployed)"| PARENT
+        PARENT -->|"2. execute on the child · permissionless<br/>CREATE_CHILD → executeSetupChild<br/>others → executeReclaimToParent / executeDestroy / executeEnableChildMultiSig"| CHILD
+    end
+```
+
+*LOCAL proposals run their whole lifecycle on one guard (a root **or** a child that has
+`childMultiSigEnabled`). Child-management proposals are REMOTE: proposed and approved on the
+parent, executed on the named child. `CREATE_CHILD` is the special case — its propose
+transaction also deploys and reserves the child (see `reserveForParent` below); the hierarchy
+is capped at two levels, so children cannot raise REMOTE proposals of their own.*
 
 A child guard is a separate MinaGuard contract instance whose `parent` state field points
 to another MinaGuard. Child-lifecycle operations (`CREATE_CHILD`, `RECLAIM_CHILD`,
@@ -581,9 +606,8 @@ contracts/
 │       ├── delegate.test.ts    memo.test.ts        list-commitment.test.ts
 │       ├── storage.test.ts     test-helpers.ts
 │
-├── .vk-hash                    # Canonical VK hashes (testnet= / mainnet=); check-vk-hash CI
-│                               #   recompiles both and fails on drift
-└── subaccounts-design.png      # Parent/child hierarchy diagram (referenced above)
+└── .vk-hash                    # Canonical VK hashes (testnet= / mainnet=); check-vk-hash CI
+                                #   recompiles both and fails on drift
 ```
 
 ---
