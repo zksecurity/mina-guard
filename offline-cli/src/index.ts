@@ -1,5 +1,17 @@
 #!/usr/bin/env bun
 import './wasm-shim.js';
+import { isMainThread } from 'worker_threads';
+
+// o1js spawns WASM workers by re-running this binary. In worker mode we must
+// import node-backend.js so its !isMainThread block runs (posts ready, then
+// blocks in wbg_rayon_start_worker until the thread pool is done). We must
+// NOT run CLI code — workers have no CLI args and would print Usage and exit.
+if (!isMainThread) {
+  await import(
+    '../../node_modules/o1js/dist/node/bindings/js/node/node-backend.js'
+  );
+  process.exit(0);
+}
 // ---------------------------------------------------------------------------
 // mina-guard-cli — air-gapped CLI for building, proving, and signing
 // Mina Guard multisig transactions.

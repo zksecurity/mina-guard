@@ -1,0 +1,279 @@
+name: Offline CLI release
+
+# Builds the air-gapped signing CLI (offline-cli/) for all supported platforms
+# and uploads the binaries to a GitHub Release, so users download one
+# canonical, checksummed artifact instead of trusting a backend-served binary
+# (see docs/offline-signing.md — the CLI is the program that ends up handling
+# MINA_PRIVATE_KEY, so its provenance matters more than anything else in the
+# offline flow).
+#
+# Artifact names intentionally match what the UI's download instructions
+# expect: mina-guard-cli-<platform> (plus .exe on Windows). A SHA256SUMS file
+# and the contracts verification-key hash are attached alongside the binaries:
+# the CLI inlines the contracts circuit, so a release is only usable against
+# deployments built from the same circuit — minaguard-vk-hash.txt is the
+# fingerprint to compare.
+#
+# Triggers:
+#   * push of a tag matching `offline-cli-v*` (e.g. offline-cli-v0.1.0-rc1)
+#     → builds, smoke-tests, and publishes a DRAFT release; review and publish
+#     it manually.
+#   * manual `workflow_dispatch` → dry run that builds and smoke-tests all
+#     platforms and uploads the binaries as CI artifacts, without a release.
+on:
+  push:
+    tags:
+      - 'offline-cli-v*'
+  workflow_dispatch: {}
+
+# Never cancel a half-finished release build; let each ref's run complete so
+# we don't end up with a partially-populated draft release.
+concurrency:
+  group: offline-cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # required to create the GitHub Release
+
+# Exact Bun toolchain for every job here. Provenance of the CLI binary is the
+# whole point of this workflow (see header), so the compiler version must be
+# fixed and reproducible, not floating. Bump intentionally; the release notes
+# echo this so the published artifact records what built it.
+env:
+  BUN_VERSION: 1.3.10
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each leg builds its own platform's targets natively (bun can
+        # cross-compile, but native builds let us actually execute the binary
+        # as a smoke test — which exercises the embedded plonk WASM shim and
+        # o1js module init on the real platform). `smoke` is the one binary in
+        # `targets` that matches the runner's own OS/arch.
+        include:
+          - os: ubuntu-latest
+            targets: 'linux-x64 linux-arm64'
+            smoke: mina-guard-cli-linux-x64
+          - os: macos-latest # arm64 runner
+            targets: 'macos-arm64 macos-x64'
+            smoke: mina-guard-cli-macos-arm64
+          - os: windows-latest
+            targets: 'windows-x64'
+            smoke: mina-guard-cli-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Pin the Bun toolchain exactly (BUN_VERSION at the workflow level). This
+      # binary ends up handling MINA_PRIVATE_KEY, so its provenance is the point
+      # (see header): a floating `@v2` would let the compiler change under us
+      # between runs and make a rebuild of the same tag non-reproducible. The
+      # release notes echo this version so the artifact records what built it.
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Git checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true # ui/deps/o1js — mina-signer source the CLI bundles
+
+      # Install with --ignore-scripts: the `ui` package has a postinstall that
+      # builds the mina-signer bundle via `npx esbuild`, which fails under
+      # bun's lifecycle-script shell on Windows. Same approach as ci.yml's
+      # macOS/Windows jobs — skip the script, then build mina-signer
+      # explicitly below.
+      - name: Install dependencies
+        run: bun install --ignore-scripts
+
+      - name: Build mina-signer (o1js submodule)
+        working-directory: ui/deps/o1js/src/mina-signer
+        shell: bash
+        run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
+
+      - name: Build contracts
+        run: bun run --filter contracts build
+
+      # Fail the release if the committed contracts/.vk-hash doesn't match the
+      # circuit at THIS tag. ci.yml's check-vk-hash only runs on PRs/main and
+      # only when it detects VK-affecting diffs, so a tag can point at a commit
+      # where it never ran — leaving minaguard-vk-hash.txt (the fingerprint
+      # operators trust to pin a binary to their deployment) unverified against
+      # the source the binary is actually built from. Here it is unconditional:
+      # release builds are rare, so always spend the compile. The Linux leg
+      # already builds contracts + has the deps, so this is nearly free; because
+      # `release` has `needs: build`, a mismatch here blocks release creation.
+      #
+      # Handles both .vk-hash formats: the legacy single bare decimal (verify
+      # the testnet/default circuit) and the per-network `net=hash` lines added
+      # in #93 (compile each network with MINA_NETWORK_DOMAIN set and compare).
+      - name: Verify committed VK hash matches the circuit
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          extract() { # $1 = raw output; prints the trailing decimal on the vkHash line
+            grep -oE 'vkHash(\[[a-z]+\])?: [0-9]+' <<<"$1" | tail -1 | grep -oE '[0-9]+$'
+          }
+          verify_one() { # $1 = network label ('' | testnet | mainnet), $2 = expected hash
+            local net="$1" expected="$2" out computed
+            echo "::group::verify VK (${net:-default})"
+            if [ -n "$net" ]; then
+              out="$(MINA_NETWORK_DOMAIN="$net" bun run dev-helpers/cli.ts vk-hash compile 2>&1)"
+            else
+              out="$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)"
+            fi
+            echo "$out"
+            echo "::endgroup::"
+            computed="$(extract "$out" || true)"
+            if [ -z "$computed" ]; then
+              echo "::error::Could not extract a VK hash from 'vk-hash compile' output (${net:-default})."
+              exit 1
+            fi
+            if [ "$computed" != "$expected" ]; then
+              echo "::error::contracts/.vk-hash is stale for ${net:-default}: circuit computes $computed but the committed file says $expected. This tag must not ship an unverified fingerprint."
+              exit 1
+            fi
+            echo "VK hash matches contracts/.vk-hash (${net:-default}): $computed"
+          }
+
+          # Keyed lines (net=hash) → per-network format; else the single bare decimal.
+          keyed="$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | grep -E '^[[:space:]]*[a-z]+=' || true)"
+          if [ -n "$keyed" ]; then
+            while IFS='=' read -r net hash; do
+              net="$(tr -d '[:space:]' <<<"$net")"
+              hash="$(tr -d '[:space:]' <<<"$hash")"
+              [ -n "$net" ] && verify_one "$net" "$hash"
+            done <<<"$keyed"
+          else
+            single="$(grep -vE '^[[:space:]]*#' contracts/.vk-hash | tr -d '[:space:]')"
+            if [ -z "$single" ]; then
+              echo "::error::contracts/.vk-hash has no hash value to verify."
+              exit 1
+            fi
+            verify_one "" "$single"
+          fi
+
+      # Same compile invocation as docs/offline-signing.md; macos-* release
+      # names map to bun's darwin targets, and bun appends .exe to the Windows
+      # outfile itself. The --define keeps o1js off Node-specific code paths
+      # that don't exist in the Bun runtime.
+      - name: Compile CLI binaries
+        working-directory: offline-cli
+        shell: bash
+        run: |
+          for t in ${{ matrix.targets }}; do
+            case "$t" in
+              macos-arm64) bt=bun-darwin-arm64 ;;
+              macos-x64)   bt=bun-darwin-x64 ;;
+              *)           bt="bun-$t" ;;
+            esac
+            echo "::group::$bt"
+            bun build --compile --target="$bt" src/index.ts \
+              --outfile "dist/mina-guard-cli-$t" --define 'process.versions.node=""'
+            echo "::endgroup::"
+          done
+          ls -lh dist/
+
+      # macOS binaries must carry JIT entitlements or the embedded WASM fails
+      # to load at runtime (see PR #87 / the equivalent step in ci.yml). Ad-hoc
+      # signing is enough; the smoke test below would fail without this.
+      - name: Sign macOS binaries with JIT entitlements
+        if: runner.os == 'macOS'
+        working-directory: offline-cli
+        run: |
+          cat > /tmp/entitlements.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key>
+            <true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          for t in ${{ matrix.targets }}; do
+            codesign -s - --force --entitlements /tmp/entitlements.plist "dist/mina-guard-cli-$t"
+          done
+
+      # Run the native-arch binary with no arguments: it must reach the usage
+      # message (module init, embedded WASM, and arg parsing all execute). A
+      # binary that can't even print usage must never ship.
+      - name: Smoke test native binary
+        working-directory: offline-cli
+        shell: bash
+        run: |
+          out="$(./dist/${{ matrix.smoke }} 2>&1 || true)"
+          echo "$out"
+          grep -q "Usage:" <<<"$out"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-cli-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: offline-cli/dist/*
+
+  # Tag builds only: collect the three legs' binaries, checksum them once, and
+  # publish everything to a draft release. A single aggregation job (instead
+  # of per-leg uploads) avoids release-creation races and yields one canonical
+  # SHA256SUMS covering every artifact.
+  release:
+    name: Publish draft release
+    if: startsWith(github.ref, 'refs/tags/offline-cli-v')
+    needs: build
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v6 # for contracts/.vk-hash (no submodules needed)
+
+      - name: Collect binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: offline-cli-*
+          merge-multiple: true
+          path: dist
+
+      # The CLI inlines the contracts circuit; attach the verification-key
+      # hash of the source it was built from so operators can check the
+      # binary matches the deployment they are signing for.
+      - name: Attach VK hash + checksums
+        run: |
+          cp contracts/.vk-hash dist/minaguard-vk-hash.txt
+          cd dist
+          sha256sum mina-guard-cli-* minaguard-vk-hash.txt > SHA256SUMS
+          cat SHA256SUMS
+
+      # Record the exact toolchain in the release body: reproducing this binary
+      # from source (the fallback trust story in docs/offline-signing.md)
+      # requires knowing which Bun compiled it. The VK hash was verified against
+      # the tagged circuit in the build job before we got here.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --title "Offline CLI $GITHUB_REF_NAME" \
+            --notes "$(cat <<EOF
+          Air-gapped signing CLI for MinaGuard. Usage and security model: \`docs/offline-signing.md\`.
+
+          **Verify your download** against \`SHA256SUMS\` before moving it to the air-gapped machine.
+
+          **Circuit compatibility:** this binary inlines the MinaGuard circuit; it only produces valid proofs for contracts whose verification-key hash matches \`minaguard-vk-hash.txt\`.
+
+          **Built with** Bun \`${BUN_VERSION}\` (pin it to reproduce these binaries from source).
+
+          macOS: \`xattr -d com.apple.quarantine mina-guard-cli-macos-*\` then \`chmod +x\`. Linux: \`chmod +x\`.
+          EOF
+          )" \
+            dist/*

@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import pg from 'pg';
 import { prisma } from './db.js';
 import type { BackendConfig } from './config.js';
@@ -54,7 +55,6 @@ type ContractConfigFields = {
   delegate: string | null;
   childMultiSigEnabled: boolean | null;
   ownersCommitment: string | null;
-  networkId: string | null;
 };
 
 /** Partial change set for a config-mutating event. Fields left undefined are copied from the latest row. */
@@ -263,7 +263,7 @@ export class MinaGuardIndexer {
       console.error('[indexer] tick failed:', error);
       this.status.lastError = error instanceof Error
         ? error.message
-        : `Non-Error thrown by indexer tick: ${typeof error === 'string' ? error : JSON.stringify(error)}`;
+        : `Non-Error thrown by indexer tick: ${describeThrown(error)}`;
     }
   }
 
@@ -609,7 +609,6 @@ export class MinaGuardIndexer {
         delegate:             changes.delegate             ?? latest?.delegate             ?? null,
         childMultiSigEnabled: changes.childMultiSigEnabled ?? latest?.childMultiSigEnabled ?? null,
         ownersCommitment:     changes.ownersCommitment     ?? latest?.ownersCommitment     ?? null,
-        networkId:            changes.networkId            ?? latest?.networkId            ?? null,
       },
     });
   }
@@ -641,7 +640,6 @@ export class MinaGuardIndexer {
         nonce: 0,
         parentNonce: 0,
         configNonce: 0,
-        networkId: asString(event.networkId),
         ownersCommitment: asString(event.ownersCommitment),
         childMultiSigEnabled: true,
       },
@@ -690,7 +688,6 @@ export class MinaGuardIndexer {
       {
         threshold: onChain.threshold,
         numOwners: onChain.numOwners,
-        networkId: onChain.networkId,
         ownersCommitment: onChain.ownersCommitment,
       },
     );
@@ -741,7 +738,6 @@ export class MinaGuardIndexer {
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expirySlot: asString(event.expirySlot),
-        networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
         destination: normalizeDestination(asString(event.destination)),
         childAccount: asNullableAddress(asString(event.childAccount)),
@@ -756,7 +752,6 @@ export class MinaGuardIndexer {
         nonce: asString(event.nonce),
         configNonce: asString(event.configNonce),
         expirySlot: asString(event.expirySlot),
-        networkId: asString(event.networkId),
         guardAddress: asString(event.guardAddress),
         destination: normalizeDestination(asString(event.destination)),
         childAccount: asNullableAddress(asString(event.childAccount)),
@@ -1287,6 +1282,21 @@ function reverseEventsWithinEachTx(events: ChainEvent[]): ChainEvent[] {
     groups.get(key)!.push(e);
   }
   return keyOrder.flatMap((k) => [...groups.get(k)!].reverse());
+}
+
+/** Renders a thrown non-Error value for a log/status message without ever
+ *  throwing itself. JSON.stringify would blow up on the bigints o1js carries
+ *  and on circular structures; util.inspect handles both. A throw here would
+ *  escape tick()'s catch and, since tick() runs fire-and-forget under
+ *  setInterval, surface as an unhandledRejection that kills the process.
+ *  Exported for unit testing. */
+export function describeThrown(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return inspect(value, { depth: 2, breakLength: Infinity });
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
 }
 
 /** Converts unknown values into nullable string form for DB persistence. */

@@ -104,40 +104,6 @@ describe('MinaGuard - Propose', () => {
     }).toThrow('Config nonce mismatch');
   });
 
-  it('should reject proposal with wrong networkId', async () => {
-    const recipient = PrivateKey.random().toPublicKey();
-    const proposal = createTransferProposal(
-      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })],
-      Field(1),
-      Field(0),
-      ctx.zkAppAddress,
-      Field(0),
-      Field(99) // wrong networkId
-    );
-
-    await expect(async () => {
-      const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
-      const nullifierWitness = ctx.nullifierStore.getWitness(
-        proposal.hash(),
-        ctx.owners[0].pub
-      );
-      const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
-      const txn = await Mina.transaction(ctx.owners[0].pub, async () => {
-        await ctx.zkApp.propose(
-          proposal,
-          ownerWitness,
-          ctx.owners[0].pub,
-          signature,
-          nullifierWitness,
-          approvalWitness
-        );
-      });
-      await txn.prove();
-      await txn.sign([ctx.owners[0].key]).send();
-    }).toThrow('Network ID mismatch');
-  });
-
   it('should reject proposal with wrong guardAddress', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const wrongGuard = PrivateKey.random().toPublicKey();
@@ -213,7 +179,6 @@ describe('MinaGuard - Propose shape rules', () => {
     nonce: Field;
     configNonce: Field;
     expirySlot: Field;
-    networkId: Field;
     guardAddress: PublicKey;
     destination: Field;
     childAccount: PublicKey;
@@ -227,7 +192,6 @@ describe('MinaGuard - Propose shape rules', () => {
       nonce: overrides.nonce ?? Field(1),
       configNonce: overrides.configNonce ?? Field(0),
       expirySlot: overrides.expirySlot ?? Field(0),
-      networkId: overrides.networkId ?? Field(1),
       guardAddress: overrides.guardAddress ?? ctx.zkAppAddress,
       destination: overrides.destination ?? Destination.LOCAL,
       childAccount: overrides.childAccount ?? PublicKey.empty(),

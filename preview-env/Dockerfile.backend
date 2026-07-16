@@ -16,10 +16,10 @@ COPY e2e/package.json e2e/
 # Install dependencies
 RUN bun install --frozen-lockfile
 
-# Copy source
+# Copy source (offline-cli's package.json above is enough for the workspace
+# install — the CLI binary is distributed via GitHub releases, not built here)
 COPY contracts/ contracts/
 COPY backend/ backend/
-COPY offline-cli/ offline-cli/
 COPY dev-helpers/ dev-helpers/
 
 # Build contracts first (workspace dependency)

@@ -1,14 +1,16 @@
-# Canonical MinaGuard verification-key hash (decimal Field value).
+# Canonical MinaGuard verification-key hashes, one per network.
 #
-# This is the hash MinaGuard.compile() produces from the CURRENT contracts/src.
-# The backend indexer filters on-chain zkApp events to this VK (via the
-# MINAGUARD_VK_HASH env var) so it only records genuine MinaGuard vaults.
+# NETWORK_DOMAIN is baked into the circuit as a compile-time constant
+# (Field(1) for mainnet, Field(2) for testnet/devnet), so each network
+# produces a structurally distinct VK. Cross-network proposal replay is
+# therefore impossible at the proof level, not just application-level.
 #
-# Node and the browser produce the SAME hash for the same source — there is no
-# environment divergence. A mismatch means contracts/build was stale when the
-# hash was computed. Regenerate after ANY change under contracts/src:
+# Backend deployments: set MINAGUARD_VK_HASH to the hash for your target
+# network (testnet hash for a testnet backend, mainnet hash for mainnet).
 #
-#     bun run --filter contracts build && bun run dev-helpers/cli.ts vk-hash compile
-#
-# Consumers strip these comment lines and read the bare number below.
-8386097977615413142711047163548026921032005350311249704685720755318441746850
+# Regenerate after any change under contracts/src:
+#   bun run dev-helpers/cli.ts vk-hash compile
+#   MINA_NETWORK_DOMAIN=mainnet bun run dev-helpers/cli.ts vk-hash compile
+# Then update the two lines below with the printed hashes.
+testnet=4361301174038201442195976394497166456800003471868606055878821457698157411156
+mainnet=12907853987774943107430415239214463945330396141876641165564927359425706713913

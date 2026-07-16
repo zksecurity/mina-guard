@@ -37,7 +37,6 @@ export interface Proposal {
   nonce: string | null;
   configNonce: string | null;
   expirySlot: string | null;
-  networkId: string | null;
   guardAddress: string | null;
   memo: string | null;
   memoHash: string | null;
@@ -76,7 +75,6 @@ export interface OwnerRecord {
 /** Contract summary returned by backend contract listing endpoints. */
 export interface ContractSummary {
   address: string;
-  networkId: string | null;
   ownersCommitment: string | null;
   threshold: number | null;
   numOwners: number | null;
