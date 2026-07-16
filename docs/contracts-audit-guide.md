@@ -110,9 +110,10 @@ Two more circuit functions serve the setup path (`setup`, `reserveForParent`,
 Three independent store classes in `storage.ts` mirror on-chain roots. Each is
 self-contained and serializable.
 
-**`OwnerStore`** — an ordered `PublicKey[]` array. Methods: `add()`, `remove()`,
-`insertAfter()`, `isOwner()`, `getCommitment()` (computes chain hash), `getWitness()`
-(returns `OwnerWitness` padded to `MAX_OWNERS`). Serializes via JSON with base58-encoded keys.
+**`OwnerStore`** — an ordered `PublicKey[]` array. Methods: `addSorted()`, `sortedPredecessor()`
+(derives the `insertAfter` key for the add-owner flow), `insertAfter()`, `remove()`, `isOwner()`,
+`getCommitment()` (computes chain hash), `getWitness()` (returns `OwnerWitness` padded to
+`MAX_OWNERS`). Serializes via JSON with base58-encoded keys.
 
 **`ApprovalStore`** — a `MerkleMap` keyed by `proposalHash`. The value encodes proposal
 state with a marker offset:
@@ -146,6 +147,7 @@ class TransactionProposal extends Struct({
   tokenId:      Field,       // Token ID (Field(0) for MINA)
   txType:       Field,       // TxType value
   data:         Field,       // Context-dependent payload (see below)
+  memoHash:     Field,       // Poseidon hash of the memo bytes (memoToField); bound into hash()
   nonce:        Field,       // Ordered execution nonce (LOCAL or child-REMOTE domain)
   configNonce:  Field,       // Must match on-chain configNonce
   expirySlot:   Field,       // Global slot deadline (0 = no expiry)
@@ -160,8 +162,11 @@ Unused receiver slots use `Receiver.empty()` (`PublicKey.empty()` + `UInt64(0)`)
 Non-transfer proposals (governance, child-lifecycle) use all-empty receiver slots unless
 otherwise noted.
 
-`hash()` returns `Poseidon(all fields)`. This hash is the universal key for approval counts,
-vote nullifiers, and signatures. Because `guardAddress`, `destination`, and `childAccount`
+`hash()` returns `Poseidon` over **every** field of the struct — including `memoHash`, which is
+how the proposal's memo is bound in (the plaintext itself travels off-chain as the transaction
+memo; see the [backend memo lifecycle](./backend-audit-guide.md#data-model)). This hash is the
+universal key for approval counts, vote nullifiers, and signatures. Because `guardAddress`,
+`destination`, and `childAccount`
 are all inside the hash, a proposal is cryptographically bound to a specific (parent, child)
 pair — cross-child reuse produces a different hash.
 
@@ -410,13 +415,13 @@ slimmed: per-execution events carry only what is **not** already derivable from 
 | `DeployEvent` | `guardAddress` | `deploy` |
 | `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId, parent` | `setup`, `executeSetupChild` |
 | `SetupOwnerEvent` | `owner, index` | `setup`, `executeSetupChild` (one per `MAX_OWNERS` slot) |
-| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, nonce, configNonce, expirySlot, networkId, guardAddress, destination, childAccount` | `propose` |
+| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, memoHash, nonce, configNonce, expirySlot, networkId, guardAddress, destination, childAccount` | `propose` |
 | `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
 | `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
 | `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |
-| `OwnerChangeEvent` | `proposalHash, newNumOwners, configNonce` | `executeOwnerChange` (the added/removed owner key is in `ReceiverEvent` slot 0; `added` is in `ProposalEvent.txType`) |
-| `ThresholdChangeEvent` | `proposalHash, oldThreshold, configNonce` | `executeThresholdChange` (the new threshold is in `ProposalEvent.data`) |
-| `DelegateEvent` | `proposalHash` | `executeDelegate` (the delegate is in `ReceiverEvent` slot 0; empty means undelegate to self) |
+| `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners, configNonce` | `executeOwnerChange` (`owner` = the added/removed key; `added` = `1` for ADD_OWNER, `0` for REMOVE_OWNER) |
+| `ThresholdChangeEvent` | `proposalHash, oldThreshold, newThreshold, configNonce` | `executeThresholdChange` |
+| `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` (empty `delegate` = undelegate to self) |
 | `CreateChildConfigEvent` | `proposalHash, childAccount, ownersCommitment, threshold, numOwners` | `reserveForParent` on child (one per `CREATE_CHILD` propose) |
 | `CreateChildOwnerEvent` | `proposalHash, owner, index` | `reserveForParent` on child (one per `MAX_OWNERS` slot) |
 | `CreateChildEvent` | `proposalHash, parentAddress` | `executeSetupChild` (config fields duplicated in the sibling `SetupEvent`) |

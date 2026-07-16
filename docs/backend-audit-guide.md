@@ -48,7 +48,7 @@ The indexer runs in one of two modes, set by config at startup.
 
 | Mode | Discovery | Backfill lower bound | Subscribe API |
 |---|---|---|---|
-| `full` | Scans every bestChain block for MinaGuard deployments | `indexedHeight - 300` (~290-block bestChain horizon + safety margin) | disabled |
+| `full` | Scans a bounded recent bestChain window (≤290 blocks) for MinaGuard deployments | `indexedHeight - 300` (~290-block bestChain horizon + safety margin) | disabled |
 | `lite` | No scan; only tracks contracts added via `POST /api/subscribe` | `config.indexStartHeight` (default `0`) | enabled |
 
 `full` is the batch indexer posture: look at the whole chain and keep everything. `lite` is the
@@ -125,7 +125,7 @@ Three ways to become tracked:
 
 - **Full mode, daemon discovery**: `discoverCandidateAddresses` scans recent bestChain blocks, `fetchVerificationKeyHash` confirms it's a zkApp, and the hash is optionally matched against `MINAGUARD_VK_HASH`. Backfill window is `max(0, indexedHeight - 300)` — a safe margin around the ~290-block bestChain horizon, which is guaranteed to cover the deploy since that horizon is the only place daemon discovery could have seen it.
 - **Full mode, archive discovery**: `discoverCandidateAddressesFromArchive` queries the archive postgres for account updates that installed MinaGuard's VK (applied zkapp commands in non-orphaned blocks). Because this can surface contracts deployed at arbitrary historical heights, the backfill lower bound is `indexStartHeight` (default 0). The on-chain VK re-fetch via the daemon still runs per new candidate: it catches the edge case where the archive shows a VK install that has since been upgraded on-chain. The query includes `pending` blocks so fresh deploys are discoverable before finalization; orphaned pending deploys are cleaned up by `rollbackAboveFork`, which deletes `Contract` rows by `discoveredAtBlock` on every reorg rollback. The residual risk is the same as any reorg deeper than the ~290-block detection window: operator intervention.
-- **Lite mode subscribe**: user calls `POST /api/subscribe { address, fromBlock? }`. `fromBlock` omitted = `latestHeight - 5` (margin to cover a block landing mid-request). `fromBlock` supplied = trusted explicit lower bound, but the address must already resolve to a deployed zkApp (guards against typos backfilling forever). VK hash is **not** checked on subscribe — the user may subscribe before the deploy tx lands.
+- **Lite mode subscribe**: user calls `POST /api/subscribe { address, fromBlock? }`. `fromBlock` omitted = `latestHeight - 5` (margin to cover a block landing mid-request). `fromBlock` supplied = trusted explicit lower bound, but the address must already resolve to a deployed zkApp (guards against typos backfilling forever). A *mismatched* VK is rejected (HTTP 400) on both subscribe paths when `MINAGUARD_VK_HASH` is set (`routes.ts`); only a *missing* VK is tolerated, so the user may still subscribe before the deploy tx lands.
 
 The `rescanUnreadyContracts` loop re-scans `[discoveredAtBlock, latestHeight]` every tick until
 events land. First event flips `ready = true` and the contract joins the forward sweep.

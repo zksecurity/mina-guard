@@ -127,7 +127,9 @@ firewall (**Hetzner Cloud Firewall**), *not* host `ufw`:
 This correction is reflected in the load-bearing comments across `deploy-trail.sh`,
 `docker-compose.trail.yml`, `Caddyfile.trail`, and `.env.example`, which previously recommended
 host `ufw` rules that enforced nothing. The `:5433` archive-postgres port was also previously
-missing from that guidance.
+missing from that guidance — it now appears where the backend reaches the DB directly
+(`deploy-trail.sh`, `.env.example`); the Caddy-facing comments legitimately list only `3085`/`8282`,
+since Caddy never proxies the DB port.
 
 ### Cross-origin isolation is required and enforced twice
 
@@ -135,7 +137,7 @@ o1js proof generation in the browser needs `SharedArrayBuffer`, which requires c
 isolation (`COOP: same-origin` + `COEP: credentialless`). The outer Caddy sets these headers (and
 strips duplicates from the inner Caddy); the inner trail Caddy *also* sets them so direct hits
 (e.g. local testing against the inner Caddy) still isolate. Losing these headers silently breaks
-proving, not security — but it's a availability footgun worth knowing.
+proving, not security — but it's an availability footgun worth knowing.
 
 ### Caddyfile notes
 
