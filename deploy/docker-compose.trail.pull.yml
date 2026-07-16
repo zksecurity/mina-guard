@@ -1,4 +1,4 @@
-# MinaGuard Mesa Trail — PULL-based deploy (Option B, phase 2).
+# MinaGuard Mesa Trail — PULL-based deploy (phase 2).
 #
 # Same services as docker-compose.trail.yml, but the app images are PULLED from
 # GHCR (signed, verified by trail-pull-deploy.sh) instead of built on-box. The
