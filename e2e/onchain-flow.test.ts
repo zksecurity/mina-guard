@@ -889,13 +889,14 @@ test('14. Verify final state', async () => { const page = sharedPage;
   await expect(page.locator('text=Owners (2)')).toBeVisible({ timeout: 10_000 });
   log('Settings shows 2 owners');
 
-  // Transactions — createChild, delete, addOwner, changeThreshold, transfer
-  // all executed; the delete target invalidated; nothing pending.
+  // Transactions — createChild, allocateChild, delete, addOwner,
+  // changeThreshold, transfer all executed; the delete target invalidated;
+  // nothing pending.
   await navigateTo(page, '/transactions');
   await page.waitForTimeout(SHORT_WAIT);
 
   await expectTabCount(/Pending/i, 0);
-  await expectTabCount(/Executed/i, 5);
+  await expectTabCount(/Executed/i, 6);
   await expectTabCount(/Invalidated/i, 1);
 
   // Final dump
