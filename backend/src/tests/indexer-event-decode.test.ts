@@ -224,3 +224,10 @@ describe('proposal event decoding', () => {
     );
   });
 });
+
+// Module mocks are process-global in bun and leak into later test files
+// (they survive mock.restore()); restore the real module so file ordering
+// can never break another suite's use of mina-client.
+afterAll(() => {
+  mock.module('../mina-client.js', () => minaClient);
+});

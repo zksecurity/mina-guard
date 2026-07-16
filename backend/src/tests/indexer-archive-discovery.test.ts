@@ -326,3 +326,10 @@ describe('archive discovery: cursor progression', () => {
     expect(calls[1]).toEqual({ from: 1000 - 5, to: 1500 });
   });
 });
+
+// Module mocks are process-global in bun and leak into later test files
+// (they survive mock.restore()); restore the real module so file ordering
+// can never break another suite's use of mina-client.
+afterAll(() => {
+  mock.module('../mina-client.js', () => minaClient);
+});

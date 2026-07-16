@@ -56,26 +56,22 @@ jobs:
         run: cd backend && bunx prisma generate
       - name: Build backend
         run: bun run --filter backend build
-      - name: Run backend tests
-        run: cd backend && bunx prisma db push --skip-generate && bun test
-        env:
-          CI: true
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
       - name: Run contract tests
         run: bun run test
         env:
           CI: true
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
-      - name: Run backend unit tests
-        # Verified 135 pass / 0 fail across all ten suites against a fresh
-        # Postgres. An earlier version of this PR excluded routes-api,
-        # routes-subscribe, and indexer-autosubscribe as "pre-existing
-        # failures" — that turned out to be stale; they pass now.
+      - name: Run backend tests
+        # All ten suites against a fresh Postgres (135 tests). Test files that
+        # mock.module mina-client re-register the real module in afterAll —
+        # bun module mocks are process-global, and CI's file order differs
+        # from local, so a leaked stub broke mina-client-tx-status here.
         run: |
           cd backend
           bunx prisma db push --force-reset --skip-generate
           bun test src/tests/
         env:
+          CI: true
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/minaguard
       - name: Run offline-cli tests
         run: cd offline-cli && bun test
