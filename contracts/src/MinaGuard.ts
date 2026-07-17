@@ -160,11 +160,14 @@ export class ExecutionEvent extends Struct({
   txType: Field,
 }) { }
 
+/** `newOwnersCommitment` is the post-change owner chain, so indexers can track
+ *  it from events alone, matching SetupEvent. */
 export class OwnerChangeEvent extends Struct({
   proposalHash: Field,
   owner: PublicKey,
   added: Field,
   newNumOwners: Field,
+  newOwnersCommitment: Field,
   configNonce: Field,
 }) { }
 
@@ -1202,7 +1205,8 @@ export class MinaGuard extends SmartContract {
     // depending on change type, check corresponding operation was successful
     Provable.if(isRemove, remIsValid, addIsValid).assertTrue('Owner change not valid');
     // select corresponding new commitment to update state
-    this.ownersCommitment.set(Provable.if(isRemove, afterRemoveComm, afterAddComm));
+    const newOwnersCommitment = Provable.if(isRemove, afterRemoveComm, afterAddComm);
+    this.ownersCommitment.set(newOwnersCommitment);
     this.setGovernanceState(threshold, newNumOwners);
 
     this.markExecuted(approvalWitness);
@@ -1220,6 +1224,7 @@ export class MinaGuard extends SmartContract {
       owner: ownerPubKey,
       added: isAdd.toField(),
       newNumOwners,
+      newOwnersCommitment,
       configNonce: currentConfigNonce.add(1),
     });
   }

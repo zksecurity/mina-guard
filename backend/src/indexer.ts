@@ -1024,10 +1024,14 @@ export class MinaGuardIndexer {
 
     const newNumOwners = asNumber(event.newNumOwners);
     const configNonce = asNumber(event.configNonce);
+    // Without this the snapshot would copy the pre-change commitment forward,
+    // leaving it stale against numOwners and the membership rows.
+    const newOwnersCommitment = asString(event.newOwnersCommitment);
 
     const changes: ContractConfigChanges = {};
     if (newNumOwners !== null) changes.numOwners = newNumOwners;
     if (configNonce !== null) changes.configNonce = configNonce;
+    if (newOwnersCommitment !== null) changes.ownersCommitment = newOwnersCommitment;
 
     if (Object.keys(changes).length > 0) {
       await this.appendContractConfigSnapshot(
