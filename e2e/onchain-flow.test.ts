@@ -24,6 +24,7 @@ import {
   waitForBanner as _waitForBanner,
   fillRecipients,
   waitForIndexer,
+  getIndexerStatus,
   getContracts,
   getContract,
   getOwners,
@@ -260,32 +261,76 @@ interface ExecuteOptions {
 }
 
 /**
+ * Best-effort barrier: wait until the backend indexer has caught up to the
+ * chain tip so any state the worker rebuilds from the backend reflects the
+ * latest blocks. Non-fatal — if the indexer can't catch up in time we proceed
+ * anyway rather than failing the test on the barrier itself.
+ */
+async function waitForIndexerCaughtUp(timeoutMs = 45_000): Promise<void> {
+  try {
+    await waitForIndexer(
+      'indexer caught up to chain tip',
+      async () => {
+        const s = await getIndexerStatus();
+        return !!s && s.latestChainHeight > 0 && s.indexedHeight >= s.latestChainHeight;
+      },
+      timeoutMs,
+    );
+  } catch {
+    log('  (indexer not fully caught up — proceeding anyway)');
+  }
+}
+
+/**
  * Opens a proposal's detail page, clicks Execute, waits for the success banner
  * and then for the indexer to reflect the execution. Returns the banner text.
+ *
+ * Retries the whole submit. A zkApp execute tx that the daemon accepts into the
+ * pool can still be silently lost under load — the tip drifts (fee-payer nonce
+ * or a state precondition) between acceptance and inclusion, so it never mines
+ * and the single-shot wait would burn the full timeout. Each attempt first lets
+ * the indexer settle, re-checks whether a prior attempt's tx landed late, then
+ * re-submits against freshly-settled state with a shorter per-attempt wait.
  */
 async function executeProposal(proposalHash: string, opts: ExecuteOptions): Promise<string> {
   const page = sharedPage;
-  await gotoWithWallet(`/transactions/${proposalHash}${opts.query ?? ''}`, opts.account ?? accounts[0]);
-  await page.waitForTimeout(SHORT_WAIT);
+  const isExecuted = opts.until ?? (async () => {
+    const proposal = await getProposal(contractAddress, proposalHash);
+    return proposal?.status === 'executed';
+  });
 
-  log('Clicking Execute Proposal...');
-  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
-  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
-  await executeBtn.click();
+  const maxAttempts = 3;
+  const perAttemptMs = Math.min(opts.timeoutMs ?? 240_000, 70_000);
+  let bannerText = '';
 
-  log('Waiting for execute transaction...');
-  const bannerText = await waitForBanner(page, 'success');
-  await opts.onBanner?.(bannerText);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await waitForIndexerCaughtUp();
+    await gotoWithWallet(`/transactions/${proposalHash}${opts.query ?? ''}`, opts.account ?? accounts[0]);
+    await page.waitForTimeout(SHORT_WAIT);
 
-  await waitForIndexer(
-    opts.waitDescription,
-    opts.until ?? (async () => {
-      const proposal = await getProposal(contractAddress, proposalHash);
-      return proposal?.status === 'executed';
-    }),
-    opts.timeoutMs,
-    opts.intervalMs
-  );
+    // A previous attempt's tx may have landed late while we were retrying.
+    if (await isExecuted()) {
+      log(`Proposal already executed (attempt ${attempt}) — done`);
+      return bannerText || '(already executed)';
+    }
+
+    log(`Clicking Execute Proposal... (attempt ${attempt}/${maxAttempts})`);
+    const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+    await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+    await executeBtn.click();
+
+    log('Waiting for execute transaction...');
+    bannerText = await waitForBanner(page, 'success');
+    await opts.onBanner?.(bannerText);
+
+    try {
+      await waitForIndexer(opts.waitDescription, isExecuted, perAttemptMs, opts.intervalMs);
+      return bannerText;
+    } catch (err) {
+      if (attempt === maxAttempts) throw err;
+      log(`  Execute not confirmed in ${(perAttemptMs / 1000).toFixed(0)}s — re-submitting (attempt ${attempt + 1}/${maxAttempts})`);
+    }
+  }
   return bannerText;
 }
 
