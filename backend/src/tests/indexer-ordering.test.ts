@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { orderEventsForApply } from '../indexer.js';
 import type { ChainEvent } from '../mina-client.js';
 
-function ev(type: string, blockHeight: number, txHash: string): ChainEvent {
+function ev(type: string, blockHeight: number, txHash: string, slot?: string): ChainEvent {
   return {
     type,
-    event: {},
+    event: slot ? { slot } : {},
     blockHeight,
     blockHash: `hash-${blockHeight}`,
     parentHash: `hash-${blockHeight - 1}`,
@@ -35,12 +35,26 @@ describe('orderEventsForApply', () => {
     expect(ordered.map((e) => e.blockHeight)).toEqual([5, 12, 20]);
   });
 
-  test('is stable: events in the same block keep their input (emission) order', () => {
+  test('orders same-block events by lifecycle type so a dependency precedes its dependent', () => {
+    // Same block, different txs, returned by the archive out of order: the
+    // approval and execution must still be applied after their proposal, or the
+    // dependent event is dropped (and, once fingerprinted, dropped for good).
     const ordered = orderEventsForApply([
-      ev('proposal', 9, 'tx-1'),
-      ev('receiver', 9, 'tx-1'),
-      ev('approval', 9, 'tx-2'),
+      ev('approval', 9, 'tx-appr'),
+      ev('execution', 9, 'tx-exec'),
+      ev('proposal', 9, 'tx-prop'),
     ]);
-    expect(ordered.map((e) => e.type)).toEqual(['proposal', 'receiver', 'approval']);
+    expect(ordered.map((e) => e.type)).toEqual(['proposal', 'approval', 'execution']);
+  });
+
+  test('preserves input order for same-type same-block events (receiver slots)', () => {
+    // Same block, same tx, same type: the type key ties, so the input order
+    // restored by reverseEventsWithinEachTx must survive (receiver slot order).
+    const ordered = orderEventsForApply([
+      ev('receiver', 9, 'tx-1', 'r0'),
+      ev('receiver', 9, 'tx-1', 'r1'),
+      ev('receiver', 9, 'tx-1', 'r2'),
+    ]);
+    expect(ordered.map((e) => (e.event as { slot: string }).slot)).toEqual(['r0', 'r1', 'r2']);
   });
 });
