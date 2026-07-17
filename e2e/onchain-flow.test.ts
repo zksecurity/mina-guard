@@ -883,6 +883,11 @@ test('13. Execute transfer (account2)', async () => { const page = sharedPage;
 test('14. Verify final state', async () => { const page = sharedPage;
   log('=== Step 14: Verify final state ===');
 
+  // The page recycle after step 13 reloads the app with the child as the active
+  // vault; re-select the parent before checking its settings (cf. step 5).
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
+
   // Settings — 2 owners, threshold 2
   await gotoWithWallet('/settings', accounts[0]);
   await page.waitForTimeout(SHORT_WAIT);
