@@ -370,6 +370,29 @@ function buildProposalStruct(
   });
 }
 
+/**
+ * Ties a rebuilt proposal to the one named in the bundle. handleApprove/
+ * handleExecute reconstruct TransactionProposal from the bundle's mutable
+ * fields and sign/act on the recomputed hash, so a bundle whose fields describe
+ * a different proposal than its declared proposalHash would silently redirect
+ * the signature/execution. A mismatch aborts before signing. handlePropose
+ * mints a new proposal with no prior identity and does not call this.
+ */
+function assertRecomputedProposalHash(
+  recomputed: InstanceType<typeof Field>,
+  expectedProposalHash: string,
+  action: string,
+): void {
+  const recomputedStr = recomputed.toString();
+  if (recomputedStr !== expectedProposalHash) {
+    throw new Error(
+      `Refusing to ${action}: the bundle's proposal fields hash to ${recomputedStr}, ` +
+        `which does not match its declared proposal ${expectedProposalHash}. ` +
+        `The bundle may have been tampered with.`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Store rebuilding from bundled events
 // ---------------------------------------------------------------------------
@@ -903,6 +926,7 @@ export async function handleApprove(
 
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
+  assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'approve this proposal');
   log(`Proposal hash: ${hashStr}`);
 
   // Sign the proposal hash.
@@ -996,6 +1020,7 @@ export async function handleExecute(
 
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
+  assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'execute this proposal');
   log(`Proposal hash: ${hashStr}`);
 
   const approvalWitness = approvalStore.getWitness(proposalHash);

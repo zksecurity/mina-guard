@@ -572,6 +572,31 @@ function buildProposalStruct(
   });
 }
 
+/**
+ * Ties a rebuilt proposal to the one the user selected. The approve/execute
+ * flows reconstruct TransactionProposal from mutable fields and then sign or act
+ * on the recomputed hash, so if a tampered backend/bundle supplies a different
+ * proposal's fields under the selected proposalHash, the signature or execution
+ * silently redirects to that other proposal. Comparing the recomputed hash to
+ * the selected identity closes that gap; a mismatch aborts the operation. The
+ * propose flow mints a new proposal with no prior identity and does not call
+ * this.
+ */
+function assertRecomputedProposalHash(
+  recomputed: InstanceType<typeof Field>,
+  expectedProposalHash: string,
+  action: string
+): void {
+  const recomputedStr = recomputed.toString();
+  if (recomputedStr !== expectedProposalHash) {
+    throw new Error(
+      `Refusing to ${action}: the proposal data hashes to ${recomputedStr}, ` +
+        `which does not match the selected proposal ${expectedProposalHash}. ` +
+        `The proposal fields may have been tampered with.`
+    );
+  }
+}
+
 /** Safely serializes tx.toJSON() regardless of whether it returns a string or object. */
 function serializeTx(tx: Awaited<ReturnType<typeof Mina.transaction>>): string {
   const json = tx.toJSON();
@@ -1028,6 +1053,7 @@ const workerApi = {
 
     const proposalHash = proposalStruct.hash();
     const hashStr = proposalHash.toString();
+    assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'approve this proposal');
 
     progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
     const signature = await signProposalHash(hashStr, signFn);
@@ -1098,6 +1124,7 @@ const workerApi = {
     }, params.contractAddress);
 
     const proposalHash = proposalStruct.hash();
+    assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'execute this proposal');
     const approvalWitness = approvalStore.getWitness(proposalHash);
     const approvalCount = approvalStore.getCount(proposalHash);
 
@@ -1232,6 +1259,7 @@ const workerApi = {
       destination: 'remote',
     }, params.parentAddress);
     const proposalHash = proposalStruct.hash();
+    assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'set up this child');
     const approvalWitness = approvalStore.getWitness(proposalHash);
     const approvalCount = approvalStore.getCount(proposalHash);
 
@@ -1316,6 +1344,7 @@ const workerApi = {
       childAccount: params.proposal.childAccount ?? params.childAddress,
     }, params.parentAddress);
     const proposalHash = proposalStruct.hash();
+    assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'execute this child action');
     const approvalWitness = approvalStore.getWitness(proposalHash);
     const approvalCount = approvalStore.getCount(proposalHash);
     const childExecutionWitness = childExecutionMap.getWitness(proposalHash);
