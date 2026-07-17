@@ -65,6 +65,7 @@ async function waitForBanner(...args: Parameters<typeof _waitForBanner>) {
 let accounts: TestAccount[];
 let contractAddress: string;
 let childAddress: string;
+let allocateChildHash: string;
 let proposalHashes: string[] = [];
 
 // Shared page — avoids Web Worker restart (and contract recompilation) between tests
@@ -261,76 +262,52 @@ interface ExecuteOptions {
 }
 
 /**
- * Best-effort barrier: wait until the backend indexer has caught up to the
- * chain tip so any state the worker rebuilds from the backend reflects the
- * latest blocks. Non-fatal — if the indexer can't catch up in time we proceed
- * anyway rather than failing the test on the barrier itself.
+ * Waits until the chain has produced `blocks` blocks beyond the current tip and
+ * the indexer has caught up. Used to let a freshly-landed tx (a just-created
+ * child account, a just-submitted proposal) finalise before we build an execute
+ * on top of it — executing against an unsettled tip is what lets the execute tx
+ * be accepted into the pool but then silently dropped under load.
  */
-async function waitForIndexerCaughtUp(timeoutMs = 45_000): Promise<void> {
-  try {
-    await waitForIndexer(
-      'indexer caught up to chain tip',
-      async () => {
-        const s = await getIndexerStatus();
-        return !!s && s.latestChainHeight > 0 && s.indexedHeight >= s.latestChainHeight;
-      },
-      timeoutMs,
-    );
-  } catch {
-    log('  (indexer not fully caught up — proceeding anyway)');
-  }
+async function waitForChainSettle(blocks: number, timeoutMs = 120_000): Promise<void> {
+  const start = await getIndexerStatus();
+  const target = (start?.latestChainHeight ?? 0) + blocks;
+  await waitForIndexer(
+    `chain settles ${blocks} blocks (height >= ${target})`,
+    async () => {
+      const s = await getIndexerStatus();
+      return !!s && s.latestChainHeight >= target && s.indexedHeight >= s.latestChainHeight;
+    },
+    timeoutMs,
+  );
 }
 
 /**
  * Opens a proposal's detail page, clicks Execute, waits for the success banner
  * and then for the indexer to reflect the execution. Returns the banner text.
- *
- * Retries the whole submit. A zkApp execute tx that the daemon accepts into the
- * pool can still be silently lost under load — the tip drifts (fee-payer nonce
- * or a state precondition) between acceptance and inclusion, so it never mines
- * and the single-shot wait would burn the full timeout. Each attempt first lets
- * the indexer settle, re-checks whether a prior attempt's tx landed late, then
- * re-submits against freshly-settled state with a shorter per-attempt wait.
  */
 async function executeProposal(proposalHash: string, opts: ExecuteOptions): Promise<string> {
   const page = sharedPage;
-  const isExecuted = opts.until ?? (async () => {
-    const proposal = await getProposal(contractAddress, proposalHash);
-    return proposal?.status === 'executed';
-  });
+  await gotoWithWallet(`/transactions/${proposalHash}${opts.query ?? ''}`, opts.account ?? accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
 
-  const maxAttempts = 3;
-  const perAttemptMs = Math.min(opts.timeoutMs ?? 240_000, 70_000);
-  let bannerText = '';
+  log('Clicking Execute Proposal...');
+  const executeBtn = page.getByRole('button', { name: /execute proposal/i });
+  await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
+  await executeBtn.click();
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await waitForIndexerCaughtUp();
-    await gotoWithWallet(`/transactions/${proposalHash}${opts.query ?? ''}`, opts.account ?? accounts[0]);
-    await page.waitForTimeout(SHORT_WAIT);
+  log('Waiting for execute transaction...');
+  const bannerText = await waitForBanner(page, 'success');
+  await opts.onBanner?.(bannerText);
 
-    // A previous attempt's tx may have landed late while we were retrying.
-    if (await isExecuted()) {
-      log(`Proposal already executed (attempt ${attempt}) — done`);
-      return bannerText || '(already executed)';
-    }
-
-    log(`Clicking Execute Proposal... (attempt ${attempt}/${maxAttempts})`);
-    const executeBtn = page.getByRole('button', { name: /execute proposal/i });
-    await executeBtn.waitFor({ state: 'visible', timeout: 30_000 });
-    await executeBtn.click();
-
-    log('Waiting for execute transaction...');
-    bannerText = await waitForBanner(page, 'success');
-    await opts.onBanner?.(bannerText);
-
-    try {
-      await waitForIndexer(opts.waitDescription, isExecuted, perAttemptMs, opts.intervalMs);
-      return bannerText;
-    } catch (err) {
-      if (attempt === maxAttempts) throw err;
-      log(`  Execute not confirmed in ${(perAttemptMs / 1000).toFixed(0)}s — re-submitting (attempt ${attempt + 1}/${maxAttempts})`);
-    }
-  }
+  await waitForIndexer(
+    opts.waitDescription,
+    opts.until ?? (async () => {
+      const proposal = await getProposal(contractAddress, proposalHash);
+      return proposal?.status === 'executed';
+    }),
+    opts.timeoutMs,
+    opts.intervalMs
+  );
   return bannerText;
 }
 
@@ -573,8 +550,17 @@ test('4. Execute CREATE_CHILD via proposal detail', async () => {
 //     routing honest against future refactors of the branching logic.
 // ---------------------------------------------------------------------------
 
-test('4b. ALLOCATE_CHILD from parent to subvault (executeChildLifecycleOnchain)', async () => { const page = sharedPage;
-  log('=== Step 4b: Propose + execute ALLOCATE_CHILD ===');
+// Split into propose (4b) and execute (4c). Every other propose/execute pair in
+// this suite lives in two separate tests; ALLOCATE_CHILD used to be the only one
+// crammed back-to-back, and it was the only step that reliably timed out on
+// loaded CI. Its execute depends on the child account created just one step
+// earlier, so on a loaded chain it was executing against an unsettled tip — the
+// execute tx got accepted into the pool then silently dropped, which trips the
+// app's single-execute lock (recoverable only after the backend's 20-min
+// DROPPED_TX_GRACE_MS, far past any test timeout). Splitting + an explicit
+// settle lets the child + proposal finalise before we execute.
+test('4b. Propose ALLOCATE_CHILD from parent to subvault', async () => { const page = sharedPage;
+  log('=== Step 4b: Propose ALLOCATE_CHILD ===');
 
   // Parent may still be active from test 4, but reassert to be safe — the
   // proposal form derives its nonce space from the active contract.
@@ -588,14 +574,22 @@ test('4b. ALLOCATE_CHILD from parent to subvault (executeChildLifecycleOnchain)'
       p.txType === 'allocateChild' && p.receivers?.some((r: any) => r.address === childAddress),
     waitDescription: 'indexer processes ALLOCATE_CHILD proposal',
   });
-  const allocateHash = proposal.proposalHash;
-  log(`ALLOCATE_CHILD proposal: hash=${allocateHash.slice(0, 12)}...`);
+  allocateChildHash = proposal.proposalHash;
+  log(`ALLOCATE_CHILD proposal: hash=${allocateChildHash.slice(0, 12)}...`);
+});
 
-  await executeProposal(allocateHash, {
+test('4c. Execute ALLOCATE_CHILD (executeChildLifecycleOnchain)', async () => {
+  log('=== Step 4c: Execute ALLOCATE_CHILD ===');
+
+  // Let the newly-created child account and the ALLOCATE_CHILD proposal finalise
+  // before executing against them — see the note on test 4b.
+  await waitForChainSettle(4);
+
+  await executeProposal(allocateChildHash, {
     waitDescription: 'indexer processes ALLOCATE_CHILD execution',
   });
 
-  const executed = await getProposal(contractAddress, allocateHash);
+  const executed = await getProposal(contractAddress, allocateChildHash);
   expect(executed.status).toBe('executed');
   log(`ALLOCATE_CHILD executed`);
 });
