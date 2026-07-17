@@ -174,6 +174,7 @@ describe('MinaGuard - Propose shape rules', () => {
 
   function buildProposal(overrides: Partial<{
     receivers: Receiver[];
+    tokenId: Field;
     txType: Field;
     data: Field;
     nonce: Field;
@@ -185,7 +186,7 @@ describe('MinaGuard - Propose shape rules', () => {
   }>): TransactionProposal {
     return new TransactionProposal({
       receivers: overrides.receivers ?? emptyReceivers(),
-      tokenId: Field(0),
+      tokenId: overrides.tokenId ?? Field(0),
       txType: overrides.txType ?? TxType.TRANSFER,
       data: overrides.data ?? Field(0),
       memoHash: (overrides as any).memoHash ?? Field(0),
@@ -351,6 +352,20 @@ describe('MinaGuard - Propose shape rules', () => {
     await expect(async () => {
       await tryPropose(proposal);
     }).toThrow('data must be zero for this txType');
+  });
+
+  // -- Rule 5: only the native MINA token (tokenId 0) is supported -----------
+
+  it('should reject a proposal with a non-zero tokenId', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    const receivers = emptyReceivers();
+    receivers[0] = new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) });
+    // A non-zero tokenId would be signed and approved but executeTransfers
+    // always sends the default MINA token, so propose() must reject it.
+    const proposal = buildProposal({ txType: TxType.TRANSFER, receivers, tokenId: Field(1) });
+    await expect(async () => {
+      await tryPropose(proposal);
+    }).toThrow('Only the native MINA token');
   });
 
   // -- Delete-flow (zero-value transfer) -------------------------------------
