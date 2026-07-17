@@ -20,6 +20,7 @@ import {
   executeSetupChildOnchain,
   assertLedgerReady,
   computeCreateChildConfigHash,
+  validateAddOwnerProposalData,
 } from '@/lib/multisigClient';
 import { fetchChildConfigFromEvents } from '@/lib/api';
 import {
@@ -145,6 +146,38 @@ export default function TransactionDetailPage() {
     return () => { cancelled = true; };
   }, [proposal, proposalHash, multisig, proposalsAddress]);
 
+  // For ADD_OWNER: recompute the canonical post-add owner commitment from the
+  // indexed owner list and compare it to the signed proposal.data. A mismatch
+  // means execution would store an owner order no client can reconstruct, so
+  // approvers are warned and blocked before signing. 'unavailable' = the owner
+  // list could not be rebuilt (backend down / not indexed), which doesn't
+  // block; the worker re-asserts canonicity before signing anyway.
+  const [addOwnerDataCheck, setAddOwnerDataCheck] =
+    useState<'checking' | 'match' | 'mismatch' | 'unavailable' | null>(null);
+  useEffect(() => {
+    if (!proposal || proposal.txType !== 'addOwner') {
+      setAddOwnerDataCheck(null);
+      return;
+    }
+    if (proposal._localPending) return;
+    if (!multisig || proposalsAddress !== multisig.address) return;
+    let cancelled = false;
+    setAddOwnerDataCheck('checking');
+    (async () => {
+      try {
+        const result = await validateAddOwnerProposalData({
+          contractAddress: multisig.address,
+          proposal,
+        });
+        if (cancelled) return;
+        setAddOwnerDataCheck(result == null || result.valid ? 'match' : 'mismatch');
+      } catch {
+        if (!cancelled) setAddOwnerDataCheck('unavailable');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [proposal, multisig, proposalsAddress]);
+
   const isOwner = useMemo(() => {
     return owners.some((owner) => owner.address === wallet.address);
   }, [owners, wallet.address]);
@@ -250,6 +283,9 @@ export default function TransactionDetailPage() {
     // to the signed proposal.data (config-swap). Only a computed mismatch
     // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
     childConfigCheck !== 'mismatch' &&
+    // Same for addOwner: block when proposal.data provably binds a
+    // non-canonical owner order.
+    addOwnerDataCheck !== 'mismatch' &&
     !myPendingApprove &&
     !contractLock.locked;
   const canExecute =
@@ -592,6 +628,27 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {addOwnerDataCheck === 'mismatch' && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
+            <p className="font-semibold mb-1">Owner order in this proposal is not canonical</p>
+            <p className="opacity-90">
+              This addOwner proposal commits to an owner-list order that does not match the sorted order this
+              app reconstructs from events. If executed, the Vault&apos;s owner list would become unusable through
+              standard tooling. Do not approve this proposal.
+            </p>
+          </div>
+        )}
+
+        {addOwnerDataCheck === 'unavailable' && (
+          <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
+            <p className="font-semibold mb-1">Owner order commitment could not be verified</p>
+            <p className="opacity-90">
+              The owner list could not be rebuilt from indexed events, so the proposal&apos;s bound owner order was
+              not checked. It will be re-checked before signing if you approve.
+            </p>
+          </div>
+        )}
+
         <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
           <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Details</h3>
           <div className="space-y-3">
@@ -746,6 +803,15 @@ export default function TransactionDetailPage() {
                       Approve blocked — config mismatch
                     </button>
                   )}
+                  {addOwnerDataCheck === 'mismatch' && proposal.status === 'pending' && isOwner && !hasApproved && (
+                    <button
+                      disabled
+                      title="Proposal data does not bind the canonical owner order"
+                      className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
+                    >
+                      Approve blocked — owner order mismatch
+                    </button>
+                  )}
                   {canExecute && (
                     <button
                       onClick={handleExecute}
@@ -798,6 +864,12 @@ export default function TransactionDetailPage() {
                             throw new Error(
                               'SubVault config mismatch: the displayed owners/threshold do not match the ' +
                               'signed proposal data. Do not approve this proposal.',
+                            );
+                          }
+                          if (addOwnerDataCheck === 'mismatch') {
+                            throw new Error(
+                              'addOwner proposal does not bind the canonical owner order. ' +
+                              'Do not approve this proposal.',
                             );
                           }
                           const p = proposal!;

@@ -308,16 +308,16 @@ describe('MinaGuard - Propose shape rules', () => {
 
   // -- Rule 4: non-threshold must have data = 0 ------------------------------
 
-  it('should reject ADD_OWNER with non-zero data', async () => {
+  it('should reject ADD_OWNER with zero data (must bind post-add commitment)', async () => {
     const newOwner = PrivateKey.random().toPublicKey();
     const proposal = buildProposal({
       txType: TxType.ADD_OWNER,
       receivers: receiversWithSlot0(newOwner),
-      data: Field(42),
+      data: Field(0),
     });
     await expect(async () => {
       await tryPropose(proposal);
-    }).toThrow('data must be zero for this txType');
+    }).toThrow('addOwner requires expected owners commitment in data');
   });
 
   it('should reject REMOVE_OWNER with non-zero data', async () => {

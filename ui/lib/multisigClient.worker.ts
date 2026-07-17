@@ -483,7 +483,10 @@ function uiTxTypeToField(type: string): InstanceType<typeof Field> {
   throw new Error(`Unknown TxType: ${type}`);
 }
 
-function buildProposalDataField(input: NewProposalInput): InstanceType<typeof Field> {
+function buildProposalDataField(
+  input: NewProposalInput,
+  ownerStore: InstanceType<typeof OwnerStore>
+): InstanceType<typeof Field> {
   if (input.txType === 'changeThreshold') {
     return Field(input.newThreshold ?? 0);
   }
@@ -496,7 +499,31 @@ function buildProposalDataField(input: NewProposalInput): InstanceType<typeof Fi
   if (input.txType === 'createChild') {
     return Field(input.createChildConfigHash ?? '0');
   }
+  if (input.txType === 'addOwner' && input.newOwner) {
+    // bind the canonical post-add owner commitment, enforced by executeOwnerChange
+    return ownerStore.commitmentWithSortedAdd(PublicKey.fromBase58(input.newOwner));
+  }
   return Field(0);
+}
+
+/**
+ * For ADD_OWNER proposals, checks proposal.data equals the commitment of the
+ * current owner list with the target inserted in canonical sorted order.
+ * executeOwnerChange enforces data on-chain, so a mismatched proposal either
+ * can never execute or would store an owner order clients cannot reconstruct.
+ * No-op for other txTypes.
+ */
+function assertCanonicalAddOwnerData(
+  proposal: InstanceType<typeof TransactionProposal>,
+  ownerStore: InstanceType<typeof OwnerStore>
+): void {
+  if (!proposal.txType.equals(uiTxTypeToField('addOwner')).toBoolean()) return;
+  const expected = ownerStore.commitmentWithSortedAdd(proposal.receivers[0].address);
+  if (!proposal.data.equals(expected).toBoolean()) {
+    throw new Error(
+      'addOwner proposal does not bind the canonical owner order, approval refused'
+    );
+  }
 }
 
 /** Governance target address for the proposal, or null for transfer / threshold / undelegate. */
@@ -887,9 +914,13 @@ const workerApi = {
 
     const isCreateChild = params.input.txType === 'createChild';
 
+    // stores are needed up front, addOwner derives proposal.data from the owner list
+    progressFn('Rebuilding stores...');
+    const { ownerStore, approvalStore, nullifierStore } = await rebuildStoresFromBackend(params.contractAddress);
+
     const receivers = buildReceiversForProposal(params.input);
     const txType = uiTxTypeToField(params.input.txType);
-    const data = buildProposalDataField(params.input);
+    const data = buildProposalDataField(params.input, ownerStore);
 
     const isRemote =
       isCreateChild ||
@@ -921,9 +952,6 @@ const workerApi = {
     progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
     const signature = await signProposalHash(hashStr, signFn);
     if (!signature) return null;
-
-    progressFn('Rebuilding stores...');
-    const { ownerStore, approvalStore, nullifierStore } = await rebuildStoresFromBackend(params.contractAddress);
 
     const proposer = PublicKey.fromBase58(params.proposerAddress);
     const ownerWitness = ownerStore.getWitness();
@@ -1019,6 +1047,22 @@ const workerApi = {
   },
 
   /**
+   * Chainless pre-check for the approve UI: for addOwner proposals, verifies
+   * proposal.data binds the canonical sorted owner order. Returns null for
+   * other txTypes so callers can skip the warning entirely.
+   */
+  async validateAddOwnerProposalData(params: {
+    contractAddress: string;
+    proposal: Proposal;
+  }): Promise<{ valid: boolean } | null> {
+    if (normalizeTxType(params.proposal.txType) !== 'addOwner') return null;
+    const { ownerStore } = await rebuildStoresFromBackend(params.contractAddress);
+    const target = PublicKey.fromBase58(params.proposal.receivers[0].address);
+    const expected = ownerStore.commitmentWithSortedAdd(target);
+    return { valid: Field(params.proposal.data ?? '0').equals(expected).toBoolean() };
+  },
+
+  /**
    * Submits an on-chain approveProposal tx for the given proposal. Each approver
    * sends their own transaction and signs the proposal hash with their wallet.
    */
@@ -1050,6 +1094,9 @@ const workerApi = {
       configNonce: params.proposal.configNonce ?? String(contractState.configNonce),
       guardAddress: params.proposal.guardAddress ?? params.contractAddress,
     }, params.contractAddress);
+
+    // refuse to co-sign an addOwner with a non-canonical bound owner order
+    assertCanonicalAddOwnerData(proposalStruct, ownerStore);
 
     const proposalHash = proposalStruct.hash();
     const hashStr = proposalHash.toString();

@@ -93,6 +93,17 @@ export class OwnerStore {
     return computeOwnerChain(this.owners);
   }
 
+  /**
+   * Commitment of the list with `owner` inserted in canonical sorted order,
+   * without mutating this store. Used to set/verify ADD_OWNER proposal.data.
+   */
+  commitmentWithSortedAdd(owner: PublicKey): Field {
+    const copy = new OwnerStore();
+    copy.owners = [...this.owners];
+    copy.addSorted(owner);
+    return copy.getCommitment();
+  }
+
   getWitness(): OwnerWitness {
     const owners = this.owners.map(
       (pk) => new PublicKeyOption({ value: pk, isSome: Bool(true) })
