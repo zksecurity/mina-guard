@@ -40,6 +40,7 @@ on:
 permissions:
   pull-requests: write
   issues: write
+  actions: read # resolve job reads in-progress runs to warn when a preview will queue
 
 concurrency:
   group: preview-${{ github.event.issue.number || github.event.number }}
@@ -106,6 +107,62 @@ jobs:
               comment_id: context.payload.comment.id,
               content: 'rocket',
             });
+
+            // The deploy job shares the single-slot `minaguard-host` lock. If
+            // the host is busy the deploy will queue — and GitHub keeps only one
+            // pending run per group, so a newer CI run can silently evict it.
+            // We can't comment from the evicted deploy job (a job cancelled while
+            // pending runs no steps), so warn up front from here (resolve always
+            // runs — it's not in the lock). Best-effort; never fail the command.
+            if (sub === 'up') {
+              const QUEUE_MARKER = '<!-- preview-queued -->';
+              try {
+                const { data: comments } = await github.rest.issues.listComments({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                });
+                for (const c of comments) {
+                  if (c.body && c.body.includes(QUEUE_MARKER)) {
+                    await github.rest.issues.deleteComment({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      comment_id: c.id,
+                    });
+                  }
+                }
+                // Workflows that contend for the host lock (see minaguard-host).
+                const HOST_WORKFLOWS = ['E2E tests', 'Deploy lightnet (/app)', 'Preview Environment'];
+                const { data: running } = await github.rest.actions.listWorkflowRunsForRepo({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  status: 'in_progress',
+                  per_page: 50,
+                });
+                const blockers = running.workflow_runs.filter(
+                  (r) => r.id !== context.runId && HOST_WORKFLOWS.includes(r.name),
+                );
+                if (blockers.length) {
+                  const b = blockers[0];
+                  const body = [
+                    QUEUE_MARKER,
+                    `⏳ **Preview queued** behind [${b.name} #${b.run_number}](${b.html_url}) (\`${b.head_branch}\`).`,
+                    '',
+                    'It shares a single-slot host lock, so it will build once that run finishes.',
+                    'Heads-up: if newer CI runs pile up they can bump this queued build out of the slot — ' +
+                      "if you don't get a preview URL in a few minutes, just re-comment `/preview` to requeue.",
+                  ].join('\n');
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body,
+                  });
+                }
+              } catch (e) {
+                core.warning(`queue-status check failed: ${e.message}`);
+              }
+            }
 
   # ---------------------------------------------------------------------------
   # Deploy / redeploy the preview.
@@ -196,7 +253,7 @@ jobs:
               issue_number: pr,
             });
             for (const comment of comments.data) {
-              if (comment.body.includes('### Preview Environment')) {
+              if (comment.body.includes('### Preview Environment') || comment.body.includes('<!-- preview-queued -->')) {
                 await github.rest.issues.deleteComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -240,7 +297,7 @@ jobs:
               issue_number: pr,
             });
             for (const comment of comments.data) {
-              if (comment.body.includes('### Preview Environment')) {
+              if (comment.body.includes('### Preview Environment') || comment.body.includes('<!-- preview-queued -->')) {
                 await github.rest.issues.deleteComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
