@@ -16,6 +16,7 @@ import {
 } from '@/lib/ledgerWallet';
 import { WalletState } from '@/lib/types';
 import { setLedgerSigning } from '@/lib/multisigClient';
+import { getMinaGuardConfig } from '@/lib/endpoints';
 
 const EMPTY_WALLET: WalletState = {
   connected: false,
@@ -136,13 +137,15 @@ export function useWallet() {
     try {
       const address = await getLedgerAddress(idx);
       localStorage.setItem('wallet-type', 'ledger');
-      setWallet((prev) => ({
+      setWallet({
         connected: true,
         address,
-        network: prev.network ?? 'testnet',
+        // A Ledger has no network of its own; the deployment fixes it. Use the
+        // same config the worker signs/broadcasts with (was the removed dropdown).
+        network: getMinaGuardConfig().networkId,
         type: 'ledger',
         ledgerAccountIndex: idx,
-      }));
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ledger connection failed');
     } finally {
@@ -164,10 +167,6 @@ export function useWallet() {
 
   const clearError = useCallback(() => setError(null), []);
 
-  const setNetwork = useCallback((network: string) => {
-    setWallet((prev) => ({ ...prev, network }));
-  }, []);
-
   return {
     wallet,
     isLoading,
@@ -178,7 +177,6 @@ export function useWallet() {
     connectAuro,
     connectLedger,
     disconnect,
-    setNetwork,
     /** Backward-compatible alias for connectAuro. */
     connect: connectAuro,
   };
