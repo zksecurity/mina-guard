@@ -13,6 +13,15 @@ jobs:
   e2e:
     timeout-minutes: 60
     runs-on: [self-hosted, e2e]
+    # Host-wide lock. The workflow-level concurrency above still cancels
+    # superseded commits on the same ref; this job-level group additionally
+    # serialises the e2e stack against the deploy-lightnet runner's heavy jobs
+    # (deploy-lightnet.yml, preview-deploy.yml) sharing this 15 GB box, so two
+    # Mina stacks never run at once. cancel-in-progress:false → queue, don't
+    # kill an in-flight deploy/preview.
+    concurrency:
+      group: minaguard-host
+      cancel-in-progress: false
 
     steps:
       - name: Git checkout

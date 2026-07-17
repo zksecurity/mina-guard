@@ -11,7 +11,7 @@ import { PrivateKey } from 'o1js';
 import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { MinaGuardIndexer } from '../indexer.js';
-import * as minaClient from '../mina-client.js';
+import { stubMinaClient } from './stub-mina-client.js';
 import type { ChainEvent } from '../mina-client.js';
 
 const stubConfig = {
@@ -58,8 +58,7 @@ async function ingest(
   const contract = await prisma.contract.create({
     data: { address, discoveredAtBlock: 1 },
   });
-  mock.module('../mina-client.js', () => ({
-    ...minaClient,
+  stubMinaClient(() => ({
     fetchDecodedContractEvents: async () => events,
   }));
   const indexer = new MinaGuardIndexer(stubConfig);
@@ -150,8 +149,7 @@ describe('config-mutating event decoding', () => {
     expect((await latestConfig(contractId)).delegate).toBe(delegate);
 
     // Undelegate = the contract delegating to itself (chain-e2e former steps 21-22)
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (): Promise<ChainEvent[]> => [
         {
           type: 'delegate', blockHeight: 9, txHash: 'tx-undel', ...HASHES(9),
@@ -223,11 +221,4 @@ describe('proposal event decoding', () => {
       ].sort()
     );
   });
-});
-
-// Module mocks are process-global in bun and leak into later test files
-// (they survive mock.restore()); restore the real module so file ordering
-// can never break another suite's use of mina-client.
-afterAll(() => {
-  mock.module('../mina-client.js', () => minaClient);
 });

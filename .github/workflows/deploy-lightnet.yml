@@ -12,6 +12,14 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, deploy-lightnet]
+    # Host-wide lock: this box (15 GB / 8 cores) also runs the e2e stack on a
+    # second runner. Two heavy Mina stacks at once thrash swap and starve o1js
+    # proving. This job-level group serialises against e2e.yml and
+    # preview-deploy.yml so only one heavy stack runs on the host at a time.
+    # cancel-in-progress:false → queue rather than kill an unrelated run.
+    concurrency:
+      group: minaguard-host
+      cancel-in-progress: false
     steps:
       - name: Verify branch is main
         run: |

@@ -3,7 +3,7 @@ import { PrivateKey } from 'o1js';
 import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { MinaGuardIndexer } from '../indexer.js';
-import * as minaClient from '../mina-client.js';
+import { stubMinaClient } from './stub-mina-client.js';
 
 const liteConfig = {
   minaEndpoint: 'http://stub',
@@ -60,8 +60,7 @@ describe('backfillContract window', () => {
     await setCursor(1000);
 
     const calls: Array<{ from: number; to: number }> = [];
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (
         _addr: string,
         from: number,
@@ -86,8 +85,7 @@ describe('backfillContract window', () => {
     await setCursor(1000);
 
     const calls: Array<{ from: number; to: number }> = [];
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (
         _addr: string,
         from: number,
@@ -111,8 +109,7 @@ describe('backfillContract window', () => {
     const contract = await prisma.contract.create({ data: { address, ready: false } });
     await setCursor(500);
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async () => [],
     }));
 
@@ -131,8 +128,7 @@ describe('backfillContract window', () => {
     // Any MinaGuard event is proof the contract was initialized on-chain.
     // Use an execution event because it's the simplest to stub without
     // triggering the deeper setup/ownerChange/etc. state machinery.
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async () => [makeExecutionEvent('hash-x', 50)],
     }));
 
@@ -151,8 +147,7 @@ describe('backfillContract window', () => {
     await setCursor(0);
 
     let called = false;
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async () => {
         called = true;
         return [];
@@ -182,8 +177,7 @@ describe('eager child auto-subscribe on CREATE_CHILD proposal', () => {
     await seedParent(parentAddress);
     await setCursor(100);
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (addr: string) =>
         addr === parentAddress
           ? [makeCreateChildProposalEvent(proposalHash, childAddress, 20)]
@@ -211,8 +205,7 @@ describe('eager child auto-subscribe on CREATE_CHILD proposal', () => {
     await seedParent(parentAddress);
     await setCursor(100);
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (addr: string) =>
         addr === parentAddress
           ? [makeCreateChildProposalEvent(proposalHash, childAddress, 20)]
@@ -234,8 +227,7 @@ describe('eager child auto-subscribe on CREATE_CHILD proposal', () => {
     await seedParent(parentAddress);
     await setCursor(100);
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (addr: string) =>
         addr === parentAddress
           ? [makeCreateChildProposalEvent(proposalHash, childAddress, 20)]
@@ -258,8 +250,7 @@ describe('eager child auto-subscribe on CREATE_CHILD proposal', () => {
 
     // txType='1' (addOwner) should not trigger any child insertion.
     const proposalHash = '99';
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (addr: string) =>
         addr === parentAddress
           ? [makeAddOwnerProposalEvent(proposalHash, 20)]
@@ -290,8 +281,7 @@ describe('eager child auto-subscribe on CREATE_CHILD proposal', () => {
       [parentAddress]: [makeCreateChildProposalEvent(proposalHash, childAddress, 20)],
       [childAddress]: [makeExecutionEvent(proposalHash, 25)],
     };
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async (addr: string) => eventsByAddress[addr] ?? [],
     }));
 
@@ -381,8 +371,7 @@ describe('tick: rescanUnreadyContracts', () => {
     await setCursor(100);
 
     let callCount = 0;
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
@@ -408,8 +397,7 @@ describe('tick: rescanUnreadyContracts', () => {
     });
     await setCursor(100);
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
@@ -435,8 +423,7 @@ describe('tick: rescanUnreadyContracts', () => {
     await setCursor(100);
 
     const rescanRanges: Array<{ from: number; to: number }> = [];
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
@@ -462,8 +449,7 @@ describe('tick: rescanUnreadyContracts', () => {
     await setCursor(100);
 
     const calls: string[] = [];
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeight: async () => 100,
       fetchBestChainHeaders: async () => [],
@@ -479,11 +465,4 @@ describe('tick: rescanUnreadyContracts', () => {
     // sits above the chain tip, so there's nothing to rescan yet.
     expect(calls).not.toContain(address);
   });
-});
-
-// Module mocks are process-global in bun and leak into later test files
-// (they survive mock.restore()); restore the real module so file ordering
-// can never break another suite's use of mina-client.
-afterAll(() => {
-  mock.module('../mina-client.js', () => minaClient);
 });

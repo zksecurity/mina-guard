@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'b
 import { PrivateKey } from 'o1js';
 import { prisma } from '../db.js';
 import { MinaGuardIndexer, detectAndRollbackReorg, rollbackAboveFork } from '../indexer.js';
-import * as minaClient from '../mina-client.js';
+import { stubMinaClient } from './stub-mina-client.js';
 import type { ChainEvent } from '../mina-client.js';
 import type { BackendConfig } from '../config.js';
 
@@ -168,8 +168,7 @@ describe('detectAndRollbackReorg', () => {
       { height: 6, blockHash: 'h6', parentHash: 'h5' },
     ]);
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchBestChainHeaders: async () => [
         { height: 5, blockHash: 'h5', parentHash: 'h4' },
         { height: 6, blockHash: 'h6', parentHash: 'h5' },
@@ -181,8 +180,7 @@ describe('detectAndRollbackReorg', () => {
   });
 
   test('returns null when no stored headers overlap the chain window', async () => {
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchBestChainHeaders: async () => [
         { height: 100, blockHash: 'h100', parentHash: 'h99' },
       ],
@@ -204,8 +202,7 @@ describe('detectAndRollbackReorg', () => {
     });
     await prisma.indexerCursor.create({ data: { key: 'indexed_height', value: '8' } });
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchBestChainHeaders: async () => [
         { height: 5, blockHash: 'h5', parentHash: 'h4' },
         { height: 6, blockHash: 'h6', parentHash: 'h5' },
@@ -244,8 +241,7 @@ describe('detectAndRollbackReorg', () => {
     });
     await prisma.indexerCursor.create({ data: { key: 'indexed_height', value: '9' } });
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchBestChainHeaders: async () => [
         { height: 5, blockHash: 'h5', parentHash: 'h4' },
         { height: 6, blockHash: 'h6', parentHash: 'h5' },
@@ -272,8 +268,7 @@ describe('detectAndRollbackReorg', () => {
     ]);
     await prisma.indexerCursor.create({ data: { key: 'indexed_height', value: '6' } });
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchBestChainHeaders: async () => [
         { height: 5, blockHash: 'h5-NEW', parentHash: 'h4-NEW' },
         { height: 6, blockHash: 'h6-NEW', parentHash: 'h5-NEW' },
@@ -291,8 +286,7 @@ describe('detectAndRollbackReorg', () => {
   test('returns null if daemon fetch throws', async () => {
     await seedHeaders([{ height: 10, blockHash: 'h10', parentHash: 'h9' }]);
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchBestChainHeaders: async () => { throw new Error('boom'); },
     }));
 
@@ -361,8 +355,7 @@ describe('reconstruction after rollback', () => {
     });
 
     // PHASE 1: ingest old chain.
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async () => oldChainEvents,
     }));
     await indexer.syncSingleContract(contract.id, address, 0, 9);
@@ -390,8 +383,7 @@ describe('reconstruction after rollback', () => {
       { height: 8, blockHash: NEW_HASH(8), parentHash: NEW_HASH(7) },
       { height: 9, blockHash: NEW_HASH(9), parentHash: NEW_HASH(8) },
     ];
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchBestChainHeaders: async () => newChainHeaders,
     }));
     const fork = await detectAndRollbackReorg(stubConfig);
@@ -436,8 +428,7 @@ describe('reconstruction after rollback', () => {
         event: { owner: ownerB, added: '0', newNumOwners: '1', configNonce: '1' },
       },
     ];
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchDecodedContractEvents: async () => newChainEvents,
     }));
     await indexer.syncSingleContract(contract.id, address, 7, 9);
@@ -503,11 +494,4 @@ describe('reconstruction after rollback', () => {
     expect(await prisma.contractConfig.count()).toBe(countsBefore.contractConfig);
     expect(await prisma.blockHeader.count()).toBe(countsBefore.blockHeader);
   });
-});
-
-// Module mocks are process-global in bun and leak into later test files
-// (they survive mock.restore()); restore the real module so file ordering
-// can never break another suite's use of mina-client.
-afterAll(() => {
-  mock.module('../mina-client.js', () => minaClient);
 });

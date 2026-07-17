@@ -24,6 +24,7 @@ import {
   waitForBanner as _waitForBanner,
   fillRecipients,
   waitForIndexer,
+  getIndexerStatus,
   getContracts,
   getContract,
   getOwners,
@@ -64,6 +65,7 @@ async function waitForBanner(...args: Parameters<typeof _waitForBanner>) {
 let accounts: TestAccount[];
 let contractAddress: string;
 let childAddress: string;
+let allocateChildHash: string;
 let proposalHashes: string[] = [];
 
 // Shared page — avoids Web Worker restart (and contract recompilation) between tests
@@ -257,6 +259,26 @@ interface ExecuteOptions {
   until?: () => Promise<boolean>;
   /** Runs after the success banner, before the indexer wait (diagnostics) */
   onBanner?: (bannerText: string) => Promise<void>;
+}
+
+/**
+ * Waits until the chain has produced `blocks` blocks beyond the current tip and
+ * the indexer has caught up. Used to let a freshly-landed tx (a just-created
+ * child account, a just-submitted proposal) finalise before we build an execute
+ * on top of it — executing against an unsettled tip is what lets the execute tx
+ * be accepted into the pool but then silently dropped under load.
+ */
+async function waitForChainSettle(blocks: number, timeoutMs = 120_000): Promise<void> {
+  const start = await getIndexerStatus();
+  const target = (start?.latestChainHeight ?? 0) + blocks;
+  await waitForIndexer(
+    `chain settles ${blocks} blocks (height >= ${target})`,
+    async () => {
+      const s = await getIndexerStatus();
+      return !!s && s.latestChainHeight >= target && s.indexedHeight >= s.latestChainHeight;
+    },
+    timeoutMs,
+  );
 }
 
 /**
@@ -528,8 +550,17 @@ test('4. Execute CREATE_CHILD via proposal detail', async () => {
 //     routing honest against future refactors of the branching logic.
 // ---------------------------------------------------------------------------
 
-test('4b. ALLOCATE_CHILD from parent to subvault (executeChildLifecycleOnchain)', async () => { const page = sharedPage;
-  log('=== Step 4b: Propose + execute ALLOCATE_CHILD ===');
+// Split into propose (4b) and execute (4c). Every other propose/execute pair in
+// this suite lives in two separate tests; ALLOCATE_CHILD used to be the only one
+// crammed back-to-back, and it was the only step that reliably timed out on
+// loaded CI. Its execute depends on the child account created just one step
+// earlier, so on a loaded chain it was executing against an unsettled tip — the
+// execute tx got accepted into the pool then silently dropped, which trips the
+// app's single-execute lock (recoverable only after the backend's 20-min
+// DROPPED_TX_GRACE_MS, far past any test timeout). Splitting + an explicit
+// settle lets the child + proposal finalise before we execute.
+test('4b. Propose ALLOCATE_CHILD from parent to subvault', async () => { const page = sharedPage;
+  log('=== Step 4b: Propose ALLOCATE_CHILD ===');
 
   // Parent may still be active from test 4, but reassert to be safe — the
   // proposal form derives its nonce space from the active contract.
@@ -543,14 +574,22 @@ test('4b. ALLOCATE_CHILD from parent to subvault (executeChildLifecycleOnchain)'
       p.txType === 'allocateChild' && p.receivers?.some((r: any) => r.address === childAddress),
     waitDescription: 'indexer processes ALLOCATE_CHILD proposal',
   });
-  const allocateHash = proposal.proposalHash;
-  log(`ALLOCATE_CHILD proposal: hash=${allocateHash.slice(0, 12)}...`);
+  allocateChildHash = proposal.proposalHash;
+  log(`ALLOCATE_CHILD proposal: hash=${allocateChildHash.slice(0, 12)}...`);
+});
 
-  await executeProposal(allocateHash, {
+test('4c. Execute ALLOCATE_CHILD (executeChildLifecycleOnchain)', async () => {
+  log('=== Step 4c: Execute ALLOCATE_CHILD ===');
+
+  // Let the newly-created child account and the ALLOCATE_CHILD proposal finalise
+  // before executing against them — see the note on test 4b.
+  await waitForChainSettle(4);
+
+  await executeProposal(allocateChildHash, {
     waitDescription: 'indexer processes ALLOCATE_CHILD execution',
   });
 
-  const executed = await getProposal(contractAddress, allocateHash);
+  const executed = await getProposal(contractAddress, allocateChildHash);
   expect(executed.status).toBe('executed');
   log(`ALLOCATE_CHILD executed`);
 });
@@ -882,6 +921,11 @@ test('13. Execute transfer (account2)', async () => { const page = sharedPage;
 
 test('14. Verify final state', async () => { const page = sharedPage;
   log('=== Step 14: Verify final state ===');
+
+  // The page recycle after step 13 reloads the app with the child as the active
+  // vault; re-select the parent before checking its settings (cf. step 5).
+  await gotoWithWallet(`/accounts/${contractAddress}`, accounts[0]);
+  await page.waitForTimeout(SHORT_WAIT);
 
   // Settings — 2 owners, threshold 2
   await gotoWithWallet('/settings', accounts[0]);

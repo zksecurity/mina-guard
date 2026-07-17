@@ -4,6 +4,7 @@ import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { MinaGuardIndexer } from '../indexer.js';
 import * as minaClient from '../mina-client.js';
+import { stubMinaClient } from './stub-mina-client.js';
 
 const config = {
   minaEndpoint: 'http://stub',
@@ -25,8 +26,7 @@ function stubLookups(opts: {
   txStatus: TxStatus;
   mempool: Set<string> | null;
 }) {
-  mock.module('../mina-client.js', () => ({
-    ...minaClient,
+  stubMinaClient(() => ({
     fetchZkappTxStatus: async (): Promise<TxStatus> => opts.txStatus,
     fetchMempoolHashes: async (): Promise<Set<string> | null> => opts.mempool,
   }));
@@ -90,10 +90,6 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  // mock.restore() does not undo mock.module registrations — re-register the
-  // real module so the stub doesn't leak into later test files in the same
-  // bun test process (mina-client-tx-status.test.ts imports the real thing).
-  mock.module('../mina-client.js', () => minaClient);
   await clearAll();
   await prisma.$disconnect();
 });
