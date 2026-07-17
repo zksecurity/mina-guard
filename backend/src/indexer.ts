@@ -434,30 +434,10 @@ export class MinaGuardIndexer {
     // otherwise multi-receiver transfer proposals have receivers stored in
     // reversed idx, which breaks the proposal-hash recomputation on the UI
     // side and causes "Proposal not found" errors on approve.
-    const events = reverseEventsWithinEachTx(rawEvents);
-
-    // Stable sort so 'proposal' events are processed before 'approval' /
-    // 'receiver' / 'execution' within the same batch. The per-tx reversal
-    // above already aligned receiver events with their emission order; the
-    // stable sort preserves that ordering since all receivers share a type.
-    const eventOrder: Record<string, number> = {
-      deployed: 0,
-      setup: 1,
-      setupOwner: 2,
-      proposal: 3,
-      approval: 4,
-      receiver: 5,
-      execution: 6,
-      ownerChange: 7,
-      thresholdChange: 8,
-      delegate: 9,
-      createChild: 10,
-      reclaimChild: 11,
-      enableChildMultiSig: 12,
-      createChildConfig: 13,
-      createChildOwner: 14,
-    };
-    events.sort((a, b) => (eventOrder[a.type] ?? 99) - (eventOrder[b.type] ?? 99));
+    // Apply events in canonical chain order: ascending block height, then the
+    // per-tx emission order restored by reverseEventsWithinEachTx. See
+    // orderEventsForApply for why the previous type-priority sort was unsafe.
+    const events = orderEventsForApply(reverseEventsWithinEachTx(rawEvents));
 
     let ingested = false;
     for (let seq = 0; seq < events.length; seq++) {
@@ -1300,6 +1280,63 @@ export function describeThrown(value: unknown): string {
   } catch {
     return Object.prototype.toString.call(value);
   }
+}
+
+/**
+/**
+ * Within-block processing order, applied only AFTER block height. o1js gives no
+ * ordering guarantee for events, so when the archive returns a single block's
+ * events across multiple txs in an unspecified order, this lifecycle rank keeps
+ * a dependent event (approval/execution) from being applied before the event it
+ * depends on (its proposal) and permanently dropped. Same-type events (notably a
+ * proposal's receiver slots) tie here and fall through to the input-order
+ * tiebreak, preserving the per-tx emission order restored by
+ * reverseEventsWithinEachTx.
+ */
+const EVENT_TYPE_ORDER: Record<string, number> = {
+  deployed: 0,
+  setup: 1,
+  setupOwner: 2,
+  proposal: 3,
+  approval: 4,
+  receiver: 5,
+  execution: 6,
+  ownerChange: 7,
+  thresholdChange: 8,
+  delegate: 9,
+  createChild: 10,
+  reclaimChild: 11,
+  enableChildMultiSig: 12,
+  createChildConfig: 13,
+  createChildOwner: 14,
+};
+
+/**
+ * Orders a batch of decoded events into canonical chain-application order by
+ * three keys: ascending block height (primary), the within-block lifecycle rank
+ * above (secondary), then the input order restored by reverseEventsWithinEachTx
+ * (tiebreak, keeping the sort stable regardless of engine).
+ *
+ * Replaces a previous GLOBAL sort by event-type priority that discarded block
+ * height entirely, so in a multi-block sync batch a later block's execution (low
+ * type rank) was applied before an earlier block's ownerChange/thresholdChange
+ * (high type rank). Because appendContractConfigSnapshot copies unchanged fields
+ * from whatever config is "latest" at apply time, that misordering wrote stale
+ * or future state into the wrong ContractConfig snapshot (e.g. a config with the
+ * new numOwners but the pre-change ownersCommitment). Making block height the
+ * primary key fixes that while the secondary type rank preserves the
+ * proposal-before-approval processing the old sort provided within a block.
+ */
+export function orderEventsForApply(events: ChainEvent[]): ChainEvent[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort(
+      (a, b) =>
+        a.event.blockHeight - b.event.blockHeight ||
+        (EVENT_TYPE_ORDER[a.event.type] ?? 99) - (EVENT_TYPE_ORDER[b.event.type] ?? 99) ||
+        a.index - b.index,
+    )
+    .map(({ event }) => event);
 }
 
 /** Converts unknown values into nullable string form for DB persistence. */
