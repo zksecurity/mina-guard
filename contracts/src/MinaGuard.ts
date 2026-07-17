@@ -276,7 +276,20 @@ export class MinaGuard extends SmartContract {
     createChildOwner: CreateChildOwnerEvent,
   };
 
-  /** Configures account permissions and emits a deploy discovery event. */
+  /**
+   * Configures account permissions and emits a deploy discovery event.
+   *
+   * SECURITY, initialize atomically: deploy() only publishes the account and its
+   * proof-authorized permissions; it does NOT set governance. Between deploy()
+   * and setup()/reserveForParent() the guard is uninitialized, and those init
+   * methods are authorized by proof alone with no deployer binding, so anyone
+   * can front-run initialization: call setup() with their own owner set, or
+   * reserveForParent() to bind the address to an attacker parent (which then
+   * permanently blocks the legitimate setup()). Callers MUST include deploy()
+   * and setup()/reserveForParent() in the SAME transaction, so no uninitialized
+   * on-chain window exists. Never deploy a guard in one transaction and
+   * initialize it in a later one.
+   */
   async deploy() {
     await super.deploy();
     this.account.permissions.set({
@@ -706,6 +719,10 @@ export class MinaGuard extends SmartContract {
    * The owners commitment is computed on-chain from `initialOwners` (see
    * initializeState), so the deployer cannot store a commitment that disagrees
    * with the owner set — no client-side cross-check is required.
+   *
+   * MUST be called in the SAME transaction as deploy() (see deploy()): this
+   * method is authorized by proof alone with no deployer binding, so a guard
+   * left deployed-but-uninitialized can be front-run and set up by anyone.
    */
   @method async setup(
     threshold: Field,
@@ -732,6 +749,11 @@ export class MinaGuard extends SmartContract {
    * executeSetupChild (which verifies the parent) can initialize the child.
    *
    * Can only be called once (parent must be empty).
+   *
+   * SECURITY: this MUST share the deploy() transaction (see deploy()). It is
+   * authorized by proof alone with no deployer binding, so a child left
+   * deployed-but-unreserved can be front-run: an attacker reserves it to their
+   * own parent, permanently bricking the intended child address.
    */
   @method async reserveForParent(
     parentAddress: PublicKey,
