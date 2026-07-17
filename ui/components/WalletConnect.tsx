@@ -4,12 +4,6 @@ import { useState, useRef, useEffect } from 'react';
 import { truncateAddress, type WalletType } from '@/lib/types';
 import LedgerConnectModal from './LedgerConnectModal';
 
-const LEDGER_NETWORKS = [
-  { label: 'Testnet', id: 0 },
-  { label: 'Devnet', id: 0 },
-  { label: 'Mainnet', id: 1 },
-] as const;
-
 interface WalletConnectProps {
   address: string | null;
   connected: boolean;
@@ -22,7 +16,6 @@ interface WalletConnectProps {
   onConnectAuro: () => void;
   onConnectLedger: (accountIndex?: number) => void;
   onDisconnect: () => void;
-  onNetworkChange?: (network: string, ledgerNetworkId: number) => void;
 }
 
 export default function WalletConnect({
@@ -37,29 +30,23 @@ export default function WalletConnect({
   onConnectAuro,
   onConnectLedger,
   onDisconnect,
-  onNetworkChange,
 }: WalletConnectProps) {
   const [copied, setCopied] = useState(false);
   const [showLedgerModal, setShowLedgerModal] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [showWalletMenu, setShowWalletMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const walletMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdowns on outside click
+  // Close the wallet menu on outside click
   useEffect(() => {
-    if (!showMenu && !showWalletMenu) return;
+    if (!showMenu) return;
     const handler = (e: MouseEvent) => {
-      if (showMenu && menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
-      }
-      if (showWalletMenu && walletMenuRef.current && !walletMenuRef.current.contains(e.target as Node)) {
-        setShowWalletMenu(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu, showWalletMenu]);
+  }, [showMenu]);
 
   const handleCopy = () => {
     if (!address) return;
@@ -75,53 +62,13 @@ export default function WalletConnect({
   if (connected && address) {
     return (
       <div className="flex items-center gap-3">
-        {walletType === 'ledger' && onNetworkChange ? (
-          <div className="relative" ref={menuRef}>
-            <button
-              onClick={() => setShowMenu((prev) => !prev)}
-              className="text-sm font-medium text-safe-text hover:text-white transition-colors flex items-center gap-1"
-            >
-              {networkLabel}
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            {showMenu && (
-              <div className="absolute right-0 top-full mt-1 bg-safe-dark border border-safe-border rounded-lg py-1 min-w-[140px] z-50 shadow-lg">
-                {LEDGER_NETWORKS.map(({ label, id }) => (
-                  <button
-                    key={label}
-                    onClick={() => {
-                      onNetworkChange(label.toLowerCase(), id);
-                      setShowMenu(false);
-                    }}
-                    className={`w-full text-left text-xs px-3 py-1.5 transition-colors ${
-                      networkLabel === label
-                        ? 'text-safe-green'
-                        : 'text-safe-text hover:text-white hover:bg-safe-hover'
-                    }`}
-                  >
-                    {label}
-                    {networkLabel === label && ' ✓'}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <span className="text-sm font-medium text-safe-text">
-            {networkLabel}
-          </span>
-        )}
-        <div className="relative" ref={walletType === 'ledger' && onNetworkChange ? walletMenuRef : menuRef}>
+        {/* Network is fixed by the deployment (see getMinaGuardConfig); read-only. */}
+        <span className="text-sm font-medium text-safe-text">
+          {networkLabel}
+        </span>
+        <div className="relative" ref={menuRef}>
           <button
-            onClick={() => {
-              if (walletType === 'ledger' && onNetworkChange) {
-                setShowWalletMenu((prev) => !prev);
-              } else {
-                setShowMenu((prev) => !prev);
-              }
-            }}
+            onClick={() => setShowMenu((prev) => !prev)}
             className="flex items-center gap-2 bg-safe-gray border border-safe-border rounded-lg px-3 py-2 hover:bg-safe-hover transition-colors cursor-pointer"
           >
             <div className="w-2 h-2 rounded-full bg-safe-green" />
@@ -135,13 +82,12 @@ export default function WalletConnect({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          {(walletType === 'ledger' && onNetworkChange ? showWalletMenu : showMenu) && (
+          {showMenu && (
             <div className="absolute right-0 top-full mt-1 bg-safe-dark border border-safe-border rounded-lg py-1 min-w-[160px] z-50 shadow-lg">
               <button
                 onClick={() => {
                   handleCopy();
                   setShowMenu(false);
-                  setShowWalletMenu(false);
                 }}
                 className="w-full text-left text-xs px-3 py-1.5 text-safe-text hover:text-white hover:bg-safe-hover transition-colors flex items-center gap-2"
               >
@@ -165,7 +111,6 @@ export default function WalletConnect({
               <button
                 onClick={() => {
                   setShowMenu(false);
-                  setShowWalletMenu(false);
                   onDisconnect();
                 }}
                 className="w-full text-left text-xs px-3 py-1.5 text-red-400 hover:text-red-300 hover:bg-safe-hover transition-colors flex items-center gap-2"

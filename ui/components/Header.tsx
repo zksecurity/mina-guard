@@ -18,7 +18,6 @@ interface HeaderProps {
   onConnectAuro: () => void;
   onConnectLedger: (accountIndex?: number) => void;
   onDisconnect: () => void;
-  onNetworkChange?: (network: string, ledgerNetworkId: number) => void;
 }
 
 export default function Header({
@@ -33,7 +32,6 @@ export default function Header({
   onConnectAuro,
   onConnectLedger,
   onDisconnect,
-  onNetworkChange,
 }: HeaderProps) {
   return (
     <header className="flex items-center justify-between px-6 py-4 border-b border-safe-border">
@@ -70,7 +68,6 @@ export default function Header({
           onConnectAuro={onConnectAuro}
           onConnectLedger={onConnectLedger}
           onDisconnect={onDisconnect}
-          onNetworkChange={onNetworkChange}
         />
       </div>
     </header>
