@@ -31,7 +31,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const {
     wallet, isLoading: walletLoading, error: walletError, clearError: clearWalletError,
     auroInstalled, ledgerSupported,
-    connect, connectAuro, connectLedger, disconnect, networkMismatch,
+    connect, connectAuro, connectLedger, disconnect, networkMismatch, assertSigningNetwork,
   } = useWallet();
 
   const {
@@ -65,9 +65,6 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const [operationBanner, setOperationBanner] = useState<OperationBanner | null>(null);
   const refreshRef = useRef(refreshMultisig);
   refreshRef.current = refreshMultisig;
-  // Read the latest mismatch inside startOperation without recreating it.
-  const networkMismatchRef = useRef(networkMismatch);
-  networkMismatchRef.current = networkMismatch;
   const currentLabelRef = useRef('');
 
   const clearBanner = useCallback(() => setOperationBanner(null), []);
@@ -84,15 +81,12 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   const startOperation = useCallback(
     async (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => {
-      // Block signing when the connected Auro wallet is on the wrong network:
-      // approvals would fail the in-circuit verify and broadcasts hit the wrong
-      // chain. The user must switch networks in Auro first.
-      const mismatch = networkMismatchRef.current;
-      if (mismatch) {
-        setOperationBanner({
-          type: 'error',
-          message: `Your Auro wallet is on ${capNetwork(mismatch.walletNetwork)}, but this app runs on ${capNetwork(mismatch.deploymentNetwork)}. Switch networks in Auro, then reconnect.`,
-        });
+      // Fail-closed network gate: re-query the connected wallet's network live and
+      // block if it can't be confirmed or is on the wrong chain, so no
+      // wrong-network approval or broadcast is ever attempted.
+      const blockMessage = await assertSigningNetwork();
+      if (blockMessage) {
+        setOperationBanner({ type: 'error', message: blockMessage });
         return;
       }
       setIsOperating(true);
@@ -133,7 +127,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         setIsOperating(false);
       }
     },
-    []
+    [assertSigningNetwork]
   );
 
   return (

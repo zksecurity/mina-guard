@@ -18,6 +18,9 @@ import { WalletState } from '@/lib/types';
 import { setLedgerSigning } from '@/lib/multisigClient';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 
+/** Capitalizes a network name for display (e.g. "mainnet" -> "Mainnet"). */
+const capNet = (n: string) => n.charAt(0).toUpperCase() + n.slice(1);
+
 const EMPTY_WALLET: WalletState = {
   connected: false,
   address: null,
@@ -167,12 +170,18 @@ export function useWallet() {
 
   const clearError = useCallback(() => setError(null), []);
 
-  // Warn when a connected Auro wallet sits on a different proof domain than this
-  // deployment. Auro signs approvals/txs on its OWN network, so a mainnet-vs-not
-  // mismatch makes owner approvals fail the in-circuit verify (which always uses
-  // the devnet prefix) and sends broadcasts to the wrong chain. Only mainnet vs
-  // not matters (devnet/testnet share the domain). Ledger has no network of its
-  // own (its id is pinned to the deployment), so this applies only to Auro.
+  // Latest wallet snapshot, so the stable assertSigningNetwork callback can read
+  // current state without being recreated.
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
+
+  // Proactive WARNING banner: derived from the cached Auro network. A connected
+  // Auro wallet on a different proof domain than this deployment makes owner
+  // approvals fail the in-circuit verify (which always uses the devnet prefix)
+  // and sends broadcasts to the wrong chain. Only mainnet vs not matters
+  // (devnet/testnet share the domain). Ledger's id is pinned to the deployment,
+  // so this applies only to Auro. Null cache => no banner (see the fail-closed
+  // enforcement below, which does not trust the cache).
   const networkMismatch = useMemo(() => {
     if (!wallet.connected || wallet.type !== 'auro' || !wallet.network) return null;
     const deploymentNetwork = getMinaGuardConfig().networkId;
@@ -180,9 +189,29 @@ export function useWallet() {
     return { walletNetwork: wallet.network, deploymentNetwork };
   }, [wallet.connected, wallet.type, wallet.network]);
 
+  // Fail-CLOSED enforcement: re-query Auro's network LIVE right before signing.
+  // The cached wallet.network can be null (Auro injects window.mina async, so
+  // requestNetwork races on first load/reconnect) or stale (a missed
+  // chainChanged), and trusting it would let a wrong-network approval/broadcast
+  // through. Returns a block message, or null when signing may proceed.
+  const assertSigningNetwork = useCallback(async (): Promise<string | null> => {
+    const w = walletRef.current;
+    if (!w.connected || w.type !== 'auro') return null;
+    const auroNetwork = await getAuroNetwork();
+    const deploymentNetwork = getMinaGuardConfig().networkId;
+    if (!auroNetwork) {
+      return `Can't confirm your Auro wallet's network. Unlock Auro and set it to ${capNet(deploymentNetwork)}, then retry.`;
+    }
+    if ((auroNetwork === 'mainnet') !== (deploymentNetwork === 'mainnet')) {
+      return `Your Auro wallet is on ${capNet(auroNetwork)}, but this app runs on ${capNet(deploymentNetwork)}. Switch networks in Auro, then retry.`;
+    }
+    return null;
+  }, []);
+
   return {
     wallet,
     networkMismatch,
+    assertSigningNetwork,
     isLoading,
     error,
     clearError,
