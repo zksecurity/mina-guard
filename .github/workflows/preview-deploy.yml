@@ -1,22 +1,40 @@
 # .github/workflows/preview-deploy.yml
 #
-# Automatically deploys/tears down preview environments for PRs targeting main.
-# Requires a self-hosted GitHub Actions runner on the Hetzner server.
+# On-demand preview environments for PRs targeting main, driven by PR comments.
+# Requires a self-hosted GitHub Actions runner (label: deploy-lightnet) on the
+# Hetzner server.
 #
-# Setup:
+#   /preview        -> deploy (or redeploy) this PR's preview environment
+#   /preview up     -> same as /preview
+#   /preview down   -> tear the preview down
+#
+# Previews used to deploy automatically on every push (pull_request:
+# synchronize). That spun up a full Mina lightnet + docker build on this box
+# for every commit, concurrently with the e2e stack on the sibling runner,
+# starving o1js proving on a 15 GB / 8-core host. They are now opt-in.
+#
+# Teardown still happens automatically when the PR is closed/merged.
+#
+# CAVEAT (GitHub semantics): `issue_comment`-triggered workflows always run the
+# workflow file from the DEFAULT branch (main), not the PR branch. So the
+# `/preview` command only works once this file is merged to main. Removing the
+# old automatic `synchronize` trigger, however, takes effect for the PR
+# immediately.
+#
+# Runner setup (unchanged):
 #   1. On the server: mkdir actions-runner && cd actions-runner
-#   2. Download: curl -o actions-runner-linux-x64-2.333.1.tar.gz -L https://github.com/actions/runner/releases/download/v2.333.1/actions-runner-linux-x64-2.333.1.tar.gz
-#   3. Extract: tar xzf actions-runner-linux-x64-2.333.1.tar.gz
-#   4. Configure: ./config.sh --url https://github.com/<org>/<repo> --token <token>
-#   5. Install as service: sudo ./svc.sh install && sudo ./svc.sh start
-#   6. Stop: sudo ./svc.sh stop
-#   7. Uninstall: sudo ./svc.sh uninstall
+#   2. curl -o actions-runner-linux-x64-2.333.1.tar.gz -L https://github.com/actions/runner/releases/download/v2.333.1/actions-runner-linux-x64-2.333.1.tar.gz
+#   3. tar xzf actions-runner-linux-x64-2.333.1.tar.gz
+#   4. ./config.sh --url https://github.com/<org>/<repo> --token <token>
+#   5. sudo ./svc.sh install && sudo ./svc.sh start
 
 name: Preview Environment
 
 on:
+  issue_comment:
+    types: [created]
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [closed]
     branches: [main]
 
 permissions:
@@ -24,17 +42,88 @@ permissions:
   issues: write
 
 concurrency:
-  group: preview-${{ github.event.number }}
+  group: preview-${{ github.event.issue.number || github.event.number }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    # Only run on PRs from the same repo (not forks) to prevent arbitrary code execution on the server
-    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+  # ---------------------------------------------------------------------------
+  # Authorise + parse the `/preview [up|down]` command. Gated in `if:` so a
+  # runner is only ever occupied for a genuine preview command from someone with
+  # write access. Resolves the PR head SHA (issue_comment events carry no PR ref)
+  # and refuses fork PRs (arbitrary code on a self-hosted runner).
+  # ---------------------------------------------------------------------------
+  resolve:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/preview') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: [self-hosted, deploy-lightnet]
+    outputs:
+      cmd: ${{ steps.parse.outputs.cmd }}
+      pr: ${{ steps.parse.outputs.pr }}
+      head_sha: ${{ steps.parse.outputs.head_sha }}
+    steps:
+      - name: Parse command and resolve PR head
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body.trim();
+            const m = body.match(/^\/preview(?:\s+(up|down))?\s*$/);
+            if (!m) {
+              // Comment starts with /preview but isn't a recognised command;
+              // ignore silently to avoid comment spam.
+              core.setOutput('cmd', 'none');
+              return;
+            }
+            const sub = m[1] || 'up';
+            const prNumber = context.payload.issue.number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const sameRepo =
+              pr.head.repo &&
+              pr.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}`;
+            if (!sameRepo) {
+              core.setOutput('cmd', 'none');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: 'Preview environments are only available for branches in this repository, not forks.',
+              });
+              return;
+            }
+            core.setOutput('cmd', sub);
+            core.setOutput('pr', String(prNumber));
+            core.setOutput('head_sha', pr.head.sha);
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket',
+            });
+
+  # ---------------------------------------------------------------------------
+  # Deploy / redeploy the preview.
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: resolve
+    if: needs.resolve.outputs.cmd == 'up'
+    runs-on: [self-hosted, deploy-lightnet]
+    # Host-wide lock — see e2e.yml / deploy-lightnet.yml. Serialises against the
+    # e2e stack on the sibling runner so two Mina stacks never run at once on
+    # this box. cancel-in-progress:false → queue behind a running e2e/deploy.
+    concurrency:
+      group: minaguard-host
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
           submodules: recursive
 
       # bun + workspace deps are needed on the host so preview.sh can compute
@@ -49,15 +138,14 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Deploy preview
-        # `down` first wipes volumes + lightnet chain so every commit to the
-        # PR gets a clean DB and fresh genesis. Without this, preview.sh up
-        # only rebuilds the app containers — the existing postgres volume
-        # (indexer cursor, contracts, events) and lightnet image (chain state)
-        # survive, so stale rows from previous iterations of the PR can make
-        # the new backend hit inconsistent state. `down` is idempotent and
-        # safe on the first open/reopen when nothing is running.
+        # `down` first wipes volumes + lightnet chain so every deploy gets a
+        # clean DB and fresh genesis. Without this, `up` only rebuilds the app
+        # containers — the existing postgres volume (indexer cursor, contracts,
+        # events) and lightnet image (chain state) survive, so stale rows from
+        # previous iterations of the PR can make the new backend hit
+        # inconsistent state. `down` is idempotent and safe when nothing runs.
         env:
-          PR_NUMBER: ${{ github.event.number }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr }}
         run: |
           chmod +x preview-env/preview.sh
           ./preview-env/preview.sh down $PR_NUMBER
@@ -65,7 +153,7 @@ jobs:
 
       - name: Wait for services
         env:
-          PR_NUMBER: ${{ github.event.number }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr }}
         run: |
           # Must match BASE_PORT in preview.sh
           PREVIEW_PORT=$((10000 + PR_NUMBER))
@@ -81,30 +169,11 @@ jobs:
           echo "Backend failed to become ready within timeout"
           exit 1
 
-      # # TEMPORARY (UI scaling PR only — remove before merging): seeds bulk
-      # # synthetic vault/proposal data into the preview's Postgres so reviewers
-      # # can exercise pagination, search, and the card grid at realistic counts.
-      # # Each wallet listed below is added as an owner of every seeded vault, so
-      # # connecting with any of them on the preview shows the full set.
-      # - name: Seed UI scaling fixtures
-      #   env:
-      #     PR_NUMBER: ${{ github.event.number }}
-      #   run: |
-      #     # Add/remove wallet pubkeys here to test with multiple wallets.
-      #     WALLETS=(
-      #       "B62qpJgZSnx9dGFAqh45SehhK9TsxTnKia9vgnYzSXnCxwQQxixrnL1"
-      #       "B62qqgtCy8FAmPtrHbQfLunyMaXTNrutgpApaSGEM8zFLN4ypspQqo4"
-      #     )
-      #     args=()
-      #     for w in "${WALLETS[@]}"; do args+=(--wallet "$w"); done
-      #     docker compose -p "pr-${PR_NUMBER}" exec -T -w /app/backend backend \
-      #       bun scripts/seed-fixtures.ts "${args[@]}" --clean
-
       - name: Comment PR with preview URL
         uses: actions/github-script@v7
         with:
           script: |
-            const pr = ${{ github.event.number }};
+            const pr = Number('${{ needs.resolve.outputs.pr }}');
             const base = `https://mina-nodes.duckdns.org/preview/${pr}`;
             const body = [
               '### Preview Environment',
@@ -116,13 +185,15 @@ jobs:
               `| GraphQL | ${base}/graphql |`,
               `| Accounts | ${base}/accounts/acquire-account |`,
               `| Explorer | ${base}/explorer |`,
+              '',
+              '_Comment `/preview down` to tear this down; it is also removed automatically when the PR closes._',
             ].join('\n');
 
             // Delete previous preview comments
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: pr,
             });
             for (const comment of comments.data) {
               if (comment.body.includes('### Preview Environment')) {
@@ -137,12 +208,61 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: pr,
               body: body,
             });
 
-  teardown:
-    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+  # ---------------------------------------------------------------------------
+  # Manual teardown via `/preview down`.
+  # ---------------------------------------------------------------------------
+  teardown-comment:
+    needs: resolve
+    if: needs.resolve.outputs.cmd == 'down'
+    runs-on: [self-hosted, deploy-lightnet]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Teardown preview
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.pr }}
+        run: |
+          chmod +x preview-env/preview.sh
+          ./preview-env/preview.sh down $PR_NUMBER
+
+      - name: Confirm teardown
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = Number('${{ needs.resolve.outputs.pr }}');
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+            });
+            for (const comment of comments.data) {
+              if (comment.body.includes('### Preview Environment')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+              body: 'Preview environment torn down.',
+            });
+
+  # ---------------------------------------------------------------------------
+  # Automatic teardown when the PR is closed/merged.
+  # ---------------------------------------------------------------------------
+  teardown-closed:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, deploy-lightnet]
     steps:
       - uses: actions/checkout@v4
