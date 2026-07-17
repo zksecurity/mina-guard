@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   isAuroInstalled,
   connectAuro as connectAuroWallet,
@@ -167,8 +167,22 @@ export function useWallet() {
 
   const clearError = useCallback(() => setError(null), []);
 
+  // Warn when a connected Auro wallet sits on a different proof domain than this
+  // deployment. Auro signs approvals/txs on its OWN network, so a mainnet-vs-not
+  // mismatch makes owner approvals fail the in-circuit verify (which always uses
+  // the devnet prefix) and sends broadcasts to the wrong chain. Only mainnet vs
+  // not matters (devnet/testnet share the domain). Ledger has no network of its
+  // own (its id is pinned to the deployment), so this applies only to Auro.
+  const networkMismatch = useMemo(() => {
+    if (!wallet.connected || wallet.type !== 'auro' || !wallet.network) return null;
+    const deploymentNetwork = getMinaGuardConfig().networkId;
+    if ((wallet.network === 'mainnet') === (deploymentNetwork === 'mainnet')) return null;
+    return { walletNetwork: wallet.network, deploymentNetwork };
+  }, [wallet.connected, wallet.type, wallet.network]);
+
   return {
     wallet,
+    networkMismatch,
     isLoading,
     error,
     clearError,

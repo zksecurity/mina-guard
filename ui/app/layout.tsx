@@ -12,6 +12,9 @@ import { AppContext, type OperationBanner } from '@/lib/app-context';
 import { warmupWorker, onLedgerSigningChange, type LedgerSigningContext } from '@/lib/multisigClient';
 import LedgerSigningModal from '@/components/LedgerSigningModal';
 
+/** Capitalizes a network name for display (e.g. "mainnet" -> "Mainnet"). */
+const capNetwork = (n: string) => n.charAt(0).toUpperCase() + n.slice(1);
+
 /** Root-level provider that wires wallet state with backend-indexed contract data. */
 function AppProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -28,7 +31,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const {
     wallet, isLoading: walletLoading, error: walletError, clearError: clearWalletError,
     auroInstalled, ledgerSupported,
-    connect, connectAuro, connectLedger, disconnect,
+    connect, connectAuro, connectLedger, disconnect, networkMismatch,
   } = useWallet();
 
   const {
@@ -62,6 +65,9 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const [operationBanner, setOperationBanner] = useState<OperationBanner | null>(null);
   const refreshRef = useRef(refreshMultisig);
   refreshRef.current = refreshMultisig;
+  // Read the latest mismatch inside startOperation without recreating it.
+  const networkMismatchRef = useRef(networkMismatch);
+  networkMismatchRef.current = networkMismatch;
   const currentLabelRef = useRef('');
 
   const clearBanner = useCallback(() => setOperationBanner(null), []);
@@ -78,6 +84,17 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   const startOperation = useCallback(
     async (label: string, fn: (onProgress: (step: string) => void) => Promise<string | null>) => {
+      // Block signing when the connected Auro wallet is on the wrong network:
+      // approvals would fail the in-circuit verify and broadcasts hit the wrong
+      // chain. The user must switch networks in Auro first.
+      const mismatch = networkMismatchRef.current;
+      if (mismatch) {
+        setOperationBanner({
+          type: 'error',
+          message: `Your Auro wallet is on ${capNetwork(mismatch.walletNetwork)}, but this app runs on ${capNetwork(mismatch.deploymentNetwork)}. Switch networks in Auro, then reconnect.`,
+        });
+        return;
+      }
       setIsOperating(true);
       setOperationLabel(label);
       setCompletedSteps([]);
@@ -164,6 +181,17 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           onConnectLedger={connectLedger}
           onDisconnect={async () => { await disconnect(); clearBanner(); router.push('/'); }}
         />
+        {networkMismatch && (
+          <div className="flex items-center gap-2 bg-amber-500/15 border-b border-amber-500/40 px-6 py-2.5 text-sm text-amber-300">
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            <span>
+              Your Auro wallet is on <b>{capNetwork(networkMismatch.walletNetwork)}</b>, but this app runs on{' '}
+              <b>{capNetwork(networkMismatch.deploymentNetwork)}</b>. Switch networks in Auro to sign or broadcast.
+            </span>
+          </div>
+        )}
         <div className="flex flex-1 min-h-0">
           {pathname !== '/' && pathname !== '/accounts/new' && (
             <Sidebar
