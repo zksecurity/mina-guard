@@ -10,10 +10,11 @@
 # Meant to be run by trail-pull-deploy.timer.
 #
 # ┌─ DRAFT — NOT YET VALIDATED ON THE TRAIL BOX ────────────────────────────┐
-# │ Before enabling: (1) gh CLI installed + authed, (2) `docker login ghcr.io`│
-# │ read:packages token so the private images pull, (3) the images actually  │
-# │ built + signed by trail-release.yml, (4) MESA_NODE_HOST / ARCHIVE_DB_*   │
-# │ present in the systemd unit's EnvironmentFile. See the setup runbook.     │
+# │ Before enabling: (1) gh CLI installed + authed, (2) the /trail GHCR       │
+# │ packages are PUBLIC, so the box pulls with no `docker login` / token,     │
+# │ (3) the images actually built + attested by trail-release.yml, (4)        │
+# │ MESA_NODE_HOST / ARCHIVE_DB_* present in the systemd unit's               │
+# │ EnvironmentFile. See the setup runbook.                                   │
 # └──────────────────────────────────────────────────────────────────────────┘
 set -euo pipefail
 
