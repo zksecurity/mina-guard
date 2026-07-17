@@ -42,16 +42,16 @@ the wallet shows only a hash — is the online path's central risk and is analyz
 | File | Purpose |
 | ---- | ------- |
 | `MinaGuard.ts` | Contract class, types (structs), events |
-| `constants.ts` | `MAX_OWNERS`, `MAX_RECEIVERS`, markers, `TxType` + `Destination` enums |
+| `constants.ts` | `MAX_OWNERS`, `MAX_RECEIVERS`, `NETWORK_DOMAIN`, markers, `TxType` + `Destination` enums |
 | `storage.ts` | Off-chain stores: `OwnerStore`, `ApprovalStore`, `VoteNullifierStore` |
 | `list-commitment.ts` | Owner chain hash circuits: membership proof, add, remove, setup-list commitment + coherence |
 | `memo.ts` | `memoToField()` (Poseidon hash of UTF-8 memo bytes), `decodeTxMemo()` (base58 tx memo → plaintext) |
 | `utils.ts` | `ownerKey()` helper (`Poseidon.hash(owner.toFields())`) |
 | `index.ts` | Public exports |
 
-### On-chain state (13 fields)
+### On-chain state (12 fields)
 
-MinaGuard declares 13 on-chain state fields — 14 field slots, since `parent` is a
+MinaGuard declares 12 on-chain state fields — 13 field slots, since `parent` is a
 two-field `PublicKey` — which exceeds the legacy 8-slot cap and requires the Mesa
 32-slot branch of o1js:
 
@@ -64,8 +64,7 @@ two-field `PublicKey` — which exceeds the legacy 8-slot cap and requires the M
 | 4 | `voteNullifierRoot` | MerkleMap root preventing double-voting |
 | 5 | `approvalRoot` | MerkleMap root of approval counts (`proposalHash → count`) |
 | 6 | `configNonce` | Incremented on governance changes; invalidates stale proposals |
-| 7 | `networkId` | Deployer-supplied network identifier |
-| 8 | `parent` | Parent guard address (`PublicKey.empty()` for a root guard) |
+| 7-8 | `parent` | Parent guard address (`PublicKey.empty()` for a root guard) |
 | 9 | `parentNonce` | Last executed REMOTE nonce on this child (`0` on root guards) |
 | 10 | `childExecutionRoot` | MerkleMap root marking REMOTE proposals executed on this child |
 | 11 | `childMultiSigEnabled` | `Field(1)` if this child accepts its own propose/approve/execute ops, `Field(0)` otherwise |
@@ -108,7 +107,8 @@ Two more circuit functions serve the setup path (`setup`, `reserveForParent`,
 ### Off-chain storage
 
 Three independent store classes in `storage.ts` mirror on-chain roots. Each is
-self-contained and serializable.
+self-contained; two of the three (`OwnerStore`, `ApprovalStore`) also implement
+`serialize`/`deserialize` — `VoteNullifierStore` does not.
 
 **`OwnerStore`** — an ordered `PublicKey[]` array. Methods: `addSorted()`, `sortedPredecessor()`
 (derives the `insertAfter` key for the add-owner flow), `insertAfter()`, `remove()`, `isOwner()`,
@@ -151,7 +151,6 @@ class TransactionProposal extends Struct({
   nonce:        Field,       // Ordered execution nonce (LOCAL or child-REMOTE domain)
   configNonce:  Field,       // Must match on-chain configNonce
   expirySlot:   Field,       // Global slot deadline (0 = no expiry)
-  networkId:    Field,       // Must match on-chain networkId
   guardAddress: PublicKey,   // Must match the guard the proposal lives on
   destination:  Field,       // LOCAL or REMOTE (see below)
   childAccount: PublicKey,   // Target child for REMOTE; empty for LOCAL
@@ -164,7 +163,10 @@ otherwise noted.
 
 `hash()` returns `Poseidon` over **every** field of the struct — including `memoHash`, which is
 how the proposal's memo is bound in (the plaintext itself travels off-chain as the transaction
-memo; see the [backend memo lifecycle](./backend-audit-guide.md#data-model)). This hash is the
+memo; see the [backend memo lifecycle](./backend-audit-guide.md#data-model)) — plus the
+compile-time `NETWORK_DOMAIN` constant appended as the final hash element (`Field(1)` on
+mainnet / `Field(2)` on testnet; see [Constants](#constants)), which is not a struct field but a
+per-network domain separator baked into the circuit. This hash is the
 universal key for approval counts, vote nullifiers, and signatures. Because `guardAddress`,
 `destination`, and `childAccount`
 are all inside the hash, a proposal is cryptographically bound to a specific (parent, child)
@@ -178,7 +180,7 @@ shares the same nonce. Execution domains:
 
 - **LOCAL proposals** use the guard's `nonce`.
 - **REMOTE proposals** use the target child's `parentNonce`.
-- **`CREATE_CHILD`** is a special REMOTE case: its `nonce` must be `0`, and `executeSetupChild` initializes the child with `nonce = 1` and `parentNonce = 1`.
+- **`CREATE_CHILD`** is a special REMOTE case: its `nonce` must be `0`, and `executeSetupChild` initializes the child with `nonce = 0` and `parentNonce = 0`.
 
 **LOCAL vs REMOTE proposals.**
 
@@ -210,6 +212,7 @@ Propose-time rules enforced in `propose()`:
 - `receivers[0]` must be empty for `CHANGE_THRESHOLD`.
 - Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, or `ENABLE_CHILD_MULTI_SIG`.
+- `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
 - `nonce` must be fresh for the relevant execution domain:
   - LOCAL propose/approve requires `proposal.nonce > this.nonce`
@@ -228,13 +231,14 @@ Defined in `constants.ts`:
 | `PROPOSED_MARKER` | `Field(1)` | Base value written to approval map on propose |
 | `EXECUTED_MARKER` | `Field(0).sub(1)` | Max field value; marks executed LOCAL proposals |
 | `EMPTY_MERKLE_MAP_ROOT` | `new MerkleMap().getRoot()` | Initializes `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` |
+| `NETWORK_DOMAIN` | `Field(1)` mainnet / `Field(2)` testnet | Per-network domain separator appended to every proposal `hash()`; selected at build time via env (`NEXT_PUBLIC_MINA_NETWORK_DOMAIN` / `MINA_NETWORK_DOMAIN`), defaulting to testnet |
 
 ### On-chain multi-step flow
 
 **Deploy.** `deploy()` sets account permissions (see [Permissions](#permissions)) and emits
 a `DeployEvent` with the contract address for indexer discovery.
 
-**Setup.** `setup(threshold, numOwners, networkId, initialOwners)` — one-time root-guard
+**Setup.** `setup(threshold, numOwners, initialOwners)` — one-time root-guard
 initialization.
 
 - Guard: `ownersCommitment == Field(0)` (not yet initialized)
@@ -250,21 +254,22 @@ initialization.
 
 1. Assert `childMultiSigEnabled == 1` if this is a child guard
 2. Verify proposer is an owner (chain hash witness)
-3. Assert `configNonce`, `networkId`, `guardAddress` match on-chain values
+3. Assert `configNonce`, `guardAddress` match on-chain values
 4. Assert `destination` and `childAccount` are consistent
 5. Assert proposal nonce freshness for the relevant domain (`nonce` or `parentNonce`; `CREATE_CHILD` requires `0`)
 6. Enforce per-txType propose rules (see TxType table)
-7. Verify proposer's signature over `[proposalHash]`
-8. Check and set vote nullifier (prevents re-proposal)
-9. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`
-10. Emit `ProposalEvent`, `MAX_RECEIVERS` `ReceiverEvent`s, and `ApprovalEvent`
+7. Assert `tokenId == Field(0)` (only native MINA is supported)
+8. Verify proposer's signature over `[proposalHash]`
+9. Check and set vote nullifier (prevents re-proposal)
+10. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`
+11. Emit `ProposalEvent`, `MAX_RECEIVERS` `ReceiverEvent`s, and `ApprovalEvent`
 
 **Approve.**
 `approveProposal(proposal, signature, approver, ownerWitness, approvalWitness, currentApprovalCount, voteNullifierWitness)`
 
 1. Assert `childMultiSigEnabled == 1` if this is a child guard
 2. Verify approver is an owner
-3. Assert `configNonce`, `networkId`, `guardAddress` match
+3. Assert `configNonce`, `guardAddress` match
 4. Assert proposal nonce freshness for the relevant domain
 5. Verify signature over `[proposalHash]`
 6. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed
@@ -277,7 +282,7 @@ initialization.
 - Wallet initialized (`ownersCommitment != 0`)
 - `childMultiSigEnabled == 1` if this is a child guard
 - `txType` matches the method, `destination == LOCAL`
-- `configNonce`, `networkId`, `guardAddress` match on-chain
+- `configNonce`, `guardAddress` match on-chain
 - `proposal.nonce == this.nonce + 1`
 - Proposal not expired (if `expirySlot != 0`, asserts `globalSlotSinceGenesis <= expirySlot`)
 - Not executed, exists, and threshold satisfied
@@ -339,7 +344,6 @@ the parent's on-chain state via:
 const parentGuard = new MinaGuard(parentAddress);
 const parentOwnersCommitment = parentGuard.ownersCommitment.getAndRequireEquals();
 const parentConfigNonce      = parentGuard.configNonce.getAndRequireEquals();
-const parentNetworkId        = parentGuard.networkId.getAndRequireEquals();
 const parentApprovalRoot     = parentGuard.approvalRoot.getAndRequireEquals();
 const parentThreshold        = parentGuard.threshold.getAndRequireEquals();
 ```
@@ -377,9 +381,14 @@ Guards:
 - **One-time only**: asserts `this.parent == PublicKey.empty()` — cannot be called twice.
 - **Non-empty parent**: asserts `parentAddress != PublicKey.empty()`.
 
-No owner authentication is needed because the child address comes from a freshly generated keypair
-whose private key is required to sign the deploy account update in the same transaction. An attacker
-cannot deploy or reserve the child without the private key.
+No owner authentication is needed on `reserveForParent` itself: like `setup()`, it is authorized by
+proof alone with **no** deployer binding. The child's private key is required only to sign the
+`deploy()` account update — not `reserveForParent` or `setup()`. So an attacker cannot *deploy* the
+child without its private key, but reserve and setup are unauthenticated: anyone can reserve or set
+up a child that was deployed in an *earlier* transaction. Safety therefore rests on a caller
+obligation, not on authentication — `deploy()` and `reserveForParent()` (together with the parent's
+`propose()`, and `deploy()` + `setup()` for the root path) MUST live in a **single** transaction, so
+no uninitialized on-chain window ever exists for a front-runner to seize.
 
 The announced config is provably coherent: `reserveForParent` runs `assertCoherentSetupOwners` and
 computes the emitted `ownersCommitment` on-chain from `initialOwners` via `computeSetupOwnersChain`,
@@ -399,7 +408,7 @@ announced config doesn't hash to the signed `proposal.data`.
 parent-approval inputs `(parentApprovalWitness, parentApprovalCount)`, and emit `ExecutionEvent`
 alongside their specific event.
 
-- **`executeSetupChild(threshold, numOwners, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Called on a child that was already deployed and reserved (via `reserveForParent`) at propose time but not yet fully initialized. Computes `ownersCommitment` on-chain from `initialOwners` (with `assertCoherentSetupOwners`), then asserts `this.parent == proposal.guardAddress` (verifying the reservation matches), `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, `proposal.nonce == 0`, and that `Poseidon([ownersCommitment, threshold, numOwners])` equals **both** `proposal.data` and the `reservedConfigHash` stored at reserve time. Uses `proposal.networkId` as the child's `networkId` — `assertParentApprovalState` pins the parent's `networkId` as an AccountUpdate precondition, so `proposal.networkId` is the parent-approved value and an attacker can't supply a mismatched id via this path. Initializes all state with `nonce = 1` and `parentNonce = 1`, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
+- **`executeSetupChild(threshold, numOwners, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Called on a child that was already deployed and reserved (via `reserveForParent`) at propose time but not yet fully initialized. Computes `ownersCommitment` on-chain from `initialOwners` (with `assertCoherentSetupOwners`), then asserts `this.parent == proposal.guardAddress` (verifying the reservation matches), `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, `proposal.nonce == 0`, and that `Poseidon([ownersCommitment, threshold, numOwners])` equals **both** `proposal.data` and the `reservedConfigHash` stored at reserve time. Initializes all state with `nonce = 0` and `parentNonce = 0`, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
 - **`executeReclaimToParent(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, amount)`** — Sends `amount` MINA back to `this.parent`. Asserts `proposal.data == amount.value`, `proposal.nonce == this.parentNonce + 1`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `ReclaimChildEvent { proposalHash, parentAddress, amount }`. Does **not** check `childMultiSigEnabled` — this is a deliberate recovery path that works even when the child is disabled.
 - **`executeDestroy(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness)`** — Sends the full child balance to the parent, sets `childMultiSigEnabled = 0`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. The child can later be re-enabled by `executeEnableChildMultiSig`; nonce state is preserved across disable/enable cycles. Reuses `ReclaimChildEvent` (same "MINA flowed child → parent" semantics — `ExecutionEvent.txType == DESTROY_CHILD` disambiguates from a partial reclaim).
 - **`executeEnableChildMultiSig(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, enabled)`** — Asserts `proposal.data == enabled`, `enabled ∈ {0, 1}`, and `proposal.nonce == this.parentNonce + 1`. Sets `childMultiSigEnabled`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `EnableChildMultiSigEvent { proposalHash, parentAddress, enabled }`.
@@ -413,15 +422,15 @@ slimmed: per-execution events carry only what is **not** already derivable from 
 | Event | Fields | Emitted By |
 | ----- | ------ | ---------- |
 | `DeployEvent` | `guardAddress` | `deploy` |
-| `SetupEvent` | `ownersCommitment, threshold, numOwners, networkId, parent` | `setup`, `executeSetupChild` |
+| `SetupEvent` | `ownersCommitment, threshold, numOwners, parent` | `setup`, `executeSetupChild` |
 | `SetupOwnerEvent` | `owner, index` | `setup`, `executeSetupChild` (one per `MAX_OWNERS` slot) |
-| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, memoHash, nonce, configNonce, expirySlot, networkId, guardAddress, destination, childAccount` | `propose` |
+| `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, memoHash, nonce, configNonce, expirySlot, guardAddress, destination, childAccount` | `propose` |
 | `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
 | `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
 | `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |
 | `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners, configNonce` | `executeOwnerChange` (`owner` = the added/removed key; `added` = `1` for ADD_OWNER, `0` for REMOVE_OWNER) |
 | `ThresholdChangeEvent` | `proposalHash, oldThreshold, newThreshold, configNonce` | `executeThresholdChange` |
-| `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` (empty `delegate` = undelegate to self) |
+| `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` (`delegate` == the guard's own address means undelegated) |
 | `CreateChildConfigEvent` | `proposalHash, childAccount, ownersCommitment, threshold, numOwners` | `reserveForParent` on child (one per `CREATE_CHILD` propose) |
 | `CreateChildOwnerEvent` | `proposalHash, owner, index` | `reserveForParent` on child (one per `MAX_OWNERS` slot) |
 | `CreateChildEvent` | `proposalHash, parentAddress` | `executeSetupChild` (config fields duplicated in the sibling `SetupEvent`) |
@@ -473,7 +482,7 @@ assumptions it *does* rest on:
   verification are trusted primitives (see [Dependencies](#dependencies)). The signing path and the
   proving path must agree on encoding — that identity is re-checked whenever the `deps/o1js`
   submodule or the o1js pin moves.
-- **The deployer's genesis choices.** The initial owner set and `networkId` are the deployer's to
+- **The deployer's genesis choices.** The initial owner set is the deployer's to
   choose; the contract only guarantees the stored commitment cannot disagree with the announced
   owner list (see [Setup](#on-chain-multi-step-flow)). Depositors verify setup events first.
 - **Mina's finality horizon.** Replay/precondition guarantees are on-chain and absolute; the
@@ -486,21 +495,19 @@ assumptions it *does* rest on:
 `TransactionProposal.hash()`, recomputed on-chain from the caller-supplied struct, and the
 approver's signature must cover that exact hash (`signature.verify(owner, [proposalHash])`).
 Audit whether any field that affects fund movement — `receivers`, `data`, `guardAddress`,
-`destination`, `childAccount`, `networkId` — is left out of the hash or of the propose-time
+`destination`, `childAccount` — is left out of the hash or of the propose-time
 consistency checks. Anything omitted becomes malleable after approval.
 
 **2. Replay guards across all four domains.** LOCAL re-execution is blocked by `EXECUTED_MARKER`
 in `approvalRoot`; REMOTE by `childExecutionRoot`; cross-contract by `guardAddress` in the hash;
 cross-child by `childAccount` in the hash plus the child's `childAccount == this.address` assert;
-cross-network by the compile-time `NETWORK_DOMAIN` baked into the VK *and* the `networkId` field
-check. Confirm each execute path writes its marker and that no path can execute twice or on the
-wrong guard/child/network.
+cross-network by the compile-time `NETWORK_DOMAIN` baked into the VK. Confirm each execute path
+writes its marker and that no path can execute twice or on the wrong guard/child/network.
 
 **3. Child reservation and config binding (PR #89).** The gap between `deploy(child)` and
 `executeSetupChild` is a hijack window closed by `reserveForParent` (write-once `parent` +
-`reservedConfigHash`). Verify: `setup()` is blocked once reserved, `executeSetupChild` can only
-initialize the double-bound config (`proposal.data` **and** `reservedConfigHash`), and the child's
-`networkId` is forced to the parent-approved value via the precondition.
+`reservedConfigHash`). Verify: `setup()` is blocked once reserved, and `executeSetupChild` can only
+initialize the double-bound config (`proposal.data` **and** `reservedConfigHash`).
 
 **4. Governance bounds cannot lock or unbound the vault.** `setup()`, `executeOwnerChange()`, and
 `executeThresholdChange()` all re-assert `0 < threshold ≤ numOwners ≤ MAX_OWNERS`. Confirm no
@@ -527,11 +534,11 @@ re-authorizes state/fund movement outside a proof, and that the deployed VK matc
 | No proposal substitution | Approvals keyed by content hash, not sequential ID |
 | Setup owner list coherent with commitment | `ownersCommitment` computed in-circuit from `initialOwners` (`computeSetupOwnersChain`); non-empty padding and duplicate active owners rejected (`assertCoherentSetupOwners`) |
 | Executed child config matches the displayed config | `reserveForParent` stores `reservedConfigHash` (write-once); `executeSetupChild` asserts the recomputed config hash equals both `proposal.data` and `reservedConfigHash` |
-| Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet) baked into every proposal hash produces distinct VKs per network; additionally `networkId` in proposal must match on-chain state |
+| Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet) baked into every proposal hash produces distinct VKs per network (pinned by the `check-vk-hash` CI job) |
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |
 | Cross-child replay prevented | `childAccount` is inside `proposalHash`; children assert `proposal.childAccount == this.address` |
 | Parent state drift invalidates REMOTE approvals | Child reads `configNonce`/`ownersCommitment`/`approvalRoot`/`threshold` as AccountUpdate preconditions; any parent change aborts the child tx |
-| Child reserved at deploy time | `reserveForParent()` asserts `ownersCommitment == 0` and `parent == empty`, then sets `this.parent` atomically with deploy — blocking `setup()` hijack, attacker-parent binding, and reservation of initialized root vaults |
+| Child reserved at deploy time | `reserveForParent()` asserts `ownersCommitment == 0` and `parent == empty`, then sets `this.parent`; the caller MUST bundle it into the same transaction as `deploy()` (a caller obligation — reserve/setup are proof-authorized, not deployer-bound). Done atomically, this blocks `setup()` hijack, attacker-parent binding, and reservation of initialized root vaults |
 | Hierarchy depth capped at 2 | `propose` rejects REMOTE proposals on any guard whose `parent != PublicKey.empty()`, so children can never raise `CREATE_CHILD` |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
 | Reclaim and destroy are recovery paths | Child-lifecycle methods bypass `childMultiSigEnabled`; the parent can always retrieve funds |
@@ -621,8 +628,8 @@ contracts/
 
 - **`o1js` (`3.0.0-mesa.final`, hoisted at the repo root)** — the proving system, zkApp runtime,
   and hashing/signature primitives (Poseidon, `Signature.verify`). This is the cryptographic
-  foundation of the TCB. The **Mesa** branch is required specifically because MinaGuard's 13 state
-  fields exceed o1js's legacy 8-slot cap. The circuit's correctness assumptions are o1js's
+  foundation of the TCB. The **Mesa** branch is required specifically because MinaGuard's 12 state
+  fields (13 slots) exceed o1js's legacy 8-slot cap. The circuit's correctness assumptions are o1js's
   correctness assumptions.
 - **`mina-signer`** — used by the clients (UI worker, offline CLI) that build and sign the structs
   this contract verifies, resolved from the pinned `ui/deps/o1js` submodule. It is **not** a

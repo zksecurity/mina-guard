@@ -100,6 +100,20 @@ reclaimable.
   - Transactions submitted through the Ledger/offline-CLI flow reach the endpoints defined in the frontend
     code (`lib/endpoints.ts`: `NEXT_PUBLIC_MINA_ENDPOINT`/`NEXT_PUBLIC_ARCHIVE_ENDPOINT` baked in at build
     time; the desktop shell overrides them at runtime via an injected `window.__minaGuardConfig`).
+- **The circuit's network domain is a build-time constant — the most security-relevant UI build var.**
+  `NEXT_PUBLIC_MINA_NETWORK_DOMAIN` selects the compile-time `NETWORK_DOMAIN` that is baked into every
+  proposal hash *and* into the per-network verification key (`contracts/src/constants.ts`, which reads
+  `NEXT_PUBLIC_MINA_NETWORK_DOMAIN ?? MINA_NETWORK_DOMAIN`; only the `NEXT_PUBLIC_` form is inlined into
+  browser code — a bare `MINA_NETWORK_DOMAIN` is dropped and `process.env` is `{}` in the browser).
+  **Unset ⇒ `testnet`, silently**, so a build with the wrong-or-defaulted domain produces proofs and
+  hashes for the wrong network (this domain separation is what blocks cross-network proposal replay).
+  The other build-time `NEXT_PUBLIC_*` Next inlines into the bundle: `NEXT_PUBLIC_MINA_NETWORK` (o1js
+  network id / fee-payer signature domain), `NEXT_PUBLIC_MINA_ENDPOINT` / `NEXT_PUBLIC_ARCHIVE_ENDPOINT`
+  (node / archive), `NEXT_PUBLIC_API_BASE_URL` (backend read API), `NEXT_PUBLIC_BLOCK_EXPLORER_URL`,
+  `NEXT_PUBLIC_POLL_INTERVAL_MS`, `NEXT_PUBLIC_INDEXER_MODE` (`full` vs `lite`),
+  `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`, and the test-only `NEXT_PUBLIC_E2E_TEST`. Only the Mina/archive
+  endpoints are overridable at runtime by the desktop shell (`window.__minaGuardConfig`); everything else
+  — `NEXT_PUBLIC_MINA_NETWORK_DOMAIN` especially, being compiled into the circuit — is fixed at build time.
 
 ---
 
@@ -144,31 +158,32 @@ the signer decides what the user authorizes. The moving parts:
     array (the proposal hash).
   - Signature reconstruction differs per wallet: Ledger `{field, scalar}`
     decimals are reassembled into an o1js `Signature` (`worker.ts:240-243`,
-    `602-605`); Auro returns base58.
+    `627-630`); Auro returns base58.
   - `ledgerNetworkId` is process-global mutable state (`ledgerWallet.ts:10-16`)
-    that has to match the network the tx is built for.
+    that has to match the network the tx is built for (that network is now
+    fixed by the deployment build, not user-selectable — see #119 below).
   - `broadcastWithLedgerSig` reuses the one fee-payer signature for any
     fee-payer-owned account update with `useFullCommitment`
-    (`worker.ts:592-632`; reuse loop `612-620`).
+    (`worker.ts:617-657`; reuse loop `637-645`).
 
 **2. Atomicity of deploy + setup, and of CREATE_CHILD.**
 A guard that is deployed but not yet configured could be controlled by whoever
 calls `setup()` first.
   - Top-level vaults use the atomic `deployAndSetupContract` — one tx doing
-    `fundNewAccount` + `deploy` + `setup` (`worker.ts:730-781`, tx at
-    `764-772`; called from `accounts/new/page.tsx:160`). Separate
+    `fundNewAccount` + `deploy` + `setup` (`worker.ts:755-806`, tx at
+    `789-797`; called from `accounts/new/page.tsx:160`). Separate
     `deployContract` / `setupContract` methods exist with no UI caller
-    (`worker.ts:693-728`, `783-841`).
+    (`worker.ts:718-753`, `808-857`).
   - CREATE_CHILD spans two transactions by design: the propose tx does
     `deploy(child)` + `reserveForParent(child)` + `propose(parent)` atomically
-    (`worker.ts:954-978`); the later `executeSetupChild` is bound on-chain to
+    (`worker.ts:979-1003`); the later `executeSetupChild` is bound on-chain to
     the config `reserveForParent()` committed (`MinaGuard.ts:736-760`,
     write-once guards `743-744`, commit `759-760`; binding checks `818`,
     `823-825`). The worker pre-flights the announced config against
-    `proposal.data` (`worker.ts:1221-1227`).
+    `proposal.data` (`worker.ts:1248-1254`).
   - Account-creation fees on execute are counted from the hash-bound
     `proposalStruct.receivers`, never the raw backend array
-    (`worker.ts:1110-1132`), so indexer rows beyond `MAX_RECEIVERS` can't
+    (`worker.ts:1142-1153`), so indexer rows beyond `MAX_RECEIVERS` can't
     inflate the executor-signed fee.
 
 **3. Indexer-supplied data feeding into signed transactions.**
@@ -179,17 +194,22 @@ included — `worker.ts:565`; owner ordering reconstructed by sorting event
 payloads, `279-292`). On action paths the recomputed `proposalHash` must key
 into a proposal that exists on-chain and the owner's signature covers it
 (`MinaGuard.ts:1011`, `1014`, `1032`), so the contract re-checks what the
-indexer supplied. The reconstruction paths that feed this — store roots, owner
-ordering, `childExecutionRoot`, the `executeSetupChild` pre-flights
-(`worker.ts:1221-1227`, `1245-1251`, on-chain anchors `MinaGuard.ts:818`,
-`823-825`) — all run from indexer data.
+indexer supplied. The client also guards this seam locally: on
+approve/execute/child paths the worker asserts that the struct it rebuilt from
+indexer data hashes to the indexer-claimed `proposalHash`, hard-failing before
+it signs anything (`assertRecomputedProposalHash`, `worker.ts:585`, called at
+`1056`/`1127`/`1262`/`1347`), so a swapped-in different proposal is caught in the
+browser rather than only on-chain (#111). The reconstruction paths that feed
+this — store roots, owner ordering, `childExecutionRoot`, the
+`executeSetupChild` pre-flights (`worker.ts:1248-1254`, `1273-1279`, on-chain
+anchors `MinaGuard.ts:818`, `823-825`) — all run from indexer data.
 
 The memo is the worked example (three roles, one enforced — see the overview).
 The **hashed** `memoHash` is the only representation owners' signatures cover
-(`worker.ts:875`; part of `TransactionProposal.hash()`, `MinaGuard.ts:85`).
+(`worker.ts:900`; part of `TransactionProposal.hash()`, `MinaGuard.ts:85`).
 The **broadcast** plaintext rides the outer tx as protocol metadata
 (`txSender`, `worker.ts:123-127`) — the proposer's own `input.memo` at propose
-(`953-954`), the indexer-supplied `proposal.memo` at execute (`1129-1130`);
+(`978-979`), the indexer-supplied `proposal.memo` at execute (`1156-1157`);
 nothing in the circuit ties it to `memoHash`. The **displayed** plaintext is
 decoded from the broadcast tx by the indexer (`indexer.ts:716`), which also
 computes both match flags (`proposal-record.ts:123-130`, `132-139`;
@@ -224,7 +244,7 @@ pending-tx metadata.
 
 **6. Test-only escape hatches.**
 `setTestKey` / `setSkipProofs` enable direct signing and dummy proofs, gated
-on `NEXT_PUBLIC_E2E_TEST` (`worker.ts:676-691`, `multisigClient.ts:119-138`;
+on `NEXT_PUBLIC_E2E_TEST` (`worker.ts:701-716`, `multisigClient.ts:119-138`;
 `skipProofs`/`DummyProof` feed `maybeProve`, `worker.ts:91-120`), which Next
 inlines at build time so the branch is dead code in production.
 
@@ -252,7 +272,9 @@ ui/
 │   └── settings/page.tsx        # Compile-cache toggle & prefs
 │
 ├── components/                  # Presentational + interactive components
-│   ├── Header.tsx               # Wallet connect controls, network switch
+│   ├── Header.tsx               # Wallet connect controls + node-endpoints chip;
+│   │                            #   network is display-only (fixed by the deployment,
+│   │                            #   no switcher — the Ledger network dropdown was removed, #119)
 │   ├── WalletConnect.tsx        # Auro/Ledger connect entry point
 │   ├── LedgerConnectModal.tsx   # Ledger address retrieval UX
 │   ├── LedgerSigningModal.tsx   # "Confirm on device" blocking modal
