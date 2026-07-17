@@ -3,16 +3,35 @@
 import TransportWebHID from '@ledgerhq/hw-transport-webhid';
 import type Transport from '@ledgerhq/hw-transport';
 import { MinaApp } from '@zondax/ledger-mina-js';
+import { getMinaGuardConfig } from '@/lib/endpoints';
 
 let transport: Transport | null = null;
 let app: MinaApp | null = null;
 
-/** Ledger network ID: 1 = mainnet, 0 = testnet/devnet. Defaults to testnet. */
-let ledgerNetworkId = 0;
+// Ledger signing network IDs are FIXED by the deployment, not user-selectable.
+// The two Ledger signing purposes need OPPOSITE networks, and the previous
+// single mutable id (set from a UI dropdown) was wrong for at least one of them
+// in every config:
+//
+//  - Fee-payer / tx-commitment signatures (signFeePayer) are verified by the
+//    Mina node, so they must use the deployment's network. A mainnet build that
+//    signed with the testnet id produced signatures the mainnet node rejects.
+//    The id comes from getMinaGuardConfig() at sign time: the SAME source the
+//    worker uses to build and broadcast the tx (the Electron runtime config when
+//    present, else NEXT_PUBLIC_* env), so a fee-payer signature can never
+//    disagree with the network the tx is actually sent to.
+//  - Owner-approval signatures over the proposal hash (signFields) are verified
+//    IN-CIRCUIT by o1js Signature.verify, which always uses the 'devnet' prefix
+//    (network id 0) regardless of the deployment. Signing these with the mainnet
+//    id produced approvals the contract rejects.
 
-/** Updates the network ID used for Ledger signing at runtime. */
-export function setLedgerNetworkId(id: number): void {
-  ledgerNetworkId = id;
+/** Network id for owner-approval signatures verified in-circuit: always devnet (0). */
+const LEDGER_APPROVAL_NETWORK_ID = 0;
+
+/** Network id for fee-payer / tx signatures the Mina node verifies. Resolved at
+ *  sign time from the same config the worker broadcasts with, so the two agree. */
+function ledgerTxNetworkId(): number {
+  return getMinaGuardConfig().networkId === 'mainnet' ? 1 : 0;
 }
 
 const LEDGER_SUCCESS = 9000;
@@ -167,7 +186,9 @@ export async function signFeePayer(
   const bytes = fieldToBytes(BigInt(commitment));
   let result;
   try {
-    result = await ledger.signFieldElement(accountIndex, ledgerNetworkId, bytes);
+    // Fee-payer signature: the Mina node verifies it, so use the deployment
+    // network (same source the worker broadcasts with).
+    result = await ledger.signFieldElement(accountIndex, ledgerTxNetworkId(), bytes);
   } catch (err) {
     throw toLedgerError(err);
   }
@@ -189,7 +210,10 @@ export async function signFields(
 
   let result;
   try {
-    result = await ledger.signFieldElement(accountIndex, ledgerNetworkId, bytes);
+    // Owner-approval signature over the proposal hash: verified in-circuit by
+    // o1js Signature.verify, which always uses the devnet prefix. Must be signed
+    // with the devnet id regardless of the deployment network.
+    result = await ledger.signFieldElement(accountIndex, LEDGER_APPROVAL_NETWORK_ID, bytes);
   } catch (err) {
     throw toLedgerError(err);
   }

@@ -10,7 +10,6 @@ import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext, type OperationBanner } from '@/lib/app-context';
 import { warmupWorker, onLedgerSigningChange, type LedgerSigningContext } from '@/lib/multisigClient';
-import { setLedgerNetworkId } from '@/lib/ledgerWallet';
 import LedgerSigningModal from '@/components/LedgerSigningModal';
 
 /** Root-level provider that wires wallet state with backend-indexed contract data. */
@@ -32,9 +31,10 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     connect, connectAuro, connectLedger, disconnect, setNetwork,
   } = useWallet();
 
-  const setWalletNetwork = useCallback((network: string, ledgerNetId: number) => {
+  // The Ledger signing network is fixed at build time (see ledgerWallet.ts), so
+  // the network selector only updates the displayed app network, not signing.
+  const setWalletNetwork = useCallback((network: string) => {
     setNetwork(network);
-    setLedgerNetworkId(ledgerNetId);
   }, [setNetwork]);
 
   const {
