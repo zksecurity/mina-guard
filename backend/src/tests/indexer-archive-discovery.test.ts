@@ -3,7 +3,7 @@ import { PrivateKey } from 'o1js';
 import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { MinaGuardIndexer } from '../indexer.js';
-import * as minaClient from '../mina-client.js';
+import { stubMinaClient } from './stub-mina-client.js';
 
 const VK_HASH = '22592591136635241954458728867125272730912271761728581931779127524287952990537';
 
@@ -70,8 +70,7 @@ describe('archive discovery: happy path', () => {
     ];
 
     let archiveQueryCalledWith: { from: number; to: number } | null = null;
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 1000,
       fetchBestChainHeaders: async () => [],
@@ -120,8 +119,7 @@ describe('archive discovery: happy path', () => {
     const matching = PrivateKey.random().toPublicKey().toBase58();
     const mismatched = PrivateKey.random().toPublicKey().toBase58();
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 500,
       fetchBestChainHeaders: async () => [],
@@ -154,8 +152,7 @@ describe('archive discovery: per-iteration failure isolation', () => {
     const bad = PrivateKey.random().toPublicKey().toBase58();
     const ok2 = PrivateKey.random().toPublicKey().toBase58();
 
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 1000,
       fetchBestChainHeaders: async () => [],
@@ -202,8 +199,7 @@ describe('archive discovery: per-iteration failure isolation', () => {
     const bad = PrivateKey.random().toPublicKey().toBase58();
 
     let backfillCallCountForBad = 0;
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 1000,
       fetchBestChainHeaders: async () => [],
@@ -260,8 +256,7 @@ describe('archive discovery: backfill range', () => {
     const addr = PrivateKey.random().toPublicKey().toBase58();
 
     const backfillCalls: Array<{ from: number; to: number }> = [];
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => 50_000,
       fetchBestChainHeaders: async () => [],
@@ -294,8 +289,7 @@ describe('archive discovery: cursor progression', () => {
     const calls: Array<{ from: number; to: number }> = [];
 
     let latestHeight = 1000;
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
       fetchLatestBlockHeightFromArchive: async () => latestHeight,
       fetchBestChainHeaders: async () => [],
@@ -325,11 +319,4 @@ describe('archive discovery: cursor progression', () => {
     // DISCOVERY_MARGIN is 5 in the source.
     expect(calls[1]).toEqual({ from: 1000 - 5, to: 1500 });
   });
-});
-
-// Module mocks are process-global in bun and leak into later test files
-// (they survive mock.restore()); restore the real module so file ordering
-// can never break another suite's use of mina-client.
-afterAll(() => {
-  mock.module('../mina-client.js', () => minaClient);
 });

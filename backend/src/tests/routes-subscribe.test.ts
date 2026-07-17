@@ -5,7 +5,7 @@ import { PrivateKey } from 'o1js';
 import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
 import type { MinaGuardIndexer } from '../indexer.js';
-import * as minaClient from '../mina-client.js';
+import { stubMinaClient } from './stub-mina-client.js';
 import { createApiRouter } from '../routes.js';
 
 let server: Server;
@@ -72,8 +72,7 @@ beforeAll(async () => {
   // Mock network-touching helpers everywhere so subscribe doesn't hit a real node.
   // Default VK mock returns a hash so fromBlock-path tests treat the address as a zkApp;
   // the "not a zkApp" test overrides this to null.
-  mock.module('../mina-client.js', () => ({
-    ...minaClient,
+  stubMinaClient(() => ({
     fetchLatestBlockHeight: async () => 0,
     fetchVerificationKeyHash: async () => 'vk-hash-stub',
   }));
@@ -86,8 +85,7 @@ afterEach(async () => {
   await clearDatabase();
   // Re-establish the baseline mock after any per-test overrides.
   mock.restore();
-  mock.module('../mina-client.js', () => ({
-    ...minaClient,
+  stubMinaClient(() => ({
     fetchLatestBlockHeight: async () => 0,
     fetchVerificationKeyHash: async () => 'vk-hash-stub',
   }));
@@ -115,8 +113,7 @@ function del(path: string) {
 
 describe('POST /api/subscribe', () => {
   test('creates a contract entry with ready=false and discoveredAtBlock set to latestHeight - SUBSCRIBE_MARGIN', async () => {
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchLatestBlockHeight: async () => 1000,
     }));
 
@@ -153,8 +150,7 @@ describe('POST /api/subscribe', () => {
 
   test('accepts explicit fromBlock and uses it as discoveredAtBlock (bypassing the margin)', async () => {
     let fetchLatestCalls = 0;
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchLatestBlockHeight: async () => {
         fetchLatestCalls += 1;
         return 9999;
@@ -172,8 +168,7 @@ describe('POST /api/subscribe', () => {
   });
 
   test('rejects explicit fromBlock when address is not a deployed zkApp (manual add-existing path)', async () => {
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchLatestBlockHeight: async () => 0,
       fetchVerificationKeyHash: async () => null,
     }));
@@ -190,8 +185,7 @@ describe('POST /api/subscribe', () => {
 
   test('does NOT require the address to be on-chain when fromBlock is omitted (auto-sub after deploy)', async () => {
     let vkCalls = 0;
-    mock.module('../mina-client.js', () => ({
-      ...minaClient,
+    stubMinaClient(() => ({
       fetchLatestBlockHeight: async () => 0,
       fetchVerificationKeyHash: async () => {
         vkCalls += 1;
@@ -426,11 +420,4 @@ describe('full-mode gating', () => {
     const stillThere = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
     expect(stillThere).not.toBeNull();
   });
-});
-
-// Module mocks are process-global in bun and leak into later test files
-// (they survive mock.restore()); restore the real module so file ordering
-// can never break another suite's use of mina-client.
-afterAll(() => {
-  mock.module('../mina-client.js', () => minaClient);
 });
