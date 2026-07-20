@@ -28,14 +28,8 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const {
     wallet, isLoading: walletLoading, error: walletError, clearError: clearWalletError,
     auroInstalled, ledgerSupported,
-    connect, connectAuro, connectLedger, disconnect, setNetwork,
+    connect, connectAuro, connectLedger, disconnect,
   } = useWallet();
-
-  // The Ledger signing network is fixed at build time (see ledgerWallet.ts), so
-  // the network selector only updates the displayed app network, not signing.
-  const setWalletNetwork = useCallback((network: string) => {
-    setNetwork(network);
-  }, [setNetwork]);
 
   const {
     state: multisig,
@@ -154,7 +148,6 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         clearBanner,
         startOperation,
         ledgerSigning,
-        setWalletNetwork,
       }}
     >
       <div className="flex flex-col min-h-screen">
@@ -170,7 +163,6 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           onConnectAuro={connectAuro}
           onConnectLedger={connectLedger}
           onDisconnect={async () => { await disconnect(); clearBanner(); router.push('/'); }}
-          onNetworkChange={setWalletNetwork}
         />
         <div className="flex flex-1 min-h-0">
           {pathname !== '/' && pathname !== '/accounts/new' && (
