@@ -112,17 +112,23 @@ describe('config-mutating event decoding', () => {
     expect(config.numOwners).toBe(1);
   });
 
-  test('ownerChange add then remove tracks memberships and numOwners', async () => {
+  test('ownerChange add then remove tracks memberships, numOwners and ownersCommitment', async () => {
     const owner2 = PrivateKey.random().toPublicKey().toBase58();
     const { contractId } = await ingest([
       ...setupEvents(owner),
       {
         type: 'ownerChange', blockHeight: 5, txHash: 'tx-add', ...HASHES(5),
-        event: { owner: owner2, added: '1', newNumOwners: '2', configNonce: '1' },
+        event: {
+          owner: owner2, added: '1', newNumOwners: '2',
+          newOwnersCommitment: 'commit-add', configNonce: '1',
+        },
       },
       {
         type: 'ownerChange', blockHeight: 8, txHash: 'tx-rm', ...HASHES(8),
-        event: { owner: owner2, added: '0', newNumOwners: '1', configNonce: '2' },
+        event: {
+          owner: owner2, added: '0', newNumOwners: '1',
+          newOwnersCommitment: 'commit-rm', configNonce: '2',
+        },
       },
     ]);
 
@@ -135,6 +141,23 @@ describe('config-mutating event decoding', () => {
     const config = await latestConfig(contractId);
     expect(config.numOwners).toBe(1);
     expect(config.configNonce).toBe(2);
+    // Must track the event, not carry setup's 'commit' forward.
+    expect(config.ownersCommitment).toBe('commit-rm');
+  });
+
+  test('ownerChange without a commitment carries the previous one forward', async () => {
+    const owner2 = PrivateKey.random().toPublicKey().toBase58();
+    const { contractId } = await ingest([
+      ...setupEvents(owner),
+      {
+        type: 'ownerChange', blockHeight: 5, txHash: 'tx-add', ...HASHES(5),
+        event: { owner: owner2, added: '1', newNumOwners: '2', configNonce: '1' },
+      },
+    ]);
+
+    const config = await latestConfig(contractId);
+    expect(config.numOwners).toBe(2);
+    expect(config.ownersCommitment).toBe('commit');
   });
 
   test('delegate event sets the delegate; self-delegation records the undelegate state', async () => {
