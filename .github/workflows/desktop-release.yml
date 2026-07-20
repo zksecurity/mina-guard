@@ -54,8 +54,10 @@ jobs:
       # lifecycle-script shell on Windows ("bunsh: No such file or directory").
       # ci.yml's macOS/Windows jobs do the same — skip the script here, then run
       # the mina-signer build explicitly below (with esbuild now installed).
+      # --frozen-lockfile pins bun.lock exactly for this signed release, bun
+      # does not freeze in CI by default.
       - name: Install dependencies
-        run: bun install --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts
 
       # The UI build imports mina-signer from the o1js submodule; its web bundle
       # is not committed for every platform, so (re)build it here — replacing the
