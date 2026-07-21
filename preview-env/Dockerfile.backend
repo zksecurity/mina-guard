@@ -41,8 +41,8 @@ RUN if [ "$MINAGUARD_VK_HASH" = "skip" ]; then \
       echo "MINAGUARD_VK_HASH build arg not set — compiling circuit (memory-heavy)..."; \
       vk_output="$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)" || { echo "$vk_output" >&2; echo "ERROR: VK hash compile failed — refusing to build with an empty VK filter (the indexer would accept ALL contracts as MinaGuard vaults)" >&2; exit 1; }; \
       echo "$vk_output"; \
-      vk_hash="$(printf '%s\n' "$vk_output" | awk '/vkHash/{print $NF; exit}')"; \
-      if [ -z "$vk_hash" ]; then echo "ERROR: no VK hash found in compile output — refusing to build with an empty VK filter" >&2; exit 1; fi; \
+      vk_hash="$(printf '%s\n' "$vk_output" | awk '/^vkHash/{print $NF; exit}')"; \
+      case "$vk_hash" in ''|*[!0-9]*) echo "ERROR: no decimal VK hash found in compile output — refusing to build with an empty VK filter" >&2; exit 1;; esac; \
       printf '%s\n' "$vk_hash" > /app/.vk-hash; \
     fi
 
