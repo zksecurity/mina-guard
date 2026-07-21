@@ -419,7 +419,7 @@ slimmed: per-execution events carry only what is **not** already derivable from 
 | `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
 | `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
 | `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |
-| `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners, configNonce` | `executeOwnerChange` (`owner` = the added/removed key; `added` = `1` for ADD_OWNER, `0` for REMOVE_OWNER) |
+| `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners, newOwnersCommitment, configNonce` | `executeOwnerChange` (`owner` = the added/removed key; `added` = `1` for ADD_OWNER, `0` for REMOVE_OWNER; `newOwnersCommitment` = the post-change owner chain, emitted for both add and remove so event-sourced clients track it without re-deriving) |
 | `ThresholdChangeEvent` | `proposalHash, oldThreshold, newThreshold, configNonce` | `executeThresholdChange` |
 | `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` (empty `delegate` = undelegate to self) |
 | `CreateChildConfigEvent` | `proposalHash, childAccount, ownersCommitment, threshold, numOwners` | `reserveForParent` on child (one per `CREATE_CHILD` propose) |
