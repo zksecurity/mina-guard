@@ -12,7 +12,7 @@ Quick start:
 ```bash
 cp backend/.env.example backend/.env    # create env file
 bun install                              # from workspace root
-bun run --filter backend dev             # dev mode (auto-runs prisma db push)
+bun run --filter backend dev             # dev mode (runs prisma:generate + prisma migrate deploy first)
 ```
 
 See the [Operations section](../docs/backend-audit-guide.md#operations) for the
