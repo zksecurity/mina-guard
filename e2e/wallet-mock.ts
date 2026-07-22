@@ -19,7 +19,10 @@ export const MOCK_WALLET_SCRIPT = `
       );
     },
     requestNetwork() {
-      return Promise.resolve({ chainId: 'testnet', name: 'testnet' });
+      // Real Auro returns { networkID: 'mina:<net>' }; getAuroNetwork parses
+      // networkID. Without it, getAuroNetwork returns null and the app's
+      // network-mismatch gate blocks signing.
+      return Promise.resolve({ networkID: 'mina:testnet', chainId: 'testnet', name: 'testnet' });
     },
     sendTransaction() {
       // In test mode the worker signs and sends directly; this is a no-op fallback.
