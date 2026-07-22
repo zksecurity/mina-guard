@@ -181,11 +181,11 @@ describe('MinaGuard - Execute', () => {
 
     // 2. Perform a governance change (add owner) to bump configNonce to 1
     const newOwner = PrivateKey.random().toPublicKey();
-    const addOwnerProposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
+    const ownerPubs = ctx.owners.map((o) => o.pub);
+    const addOwnerProposal = createAddOwnerProposal(newOwner, ownerPubs, Field(1), Field(0), ctx.zkAppAddress);
     const govTxHash = await proposeTransaction(ctx, addOwnerProposal, 0);
     await approveTransaction(ctx, addOwnerProposal, 1);
 
-    const ownerPubs = ctx.owners.map((o) => o.pub);
     const ownerWitness = makeOwnerWitness(ownerPubs);
     const insertAfter = sortedInsertAfter(ownerPubs, newOwner);
     const govApprovalWitness = ctx.approvalStore.getWitness(govTxHash);

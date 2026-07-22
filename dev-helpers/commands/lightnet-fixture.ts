@@ -191,12 +191,14 @@ function createAddOwnerProposal(
   nonce: number,
   configNonce: number,
   newOwner: PublicKey,
+  ownerStore: InstanceType<typeof OwnerStore>,
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(newOwner),
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
-    data: Field(0),
+    // bind canonical post-add commitment, required by propose Rule 4b
+    data: ownerStore.commitmentWithSortedAdd(newOwner),
     nonce: Field(nonce),
     configNonce: Field(configNonce),
     expirySlot: Field(0),
@@ -636,6 +638,7 @@ async function runFullScenario(ctx: FixtureRuntimeContext): Promise<FixtureSumma
     addOwnerContract.nextProposalNonce++,
     addOwnerContract.configNonce,
     newOwner,
+    addOwnerContract.ownerStore,
   );
   await propose(addOwnerContract, signerA, addOwnerProposal, 'Add Owner: propose', deployer);
   await approve(addOwnerContract, signerB, addOwnerProposal, 'Add Owner: approve', deployer);

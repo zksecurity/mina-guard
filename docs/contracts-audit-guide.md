@@ -197,7 +197,7 @@ runs an execute method for them. Replay protection lives on the child in `childE
 | TxType | Value | `destination` | `data` contains | `receivers[0]` contains |
 | ------ | ----- | ------------- | --------------- | ----------------------- |
 | `TRANSFER` | 0 | `LOCAL` | `Field(0)` | Any recipient (multi-slot allowed) |
-| `ADD_OWNER` | 1 | `LOCAL` | `Field(0)` | The owner pubkey to add |
+| `ADD_OWNER` | 1 | `LOCAL` | Expected post-add `ownersCommitment` (canonical sorted insert, never 0) | The owner pubkey to add |
 | `REMOVE_OWNER` | 2 | `LOCAL` | `Field(0)` | The owner pubkey to remove |
 | `CHANGE_THRESHOLD` | 3 | `LOCAL` | New threshold value | Empty |
 | `SET_DELEGATE` | 4 | `LOCAL` | `Field(0)` | Delegate pubkey (empty = undelegate to self) |
@@ -211,7 +211,7 @@ Propose-time rules enforced in `propose()`:
 - `receivers[0]` must be non-empty for `ADD_OWNER`/`REMOVE_OWNER`.
 - `receivers[0]` must be empty for `CHANGE_THRESHOLD`.
 - Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
-- `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, or `ENABLE_CHILD_MULTI_SIG`.
+- `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, `ENABLE_CHILD_MULTI_SIG`, or `ADD_OWNER`. For `ADD_OWNER`, `data` must be non-zero (the expected post-add owners commitment).
 - `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
 - `nonce` must be fresh for the relevant execution domain:
@@ -294,7 +294,7 @@ After execution the contract increments `nonce` and overwrites the approval coun
 
 - **`executeTransfer`** — Loops through all receiver slots, sending to each non-empty one. Empty slots are converted into zero-value self-sends so they have no effect on balances. Emits `ExecutionEvent`.
 - **`executeAllocateToChildren`** — Same structure as `executeTransfer` but asserts `txType == ALLOCATE_CHILD`. Typically sends MINA from a parent to its children. Emits `ExecutionEvent { txType: ALLOCATE_CHILD }`. The indexer distinguishes allocations from generic transfers by txType.
-- **`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. The owner pubkey is read from `receivers[0]`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits and selects the correct result based on `txType`. Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
+- **`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. The owner pubkey is read from `receivers[0]`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits and selects the correct result based on `txType`. For `ADD_OWNER`, asserts the post-add commitment equals `proposal.data`, so the executor-supplied `insertAfter` cannot pick a valid-but-non-canonical order the event-sourced clients can't reconstruct (removal is order-preserving, nothing to bind). Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
 - **`executeThresholdChange`** — Validates `proposal.data == newThreshold`, `newThreshold > 0`, `numOwners >= newThreshold`. Updates `threshold`. Increments `configNonce`. Emits `ExecutionEvent` + `ThresholdChangeEvent`.
 - **`executeDelegate`** — Reads the target delegate from `receivers[0]` (empty slot = undelegate to self). Sets `account.delegate`. Does **not** increment `configNonce`. Emits `ExecutionEvent` + `DelegateEvent`.
 

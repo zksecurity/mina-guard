@@ -57,6 +57,9 @@ const ReceiversArray = Provable.Array(Receiver, MAX_RECEIVERS);
  * vs REMOTE (proposed/approved on a parent guard, executed on a specific child).
  * `childAccount` is the target child for REMOTE proposals and must be empty
  * for LOCAL proposals.
+ *
+ * `data` is a per-txType payload, see propose() Rule 4. For ADD_OWNER it is
+ * the expected post-add ownersCommitment, binding the insertion order.
  */
 export class TransactionProposal extends Struct({
   receivers: ReceiversArray,
@@ -160,11 +163,14 @@ export class ExecutionEvent extends Struct({
   txType: Field,
 }) { }
 
+/** `newOwnersCommitment` is the post-change owner chain, so indexers can track
+ *  it from events alone, matching SetupEvent. */
 export class OwnerChangeEvent extends Struct({
   proposalHash: Field,
   owner: PublicKey,
   added: Field,
   newNumOwners: Field,
+  newOwnersCommitment: Field,
   configNonce: Field,
 }) { }
 
@@ -949,13 +955,21 @@ export class MinaGuard extends SmartContract {
 
     // Rule 4: `data` must be 0 except for txTypes that use it:
     //   CHANGE_THRESHOLD (new threshold), CREATE_CHILD (child config hash),
-    //   RECLAIM_CHILD (amount), ENABLE_CHILD_MULTI_SIG (flag).
+    //   RECLAIM_CHILD (amount), ENABLE_CHILD_MULTI_SIG (flag),
+    //   ADD_OWNER (expected post-add owners commitment).
     const allowsData = isChangeThreshold
       .or(isCreateChild)
       .or(isReclaimChild)
-      .or(isEnableChildMultiSig);
+      .or(isEnableChildMultiSig)
+      .or(isAddOwner);
     allowsData.or(proposal.data.equals(Field(0)))
       .assertTrue('data must be zero for this txType');
+
+    // Rule 4b: ADD_OWNER must bind the expected post-add owners commitment,
+    // which is never 0. Pins the insertion order chosen by the executor,
+    // a zero here would make the proposal unexecutable anyway.
+    isAddOwner.and(proposal.data.equals(Field(0)))
+      .assertFalse('addOwner requires expected owners commitment in data');
 
     // Rule 5: only the native MINA token (tokenId 0) is supported. `tokenId` is
     // part of the signed/approved proposal but executeTransfers always sends on
@@ -1153,8 +1167,11 @@ export class MinaGuard extends SmartContract {
 
   /**
    * Executes an ADD_OWNER or REMOVE_OWNER proposal.
-   * The target owner pubkey is in receivers[0]. Bumps configNonce,
-   * which invalidates any pending proposals that used the old configNonce.
+   * The target owner pubkey is in receivers[0]. For ADD_OWNER, proposal.data
+   * carries the approved post-add ownersCommitment, so the executor-supplied
+   * insertAfter cannot pick an order clients can't reconstruct. Bumps
+   * configNonce, which invalidates any pending proposals that used the old
+   * configNonce.
    */
   @method async executeOwnerChange(
     proposal: TransactionProposal,
@@ -1201,8 +1218,13 @@ export class MinaGuard extends SmartContract {
 
     // depending on change type, check corresponding operation was successful
     Provable.if(isRemove, remIsValid, addIsValid).assertTrue('Owner change not valid');
+    // adds must land on the approver-bound commitment from proposal.data,
+    // removes are order-preserving so nothing to bind
+    Provable.if(isAdd, afterAddComm.equals(proposal.data), Bool(true))
+      .assertTrue('Owner commitment does not match approved proposal.data');
     // select corresponding new commitment to update state
-    this.ownersCommitment.set(Provable.if(isRemove, afterRemoveComm, afterAddComm));
+    const newOwnersCommitment = Provable.if(isRemove, afterRemoveComm, afterAddComm);
+    this.ownersCommitment.set(newOwnersCommitment);
     this.setGovernanceState(threshold, newNumOwners);
 
     this.markExecuted(approvalWitness);
@@ -1220,6 +1242,7 @@ export class MinaGuard extends SmartContract {
       owner: ownerPubKey,
       added: isAdd.toField(),
       newNumOwners,
+      newOwnersCommitment,
       configNonce: currentConfigNonce.add(1),
     });
   }
