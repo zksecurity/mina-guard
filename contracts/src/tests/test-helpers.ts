@@ -23,7 +23,7 @@ import {
   MAX_OWNERS,
   MAX_RECEIVERS,
 } from '../constants.js';
-import { ApprovalStore, VoteNullifierStore } from '../storage.js';
+import { ApprovalStore, OwnerStore, VoteNullifierStore } from '../storage.js';
 import { PublicKeyOption, computeOwnerChain, OwnerWitness } from '../list-commitment.js';
 
 // -- Types -------------------------------------------------------------------
@@ -201,9 +201,17 @@ function singleReceiverArray(address: PublicKey): Receiver[] {
   return arr;
 }
 
-/** Builds an add-owner governance proposal payload. */
+/** Expected ADD_OWNER proposal.data: commitment of the sorted list with newOwner inserted. */
+export function expectedAddOwnerData(currentOwners: PublicKey[], newOwner: PublicKey): Field {
+  const store = new OwnerStore();
+  for (const o of currentOwners) store.addSorted(o);
+  return store.commitmentWithSortedAdd(newOwner);
+}
+
+/** Builds an add-owner governance proposal payload, data binds the canonical post-add commitment. */
 export function createAddOwnerProposal(
   newOwner: PublicKey,
+  currentOwners: PublicKey[],
   nonce: Field,
   configNonce: Field,
   guardAddress: PublicKey,
@@ -216,7 +224,7 @@ export function createAddOwnerProposal(
     receivers: singleReceiverArray(newOwner),
     tokenId: Field(0),
     txType: TxType.ADD_OWNER,
-    data: Field(0),
+    data: expectedAddOwnerData(currentOwners, newOwner),
     memoHash,
     nonce,
     configNonce,

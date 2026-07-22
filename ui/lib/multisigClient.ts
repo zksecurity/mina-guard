@@ -287,6 +287,17 @@ export async function computeCreateChildConfigHash(params: {
 }
 
 /**
+ * For addOwner proposals, verifies proposal.data binds the canonical sorted
+ * owner order. Returns null for other txTypes.
+ */
+export async function validateAddOwnerProposalData(params: {
+  contractAddress: string;
+  proposal: Proposal;
+}): Promise<{ valid: boolean } | null> {
+  return getWorkerApi().validateAddOwnerProposalData(params);
+}
+
+/**
  * Calls executeSetupChild on an already-deployed child contract.
  * Used to execute a CREATE_CHILD proposal once the parent has reached threshold.
  */

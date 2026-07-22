@@ -972,7 +972,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       {
         const newOwner = PrivateKey.random().toPublicKey();
         const ownerChange = createAddOwnerProposal(
-          newOwner, Field(101), Field(0), childAddress, Field(0), parentCtx.networkId,
+          newOwner, childOwnerPubs, Field(101), Field(0), childAddress, Field(0), parentCtx.networkId,
         );
         const insertAfter = sortedInsertAfter(childOwnerPubs, newOwner);
         await expect(async () => {
@@ -1049,7 +1049,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       {
         const newOwner = PrivateKey.random().toPublicKey();
         const ownerChange = createAddOwnerProposal(
-          newOwner, Field(110), Field(0), childAddress, Field(0), parentCtx.networkId,
+          newOwner, childOwnerPubs, Field(110), Field(0), childAddress, Field(0), parentCtx.networkId,
         );
         const insertAfter = sortedInsertAfter(childOwnerPubs, newOwner);
         await assertChildMultiSigEnabled(async () => {

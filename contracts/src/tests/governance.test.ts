@@ -30,12 +30,12 @@ describe('MinaGuard - Governance', () => {
     it('should add a new owner via multisig', async () => {
       const newOwnerKey = PrivateKey.random();
       const newOwner = newOwnerKey.toPublicKey();
+      const ownerPubs = ctx.owners.map((o) => o.pub);
 
-      const proposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(newOwner, ownerPubs, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const ownerPubs = ctx.owners.map((o) => o.pub);
       const ownerWitness = makeOwnerWitness(ownerPubs);
       const insertAfter = sortedInsertAfter(ownerPubs, newOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -62,12 +62,12 @@ describe('MinaGuard - Governance', () => {
 
     it('should reject adding an already-existing owner', async () => {
       const existingOwner = ctx.owners[1].pub;
+      const ownerPubs = ctx.owners.map((o) => o.pub);
 
-      const proposal = createAddOwnerProposal(existingOwner, Field(1), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(existingOwner, ownerPubs, Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
-      const ownerPubs = ctx.owners.map((o) => o.pub);
       const ownerWitness = makeOwnerWitness(ownerPubs);
       const insertAfter = sortedInsertAfter(ownerPubs, existingOwner);
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
@@ -89,7 +89,7 @@ describe('MinaGuard - Governance', () => {
 
     it('should reject unproposed owner change with approvalCount = 0', async () => {
       const newOwner = PrivateKey.random().toPublicKey();
-      const proposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(newOwner, ctx.owners.map((o) => o.pub), Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = proposal.hash();
       const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
       const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
@@ -113,7 +113,7 @@ describe('MinaGuard - Governance', () => {
     it('should increment configNonce after adding owner', async () => {
       const newOwner = PrivateKey.random().toPublicKey();
 
-      const proposal = createAddOwnerProposal(newOwner, Field(1), Field(0), ctx.zkAppAddress);
+      const proposal = createAddOwnerProposal(newOwner, ctx.owners.map((o) => o.pub), Field(1), Field(0), ctx.zkAppAddress);
       const proposalHash = await proposeTransaction(ctx, proposal, 0);
       await approveTransaction(ctx, proposal, 1);
 
@@ -131,6 +131,49 @@ describe('MinaGuard - Governance', () => {
       await txn.sign([ctx.deployerKey]).send();
 
       expect(ctx.zkApp.configNonce.get()).toEqual(Field(1));
+    });
+
+    it('should reject execution with a valid but non-canonical insertAfter', async () => {
+      const ownerPubs = ctx.owners.map((o) => o.pub);
+
+      // pick a new owner that sorts after at least one existing owner, so a
+      // prepend is a valid list position but not the canonical one
+      let newOwner = PrivateKey.random().toPublicKey();
+      while (!ownerPubs.some((o) => o.toBase58() < newOwner.toBase58())) {
+        newOwner = PrivateKey.random().toPublicKey();
+      }
+
+      const proposal = createAddOwnerProposal(newOwner, ownerPubs, Field(1), Field(0), ctx.zkAppAddress);
+      const proposalHash = await proposeTransaction(ctx, proposal, 0);
+      await approveTransaction(ctx, proposal, 1);
+
+      const ownerWitness = makeOwnerWitness(ownerPubs);
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const commitmentBefore = ctx.zkApp.ownersCommitment.get();
+
+      // untrusted executor front-runs with insertAfter = none (prepend)
+      await expect(async () => {
+        const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+          await ctx.zkApp.executeOwnerChange(
+            proposal, approvalWitness, Field(3), ownerWitness, PublicKeyOption.none()
+          );
+        });
+        await txn.prove();
+        await txn.sign([ctx.deployerKey]).send();
+      }).toThrow('Owner commitment does not match approved proposal.data');
+
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(commitmentBefore);
+
+      // canonical execution still succeeds afterwards
+      const insertAfter = sortedInsertAfter(ownerPubs, newOwner);
+      const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+        await ctx.zkApp.executeOwnerChange(
+          proposal, approvalWitness, Field(3), ownerWitness, insertAfter
+        );
+      });
+      await txn.prove();
+      await txn.sign([ctx.deployerKey]).send();
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(proposal.data);
     });
   });
 

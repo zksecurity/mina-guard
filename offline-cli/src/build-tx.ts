@@ -338,12 +338,39 @@ function buildReceiversForProposal(input: NewProposalInput): InstanceType<typeof
   return arr;
 }
 
-function buildProposalDataField(input: NewProposalInput): InstanceType<typeof Field> {
+function buildProposalDataField(
+  input: NewProposalInput,
+  ownerStore: InstanceType<typeof OwnerStore>,
+): InstanceType<typeof Field> {
   if (input.txType === 'changeThreshold') return Field(input.newThreshold ?? 0);
   if (input.txType === 'reclaimChild') return Field(input.reclaimAmount ?? '0');
   if (input.txType === 'enableChildMultiSig') return Field(input.childMultiSigEnable ? 1 : 0);
   if (input.txType === 'createChild') return Field(input.createChildConfigHash ?? '0');
+  if (input.txType === 'addOwner' && input.newOwner) {
+    // bind the canonical post-add owner commitment, enforced by executeOwnerChange
+    return ownerStore.commitmentWithSortedAdd(PublicKey.fromBase58(input.newOwner));
+  }
   return Field(0);
+}
+
+/**
+ * For ADD_OWNER proposals, checks proposal.data equals the commitment of the
+ * current owner list with the target inserted in canonical sorted order.
+ * executeOwnerChange enforces data on-chain, so a mismatched proposal either
+ * can never execute or would store an owner order clients cannot reconstruct.
+ * No-op for other txTypes.
+ */
+function assertCanonicalAddOwnerData(
+  proposal: InstanceType<typeof TransactionProposal>,
+  ownerStore: InstanceType<typeof OwnerStore>,
+): void {
+  if (!proposal.txType.equals(uiTxTypeToField('addOwner')).toBoolean()) return;
+  const expected = ownerStore.commitmentWithSortedAdd(proposal.receivers[0].address);
+  if (!proposal.data.equals(expected).toBoolean()) {
+    throw new Error(
+      'addOwner proposal does not bind the canonical owner order, approval refused',
+    );
+  }
 }
 
 function buildProposalStruct(
@@ -787,7 +814,7 @@ export async function handlePropose(
   // Build proposal struct
   const receivers = buildReceiversForProposal(input);
   const txType = uiTxTypeToField(input.txType);
-  const data = buildProposalDataField(input);
+  const data = buildProposalDataField(input, ownerStore);
 
   const isRemote =
     isCreateChild ||
@@ -923,6 +950,9 @@ export async function handleApprove(
     },
     bundle.contractAddress,
   );
+
+  // refuse to co-sign an addOwner with a non-canonical bound owner order
+  assertCanonicalAddOwnerData(proposalStruct, ownerStore);
 
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
