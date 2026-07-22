@@ -43,22 +43,25 @@ The code that must be correct for funds to be safe:
 | `ui/lib/multisigClient.worker.ts` | Constructs the `TransactionProposal` structs, proposal hashes, and Merkle witnesses that owners sign and that transactions carry | What you sign is what this code builds |
 | `offline-cli/src/` (`build-tx.ts`, `index.ts`, `summary.ts`, `wasm-shim.ts`) | Same construction role for the air-gapped path | Trust-minimized signing path |
 | o1js (`o1js@3.0.0-mesa.final`) + `mina-signer` (built from the pinned `ui/deps/o1js` submodule) | Proof system, hashing (Poseidon), signatures | Cryptographic foundation |
+| `desktop/src/preload.js`, `desktop/src/ipc.ts`, `desktop/src/auro/*` | Bridge the transaction payloads Auro signs in the self-contained Electron build (which also embeds the backend in-process) | Desktop signing path |
 
-Everything else — the backend indexer/API, the rest of the UI, `deploy/`, `preview-env/`,
-`dev-helpers/`, `e2e/` — is **outside the TCB for fund safety** (see the next section for
-what a compromise there can and cannot do).
+Everything else — the backend indexer/API, the rest of the UI, the rest of `desktop/`, `deploy/`,
+`preview-env/`, `dev-helpers/`, `e2e/` — is **outside the TCB for fund safety** (see the next
+section for what a compromise there can and cannot do).
 
 ### What a compromised component can do
 
 **Backend (indexer + API).** It holds no keys and its data is a re-indexable materialized
 view of public chain events. It cannot forge approvals: every approval requires an owner
 signature over the proposal hash, verified in-circuit against `ownersCommitment`. It also
-cannot trick an owner into approving something other than what it displays: the UI worker
-and the offline CLI **recompute the proposal hash from the proposal fields themselves**
-(`multisigClient.worker.ts`, `build-tx.ts`) rather than signing a backend-supplied hash — so
-if the backend serves tampered fields, the recomputed hash points at an approval slot that
-was never proposed, and the transaction fails the contract's existence check
-(`count >= PROPOSED_MARKER`). The damage ceiling for a fully compromised backend is therefore
+cannot trick an owner into approving something other than what it displays: on the approve and
+execute paths the UI worker and the offline CLI **recompute the proposal hash from the proposal
+fields themselves and verify it equals the selected proposal's identity**
+(`assertRecomputedProposalHash` in `multisigClient.worker.ts` and `build-tx.ts`, PR #111),
+aborting before any signature or execution if the two differ. So even if the backend serves the
+fields of a *different* real proposal under a given `proposalHash` — the case a bare
+existence check would miss, since that slot does exist — the client-side mismatch is caught and
+nothing is signed. The damage ceiling for a fully compromised backend is therefore
 **censorship and denial of service**: hiding proposals, showing stale state, causing failed
 transactions. (The one surface where a lying indexer's data is *displayed* but not
 action-bound — the memo badge — is analyzed in [`ui-audit-guide.md`](./ui-audit-guide.md) focus
@@ -81,11 +84,19 @@ non-custodial design above, even host-root compromise cannot move vault funds di
 
 ### One-time trust at deploy
 
-The account that deploys and runs `setup()` chooses the initial owner set and `networkId`. The
-owners commitment is computed **in-circuit** from the supplied owner list (`computeSetupOwnersChain`
-+ `assertCoherentSetupOwners`), so the stored commitment cannot disagree with the announced owners —
-but the *choice* of owners and network id at genesis is the deployer's, as in any multisig. Verify
-the setup events before depositing.
+The account that deploys and runs `setup()` chooses the initial owner set (`setup()` takes
+`threshold`, `numOwners`, `initialOwners`). The owners commitment is computed **in-circuit** from
+the supplied owner list (`computeSetupOwnersChain` + `assertCoherentSetupOwners`), so the stored
+commitment cannot disagree with the announced owners — but the *choice* of owners at genesis is
+the deployer's, as in any multisig. Verify the setup events before depositing.
+
+`deploy()`, `setup()`, and `reserveForParent()` are separately callable and each authorized by
+proof alone with no deployer binding, so a guard left deployed-but-uninitialized can be front-run:
+anyone can call `setup()` with their own owner set, or `reserveForParent()` to bind the address to
+an attacker parent (permanently blocking the legitimate `setup()`). Callers therefore MUST include
+`deploy()` and `setup()`/`reserveForParent()` in the SAME transaction so no uninitialized on-chain
+window exists — this is a caller obligation, not something the circuit enforces (see the #112
+doc-comments on `deploy()`/`setup()`/`reserveForParent()` in `MinaGuard.ts`).
 
 ## Invariants
 
@@ -100,6 +111,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Approvals cannot be forged | `propose()` / `approveProposal()` verify an owner signature over the proposal hash in-circuit (`signature.verify(owner, [proposalHash])`) — membership alone is not enough | `propose.test.ts`, `approve.test.ts` ("reject invalid signature") |
 | No double-voting | vote nullifier map keyed `hash(proposalHash, approver)` | `approve.test.ts` |
 | Approvals bind to exact content | approvals keyed by `TransactionProposal.hash()` (includes `guardAddress`, `destination`, `childAccount`) | `propose.test.ts`, `approve.test.ts` |
+| Only native MINA is transferable | `propose()` asserts `proposal.tokenId == 0` — `executeTransfers` always sends on the default token, so a non-zero tokenId is rejected at proposal time and can never be approved as a MINA send | `propose.test.ts` ("reject a proposal with a non-zero tokenId") |
 | Cannot approve a nonexistent proposal | approval slot must be `>= PROPOSED_MARKER` | `approve.test.ts` |
 | No LOCAL re-execution | `EXECUTED_MARKER` overwrites the approval slot | `execute.test.ts` |
 | No REMOTE re-execution | child's `childExecutionRoot` marks executed proposals | `child.test.ts` |
@@ -108,27 +120,31 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Execution is permissionless (liveness) | no owner gate on any `execute*` — once threshold is met, anyone can execute; a non-cooperating proposer cannot strand an approved proposal | `execute.test.ts` ("allow anyone to trigger execution") |
 | Stale proposals invalidated | `configNonce` match + execution-nonce ordering (`nonce` / `parentNonce`) | `governance.test.ts`, `execute.test.ts` |
 | Time-bounded proposals | optional `expirySlot` vs `globalSlotSinceGenesis` | `execute.test.ts` |
-| Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet/devnet) is baked into every proposal hash, producing structurally distinct VKs per network; additionally `proposal.networkId` must equal the on-chain `networkId` | `propose.test.ts` ("wrong networkId") |
+| Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet/devnet) folded into every proposal hash (`constants.ts`, `TransactionProposal.hash()`), producing a structurally distinct VK per network — there is no `networkId` field or state | no unit test; the per-network VK is pinned by the `check-vk-hash` CI job against `contracts/.vk-hash` |
 | Cross-contract / cross-child replay prevented | `guardAddress` and `childAccount` inside the proposal hash; children assert `childAccount == this.address` | `child.test.ts` |
 | Setup owner list coherent with commitment | commitment computed in-circuit; duplicate owners and non-empty padding rejected | `setup.test.ts`, `list-commitment.test.ts` |
 | Executed child config = displayed config | `reservedConfigHash` written once at `reserveForParent`; `executeSetupChild` binds `proposal.data` and `reservedConfigHash` to the recomputed hash | `child.test.ts` |
-| Child cannot be hijacked between deploy and setup | `reserveForParent` sets `parent` atomically with deploy; `setup()` requires `parent == empty` | `child.test.ts` |
+| Child cannot be hijacked between deploy and setup | Caller obligation, **not** a circuit invariant: callers MUST bundle `deploy()` + `reserveForParent()` (or `setup()`) into ONE transaction — none is deployer-bound. The circuit only enforces that `setup()` and `reserveForParent()` require `parent == empty` (write-once), so a separately-deployed guard can be front-run before it is reserved/set up | `child.test.ts` |
 | Hierarchy depth capped at two levels | REMOTE proposals (including `CREATE_CHILD`) are rejected on any guard whose `parent != empty` — children cannot spawn children | `child.test.ts` |
 | Parent can always recover child funds | `executeReclaimToParent` / `executeDestroy` deliberately skip the `childMultiSigEnabled` check — disabling a child never strands its balance | `child.test.ts` |
 | Parent state drift voids REMOTE approvals | child pins parent state via AccountUpdate preconditions | `child.test.ts` |
 | Governance preserves `0 < threshold ≤ numOwners ≤ MAX_OWNERS` | `setup()`, `executeOwnerChange()`, `executeThresholdChange()` all assert the bounds — the vault can be neither locked (threshold unreachable) nor unbounded | `setup.test.ts`, `governance.test.ts` |
 | No permission downgrade / VK swap | `setPermissions: impossible()`, `setVerificationKey: impossibleDuringCurrentVersion()` set in `deploy()` | `setup.test.ts` |
 
-Off-chain, one invariant matters for the trust argument above: **clients derive the hash they sign
-from the fields they display** — `ui/lib/multisigClient.worker.ts` and `offline-cli/src/build-tx.ts`
-reconstruct the `TransactionProposal` struct and call `.hash()` locally at propose, approve, and
-execute time.
+Off-chain, one invariant matters for the trust argument above: **clients recompute the hash they
+sign from the fields they display and verify it equals the selected proposal's identity** —
+`ui/lib/multisigClient.worker.ts` and `offline-cli/src/build-tx.ts` reconstruct the
+`TransactionProposal` struct and call `.hash()` locally, then `assertRecomputedProposalHash` aborts
+the approve or execute before any signature if the recomputed hash does not match the proposal the
+owner selected. (Propose mints a fresh proposal with no prior identity, so it has nothing to match
+against and skips the check.)
 
 The deployed verification key is pinned in CI: `contracts/.vk-hash` holds canonical hashes for
 testnet and mainnet (`testnet=` and `mainnet=` labeled entries — each network produces a structurally
 distinct VK because `NETWORK_DOMAIN` is baked into the circuit at compile time), and the
-`check-vk-hash` job recompiles both and fails on drift, so the reviewed source and the on-chain VK
-cannot silently diverge.
+`check-vk-hash` job recompiles both and fails on drift whenever a change touches VK-affecting paths
+or `contracts/.vk-hash` (it skips the compile otherwise, so it does not run on every push), so the
+reviewed source and the on-chain VK cannot silently diverge.
 
 ## Accepted risks and known limitations
 
@@ -148,8 +164,10 @@ private ops repo's risk register.
 ## Scope guidance for auditors
 
 - **In scope (fund safety):** `contracts/src/**`, `ui/lib/multisigClient.worker.ts`,
-  `offline-cli/src/**`, and the bundle format in [`offline-audit-guide.md`](./offline-audit-guide.md).
-- **Context (availability/display):** `backend/**`, remaining `ui/**`.
+  `offline-cli/src/**`, the desktop signing path (`desktop/src/preload.js`, `desktop/src/ipc.ts`,
+  `desktop/src/auro/*`), and the bundle format in [`offline-audit-guide.md`](./offline-audit-guide.md).
+- **Context (availability/display):** `backend/**`, remaining `ui/**`, remaining `desktop/**`
+  (`main.ts`, `config-*.ts`, `hid-picker.ts`, `backend-embed.ts`, `assets/`, `scripts/`).
 - **Out of scope in this repo:** `deploy/`, `preview-env/`, `dev-helpers/`, `e2e/`. Deployment and
   operations are covered by the private ops repo, shared with auditors under the engagement; the
   in-repo deployment assets are described in [`deploy-audit-guide.md`](./deploy-audit-guide.md) for

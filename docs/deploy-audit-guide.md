@@ -42,8 +42,11 @@ inner Caddy.
 | `docker-compose.yml` | Main stack: lightnet (daemon + archive + account manager), postgres, backend, frontend, explorer, inner Caddy |
 | `Caddyfile` | Inner-Caddy routes for the main stack (`/app/*`) |
 | `deploy-trail.sh` | `up`/`down` for the Mesa Trail deploy: env checks, VK-hash sourcing, compose + outer-Caddy route for `/trail/*` |
-| `docker-compose.trail.yml` | Trail app stack: postgres, backend (archive discovery), frontend, explorer, inner Caddy — node stack is remote |
+| `docker-compose.trail.yml` | Trail app stack, **on-box build** (interim): postgres, backend (archive discovery), frontend, explorer, inner Caddy — node stack is remote |
+| `docker-compose.trail.pull.yml` | Trail app stack, **pull-based**: same services, but app images are pulled from GHCR by attestation-verified digest instead of built on-box (see *Pull-based deploy*) |
 | `Caddyfile.trail` | Inner-Caddy routes for the trail stack (`/trail/*`), including cross-host proxies to the node-stack box |
+| `trail-pull-deploy.sh` | Box-side pull agent (phase 2): pulls the latest signed `/trail` images, verifies each build-provenance attestation with `gh attestation verify`, rolling-`up -d`s on digest change |
+| `systemd/trail-pull-deploy.{service,timer}` | User-level systemd oneshot + 2-minute timer that drives `trail-pull-deploy.sh` |
 | `.env.example` | Template for `deploy/.env` (gitignored), sourced by `deploy-trail.sh` |
 
 Both scripts expect to be run from the repo root.
@@ -96,14 +99,44 @@ MINA_NETWORK_DOMAIN=mainnet bun run dev-helpers/cli.ts vk-hash compile
 
 then update the two lines in `contracts/.vk-hash`.
 
-- URLs after deploy: `https://mina-nodes.duckdns.org/trail/` (app), `/trail/health`, `/trail/graphql`, `/trail/archive`, `/trail/explorer`.
-- Auto-deployed on every push to `main` by `.github/workflows/deploy-trail.yml`, which supplies `MESA_NODE_HOST` and `ARCHIVE_DB_PASSWORD` from repo secrets.
+- URLs after deploy: `https://mina-trail.duckdns.org/trail/` (app), `/trail/health`, `/trail/graphql`, `/trail/archive`, `/trail/explorer`. The frontend bundle bakes these `mina-trail.duckdns.org/trail` URLs (both the on-box `docker-compose.trail.yml` build args and the pull-based `trail-release.yml` build) — **not** `mina-nodes` (which serves `/app/*`).
+- **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). What fires on every push to `main` is instead `.github/workflows/trail-release.yml`, which **builds, pushes, and attests** the `/trail` GHCR images and deploys nothing — the box pulls and verifies them itself (see *Pull-based deploy* below).
 
 **Why `down` wipes the DB (`down -v`).** During active contract development the VK hash changes
 with every circuit-touching merge, and discovery filters by VK hash — so previously-indexed
 `Contract` rows point at addresses the new indexer would skip anyway. Wiping avoids dead rows and
 wasted rescan cycles (the `archive_discovered_height` cursor would be a stale high-water mark too).
-Once the contract stabilizes, drop the `-v` to get persistence across deploys.
+Once the contract stabilizes, drop the `-v` to get persistence across deploys. **This wipe is
+specific to the interim `deploy-trail.sh` path**; the pull-based deploy reverses it — in steady
+production the VK is stable, so it does a rolling `up -d` with **no** volume wipe, wiping only when
+a release deliberately changes the VK (see below).
+
+### Pull-based deploy (`/trail`, GHCR pull + attestation verify)
+
+Replacing the push-to-box `deploy` runner, the trail app is moving to a **pull** model in two
+phases. Nothing pushes to the box; the box pulls — so no party with repo write access can execute
+on it via a pushed-branch workflow.
+
+- **Phase 1 — build & attest (CI, `.github/workflows/trail-release.yml`).** On every push to
+  `main`, this workflow builds the three `/trail` images (backend, frontend, explorer), pushes them
+  to GHCR by digest, and attaches a GitHub **build-provenance attestation** to each digest
+  (`actions/attest-build-provenance` — keyless, Sigstore-backed: GitHub OIDC → Fulcio → Rekor). It
+  touches the box for nothing. The frontend's `NEXT_PUBLIC_*` are baked here for
+  **`mina-trail.duckdns.org/trail`** (kept in sync with `docker-compose.trail.yml`'s build args
+  until the on-box build is retired).
+- **Phase 2 — pull, verify & deploy (box, `deploy/trail-pull-deploy.sh`).** A **user-level systemd
+  timer** (`deploy/systemd/trail-pull-deploy.{service,timer}`) fires every 2 minutes and runs the
+  script, which — per image — pulls the `:main` tag, resolves its digest, and verifies that
+  digest's attestation with `gh attestation verify` pinned to the release-workflow identity
+  (`…/trail-release.yml@refs/heads/main`). **The ref pin is load-bearing:** a rogue build from
+  another branch/workflow gets a different signer identity and fails the check. Verification is
+  **fail-closed** — a verify failure never deploys. When (and only when) a digest actually changed,
+  it runs a rolling `docker compose -f docker-compose.trail.pull.yml -p minaguard-trail up -d`
+  against the attestation-verified digests, with **no** volume wipe (the interim `down -v` is
+  reversed here; wipe only when a release deliberately changes the VK).
+
+Both phase-2 files are marked **draft / not-yet-enabled on the trail box**; until they are, redeploy
+manually via `deploy-trail.yml` (`workflow_dispatch`) or over SSH.
 
 ---
 
@@ -155,14 +188,23 @@ The inner Caddyfiles (`Caddyfile` for `/app/*`, `Caddyfile.trail` for `/trail/*`
 
 ```
 deploy/
-├── deploy.sh                   # main localnet up/down + outer-Caddy /app/* route
-├── docker-compose.yml          # main stack: in-stack lightnet + app services
-├── Caddyfile                   # inner-Caddy routes for /app/*
-├── deploy-trail.sh             # trail up/down: env checks, VK-hash sourcing, /trail/* route
-├── docker-compose.trail.yml    # trail app stack (remote node stack via $MESA_NODE_HOST)
-├── Caddyfile.trail             # inner-Caddy routes for /trail/* + cross-host node proxies
-└── .env.example                # template for deploy/.env (gitignored): MESA_NODE_HOST, ARCHIVE_DB_PASSWORD
+├── deploy.sh                       # main localnet up/down + outer-Caddy /app/* route
+├── docker-compose.yml              # main stack: in-stack lightnet + app services
+├── Caddyfile                       # inner-Caddy routes for /app/*
+├── deploy-trail.sh                 # trail up/down (interim): env checks, VK-hash sourcing, /trail/* route
+├── docker-compose.trail.yml        # trail app stack, on-box build (remote node stack via $MESA_NODE_HOST)
+├── docker-compose.trail.pull.yml   # trail app stack, pull-based (GHCR images by verified digest)
+├── Caddyfile.trail                 # inner-Caddy routes for /trail/* + cross-host node proxies
+├── trail-pull-deploy.sh            # box-side pull agent: pull + attestation-verify + rolling up -d
+├── systemd/
+│   ├── trail-pull-deploy.service   # user-level oneshot that runs trail-pull-deploy.sh
+│   └── trail-pull-deploy.timer     # 2-minute timer driving the service
+└── .env.example                    # template for deploy/.env (gitignored): MESA_NODE_HOST, ARCHIVE_DB_PASSWORD
 ```
+
+The push-to-`main` CI workflow that feeds the pull path lives at
+`.github/workflows/trail-release.yml` (build · push · attest); `deploy-trail.yml` is now
+`workflow_dispatch`-only.
 
 ---
 

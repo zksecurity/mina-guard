@@ -119,9 +119,10 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:92`) and into
    the per-network VK (see focus point 3).
 4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
-   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:701-716`),
-   `MinaGuard.compile` runs against the shipped `offline-cli/cache/`
-   (circuit-keyed, so per-domain; a cold cache regenerates in minutes).
+   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:731-739`),
+   `MinaGuard.compile` runs against the local `offline-cli/cache/`
+   (gitignored, generated on first run; circuit-keyed, so per-domain; a cold
+   cache regenerates in minutes).
    Proving takes minutes on typical hardware; `SKIP_PROOFS=1` swaps in dummy
    proofs (see focus point 6).
 5. **Fee-payer signing + output** — the proved tx is signed with mina-signer's
@@ -279,9 +280,12 @@ included), so these copies sit on the propose path between what is signed and
 what the operator sees.
 
 **2. What the confirmation screen shows.** The summary prints the bundle's
-*claimed* `p.proposalHash`; the hash the CLI recomputes from the fields is
-logged only after confirmation. The Memo line is the bundle's advisory
-plaintext, not the hash-covered `memoHash`.
+*claimed* `p.proposalHash`; on approve/execute the hash the CLI recomputes from
+the fields is **verified against that claimed hash (hard failure on mismatch)**
+before any signing (`assertRecomputedProposalHash`, `build-tx.ts:381`, called at
+`929`/`1023`) — propose mints a new proposal, so there is no prior hash to check.
+The Memo line is the bundle's advisory plaintext, not the hash-covered
+`memoHash`.
 
 **3. Signature-domain split.** In-circuit proposal-hash signatures use
 mina-signer's `signFields` with its fixed devnet domain (the code comments say
@@ -290,7 +294,7 @@ uses the devnet prefix); the fee payer is signed with the **network-aware**
 `signZkappCommand`. Each half carries an invariant: cross-network replay of
 proposals is blocked by the compile-time `NETWORK_DOMAIN` baked into the
 proposal hash *and* the VK (plus `guardAddress`/`configNonce`/nonce) — the
-`compileContract` bundle↔domain gate (`build-tx.ts:701-716`) is the UX-level
+`compileContract` bundle↔domain gate (`build-tx.ts:731-739`) is the UX-level
 check, the per-network VK is the on-chain enforcement — and the fee-payer
 domain (`minaNetwork`) has to match the chain the tx is broadcast to. Note
 the two are set by *different* inputs (an env var vs. a bundle field); the
@@ -308,8 +312,8 @@ strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
 come from the bundle and feed o1js's account cache; the proved tx is checked
 against real chain state at broadcast.
 
-**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:699`, dummy-proof path
-`726-737`).** Unlike the web UI's compile-time-gated test hooks, this ships in
+**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:722`, dummy-proof path
+`749-758`).** Unlike the web UI's compile-time-gated test hooks, this ships in
 every binary and is enabled by an env var.
 
 **7. Confirmation policy (`confirmOrExit`).** No attached TTY ⇒ proceed
@@ -345,8 +349,9 @@ offline-cli/
 │   │                   #   resolution inside Bun-compiled binaries via a temp-dir
 │   │                   #   stub — see the file's comments before touching it)
 │   └── tests/          # Unit + e2e tests (bundle → sign → broadcast on lightnet)
-├── cache/              # Committed o1js compile cache (prover/verifier keys, SRS)
-│                       #   — skips the first-run compile; keyed to the circuit
+├── cache/              # o1js compile cache (prover/verifier keys, SRS) — NOT
+│                       #   committed (gitignored); generated locally on first
+│                       #   run, keyed to the circuit (per network domain)
 └── package.json        # deps: contracts (workspace), mina-signer (ui submodule)
 
 ui/
@@ -399,11 +404,13 @@ release is a per-deployment choice anyway: pin the one whose VK hash matches
 the deployed contracts, since the binary inlines the circuit. When the
 variable is unset, the panel shows setup guidance instead of a link.
 
-The `offline-cli/cache/` directory in the repo holds the compile cache so the
-first run doesn't spend minutes generating keys; the CLI looks for `./cache`
-relative to its working directory and regenerates (slowly) if absent. The
-cache is circuit-keyed (and therefore per-network-domain): after a contract
-change, stale entries are simply recompiled.
+The `offline-cli/cache/` directory holds o1js's compile cache, but it is **not
+committed** — it is `.gitignore`d (the repo-wide `cache/` rule). The CLI
+generates it locally on first run, looking for `./cache` relative to its working
+directory and regenerating (slowly) if absent, so the first run is the one that
+spends the minutes to build the keys. The cache is circuit-keyed (and therefore
+per-network-domain): after a contract change, stale entries are simply
+recompiled.
 
 ## Dependencies
 

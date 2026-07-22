@@ -11,13 +11,14 @@
 # Why a user unit (not a root system unit): `docker compose -p minaguard-trail`
 # must target the SAME daemon the stack runs on — the rootless one. A root unit
 # hits the rootful daemon: wrong daemon, a second stack, a :10001 collision,
-# $HOME=/root, and no access to the user's cosign/ghcr config. A user unit runs
+# $HOME=/root, and no access to the user's gh/ghcr config. A user unit runs
 # as the right user with the rootless socket + XDG_RUNTIME_DIR already set, and
 # `After=docker.service` correctly means the user's (rootless) docker.
 #
-# Prereqs the user unit needs: cosign on PATH (install to /usr/local/bin, not
-# ~/.local/bin, so the user manager's PATH finds it); `docker login ghcr.io` as
-# this user (or public packages → no login); ExecStart script at /usr/local/bin.
+# Prereqs the user unit needs: the `gh` CLI on PATH (install to /usr/local/bin,
+# not ~/.local/bin, so the user manager's PATH finds it) for `gh attestation
+# verify`; ExecStart script at /usr/local/bin. The /trail GHCR packages are
+# public, so no `docker login` / read:packages token is required to pull.
 # (If a box instead runs the stack ROOTFUL, use a root system unit with
 # WantedBy=multi-user.target + EnvironmentFile in /etc — the inverse of this.)
 [Unit]
@@ -30,6 +31,6 @@ Type=oneshot
 # %h = this user's home. Owner-only 0600, readable by the unit's user.
 EnvironmentFile=%h/.config/minaguard/trail.env
 ExecStart=/usr/local/bin/trail-pull-deploy.sh
-# Don't thrash on a transient GHCR/cosign hiccup; the timer will retry.
+# Don't thrash on a transient GHCR/attestation-verify hiccup; the timer will retry.
 TimeoutStartSec=600
 # (No [Install] — this oneshot is triggered by trail-pull-deploy.timer, not enabled directly.)

@@ -39,8 +39,9 @@ submissions, lite-mode subscriptions) or lightnet test funding.
 ## Architecture
 
 At startup: environment is loaded and validated by `src/config.ts` (fails fast on
-missing/invalid vars) → Prisma connects to the database → the indexer starts and runs one
-immediate sync tick → Express starts and serves API routes.
+missing/invalid vars) → Prisma connects to the database → Express starts and serves API
+routes → the indexer starts and runs one immediate sync tick. Express comes up **before**
+the indexer so `/health` stays reachable while the first (potentially slow) tick runs.
 
 ### Modes
 
@@ -48,8 +49,8 @@ The indexer runs in one of two modes, set by config at startup.
 
 | Mode | Discovery | Backfill lower bound | Subscribe API |
 |---|---|---|---|
-| `full` | Scans a bounded recent bestChain window (≤290 blocks) for MinaGuard deployments | `indexedHeight - 300` (~290-block bestChain horizon + safety margin) | disabled |
-| `lite` | No scan; only tracks contracts added via `POST /api/subscribe` | `config.indexStartHeight` (default `0`) | enabled |
+| `full` | Scans a bounded recent bestChain window (≤290 blocks) for MinaGuard deployments | daemon discovery: `indexedHeight - 300` (~290-block bestChain horizon + safety margin); archive discovery: `config.indexStartHeight` | disabled |
+| `lite` | No scan; only tracks contracts added via `POST /api/subscribe` | `backfillContract` is not called; sync is via `rescanUnreadyContracts` from `discoveredAtBlock` (= subscribe `fromBlock ?? latestHeight - 5`) | enabled |
 
 `full` is the batch indexer posture: look at the whole chain and keep everything. `lite` is the
 user-facing posture (and the desktop shell's): only track what a user asked for, but pull full
@@ -125,7 +126,7 @@ Three ways to become tracked:
 
 - **Full mode, daemon discovery**: `discoverCandidateAddresses` scans recent bestChain blocks, `fetchVerificationKeyHash` confirms it's a zkApp, and the hash is optionally matched against `MINAGUARD_VK_HASH`. Backfill window is `max(0, indexedHeight - 300)` — a safe margin around the ~290-block bestChain horizon, which is guaranteed to cover the deploy since that horizon is the only place daemon discovery could have seen it.
 - **Full mode, archive discovery**: `discoverCandidateAddressesFromArchive` queries the archive postgres for account updates that installed MinaGuard's VK (applied zkapp commands in non-orphaned blocks). Because this can surface contracts deployed at arbitrary historical heights, the backfill lower bound is `indexStartHeight` (default 0). The on-chain VK re-fetch via the daemon still runs per new candidate: it catches the edge case where the archive shows a VK install that has since been upgraded on-chain. The query includes `pending` blocks so fresh deploys are discoverable before finalization; orphaned pending deploys are cleaned up by `rollbackAboveFork`, which deletes `Contract` rows by `discoveredAtBlock` on every reorg rollback. The residual risk is the same as any reorg deeper than the ~290-block detection window: operator intervention.
-- **Lite mode subscribe**: user calls `POST /api/subscribe { address, fromBlock? }`. `fromBlock` omitted = `latestHeight - 5` (margin to cover a block landing mid-request). `fromBlock` supplied = trusted explicit lower bound, but the address must already resolve to a deployed zkApp (guards against typos backfilling forever). A *mismatched* VK is rejected (HTTP 400) on both subscribe paths when `MINAGUARD_VK_HASH` is set (`routes.ts`); only a *missing* VK is tolerated, so the user may still subscribe before the deploy tx lands.
+- **Lite mode subscribe**: user calls `POST /api/subscribe { address, fromBlock? }`. `fromBlock` omitted = `latestHeight - 5` (margin to cover a block landing mid-request), with **no on-chain check at all** — the auto-subscribe after a fresh deploy races the tx landing, so the address may still be in the mempool. `fromBlock` supplied = trusted explicit lower bound, and this manual path is the **only** one that runs a VK lookup (`routes.ts`): the address must already resolve to a deployed zkApp (a *missing* VK → HTTP 404, guarding against typos backfilling forever) and, when `MINAGUARD_VK_HASH` is set, a *mismatched* VK → HTTP 400.
 
 The `rescanUnreadyContracts` loop re-scans `[discoveredAtBlock, latestHeight]` every tick until
 events land. First event flips `ready = true` and the contract joins the forward sweep.
@@ -136,7 +137,7 @@ events land. First event flips `ready = true` and the contract joins the forward
 
 1. **Fetch** decoded events via `fetchDecodedContractEvents` (archive GraphQL). Each event carries `txMemo` (the base58-encoded transaction memo from the archive).
 2. **Reverse per-tx groups** (`reverseEventsWithinEachTx`). o1js returns events within a single tx in newest-first order; the contract emits them oldest-first. Cross-tx ordering is preserved. This matters for multi-receiver proposals — reversed `receiver` indices break the off-chain proposal-hash recomputation on approve.
-3. **Stable sort by type** (`setup`/`setupOwner`/`proposal`/`approval`/`receiver`/`execution`/...). Ensures a `proposal` row exists before its `approval`/`receiver`/`execution` children are processed within the same batch.
+3. **Order for apply** (`orderEventsForApply`). Events are applied in canonical block order: ascending `blockHeight` (primary), then a within-block lifecycle-type rank (secondary: `setup`/`setupOwner`/`proposal`/`approval`/`receiver`/`execution`/...), then the per-tx emission order restored by step 2 (tiebreak, keeping the sort stable). Block height is primary so a later block's low-rank event (e.g. an `execution`) can't be applied before an earlier block's high-rank event (e.g. a `thresholdChange`) and corrupt the copied-forward `ContractConfig` snapshot; the type rank still keeps a `proposal` ahead of its `approval`/`receiver`/`execution` children within a block.
 4. **Dedupe by fingerprint** (`address::type::blockHeight::txHash::payload`). `EventRaw.fingerprint` is unique; second writer is a no-op.
 5. **Upsert BlockHeader** for the event's `(height, blockHash, parentHash)`. First writer wins; mismatches across events at the same height get caught by the next tick's reorg detector.
 6. **Insert EventRaw** and dispatch to the appropriate `apply*` handler.
@@ -154,7 +155,7 @@ block it became valid at. Current state is the latest row; reorg rollback is a s
 `eventOrder`. Current state = latest row by `(validFromBlock DESC, eventOrder DESC)`.
 
 - **`BlockHeader`** — `(height, blockHash, parentHash)`. Only populated at heights with MinaGuard activity. Raw material for reorg detection.
-- **`ContractConfig`** — full snapshot of `threshold`, `numOwners`, `nonce`, `parentNonce`, `configNonce`, `delegate`, `childMultiSigEnabled`, `ownersCommitment`, `networkId`. `appendContractConfigSnapshot` copies the latest row forward and overlays changes, so every row is a complete point-in-time view. Read routes use the latest row.
+- **`ContractConfig`** — full snapshot of `threshold`, `numOwners`, `nonce`, `parentNonce`, `configNonce`, `delegate`, `childMultiSigEnabled`, `ownersCommitment`. `appendContractConfigSnapshot` copies the latest row forward and overlays changes, so every row is a complete point-in-time view. Read routes use the latest row. (Both this table and `Proposal` also carry a `networkId` column, but no write path populates either — the columns are vestigial and always null.)
 - **`OwnerMembership`** — `{address, action: 'added'|'removed', index?}`. Active owners = reduce memberships per address, keep addresses whose latest action is `added`.
 - **`ProposalExecution`** — unique per proposal (`@@unique([proposalId])`); upserted when an `execution` event is ingested. Its existence is what makes a proposal `executed`.
 - **`Approval`** — unique per `(proposalId, approver)`; upserted so duplicate approval events from reorgs/retries don't inflate counts.
@@ -163,7 +164,7 @@ block it became valid at. Current state is the latest row; reorg rollback is a s
 **Identity / pointer.**
 
 - **`Contract`** — `(address, parent?, ready, discoveredAtBlock, ...)`. Identity + latest-synced metadata. `parent` set from `setup.parent` (null/EMPTY for root guards).
-- **`Proposal`** — `(contractId, proposalHash, ...)`, unique per `@@unique([contractId, proposalHash])`. Identity + propose-time fields (`proposer`, `toAddress`, `tokenId`, `txType`, `data`, `nonce`, `configNonce`, `expirySlot`, `networkId`, `guardAddress`, `destination`, `childAccount`, `memo`/`memoHash`/`executionMemoHash`, `createdAtBlock`), plus last-submitted approve/execute tx hashes and error fields for UI polling. `ProposalReceiver` child rows carry per-slot receivers from `receiver` events (padded empties skipped); for governance proposals slot 0 is mirrored onto `Proposal.toAddress`. **There is no stored status column** — status is derived at read time (see [Proposal status](#proposal-status)).
+- **`Proposal`** — `(contractId, proposalHash, ...)`, unique per `@@unique([contractId, proposalHash])`. Identity + propose-time fields (`proposer`, `toAddress`, `tokenId`, `txType`, `data`, `nonce`, `configNonce`, `expirySlot`, `guardAddress`, `destination`, `childAccount`, `memo`/`memoHash`/`executionMemoHash`, `createdAtBlock`), plus last-submitted approve/execute tx hashes and error fields for UI polling. `ProposalReceiver` child rows carry per-slot receivers from `receiver` events (padded empties skipped); for governance proposals slot 0 is mirrored onto `Proposal.toAddress`. **There is no stored status column** — status is derived at read time (see [Proposal status](#proposal-status)).
 - **`IndexerCursor`** — key/value rows. `indexed_height` is the forward-sweep cursor. `archive_discovered_height` is the archive-discovery high-water mark, tracked separately so that switching `DISCOVERY_BACKEND` from `daemon` to `archive` triggers a from-genesis sweep instead of inheriting the (much narrower) daemon cursor position.
 
 **Memo lifecycle.** The on-chain `TransactionProposal` struct includes a `memoHash` field
@@ -269,12 +270,15 @@ endpoints.
 
 From `backend/`:
 
-- `bun run dev` — auto-sync schema, then start server with `tsx watch`
-- `bun run build` — compile TypeScript to `dist/`
-- `bun run start` — auto-sync schema, then run compiled server
-- `bun run prisma:generate` — generate Prisma client
-- `bun run prisma:migrate` — run Prisma migration workflow
-- `bun run prisma:push` — push schema manually
+- `bun run dev` — generate client, `prisma migrate deploy`, then start the server with `bun --watch`
+- `bun run build` — generate client, then compile TypeScript to `dist/`
+- `bun run start` — `prisma migrate deploy`, then run the compiled server
+- `bun run db:migrate` — apply committed migrations (`prisma migrate deploy`)
+- `bun run prisma:generate` — generate the Prisma client (Postgres schema)
+- `bun run prisma:generate:sqlite` — generate the Prisma client from the SQLite desktop schema (runs a schema-sync check first)
+- `bun run prisma:migrate` — author a new migration against a dev DB (`prisma migrate dev`; dev-only)
+- `bun run prisma:schema-sql` — render the SQLite schema as raw SQL via `prisma migrate diff`
+- `bun run prisma:check-schema-sync` — assert the Postgres and SQLite schemas stay in sync
 - `bun run seed:fixtures` — seed bulk synthetic UI-scaling fixtures straight into Postgres (bypasses the indexer; dev-only)
 
 ### Environment variables
@@ -291,6 +295,8 @@ From `backend/`:
 | `INDEX_POLL_INTERVAL_MS` | `15000` | Poll interval for index ticks |
 | `INDEX_START_HEIGHT` | `0` | Initial cursor height when no cursor row exists |
 | `INDEXER_MODE` | `full` | `full` = auto-discover contracts on every tick; `lite` = track only addresses added via the subscribe API |
+| `INDEXER_DISABLED` | `false` | Test-harness knob: when `true`, boot the API without starting the polling indexer (UI tests run against a pre-seeded DB with no chain behind it) |
+| `INDEXER_FIXED_LATEST_SLOT` | empty | Test-harness knob: with the indexer disabled there is no genesis to derive slots from, so `status.latestSlot` (used for read-time expiry) is primed with this fixed value |
 | `DISCOVERY_BACKEND` | `daemon` | Candidate source for full-mode discovery: `daemon` (bestChain scan, ~290-block reach) or `archive` (direct archive-postgres SQL, unbounded history) |
 | `MINAGUARD_VK_HASH` | empty | Verification key hash filter for discovery. Optional for `daemon`; **required** for `archive` (the SQL filters on it). The canonical value is committed at `contracts/.vk-hash` (two labeled entries: `testnet=` and `mainnet=`; use the one matching the target network) |
 | `ARCHIVE_DB_HOST` | — | Archive postgres host (required when `DISCOVERY_BACKEND=archive`) |
@@ -326,7 +332,6 @@ event ingested); speculative rows — subscribed-before-deploy addresses, eagerl
 | `POST /api/fund` | Lightnet only (requires `LIGHTNET_ACCOUNT_MANAGER`). Acquires a pre-funded lightnet keypair and transfers MINA. Body: `{ address }`. |
 | `POST /api/subscribe` | Lite mode only (`404` otherwise). Subscribes an address; idempotent. Body: `{ address, fromBlock? }` — supplied `fromBlock` = explicit lower bound (address must resolve to a deployed zkApp); omitted = `latestHeight - 5`, no existence check (subscribe-before-deploy). |
 | `DELETE /api/subscribe/:address` | Lite mode only. Unsubscribes and deletes all tracked history, cascading to children. |
-| `GET /api/offline-cli/:platform` | Downloads the offline signing CLI binary (`macos-arm64\|macos-x64\|linux-x64\|linux-arm64\|windows-x64`), building it on first request. |
 
 Route middleware logs every request with a short id (`[api:<id>] -> …` inbound, `<- … <status> <ms>`
 outbound, `!! … stack` on error) to correlate lifecycle and failures in local/dev logs.
@@ -337,7 +342,7 @@ Status is computed per request in `src/proposal-record.ts`, with precedence:
 
 1. `executed` — a `ProposalExecution` row exists
 2. `expired` — `expirySlot > 0` and the current `latestSlot` is past it
-3. `invalidated` — the proposal's `configNonce` is stale, or its `nonce` is no longer fresh for its execution domain (contract `nonce` for LOCAL, the child's `parentNonce` for REMOTE), compared against the latest `ContractConfig` snapshot
+3. `invalidated` — the proposal's `configNonce` is stale, or its `nonce` is no longer fresh for its execution domain (contract `nonce` for LOCAL, the child's `parentNonce` for REMOTE), compared against the latest `ContractConfig` snapshot. CREATE_CHILD proposals (`txType === '5'`) are exempt from the nonce-staleness half — their nonce is structural (always `0`), so only a stale `configNonce` can invalidate them (`proposal-record.ts`)
 4. `pending` — otherwise
 
 Deriving instead of storing means a reorg rollback can't leave a stale status behind, and expiry
@@ -355,8 +360,8 @@ command) and lightnet running locally (`zk lightnet start`).
 
 ### Troubleshooting
 
-- **Reset the database** — `bun prisma db push --force-reset` (wipes all data, recreates tables).
-- **`P2021` table missing** — schema not applied to the current DB: `bun run --filter backend prisma:push`, or restart with `dev`/`start` so `db:push` runs automatically.
+- **Reset the database** — `bun prisma migrate reset` (wipes all data, re-applies migrations from the baseline).
+- **`P2021` table missing** — schema not applied to the current DB: `bun run --filter backend db:migrate`, or restart with `dev`/`start` so `prisma migrate deploy` runs automatically.
 - **No contracts discovered** — check `INDEXER_MODE` (`lite` auto-discovers nothing — use `POST /api/subscribe`), endpoint connectivity (`MINA_ENDPOINT`/`ARCHIVE_ENDPOINT`; `ARCHIVE_DB_*` for archive), `MINAGUARD_VK_HASH` (must match the deployed VK for the target network — pick `testnet=`/`mainnet=` from `contracts/.vk-hash`; stale after any circuit change), discovery reach (`daemon` sees only ~290 blocks — use `DISCOVERY_BACKEND=archive` for older deploys), and `INDEX_START_HEIGHT` vs the current activity window.
 - **Indexer appears stuck** — check `GET /api/indexer/status`: `lastError` for the failure reason, `latestChainHeight` vs `indexedHeight` for lag, and server logs for GraphQL/network errors.
 
