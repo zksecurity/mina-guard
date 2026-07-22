@@ -656,7 +656,9 @@ export default function TransactionDetailPage() {
             <DetailRow label="Proposal Hash" value={proposal.proposalHash} mono copyable />
             <DetailRow label="Nonce" value={proposal.nonce ?? '-'} mono copyable />
             <DetailRow label="Proposed by" value={proposal.proposer ?? '-'} mono copyable />
-            {proposal.txType === 'transfer' && !isDeleteProposal(proposal) && (
+            {/* allocateChild also sends MINA (to child vaults), so approvers must
+                see its recipients/amounts just like a transfer. */}
+            {(proposal.txType === 'transfer' || proposal.txType === 'allocateChild') && !isDeleteProposal(proposal) && (
               <>
                 <DetailRow label="Recipients" value={String(proposal.recipientCount)} />
                 <DetailRow label="Total Amount" value={`${formatMina(proposal.totalAmount)} MINA`} />
@@ -688,7 +690,7 @@ export default function TransactionDetailPage() {
           </div>
         </div>
 
-        {proposal.txType === 'transfer' && proposal.receivers.length > 0 && (
+        {(proposal.txType === 'transfer' || proposal.txType === 'allocateChild') && proposal.receivers.length > 0 && (
           <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
             <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Recipients</h3>
             <div className="space-y-2">

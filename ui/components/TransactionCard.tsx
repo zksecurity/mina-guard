@@ -94,7 +94,7 @@ export default function TransactionCard({
                 )}
               </div>
               <p className="text-xs text-safe-text mt-0.5">{secondaryLine}</p>
-              {proposal.txType === 'transfer' && !isDelete && (
+              {(proposal.txType === 'transfer' || proposal.txType === 'allocateChild') && !isDelete && (
                 <p className="text-xs text-safe-text mt-0.5">
                   {proposal.recipientCount} recipients · {formatMina(proposal.totalAmount)} MINA
                 </p>
