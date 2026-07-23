@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { app, BrowserWindow, dialog, Menu } from 'electron';
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { registerConfigIpc } from './config-ipc.js';
 import { handleAuroRoute } from './auro/router.js';
@@ -91,6 +91,34 @@ function startNextStandalone(): Promise<void> {
   });
 }
 
+// CSP for the app window that holds window.mina. o1js proving forces
+// 'unsafe-eval' + blob workers, so this is a remote-content and exfil lock,
+// not XSS prevention. connect-src must allow the configured Mina/archive nodes.
+function contentSecurityPolicy(): string {
+  const connect = new Set<string>(["'self'"]);
+  for (const ep of [currentConfig?.minaEndpoint, currentConfig?.archiveEndpoint]) {
+    if (!ep) continue;
+    try {
+      connect.add(new URL(ep).origin);
+    } catch {
+      // skip an unparseable endpoint
+    }
+  }
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
+    "worker-src 'self' blob:",
+    `connect-src ${[...connect].join(' ')}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "frame-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
 async function startHttpServer(
   backendHandle: EmbeddedBackendHandle,
 ): Promise<void> {
@@ -102,6 +130,8 @@ async function startHttpServer(
       return;
     }
     if (handleAuroRoute(req, res)) return;
+    // CSP on the app + api responses, not the Auro pages handled above.
+    res.setHeader('Content-Security-Policy', contentSecurityPolicy());
     // Express app is itself a (req, res, next) handler. If no /api/* or /health
     // route matches, Express calls next() and we fall through to the Next
     // standalone server via the proxy below.
@@ -154,6 +184,45 @@ async function startServices(config: UserConfig): Promise<void> {
   await startHttpServer(backend);
 }
 
+/** Locks a window to the trusted app: denies new-window creation (external
+ *  links go to the OS browser) and blocks in-frame navigation off
+ *  `allowedOrigin`. Omit `allowedOrigin` to block all navigation, for static
+ *  loadFile windows that never navigate. */
+function hardenWindow(win: BrowserWindow, allowedOrigin?: string): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    // External URLs must not open in-app, a window inherits the preload and
+    // exposes the privileged bridge. Route http(s) to the OS browser, deny all.
+    let protocol = '';
+    try {
+      protocol = new URL(url).protocol;
+    } catch {
+      // malformed url, fall through to deny
+    }
+    if (protocol === 'http:' || protocol === 'https:') {
+      void shell.openExternal(url).catch((err) => {
+        console.error('[desktop] failed to open external url:', err.message);
+      });
+    }
+    return { action: 'deny' };
+  });
+
+  // Keep the frame on the trusted origin, or block all navigation when no
+  // origin is allowed. Covers main frame and subframes, not loadFile/loadURL
+  // or in-page routing.
+  win.webContents.on('will-frame-navigate', (details) => {
+    let origin = '';
+    try {
+      origin = new URL(details.url).origin;
+    } catch {
+      // malformed url, block it
+    }
+    if (allowedOrigin === undefined || origin !== allowedOrigin) {
+      details.preventDefault();
+      console.warn(`[desktop] blocked navigation to ${details.url}`);
+    }
+  });
+}
+
 /** Runs the setup flow: on first run seeded with defaults, and as the recovery
  *  path — seeded with the saved endpoints plus the startup error — when the
  *  app failed to start. Saving verifies the endpoints, persists them, and
@@ -179,6 +248,9 @@ function runSetupFlow(
       title: 'MinaGuard Setup',
       webPreferences: { preload: setupPreloadPath },
     });
+
+    // Static setup page, no navigation is ever legitimate, block all of it.
+    hardenWindow(win);
 
     let settled = false;
     const settle = (value: { config: UserConfig; close: () => void } | null) => {
@@ -374,6 +446,10 @@ function openMainWindow(closeSetupWindow: (() => void) | null): void {
   win.on('page-title-updated', (event) => {
     event.preventDefault();
   });
+
+  // Treat the renderer as untrusted: pin it to the local origin and send
+  // external links to the OS browser, not preload-carrying windows.
+  hardenWindow(win, `http://127.0.0.1:${PORT}`);
 
   // Keep setup window alive until the main window has a content to show, then
   // close it. `did-finish-load` fires after the initial navigation completes.
