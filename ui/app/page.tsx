@@ -42,31 +42,42 @@ function buildOwnedForest(
   if (!walletAddress) return [];
 
   const byAddress = new Map<string, ContractSummary>();
+  for (const c of contracts) {
+    if (!byAddress.has(c.address)) byAddress.set(c.address, c); // ignore duplicate rows
+  }
+
+  // Normalize an untrusted parent edge: the parent must exist and be a root.
+  // Anything else (dangling, grandchild, cycle) collapses to null, so the node
+  // becomes its own root. Caps the forest at MinaGuard's 2 levels and tolerates
+  // a missing parent (lite mode, a subscribed child whose parent isn't indexed).
+  const rootParentOf = (c: ContractSummary): string | null => {
+    if (!c.parent) return null;
+    const parent = byAddress.get(c.parent);
+    if (!parent || parent.parent) return null;
+    return c.parent;
+  };
+
   const childrenByParent = new Map<string, ContractSummary[]>();
   for (const c of contracts) {
-    byAddress.set(c.address, c);
-    if (c.parent) {
-      const siblings = childrenByParent.get(c.parent) ?? [];
-      siblings.push(c);
-      childrenByParent.set(c.parent, siblings);
-    }
+    const parent = rootParentOf(c);
+    if (!parent) continue;
+    const siblings = childrenByParent.get(parent) ?? [];
+    siblings.push(c);
+    childrenByParent.set(parent, siblings);
   }
 
   const ownsNode = (addr: string): boolean =>
     allContractOwners.get(addr)?.includes(walletAddress) ?? false;
 
+  // Each node is at most one hop from its root now, so no ancestor walk is needed.
   const ownedRoots = new Set<string>();
   for (const c of contracts) {
     if (!ownsNode(c.address)) continue;
-    let current: ContractSummary | undefined = c;
-    while (current?.parent) {
-      const next = byAddress.get(current.parent);
-      if (!next) break;
-      current = next;
-    }
-    if (current) ownedRoots.add(current.address);
+    ownedRoots.add(rootParentOf(c) ?? c.address);
   }
 
+  // childrenByParent holds only valid 2-level children, so this recursion is
+  // acyclic and depth-capped by construction.
   const buildNode = (contract: ContractSummary): TreeNode => {
     const children = (childrenByParent.get(contract.address) ?? [])
       .slice()

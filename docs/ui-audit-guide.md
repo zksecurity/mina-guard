@@ -27,12 +27,18 @@ as a **forest of trees** (a root vault with its children nested underneath). The
 rule is: **a whole tree is visible if the connected wallet owns *any* node in it** — the root
 or any child. Concretely, the UI walks up from each vault the wallet owns to its root, then
 renders that root's *entire* subtree, including sibling children the wallet does **not** own
-(`buildOwnedForest`, `app/page.tsx:37-83`).
+(`buildOwnedForest`, `app/page.tsx:37-94`).
 Those non-owned nodes are still displayed, marked **"View-only"**. So owning a single child
 surfaces its parent and all siblings; conversely, if the wallet owns nothing in a tree, the
 whole tree is hidden. Tree depth is capped at 2 (children cannot themselves have children),
 and the header vault *count* is stricter than tree visibility — it counts only directly-owned
 vaults, so a tree surfaced solely via an owned child is visible but not counted.
+The `parent` edges come from the untrusted indexer, so `buildOwnedForest`
+normalizes each before use (`rootParentOf`): a parent is honored only if it
+exists and is itself a root, collapsing dangling, grandchild, or cyclic edges so
+the node renders as its own root. This keeps the displayed forest a valid 2-level
+tree. The hierarchy is display-only, it is not part of the signed proposal (which
+binds `guardAddress`), so a tampered edge cannot reroute an approval.
 
 **Propose → approve → execute is a direct on-chain flow.** These three steps are the vault
 lifecycle, and each one is an independent transaction that the browser/worker **builds,
