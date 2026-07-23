@@ -154,6 +154,45 @@ async function startServices(config: UserConfig): Promise<void> {
   await startHttpServer(backend);
 }
 
+/** Locks a window to the trusted app: denies new-window creation (external
+ *  links go to the OS browser) and blocks in-frame navigation off
+ *  `allowedOrigin`. Omit `allowedOrigin` to block all navigation, for static
+ *  loadFile windows that never navigate. */
+function hardenWindow(win: BrowserWindow, allowedOrigin?: string): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    // External URLs must not open in-app, a window inherits the preload and
+    // exposes the privileged bridge. Route http(s) to the OS browser, deny all.
+    let protocol = '';
+    try {
+      protocol = new URL(url).protocol;
+    } catch {
+      // malformed url, fall through to deny
+    }
+    if (protocol === 'http:' || protocol === 'https:') {
+      void shell.openExternal(url).catch((err) => {
+        console.error('[desktop] failed to open external url:', err.message);
+      });
+    }
+    return { action: 'deny' };
+  });
+
+  // Keep the frame on the trusted origin, or block all navigation when no
+  // origin is allowed. Covers main frame and subframes, not loadFile/loadURL
+  // or in-page routing.
+  win.webContents.on('will-frame-navigate', (details) => {
+    let origin = '';
+    try {
+      origin = new URL(details.url).origin;
+    } catch {
+      // malformed url, block it
+    }
+    if (allowedOrigin === undefined || origin !== allowedOrigin) {
+      details.preventDefault();
+      console.warn(`[desktop] blocked navigation to ${details.url}`);
+    }
+  });
+}
+
 /** Runs the setup flow: on first run seeded with defaults, and as the recovery
  *  path — seeded with the saved endpoints plus the startup error — when the
  *  app failed to start. Saving verifies the endpoints, persists them, and
@@ -179,6 +218,9 @@ function runSetupFlow(
       title: 'MinaGuard Setup',
       webPreferences: { preload: setupPreloadPath },
     });
+
+    // Static setup page, no navigation is ever legitimate, block all of it.
+    hardenWindow(win);
 
     let settled = false;
     const settle = (value: { config: UserConfig; close: () => void } | null) => {
@@ -375,22 +417,9 @@ function openMainWindow(closeSetupWindow: (() => void) | null): void {
     event.preventDefault();
   });
 
-  // External URLs must never open in-app, an Electron window would inherit the
-  // preload and expose window.mina. Route http(s) to the OS browser, deny all.
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    let protocol = '';
-    try {
-      protocol = new URL(url).protocol;
-    } catch {
-      // malformed url, fall through to deny
-    }
-    if (protocol === 'http:' || protocol === 'https:') {
-      void shell.openExternal(url).catch((err) => {
-        console.error('[desktop] failed to open external url:', err.message);
-      });
-    }
-    return { action: 'deny' };
-  });
+  // Treat the renderer as untrusted: pin it to the local origin and send
+  // external links to the OS browser, not preload-carrying windows.
+  hardenWindow(win, `http://127.0.0.1:${PORT}`);
 
   // Keep setup window alive until the main window has a content to show, then
   // close it. `did-finish-load` fires after the initial navigation completes.
