@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { app, BrowserWindow, dialog, Menu } from 'electron';
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { registerConfigIpc } from './config-ipc.js';
 import { handleAuroRoute } from './auro/router.js';
@@ -373,6 +373,23 @@ function openMainWindow(closeSetupWindow: (() => void) | null): void {
   // replace the window title on every navigation. Pin it to "MinaGuard".
   win.on('page-title-updated', (event) => {
     event.preventDefault();
+  });
+
+  // External URLs must never open in-app, an Electron window would inherit the
+  // preload and expose window.mina. Route http(s) to the OS browser, deny all.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    let protocol = '';
+    try {
+      protocol = new URL(url).protocol;
+    } catch {
+      // malformed url, fall through to deny
+    }
+    if (protocol === 'http:' || protocol === 'https:') {
+      void shell.openExternal(url).catch((err) => {
+        console.error('[desktop] failed to open external url:', err.message);
+      });
+    }
+    return { action: 'deny' };
   });
 
   // Keep setup window alive until the main window has a content to show, then
