@@ -91,6 +91,34 @@ function startNextStandalone(): Promise<void> {
   });
 }
 
+// CSP for the app window that holds window.mina. o1js proving forces
+// 'unsafe-eval' + blob workers, so this is a remote-content and exfil lock,
+// not XSS prevention. connect-src must allow the configured Mina/archive nodes.
+function contentSecurityPolicy(): string {
+  const connect = new Set<string>(["'self'"]);
+  for (const ep of [currentConfig?.minaEndpoint, currentConfig?.archiveEndpoint]) {
+    if (!ep) continue;
+    try {
+      connect.add(new URL(ep).origin);
+    } catch {
+      // skip an unparseable endpoint
+    }
+  }
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
+    "worker-src 'self' blob:",
+    `connect-src ${[...connect].join(' ')}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "frame-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
 async function startHttpServer(
   backendHandle: EmbeddedBackendHandle,
 ): Promise<void> {
@@ -102,6 +130,8 @@ async function startHttpServer(
       return;
     }
     if (handleAuroRoute(req, res)) return;
+    // CSP on the app + api responses, not the Auro pages handled above.
+    res.setHeader('Content-Security-Policy', contentSecurityPolicy());
     // Express app is itself a (req, res, next) handler. If no /api/* or /health
     // route matches, Express calls next() and we fall through to the Next
     // standalone server via the proxy below.
