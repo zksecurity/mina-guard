@@ -91,6 +91,14 @@ reclaimable.
 - **Heavy crypto runs in a Web Worker.** The worker compiles the contract and
   generates proofs. It calls *back* to the main thread for anything requiring a
   signer or network egress, via Comlink-proxied callbacks.
+- **The compile cache is untrusted; the compile *output* is what's checked.**
+  `idb-compile-cache.ts` matches a blob's `uniqueId` against `__manifest__`, which sits in the same
+  IndexedDB — so it can't prove a blob belongs to the id it's served under, and anything able to write
+  same-origin IndexedDB can swap the keys o1js compiles from. Rather than authenticate each entry, the
+  worker checks the resulting verification key against `NEXT_PUBLIC_MINAGUARD_VK_HASH`, failing the
+  compile and clearing the cache on mismatch. Pre-deploy is the window that matters: `zkApp.deploy()`
+  installs whatever key compile produced, while afterwards a swap only yields proofs that fail on-chain.
+  Unset ⇒ skipped, like the backend's `minaguardVkHash`.
 - **The backend is not trusted for integrity.** Data from the backend is used to construct
   transactions and display information. Security-critical operations, such as proposal creation, approval,
   and execution, are performed on-chain. Transactions are also submitted directly to the node.
@@ -111,7 +119,8 @@ reclaimable.
   network id / fee-payer signature domain), `NEXT_PUBLIC_MINA_ENDPOINT` / `NEXT_PUBLIC_ARCHIVE_ENDPOINT`
   (node / archive), `NEXT_PUBLIC_API_BASE_URL` (backend read API), `NEXT_PUBLIC_BLOCK_EXPLORER_URL`,
   `NEXT_PUBLIC_POLL_INTERVAL_MS`, `NEXT_PUBLIC_INDEXER_MODE` (`full` vs `lite`),
-  `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`, and the test-only `NEXT_PUBLIC_E2E_TEST`. Only the Mina/archive
+  `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`, `NEXT_PUBLIC_MINAGUARD_VK_HASH` (expected compile output — see
+  above; stale ⇒ every compile fails), and the test-only `NEXT_PUBLIC_E2E_TEST`. Only the Mina/archive
   endpoints are overridable at runtime by the desktop shell (`window.__minaGuardConfig`); everything else
   — `NEXT_PUBLIC_MINA_NETWORK_DOMAIN` especially, being compiled into the circuit — is fixed at build time.
 

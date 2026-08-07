@@ -170,6 +170,41 @@ async function configureNetwork() {
 let compileSucceeded = false;
 let idbCache: Awaited<ReturnType<typeof import('./idb-compile-cache').createIndexedDBCache>> | null = null;
 
+/** The verification key this build's circuit must compile to — the same
+ *  `contracts/.vk-hash` value the backend receives as `MINAGUARD_VK_HASH`, for
+ *  the network domain in `NEXT_PUBLIC_MINA_NETWORK_DOMAIN`. */
+const EXPECTED_VK_HASH = process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH;
+
+/**
+ * Fails the compile when the artifacts o1js compiled from were not ours.
+ *
+ * The compile cache is untrusted local storage: its manifest cannot prove that
+ * a blob belongs to the id it is served under (see `read()` in
+ * `idb-compile-cache.ts`), so anything able to write same-origin IndexedDB can
+ * substitute the step/wrap keys o1js builds with. Checking the resulting
+ * verification key catches that however the artifacts were swapped, and it
+ * matters most *before* a deploy: `zkApp.deploy()` installs whatever key the
+ * compile produced, making a substituted one the vault's permanent
+ * authorization rule. (For an already-deployed vault, mismatched artifacts only
+ * yield proofs that fail against the on-chain key.)
+ *
+ * No-op when the hash is unset, mirroring the backend's `minaguardVkHash`
+ * check, so dev and test builds run without it.
+ */
+async function assertExpectedVerificationKey(actualHash: string): Promise<void> {
+  if (!EXPECTED_VK_HASH || actualHash === EXPECTED_VK_HASH) return;
+  // The cache is the only untrusted input to compile — drop it, along with the
+  // preloaded in-memory copy, so a retry rebuilds from scratch rather than
+  // reading the same artifacts straight back.
+  const { clearCompileCache } = await import('./idb-compile-cache');
+  await clearCompileCache();
+  idbCache = null;
+  throw new Error(
+    `Verification key mismatch: compiled ${actualHash}, expected ${EXPECTED_VK_HASH}. `
+    + 'Local compile cache discarded — retry to rebuild it from scratch.',
+  );
+}
+
 async function compileContract(): Promise<boolean> {
   if (compileSucceeded) return true;
 
@@ -182,7 +217,8 @@ async function compileContract(): Promise<boolean> {
         const { createIndexedDBCache } = await import('./idb-compile-cache');
         idbCache = await createIndexedDBCache();
       }
-      await MinaGuard.compile({ cache: idbCache });
+      const { verificationKey } = await MinaGuard.compile({ cache: idbCache });
+      await assertExpectedVerificationKey(verificationKey.hash.toString());
       const { getCompileCacheSize } = await import('./idb-compile-cache');
       const size = await getCompileCacheSize();
       console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s — cache: ${(size.bytes / 1024 / 1024).toFixed(0)}MB (${size.entries} entries)`);
