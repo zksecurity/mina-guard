@@ -89,6 +89,9 @@ services:
         # `?network=mesa`).
         - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-trail.duckdns.org/trail/explorer
         - NEXT_PUBLIC_POLL_INTERVAL_MS=1000
+        # Same host-computed hash the backend gets above — the worker rejects a
+        # compile whose verification key doesn't match it.
+        - NEXT_PUBLIC_MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-}
         - ENABLE_SOURCE_MAPS=false
     restart: unless-stopped
     depends_on:
