@@ -463,10 +463,9 @@ function openMainWindow(closeSetupWindow: (() => void) | null): void {
 
   let selectedHidDevice: Electron.HIDDevice | null = null;
 
-  // The renderer is untrusted, so the chooser is an OS dialog rather than
-  // anything drawn in the page — see hid-picker.ts. Buttons are the devices in
-  // list order, so the response index selects straight out of deviceList;
-  // Cancel is one past the end and lands on undefined, denying access.
+  // Chooser is an OS dialog, never drawn in the untrusted page — see
+  // hid-picker.ts. Buttons mirror deviceList, so the response index selects
+  // straight out of it; Cancel sits one past the end and lands on undefined.
   win.webContents.session.on('select-hid-device', (event, details, callback) => {
     event.preventDefault();
     selectedHidDevice = null;
