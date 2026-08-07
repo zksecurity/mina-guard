@@ -6,14 +6,17 @@
 // plaintext description of exactly what is about to be signed and (on a real
 // terminal) require an explicit y/N confirmation.
 //
-// Everything here writes to STDERR — stdout must stay pure signed-tx JSON.
+// stdout must stay pure signed-tx JSON, so nothing here writes to it. The
+// interactive prompt goes to the controlling terminal (/dev/tty) rather than
+// stderr, so that redirecting stderr cannot hide it; the non-interactive paths
+// write to stderr.
 //
 // Self-contained by convention (mirrors decodeTxMemo / normalizeTxType in
 // build-tx.ts): format helpers are duplicated from ui/lib/types.ts rather than
 // imported, so the CLI has no dependency on the web app.
 // ---------------------------------------------------------------------------
 
-import { openSync, readSync, closeSync } from 'fs';
+import { openSync, readSync, writeSync, closeSync } from 'fs';
 import {
   normalizeTxType,
   EMPTY_PUBKEY_B58,
@@ -275,11 +278,22 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
 
 type LogFn = (msg: string) => void;
 
-/** Reads a single line from the controlling terminal (/dev/tty). */
-function readLineFromTty(): string | null {
-  let fd: number | null = null;
+/** Opens the controlling terminal for reading and writing, or returns null when
+ *  the process has none (Windows, detached, or a container with no tty). This
+ *  is deliberately independent of whether stdout/stderr are redirected: an
+ *  operator running `... > signed.json 2>log` still has a terminal, and it is
+ *  the only channel guaranteed to reach them. */
+function openTty(): number | null {
   try {
-    fd = openSync('/dev/tty', 'rs');
+    return openSync('/dev/tty', 'r+');
+  } catch {
+    return null;
+  }
+}
+
+/** Reads a single line from an open terminal fd. Returns null on read error. */
+function readLineFromFd(fd: number): string | null {
+  try {
     const buf = Buffer.alloc(1);
     let input = '';
     while (true) {
@@ -292,50 +306,60 @@ function readLineFromTty(): string | null {
     }
     return input;
   } catch {
-    return null; // no controlling terminal (e.g. Windows / detached)
-  } finally {
-    if (fd != null) {
-      try { closeSync(fd); } catch { /* ignore */ }
-    }
+    return null;
   }
 }
 
 /**
- * Prints the summary to stderr and, on a real terminal, requires explicit y/N
- * confirmation. Exits the process (code 1) if the user declines.
+ * Shows the operator exactly what is about to be signed and requires an
+ * explicit y/N confirmation before any key use. Exits (code 1) on anything
+ * other than an explicit yes.
  *
- * Non-interactive policy: when no TTY is attached (piped/CI/scripts) or when the
- * caller passes assumeYes, the summary is shown and signing proceeds without a
- * prompt. Only an attached terminal blocks for confirmation.
+ * The summary and prompt go to /dev/tty, not stderr, so redirecting stderr
+ * cannot silently skip the checkpoint — the operator is still at a terminal.
+ * When there is genuinely no terminal to ask, this fails closed rather than
+ * treating the absence of a prompt as approval: signing without a human in the
+ * loop has to be requested explicitly with --yes / MINA_GUARD_ASSUME_YES=1.
  */
 export function confirmOrExit(
   summary: string,
-  opts: { assumeYes: boolean; stderrIsTty: boolean },
+  opts: { assumeYes: boolean },
   log: LogFn,
 ): void {
-  process.stderr.write(summary + '\n');
-
   if (opts.assumeYes) {
+    process.stderr.write(summary + '\n');
     log('Confirmation bypassed (--yes / MINA_GUARD_ASSUME_YES).');
     return;
   }
-  if (!opts.stderrIsTty) {
-    log('No terminal attached — proceeding without interactive confirmation.');
-    return;
+
+  const fd = openTty();
+  if (fd == null) {
+    process.stderr.write(summary + '\n');
+    process.stderr.write(
+      '\nNo terminal available to confirm this signature.\n'
+      + 'Re-run from an interactive terminal, or pass --yes (or set\n'
+      + 'MINA_GUARD_ASSUME_YES=1) to sign without confirmation.\n'
+      + 'Aborted. No transaction was signed.\n',
+    );
+    process.exit(1);
   }
 
-  process.stderr.write('\nSign this transaction? [y/N]: ');
-  const answer = readLineFromTty();
-  if (answer == null) {
-    // Could not open /dev/tty despite isTTY — fall back to auto-proceed rather
-    // than deadlock, but make it visible.
-    log('Could not read from terminal — proceeding without confirmation.');
-    return;
+  let approved = false;
+  try {
+    writeSync(fd, summary + '\n');
+    writeSync(fd, '\nSign this transaction? [y/N]: ');
+    const answer = readLineFromFd(fd);
+    // A failed read (null) is not consent — fall through to abort.
+    const normalized = (answer ?? '').trim().toLowerCase();
+    approved = normalized === 'y' || normalized === 'yes';
+    if (!approved) writeSync(fd, 'Aborted. No transaction was signed.\n');
+  } catch {
+    // Any terminal I/O failure means we never got a confirmation.
+    approved = false;
+  } finally {
+    try { closeSync(fd); } catch { /* ignore */ }
   }
-  const normalized = answer.trim().toLowerCase();
-  if (normalized === 'y' || normalized === 'yes') {
-    return;
-  }
-  process.stderr.write('Aborted. No transaction was signed.\n');
+
+  if (approved) return;
   process.exit(1);
 }
