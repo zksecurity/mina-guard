@@ -5,7 +5,7 @@ import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { registerConfigIpc } from './config-ipc.js';
 import { handleAuroRoute } from './auro/router.js';
-import { buildPickerScript } from './hid-picker.js';
+import { buildHidPickerDialog } from './hid-picker.js';
 import { startEmbeddedBackend, type EmbeddedBackendHandle } from './backend-embed.js';
 import {
   deleteDatabase,
@@ -463,15 +463,25 @@ function openMainWindow(closeSetupWindow: (() => void) | null): void {
 
   let selectedHidDevice: Electron.HIDDevice | null = null;
 
+  // The renderer is untrusted, so the chooser is an OS dialog rather than
+  // anything drawn in the page — see hid-picker.ts. Buttons are the devices in
+  // list order, so the response index selects straight out of deviceList;
+  // Cancel is one past the end and lands on undefined, denying access.
   win.webContents.session.on('select-hid-device', (event, details, callback) => {
     event.preventDefault();
     selectedHidDevice = null;
-    const script = buildPickerScript(details.deviceList);
-    win.webContents.executeJavaScript(script).then((deviceId: string) => {
-      if (deviceId) {
-        selectedHidDevice = details.deviceList.find(d => d.deviceId === deviceId) ?? null;
-      }
-      callback(deviceId || undefined);
+    const { message, detail, buttons, cancelId } = buildHidPickerDialog(details.deviceList);
+    dialog.showMessageBox(win, {
+      type: 'question',
+      noLink: true,
+      message,
+      detail,
+      buttons,
+      cancelId,
+      defaultId: cancelId,
+    }).then(({ response }) => {
+      selectedHidDevice = details.deviceList[response] ?? null;
+      callback(selectedHidDevice?.deviceId);
     }).catch(() => {
       callback();
     });
