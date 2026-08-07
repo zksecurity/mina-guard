@@ -37,10 +37,23 @@ function toFixedOwners(pubs: PublicKey[]): PublicKey[] {
   return padded.slice(0, MAX_OWNERS);
 }
 
-function runCLI(bundlePath: string, privateKey: string): Promise<{ stdout: string; stderr: string; code: number }> {
+function runCLI(
+  bundlePath: string,
+  privateKey: string,
+  opts: { assumeYes?: boolean } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  // A spawned CLI has no controlling terminal, so it aborts at the confirmation
+  // gate unless the caller explicitly opts into non-interactive signing.
+  const assumeYes = opts.assumeYes ?? true;
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    MINA_PRIVATE_KEY: privateKey,
+  };
+  if (assumeYes) env.MINA_GUARD_ASSUME_YES = '1';
+  else delete env.MINA_GUARD_ASSUME_YES;
   return new Promise((resolve) => {
     const proc = spawn('bun', ['run', CLI_PATH, bundlePath], {
-      env: { ...process.env, MINA_PRIVATE_KEY: privateKey },
+      env,
       cwd: join(import.meta.dirname, '..', '..'),
     });
     let stdout = '';
@@ -99,6 +112,33 @@ describe('offline-cli', () => {
     const result = await runCLI(bundlePath, key);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('childPrivateKey');
+  }, 30_000);
+
+  it('aborts without touching the key when there is no terminal and no --yes', async () => {
+    // Same bundle as the case above, which with MINA_GUARD_ASSUME_YES gets far
+    // enough into signing to fail on the missing child key. Without it, the
+    // confirmation gate must stop it first: a run with no terminal attached is
+    // not consent, and nothing may be signed.
+    const bundlePath = join(tmpDir, 'no-tty-abort.json');
+    writeFileSync(bundlePath, JSON.stringify({
+      version: 1,
+      action: 'propose',
+      minaNetwork: 'testnet',
+      contractAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
+      feePayerAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
+      accounts: {},
+      events: [],
+      input: { txType: 'createChild', nonce: 1 },
+      configNonce: 0,
+      networkId: '1',
+    }));
+    const key = PrivateKey.random().toBase58();
+    const result = await runCLI(bundlePath, key, { assumeYes: false });
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('No terminal available to confirm');
+    // Stopped before any key use — never reached the child-key check.
+    expect(result.stderr).not.toContain('childPrivateKey');
+    expect(result.stdout).toBe('');
   }, 30_000);
 
   // -- Store rebuilding (in-process, uses internal logic) --

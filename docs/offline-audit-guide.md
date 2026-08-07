@@ -101,8 +101,10 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    compile/prove/sign work or key use*, `renderBundleSummary` renders
    everything the proposal hash covers (action, contract, fee payer, fee,
    nonce, memo, expiry, the per-type body, a `*** MAINNET ***` banner when
-   applicable) and asks for `y`; `--yes` / `MINA_GUARD_ASSUME_YES=1` — or no
-   attached TTY — skips the prompt (see focus point 7).
+   applicable) and asks for `y` on the controlling terminal (`/dev/tty`, so
+   redirecting stdout/stderr cannot hide it); only `--yes` /
+   `MINA_GUARD_ASSUME_YES=1` skips the prompt, and with no terminal at all the
+   CLI aborts (see focus point 7).
 2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
    never dials out), the bundled account snapshots injected into o1js's
    account cache, and the Merkle stores rebuilt by replaying the bundled
@@ -316,9 +318,13 @@ against real chain state at broadcast.
 `749-758`).** Unlike the web UI's compile-time-gated test hooks, this ships in
 every binary and is enabled by an env var.
 
-**7. Confirmation policy (`confirmOrExit`).** No attached TTY ⇒ proceed
-without prompting (with a log line); `--yes`/`MINA_GUARD_ASSUME_YES` skip it;
-an unreadable `/dev/tty` despite a TTY also proceeds.
+**7. Confirmation policy (`confirmOrExit`).** The summary and prompt go to
+`/dev/tty` rather than stderr, so `> signed.json 2>log` still prompts — an
+operator who redirected a stream is still sitting at a terminal. Every path
+other than an explicit `y`/`yes` fails closed with exit 1: an unopenable
+`/dev/tty` (Windows, detached, no controlling terminal), a failed read, EOF, or
+any other answer. `--yes` / `MINA_GUARD_ASSUME_YES=1` is the only way to sign
+without a human in the loop.
 
 **8. Upload validation (`UploadSignedResponse`).** The binding checks compare
 the response's `contractAddress`/`proposalHash` against the open

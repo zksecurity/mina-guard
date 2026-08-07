@@ -57,8 +57,8 @@ if (!bundlePath || !rawKey) {
     '\n' +
     '  bundle.json        Path to the request bundle exported from the Mina Guard UI\n' +
     '  MINA_PRIVATE_KEY   Mina private key (base58, starts with EKE...)\n' +
-    '  --yes, -y          Skip the interactive sign confirmation\n' +
-    '                     (also via MINA_GUARD_ASSUME_YES=1)\n' +
+    '  --yes, -y          Skip the interactive sign confirmation; required when\n' +
+    '                     running without a terminal (also MINA_GUARD_ASSUME_YES=1)\n' +
     '\n' +
     'Output (signed transaction JSON) is written to stdout.\n' +
     'Redirect to a file:  ... mina-guard-cli bundle.json > signed.json',
@@ -91,7 +91,7 @@ async function main() {
   // terminal) require explicit confirmation — before any expensive
   // compile/prove/sign work and before touching the private key.
   const summary = renderBundleSummary(bundle);
-  confirmOrExit(summary, { assumeYes, stderrIsTty: !!process.stderr.isTTY }, log);
+  confirmOrExit(summary, { assumeYes }, log);
 
   let result: unknown;
 

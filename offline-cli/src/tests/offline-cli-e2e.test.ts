@@ -61,7 +61,9 @@ function runCLI(
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     const proc = spawn('bun', ['run', CLI_PATH, bundlePath], {
-      env: { ...process.env, MINA_PRIVATE_KEY: privateKey, ...(process.env.SKIP_PROOFS ? { SKIP_PROOFS: process.env.SKIP_PROOFS } : {}), ...extraEnv },
+      // No controlling terminal under test — opt into non-interactive signing
+      // explicitly, as any non-interactive caller must.
+      env: { ...process.env, MINA_PRIVATE_KEY: privateKey, MINA_GUARD_ASSUME_YES: '1', ...(process.env.SKIP_PROOFS ? { SKIP_PROOFS: process.env.SKIP_PROOFS } : {}), ...extraEnv },
       cwd: join(import.meta.dirname, '..', '..'),
     });
     let stdout = '';
@@ -88,7 +90,7 @@ function runBinary(
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     const proc = spawn(binaryPath, [bundlePath], {
-      env: { MINA_PRIVATE_KEY: privateKey, SKIP_PROOFS: '1' },
+      env: { MINA_PRIVATE_KEY: privateKey, SKIP_PROOFS: '1', MINA_GUARD_ASSUME_YES: '1' },
       cwd,
     });
     let stdout = '';
