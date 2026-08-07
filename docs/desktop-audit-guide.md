@@ -57,11 +57,14 @@ On launch (`src/main.ts`):
    after a **Host-header allowlist check** (`127.0.0.1:5050`/`localhost:5050`,
    else 403 — the DNS-rebinding defense, see focus point 2), `/auro/*` → the
    Auro signing bridge; `/api/*` and `/health` → the embedded backend;
-   everything else → reverse-proxied to the Next child.
+   everything else → reverse-proxied to the Next child. App and API responses
+   (not the Auro pages) carry a **Content-Security-Policy** header (focus point 7).
 5. The **main window** loads `http://127.0.0.1:5050` with a preload script
    that injects a `window.mina` implementation (backed by IPC, see below) and
    the runtime endpoint config (`window.__minaGuardConfig`, which
    `ui/lib/endpoints.ts` prefers over its build-time `NEXT_PUBLIC_*` values).
+   The window is locked to that origin: new windows are denied and in-frame
+   navigation is pinned (focus point 1).
 
 If startup with a saved config fails (endpoint moved, typo persisted), the
 setup window reopens seeded with the saved values and the error, instead of the
@@ -92,8 +95,10 @@ Signing inside the shell:
 │                      /auro/*          → auro/router.ts  (signing bridge)      │
 │                      /api/*, /health  → backend middleware                    │
 │                      everything else  → proxy → Next standalone child :5051   │
+│                      CSP header       → app+api responses (not /auro/*)       │
 │  ipc.ts            pending-request map (UUIDv4 ids, 120 s timeout)            │
 │  config-ipc.ts     validated config IPC (setup save / change endpoints)       │
+│  ipc-security.ts   assertMainWindow: rejects IPC from untrusted senders       │
 └────────▲──────────────────────────▲──────────────────────────────▲───────────┘
          │ IPC via contextBridge    │ HTTP (loopback)              │ GraphQL
 ┌────────┴───────────┐   ┌──────────┴──────────┐          ┌────────┴──────────┐
@@ -141,8 +146,10 @@ the real Auro extension living in the user's normal browser:
 ```
 
 Bridged methods: `requestAccounts`, `signFields`, `signMessage`,
-`sendTransaction` (`src/ipc.ts:88-103`). Two are answered locally without ever
-reaching Auro: `getAccounts` (stub, returns `[]`) and `requestNetwork`, which
+`sendTransaction` (`src/ipc.ts:88-108`); each handler first rejects IPC from any
+non-main-window sender (`assertMainWindow`, focus point 1). Two are answered
+locally without ever reaching Auro: `getAccounts` (stub, returns `[]`) and
+`requestNetwork`, which
 returns `mina:<networkId>` **from the persisted desktop config**, not from
 Auro (`src/preload.js:28-31`) — see focus point 6.
 
@@ -165,7 +172,7 @@ Deliberate design details worth knowing before auditing them:
 
 ## Ledger over WebHID
 
-`main.ts:390-413` wires the three handlers Electron needs for WebHID:
+`main.ts:466-489` wires the three handlers Electron needs for WebHID:
 
 - `select-hid-device` — intercepted; a picker overlay is injected into the page
   via `executeJavaScript` (`src/hid-picker.ts`) and the chosen `deviceId` is
@@ -195,7 +202,9 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
 - **Validation is main-process-side.** The setup form and the in-app settings
   modal validate for UX only; the IPC layer re-validates the payload shape
   strictly (exact two string fields, http/https URLs —
-  `src/config-ipc.ts:25-54`) because the renderer is not trusted.
+  `src/config-ipc.ts:26-55`) because the renderer is not trusted, and
+  `config:set-endpoints` also rejects any non-main-window sender
+  (`assertMainWindow`, focus point 1).
 - **Endpoints are probed before persisting** (`verifyEndpoints`,
   `src/config-store.ts:93-115`): both must answer a real GraphQL POST within
   10 s. The network id is taken from the node's `networkID` field; only if the
@@ -205,7 +214,7 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   sharing testnet) is rejected at save time — the bundled circuit can only
   prove against one domain.
 - **Changing endpoints wipes the local DB and relaunches**
-  (`changeEndpointsAndRelaunch`, `src/main.ts:277-291`): the local index is
+  (`changeEndpointsAndRelaunch`, `src/main.ts:349-363`): the local index is
   only meaningful for the chain it was built against. The same policy applies
   in the setup-recovery flow. A failed save never overwrites a working config.
 - Config writes are atomic (tmp file + rename); DB deletion also removes
@@ -274,17 +283,22 @@ indexer could online.
 
 #### Suggested focus points
 
-**1. The renderer bridge × navigation policy (`src/preload.js`, `src/main.ts`).**
+**1. The renderer trust boundary (`src/main.ts`, `src/ipc-security.ts`, `src/preload.js`).**
 The preload exposes `window.mina` (signing triggers) and
 `minaGuardConfig.setEndpoints` (endpoint rewrite + DB wipe + relaunch) to
-whatever document the main window loads, and `main.ts` sets no `will-navigate`
-handler or `setWindowOpenHandler`, so any document that loads there inherits
-both.
+whatever document the main window loads. Three origin-based layers gate that
+bridge. `hardenWindow` (`main.ts:191-224`) denies new-window creation
+(`setWindowOpenHandler`; http(s) links are routed to the OS browser via
+`shell.openExternal`) and pins in-frame navigation to `http://127.0.0.1:5050`
+(`will-frame-navigate`; the setup window blocks *all* navigation, being a static
+`file://` page). `assertMainWindow` (`src/ipc-security.ts`) rejects any
+`auro:*` / `config:set-endpoints` IPC whose `senderFrame` origin isn't the local
+origin (`nodeIntegrationInSubFrames` is off, so only the main frame sends IPC).
 
 **2. The loopback HTTP surface (`127.0.0.1:5050`).**
 Reachable by every local process and, within limits, by web pages the user
 visits. Its defenses: a Host-header allowlist (`main.ts:26`, checked first at
-`100-103`) against DNS rebinding, no CORS headers anywhere (so no cross-origin
+`128-131`) against DNS rebinding, no CORS headers anywhere (so no cross-origin
 reads), and the UUIDv4 request id as the per-request token. Cross-origin
 "simple" POSTs (`/auro/callback`, subscribe/unsubscribe) satisfy the
 allowlist, and the id rides a URL handed to the OS browser
@@ -303,7 +317,9 @@ settings-modal and setup-window IPC.
 **4. Electron hardening posture (`src/main.ts`).**
 The windows rely on modern Electron defaults (context isolation on, node
 integration off, sandboxed renderers) rather than explicit settings, so the
-posture tracks the pinned major (`electron ^43`, Dependabot-grouped).
+posture tracks the pinned major (`electron ^43`, Dependabot-grouped). Navigation
+and new-window creation are the exception — hardened explicitly via
+`hardenWindow` (focus point 1) rather than left to defaults.
 Deliberate loosenings: `setPermissionCheckHandler(() => true)`,
 `setDevicePermissionHandler` granting every non-HID device type, dev-only
 `electron --no-sandbox`, and ad-hoc-only macOS signing
@@ -324,6 +340,16 @@ is answered locally from config, while `sendTransaction` broadcasts through
 Auro's node. The per-network VK and the fee-payer signature domain are what
 constrain a mismatch.
 
+**7. Content-Security-Policy on the app surface (`src/main.ts`).**
+`contentSecurityPolicy` (`97-120`) is set on every app + API response (not the
+`/auro/*` pages, which run in the external browser) via `res.setHeader`.
+`connect-src` is built dynamically from `currentConfig` — the configured
+Mina/archive origins plus `'self'`, since the o1js worker broadcasts to them
+directly, and `'self'` only before the first save. `script-src` allows
+`'unsafe-eval'`/`'wasm-unsafe-eval'` and `worker-src` allows `blob:`, both
+required by o1js proving; `default-src 'self'` with
+`object-src`/`frame-src`/`frame-ancestors 'none'` cover the rest.
+
 ---
 
 ## File tree
@@ -332,13 +358,18 @@ constrain a mismatch.
 desktop/
 ├── src/
 │   ├── main.ts              # Entry: boot order, setup-window flow, front server
-│   │                        #   (5050), Next child (5051), main window, HID handlers
-│   ├── ipc.ts               # auro:* IPC handlers + pending-request map (UUID ids,
-│   │                        #   120 s timeout); opens the external browser
+│   │                        #   (5050), Next child (5051), main window, HID handlers,
+│   │                        #   window nav lockdown (hardenWindow) + CSP header
+│   ├── ipc.ts               # auro:* IPC handlers (sender-origin checked) +
+│   │                        #   pending-request map (UUID ids, 120 s timeout);
+│   │                        #   opens the external browser
+│   ├── ipc-security.ts      # assertMainWindow: rejects IPC whose sender
+│   │                        #   frame origin isn't the local app origin
 │   ├── preload.js           # Main window bridge: window.mina mock (→ IPC),
 │   │                        #   window.__minaGuardConfig, minaGuardConfig.setEndpoints
 │   ├── preload-setup.js     # Setup window bridge: getState/save/cancel
-│   ├── config-ipc.ts        # Strict payload validation for all config IPC
+│   ├── config-ipc.ts        # Strict payload validation for all config IPC;
+│   │                        #   set-endpoints sender-origin checked
 │   ├── config-store.ts      # config.json read/write, endpoint probing, network-id
 │   │                        #   detection, DB deletion
 │   ├── backend-embed.ts     # Boots the bundled backend in-process (SQLite, lite

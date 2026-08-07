@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { assertMainWindow } from './ipc-security.js';
 import type { UserConfig } from './config-store.js';
 
 export interface ConfigIpcContext {
@@ -71,7 +72,8 @@ export function registerConfigIpc(ctx: ConfigIpcContext): void {
     ctx.onSetupCancel();
   });
 
-  ipcMain.handle('config:set-endpoints', async (_event, cfg) => {
+  ipcMain.handle('config:set-endpoints', async (event, cfg) => {
+    assertMainWindow(event);
     const parsed = parseEndpointsPayload(cfg);
     await ctx.onChangeEndpoints(parsed);
   });

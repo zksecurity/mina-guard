@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { ipcMain, shell } from 'electron';
+import { assertMainWindow } from './ipc-security.js';
 
 const REQUEST_TIMEOUT_MS = 120_000;
 const PORT = 5050;
@@ -85,19 +86,23 @@ function handleAuroRequest(method: string, payload: unknown): Promise<unknown> {
 }
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle('auro:request-accounts', () => {
+  ipcMain.handle('auro:request-accounts', (event) => {
+    assertMainWindow(event);
     return handleAuroRequest('requestAccounts', {});
   });
 
-  ipcMain.handle('auro:sign-fields', (_event, params) => {
+  ipcMain.handle('auro:sign-fields', (event, params) => {
+    assertMainWindow(event);
     return handleAuroRequest('signFields', params);
   });
 
-  ipcMain.handle('auro:sign-message', (_event, params) => {
+  ipcMain.handle('auro:sign-message', (event, params) => {
+    assertMainWindow(event);
     return handleAuroRequest('signMessage', params);
   });
 
-  ipcMain.handle('auro:send-transaction', (_event, params) => {
+  ipcMain.handle('auro:send-transaction', (event, params) => {
+    assertMainWindow(event);
     return handleAuroRequest('sendTransaction', params);
   });
 }
