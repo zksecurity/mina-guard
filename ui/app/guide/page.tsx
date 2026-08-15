@@ -89,7 +89,9 @@ function Section({ id, eyebrow, title, intro, children }: {
   );
 }
 
-function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+function Step({ n, title, img, imgAlt, children }: {
+  n: number; title: string; img?: string; imgAlt?: string; children: ReactNode;
+}) {
   return (
     <li className="relative pl-14 py-4 border-b border-safe-border last:border-0">
       <span className="absolute left-0 top-4 grid place-items-center w-9 h-9 rounded-lg font-mono font-semibold text-sm bg-safe-green/10 text-safe-green border border-safe-green/30">
@@ -97,6 +99,15 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
       </span>
       <h4 className="font-semibold text-white">{title}</h4>
       <div className="mt-1 text-sm text-safe-text leading-relaxed max-w-[64ch] space-y-2.5">{children}</div>
+      {img && (
+        <Zoomable
+          src={img}
+          alt={imgAlt ?? title}
+          className="mt-3 rounded-lg overflow-hidden border border-safe-border bg-safe-dark max-w-[560px]"
+        >
+          <img src={img} alt={imgAlt ?? title} loading="lazy" className="w-full block" />
+        </Zoomable>
+      )}
     </li>
   );
 }
@@ -411,24 +422,20 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             intro={<>Creating a vault takes four steps and confirms after roughly three minutes.</>}
           >
             <ol className="list-none m-0 p-0">
-              <Step n={1} title="Connect a wallet">
+              <Step n={1} title="Connect a wallet" img="/guide/step-create-connect.png" imgAlt="The connect-wallet screen">
+
                 <p>Connect Auro (browser extension) or Ledger (USB, via WebHID). Ledger also requires a <Em>Vault Index</Em>, the account number on the device (default <Tok>0</Tok>).</p>
               </Step>
-              <Step n={2} title="Start a vault">
+              <Step n={2} title="Start a vault" img="/guide/step-create-name.png" imgAlt="Name and network step">
                 <p>From <Tok>Your Vaults</Tok>, select <Tok>Create Vault</Tok>. Enter a local nickname and choose a network. Only Testnet is currently available.</p>
               </Step>
-              <Step n={3} title="Set owners and threshold">
+              <Step n={3} title="Set owners and threshold" img="/guide/step-create-owners.png" imgAlt="Owners and threshold step">
                 <p>The vault address is generated automatically. Add each owner address (up to twenty; your wallet is included by default) and set the threshold.</p>
               </Step>
-              <Step n={4} title="Deploy">
+              <Step n={4} title="Deploy" img="/guide/step-create-owners.png" imgAlt="Deploy Vault button">
                 <p>Select <Tok>Deploy Vault</Tok>. A single transaction creates the vault and installs its owners, confirming after the next block.</p>
               </Step>
             </ol>
-            <Figure
-              src="/guide/create-vault.png"
-              alt="The Create Vault wizard"
-              caption="The Create Vault wizard: name and network, then owners and threshold."
-            />
           </Section>
 
           {/* PROPOSE / APPROVE / EXECUTE */}
@@ -439,21 +446,16 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             intro={<>Once a vault is deployed, every action follows this sequence.</>}
           >
             <ol className="list-none m-0 p-0">
-              <Step n={1} title="Propose">
+              <Step n={1} title="Propose" img="/guide/action-transfer.png" imgAlt="New Proposal form">
                 <p>Open a vault and select <Tok>New Proposal</Tok>. Choose an action, complete the form (the nonce is prefilled), and select <Tok>Submit Proposal</Tok>. Proposing records the proposer&apos;s first approval.</p>
               </Step>
-              <Step n={2} title="Approve">
+              <Step n={2} title="Approve" img="/guide/step-approve.png" imgAlt="Approve Proposal view">
                 <p>Each remaining owner opens the proposal and selects <Tok>Approve Proposal</Tok>. Confirmations accrue until the threshold is met. If a proposal cannot proceed, the app disables the action and states why (see <a href="#warnings" className="text-safe-green hover:opacity-80 underline underline-offset-2">Reading the warnings</a>).</p>
               </Step>
-              <Step n={3} title="Execute">
+              <Step n={3} title="Execute" img="/guide/step-execute.png" imgAlt="Execute Proposal view">
                 <p>When the threshold is met, select <Tok>Execute Proposal</Tok>. Any party can execute. If the vault balance is insufficient, execution is blocked.</p>
               </Step>
             </ol>
-            <Figure
-              src="/guide/proposal-detail.png"
-              alt="A proposal detail page with approve and execute"
-              caption="A proposal's detail page: owners approve here, and once the threshold is met, anyone can execute."
-            />
           </Section>
 
           {/* WHAT YOU CAN DO */}
@@ -499,16 +501,16 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             intro={<>A SubVault is a vault owned by another vault, used to separate funds into compartments the owning Vault controls. Nesting is limited to one level.</>}
           >
             <ol className="list-none m-0 p-0">
-              <Step n={1} title="Create">
+              <Step n={1} title="Create" img="/guide/action-createChild.png" imgAlt="Create SubVault">
                 <p>On a top-level vault, open <Tok>SubVaults</Tok> and select <Tok>Create SubVault</Tok>. Owners and threshold are prefilled from the Vault. Propose it, have the Vault owners approve, then execute to initialize the SubVault.</p>
               </Step>
-              <Step n={2} title="Fund and reclaim">
+              <Step n={2} title="Fund and reclaim" img="/guide/action-allocateChild.png" imgAlt="Allocate to SubVaults">
                 <p><Tok>Allocate to SubVaults</Tok> sends MINA to SubVaults. <Tok>Reclaim from SubVault</Tok> returns an amount to the Vault, capped at the SubVault balance.</p>
               </Step>
-              <Step n={3} title="Autonomy">
+              <Step n={3} title="Autonomy" img="/guide/action-enableChildMultiSig.png" imgAlt="Toggle SubVault Multi-sig">
                 <p><Tok>Toggle SubVault Multi-sig</Tok> controls whether a SubVault can run its own proposals. When disabled, the SubVault is controlled only by its Vault; Vault-authorized actions still apply.</p>
               </Step>
-              <Step n={4} title="Destroy">
+              <Step n={4} title="Destroy" img="/guide/action-destroyChild.png" imgAlt="Destroy SubVault">
                 <p><Tok>Destroy SubVault</Tok> drains the SubVault to its Vault and permanently disables it. The action is irreversible and requires confirmation.</p>
               </Step>
             </ol>
@@ -522,7 +524,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             intro={<>To keep an owner key on a machine that is never online, use air-gapped signing. Propose, approve, and execute each offer an Online and Offline option.</>}
           >
             <ol className="list-none m-0 p-0">
-              <Step n={1} title="Name the signer">
+              <Step n={1} title="Name the signer" img="/guide/step-offline.png" imgAlt="The Offline signing tab">
                 <p>On the Offline tab, enter the <Tok>Signer Address (Fee Payer)</Tok>: the public key of the key held on the offline machine. No wallet connection is required.</p>
               </Step>
               <Step n={2} title="Get the CLI">
