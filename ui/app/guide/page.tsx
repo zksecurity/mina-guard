@@ -103,11 +103,39 @@ function ActionCard({ code, title, desc, chips }: {
 }) {
   return (
     <div className="flex flex-col gap-2.5 bg-safe-gray border border-safe-border rounded-xl p-4 card-hover">
+      <a
+        href={`/guide/action-${code}.png`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Open full screenshot"
+        className="block rounded-lg overflow-hidden border border-safe-border bg-safe-dark"
+      >
+        <img
+          src={`/guide/action-${code}.png`}
+          alt={`${title} form`}
+          loading="lazy"
+          className="w-full h-32 object-cover object-top"
+        />
+      </a>
       <span className="font-mono text-[0.66rem] text-safe-text/70">{code}</span>
       <h4 className="font-semibold text-white">{title}</h4>
       <p className="text-sm text-safe-text leading-relaxed flex-1">{desc}</p>
       <div className="flex flex-wrap gap-1.5">{chips}</div>
     </div>
+  );
+}
+
+/** Full-width labelled screenshot; the image links to its full resolution. */
+function Figure({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
+  return (
+    <figure className="mt-5 rounded-xl border border-safe-border overflow-hidden bg-safe-dark">
+      <a href={src} target="_blank" rel="noopener noreferrer" className="block">
+        <img src={src} alt={alt} loading="lazy" className="w-full block" />
+      </a>
+      {caption && (
+        <figcaption className="px-4 py-2.5 text-xs text-safe-text border-t border-safe-border">{caption}</figcaption>
+      )}
+    </figure>
   );
 }
 
@@ -202,6 +230,12 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <path d="M5 12h14M13 6l6 6-6 6" />
               </svg>
             </a>
+
+            <Figure
+              src="/guide/vault-detail.png"
+              alt="A MinaGuard vault dashboard"
+              caption="A vault's dashboard: owners, threshold, SubVaults, and recent proposals."
+            />
           </section>
 
           {/* HOW IT WORKS */}
@@ -288,6 +322,11 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p>Select <Tok>Deploy Vault</Tok>. A single transaction creates the vault and installs its owners, confirming after the next block.</p>
               </Step>
             </ol>
+            <Figure
+              src="/guide/create-vault.png"
+              alt="The Create Vault wizard"
+              caption="The Create Vault wizard: name and network, then owners and threshold."
+            />
           </Section>
 
           {/* PROPOSE / APPROVE / EXECUTE */}
@@ -308,6 +347,11 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p>When the threshold is met, select <Tok>Execute Proposal</Tok>. Any party can execute. If the vault balance is insufficient, execution is blocked.</p>
               </Step>
             </ol>
+            <Figure
+              src="/guide/proposal-detail.png"
+              alt="A proposal detail page with approve and execute"
+              caption="A proposal's detail page: owners approve here, and once the threshold is met, anyone can execute."
+            />
           </Section>
 
           {/* WHAT YOU CAN DO */}
