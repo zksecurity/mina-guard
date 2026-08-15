@@ -445,7 +445,6 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               {[
                 { l: 'Blind signing', v: <>Auro and Ledger sign only the proposal <b className="text-white">hash</b>. Confirm the action in the app first; it recomputes and verifies the hash before signing.</> },
                 { l: 'Networks', v: <><b className="text-white">Testnet</b> is currently available. Devnet and Mainnet are planned.</> },
-                { l: 'Web vs desktop', v: <>The desktop application adds a <b className="text-white">Change node endpoints</b> control, which re-indexes and requires typing <Tok>WIPE LOCAL DATA</Tok> to confirm. The web application hides it.</> },
               ].map((f) => (
                 <div key={f.l} className="flex flex-col sm:flex-row sm:gap-3 text-sm text-safe-text leading-relaxed">
                   <span className="font-mono text-[0.7rem] uppercase tracking-wide text-safe-text/60 sm:min-w-[128px] shrink-0 mb-0.5 sm:mb-0">{f.l}</span>
