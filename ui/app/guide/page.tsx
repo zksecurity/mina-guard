@@ -1,6 +1,9 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useRef, useCallback, createContext, useContext, type ReactNode } from 'react';
+
+type OpenLightbox = (src: string, alt: string) => void;
+const LightboxContext = createContext<OpenLightbox>(() => {});
 
 // -- In-page table of contents (mirrors the section ids below) ---------------
 const NAV = [
@@ -103,12 +106,10 @@ function ActionCard({ code, title, desc, chips }: {
 }) {
   return (
     <div className="flex flex-col gap-2.5 bg-safe-gray border border-safe-border rounded-xl p-4 card-hover">
-      <a
-        href={`/guide/action-${code}.png`}
-        target="_blank"
-        rel="noopener noreferrer"
-        title="Open full screenshot"
-        className="block rounded-lg overflow-hidden border border-safe-border bg-safe-dark"
+      <Zoomable
+        src={`/guide/action-${code}.png`}
+        alt={`${title} form`}
+        className="rounded-lg overflow-hidden border border-safe-border bg-safe-dark"
       >
         <img
           src={`/guide/action-${code}.png`}
@@ -116,7 +117,7 @@ function ActionCard({ code, title, desc, chips }: {
           loading="lazy"
           className="w-full h-32 object-cover object-top"
         />
-      </a>
+      </Zoomable>
       <span className="font-mono text-[0.66rem] text-safe-text/70">{code}</span>
       <h4 className="font-semibold text-white">{title}</h4>
       <p className="text-sm text-safe-text leading-relaxed flex-1">{desc}</p>
@@ -125,17 +126,115 @@ function ActionCard({ code, title, desc, chips }: {
   );
 }
 
-/** Full-width labelled screenshot; the image links to its full resolution. */
+/** Full-width labelled screenshot; click opens the zoomable overlay. */
 function Figure({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
   return (
     <figure className="mt-5 rounded-xl border border-safe-border overflow-hidden bg-safe-dark">
-      <a href={src} target="_blank" rel="noopener noreferrer" className="block">
+      <Zoomable src={src} alt={alt} className="block">
         <img src={src} alt={alt} loading="lazy" className="w-full block" />
-      </a>
+      </Zoomable>
       {caption && (
         <figcaption className="px-4 py-2.5 text-xs text-safe-text border-t border-safe-border">{caption}</figcaption>
       )}
     </figure>
+  );
+}
+
+/** Wraps a screenshot in a zoom-in button that opens the shared lightbox. */
+function Zoomable({ src, alt, className, children }: {
+  src: string; alt: string; className?: string; children: ReactNode;
+}) {
+  const open = useContext(LightboxContext);
+  return (
+    <button
+      type="button"
+      onClick={() => open(src, alt)}
+      title="Click to zoom"
+      className={`block w-full p-0 cursor-zoom-in ${className ?? ''}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Full-screen image overlay: zoom via buttons / wheel / +,-,0 keys, drag to pan, Esc to close. */
+function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  const reset = useCallback(() => { setScale(1); setPan({ x: 0, y: 0 }); }, []);
+  const zoomBy = useCallback((d: number) => {
+    setScale((s) => {
+      const n = Math.min(5, Math.max(1, Math.round((s + d) * 100) / 100));
+      if (n === 1) setPan({ x: 0, y: 0 });
+      return n;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === '+' || e.key === '=') zoomBy(0.5);
+      else if (e.key === '-' || e.key === '_') zoomBy(-0.5);
+      else if (e.key === '0') reset();
+    };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prevOverflow; };
+  }, [onClose, zoomBy, reset]);
+
+  useEffect(() => {
+    const el = imgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 0.25 : -0.25); };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [zoomBy]);
+
+  const ctrl = 'h-9 min-w-9 px-3 grid place-items-center rounded-lg bg-safe-gray/90 border border-safe-border text-sm text-white hover:border-safe-green transition-colors';
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt}
+    >
+      <div className="absolute top-4 right-4 flex items-center gap-2 font-mono" onClick={(e) => e.stopPropagation()}>
+        <button type="button" onClick={() => zoomBy(-0.5)} className={ctrl} aria-label="Zoom out">−</button>
+        <span className="w-14 text-center text-xs text-safe-text tabular-nums">{Math.round(scale * 100)}%</span>
+        <button type="button" onClick={() => zoomBy(0.5)} className={ctrl} aria-label="Zoom in">+</button>
+        <button type="button" onClick={reset} className={ctrl} aria-label="Reset zoom">Reset</button>
+        <button type="button" onClick={onClose} className={ctrl} aria-label="Close">✕</button>
+      </div>
+      <img
+        ref={imgRef}
+        src={src}
+        alt={alt}
+        draggable={false}
+        onClick={(e) => { e.stopPropagation(); zoomBy(scale >= 2 ? 1 - scale : 1); }}
+        onPointerDown={(e) => {
+          if (scale <= 1) return;
+          drag.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          if (!drag.current) return;
+          setPan({ x: drag.current.px + (e.clientX - drag.current.x), y: drag.current.py + (e.clientY - drag.current.y) });
+        }}
+        onPointerUp={() => { drag.current = null; }}
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+          cursor: scale > 1 ? 'grab' : 'zoom-in',
+          transition: drag.current ? 'none' : 'transform 0.15s ease',
+        }}
+        className="max-w-[92vw] max-h-[88vh] object-contain rounded-lg shadow-2xl select-none"
+      />
+    </div>
   );
 }
 
@@ -167,6 +266,8 @@ function Warn({ tone, sev, title, children }: {
 // -- Page -------------------------------------------------------------------
 export default function GuidePage() {
   const [active, setActive] = useState('overview');
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const openLightbox = useCallback((src: string, alt: string) => setLightbox({ src, alt }), []);
 
   useEffect(() => {
     document.title = 'Guide · MinaGuard';
@@ -187,6 +288,7 @@ export default function GuidePage() {
   }, []);
 
   return (
+    <LightboxContext.Provider value={openLightbox}>
     <div className="px-6 md:px-10 py-10 md:py-14">
       <div className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_216px] xl:gap-14">
         {/* ---------- CONTENT ---------- */}
@@ -535,5 +637,9 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
         </aside>
       </div>
     </div>
+      {lightbox && (
+        <Lightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
+      )}
+    </LightboxContext.Provider>
   );
 }
