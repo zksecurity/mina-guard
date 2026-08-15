@@ -394,12 +394,12 @@ export default function TransactionDetailPage() {
       if (isCreateChild) {
         const childAddr = captured.proposal.childAccount;
         if (!childAddr) throw new Error('createChild proposal missing childAccount');
-        onProgress('Fetching child config from events...');
+        onProgress('Fetching SubVault config from events...');
         const childConfig = await fetchChildConfigFromEvents(
           childAddr,
           captured.proposal.proposalHash,
         );
-        if (!childConfig) throw new Error('Child config not found in indexed events');
+        if (!childConfig) throw new Error('SubVault config not found in indexed events');
         const result = await executeSetupChildOnchain({
           parentAddress: captured.contractAddress,
           childAddress: childAddr,

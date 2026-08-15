@@ -410,7 +410,7 @@ export default function ProposalForm({
           <label className="block text-sm text-safe-text mb-2">Target SubVault</label>
           {children.length === 0 ? (
             <p className="text-sm text-amber-400">
-              No indexed SubVaults to target. Create one first via the parent Vault &rarr; Create SubVault flow.
+              No indexed SubVaults to target. Create one first via the Vault &rarr; Create SubVault flow.
             </p>
           ) : (
             <div className="space-y-2">
@@ -521,7 +521,7 @@ export default function ProposalForm({
           </div>
           <p className="text-xs text-safe-text pt-1">
             {currentMultiSigEnabled
-              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.). Parent-Vault-authorized lifecycle actions remain available.'
+              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.). Vault-authorized lifecycle actions remain available.'
               : 'Enabling restores the SubVault\'s ability to run its own LOCAL proposals.'}
           </p>
         </div>

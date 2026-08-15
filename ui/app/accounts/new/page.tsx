@@ -188,7 +188,7 @@ function CreateAccountWizard() {
     if (error) { setFormError(error); return; }
     if (!wallet.address || !parentAddress || !parentContract || !keypair) return;
     if (parentContract.configNonce == null) {
-      setFormError('Parent contract not fully indexed yet — try again in a moment.');
+      setFormError('The Vault is not fully indexed yet, try again in a moment.');
       return;
     }
 
@@ -206,7 +206,7 @@ function CreateAccountWizard() {
     const childAddress = keypair.publicKey;
 
     void startOperation('Preparing SubVault proposal…', async (onProgress) => {
-      onProgress('Computing child config hash…');
+      onProgress('Computing SubVault config hash…');
       const { configHash } = await computeCreateChildConfigHash({
         childOwners: parsedOwners,
         childThreshold,
@@ -250,7 +250,7 @@ function CreateAccountWizard() {
         },
       });
 
-      return `SubVault deployed and proposal submitted. Approve on the parent Vault, then execute to initialize.`;
+      return `SubVault deployed and proposal submitted. Approve on the Vault, then execute to initialize.`;
     });
 
     router.push(`/accounts/${parentAddress}`);
@@ -277,7 +277,7 @@ function CreateAccountWizard() {
                 >
                   {parentAddress.slice(0, 8)}…{parentAddress.slice(-6)}
                 </Link>
-                . Parent owners must approve before deployment finalizes.
+                . The Vault owners must approve before deployment finalizes.
               </p>
             )}
             {!isSubaccount && <div className="mb-6" />}
@@ -341,7 +341,7 @@ function CreateAccountWizard() {
                         className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green disabled:opacity-60"
                         title={
                           isSubaccount
-                            ? 'SubVaults inherit the parent Vault network.'
+                            ? 'SubVaults inherit their Vault network.'
                             : 'Devnet and Mainnet support is coming soon.'
                         }
                       >
@@ -353,7 +353,7 @@ function CreateAccountWizard() {
                       </select>
                       <span className="text-[10px] text-safe-text">
                         {isSubaccount
-                          ? 'Locked to the parent Vault network.'
+                          ? 'Locked to the Vault network.'
                           : 'Only Testnet is available right now.'}
                       </span>
                     </label>
@@ -466,7 +466,7 @@ function CreateAccountWizard() {
                     disabled={isOperating || !parentContract}
                     onClick={handleProposeSubaccount}
                     className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
-                    title={!parentContract ? 'Loading parent contract…' : undefined}
+                    title={!parentContract ? 'Loading Vault…' : undefined}
                   >
                     {isOperating ? 'Proposing…' : 'Propose SubVault'}
                   </button>

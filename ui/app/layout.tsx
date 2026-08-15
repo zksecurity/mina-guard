@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import localFont from 'next/font/local';
 import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
@@ -11,6 +12,16 @@ import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext, type OperationBanner } from '@/lib/app-context';
 import { warmupWorker, onLedgerSigningChange, type LedgerSigningContext } from '@/lib/multisigClient';
 import LedgerSigningModal from '@/components/LedgerSigningModal';
+
+// Brand typeface — Inter (the open equivalent of the system SF face the logo
+// uses), self-hosted so builds never fetch from a font CDN. Exposed as
+// --font-sans, which tailwind.config maps to the default sans.
+const inter = localFont({
+  src: './fonts/InterVariable.woff2',
+  variable: '--font-sans',
+  display: 'swap',
+  weight: '100 900',
+});
 
 /** Capitalizes a network name for display (e.g. "mainnet" -> "Mainnet"). */
 const capNetwork = (n: string) => n.charAt(0).toUpperCase() + n.slice(1);
@@ -273,7 +284,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable}>
       <body>
         <AppProvider>{children}</AppProvider>
       </body>

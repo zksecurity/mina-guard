@@ -72,7 +72,7 @@ export default function AccountPage() {
   const localDisabledReason = !isOwner
     ? 'You are not an owner of this Vault'
     : !childMultiSigEnabled
-      ? 'Multi-sig disabled by parent'
+      ? 'Multi-sig disabled by the Vault'
       : null;
   const parentContract = useMemo(() => {
     if (!multisig?.parent) return null;
@@ -445,7 +445,7 @@ function ParentCard({ parent, parentContract, childMultiSigEnabled }: ParentCard
     <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Parent Vault</p>
+          <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Vault</p>
           <Link
             href={`/accounts/${parent}`}
             className="text-sm font-mono text-safe-green hover:underline truncate block"
@@ -456,7 +456,7 @@ function ParentCard({ parent, parentContract, childMultiSigEnabled }: ParentCard
           <p className="text-xs text-safe-text mt-1">
             Multi-sig:{' '}
             <span className={childMultiSigEnabled ? 'text-safe-green' : 'text-amber-400'}>
-              {childMultiSigEnabled ? 'Enabled' : 'Disabled by parent'}
+              {childMultiSigEnabled ? 'Enabled' : 'Disabled by Vault'}
             </span>
           </p>
         </div>
@@ -464,7 +464,7 @@ function ParentCard({ parent, parentContract, childMultiSigEnabled }: ParentCard
           href={`/accounts/${parent}`}
           className="text-xs text-safe-green hover:underline shrink-0"
         >
-          Open parent →
+          Open Vault →
         </Link>
       </div>
     </div>

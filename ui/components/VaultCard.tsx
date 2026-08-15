@@ -65,7 +65,7 @@ export default function VaultCard({
               {isChild && contract.childMultiSigEnabled === false && (
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 shrink-0"
-                  title="Multi-sig disabled by parent"
+                  title="Multi-sig disabled by the Vault"
                 >
                   Multi-sig off
                 </span>

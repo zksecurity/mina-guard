@@ -1,0 +1,13 @@
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <!-- MinaGuard mark: isometric cube (violet + orange faces) with the white
+       consensus triangle + three signer nodes. Flat/bold for legibility at
+       favicon sizes; the detailed glass version lives in components/CubeLogo. -->
+  <polygon points="16,2 28.1,9 16,16 3.9,9" fill="#B9C4EE"/>
+  <polygon points="3.9,9 3.9,23 16,30 16,16" fill="#6E57D6"/>
+  <polygon points="28.1,9 28.1,23 16,30 16,16" fill="#E0743A"/>
+  <polygon points="16,2 28.1,9 16,16 3.9,9" fill="#FFFFFF" opacity="0.09"/>
+  <polygon points="16,9 10,19.2 22,19.2" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linejoin="round"/>
+  <circle cx="16" cy="9" r="1.9" fill="#FFFFFF"/>
+  <circle cx="10" cy="19.2" r="1.9" fill="#FFFFFF"/>
+  <circle cx="22" cy="19.2" r="1.9" fill="#FFFFFF"/>
+</svg>
