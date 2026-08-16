@@ -266,7 +266,8 @@ ui/
 ├── app/                         # Next.js App Router — pages & layout
 │   ├── layout.tsx               # Root provider: wires wallet + indexer state, global
 │   │                            #   operation banner, Ledger signing modal (the
-│   │                            #   AppContext every page trusts)
+│   │                            #   AppContext every page trusts — except the
+│   │                            #   standalone /guide route, rendered outside it)
 │   ├── page.tsx                 # Landing / connect
 │   ├── globals.css
 │   ├── accounts/
@@ -278,7 +279,9 @@ ui/
 │   │   ├── page.tsx             # Proposal list
 │   │   ├── new/page.tsx         # Proposal creation form
 │   │   └── [id]/page.tsx        # Proposal detail: approve / execute actions
-│   └── settings/page.tsx        # Compile-cache toggle & prefs
+│   ├── settings/page.tsx        # Compile-cache toggle & prefs
+│   └── guide/page.tsx           # Standalone user guide (docs only; rendered
+│                                #   outside the app shell — no security surface)
 │
 ├── components/                  # Presentational + interactive components
 │   ├── Header.tsx               # Wallet connect controls + node-endpoints chip;
@@ -300,12 +303,13 @@ ui/
 │   ├── ApprovalProgress.tsx     # Threshold progress from indexed approvals
 │   ├── OwnerList.tsx            # Owner set (rendered from backend data)
 │   ├── VaultCard.tsx
-│   ├── Sidebar.tsx              # Nav + indexer status
+│   ├── Sidebar.tsx              # Nav
 │   ├── AddExistingAccountModal.tsx  # Subscribe an already-deployed vault to the indexer
 │   ├── NodeEndpointsChip.tsx  NodeEndpointsModal.tsx  # Show/edit node endpoints
 │   │                            #   (runtime-editable only in the desktop shell)
 │   ├── ThresholdBadge.tsx  TxTypeIcon.tsx  ConnectNotice.tsx
 │   ├── SearchInput.tsx  LoadMore.tsx  TestnetFundButton.tsx
+│   ├── CubeLogo.tsx  AppFooter.tsx  # Brand mark + global footer (presentational)
 │
 ├── hooks/                       # Client state & polling
 │   ├── useWallet.ts             # Auro/Ledger connect, account/network change subs
