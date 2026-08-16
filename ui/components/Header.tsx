@@ -55,11 +55,11 @@ export default function Header({
       <div className="flex items-center gap-3 shrink-0">
         <Link
           href="/"
-          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-          title="Back to Vaults"
+          className="group -ml-2 flex items-center gap-2 rounded-lg border border-transparent px-2 py-1 transition-colors hover:border-safe-border hover:bg-safe-hover"
+          title="Home"
         >
           <CubeLogo className="h-8 w-auto shrink-0" />
-          <span className="text-sm font-medium tracking-[0.14em] hidden sm:inline">MINAGUARD</span>
+          <span className="hidden text-sm font-medium tracking-[0.14em] text-white/90 transition-colors group-hover:text-white sm:inline">MINAGUARD</span>
         </Link>
         <NodeEndpointsChip />
       </div>
