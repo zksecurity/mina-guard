@@ -285,13 +285,17 @@ export default function GuidePage() {
   return (
     <LightboxContext.Provider value={openLightbox}>
     <header className="sticky top-0 z-40 border-b border-safe-border bg-safe-dark/80 backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-6 md:px-10">
-        <a href="#overview" className="flex items-center gap-2.5 transition-opacity hover:opacity-80" title="Back to top">
-          <CubeLogo className="h-7 w-auto shrink-0" />
-          <span className="text-sm font-medium tracking-[0.14em] text-white">MINAGUARD</span>
-        </a>
-        <span aria-hidden className="h-4 w-px bg-safe-border" />
-        <span className="text-sm text-safe-text">User Guide</span>
+      {/* Padding on the outer div + max-w-6xl centered inside, matching the
+          content wrapper below, so the logo's left edge aligns with the hero. */}
+      <div className="px-6 md:px-10">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3">
+          <a href="#overview" className="flex items-center gap-2.5 transition-opacity hover:opacity-80" title="Back to top">
+            <CubeLogo className="h-7 w-auto shrink-0" />
+            <span className="text-sm font-medium tracking-[0.14em] text-white">MINAGUARD</span>
+          </a>
+          <span aria-hidden className="h-4 w-px bg-safe-border" />
+          <span className="text-sm text-safe-text">User Guide</span>
+        </div>
       </div>
     </header>
     <div className="px-6 md:px-10 py-10 md:py-14">
