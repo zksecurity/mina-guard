@@ -33,7 +33,6 @@ const NAV = [
   {
     group: 'Reference',
     items: [
-      { id: 'warnings', label: 'Reading the warnings' },
       { id: 'wallets', label: 'Wallets and networks' },
     ],
   },
@@ -258,22 +257,6 @@ function Term({ term, children }: { term: string; children: ReactNode }) {
   );
 }
 
-function Warn({ tone, sev, title, children }: {
-  tone: 'red' | 'amber'; sev: string; title: string; children: ReactNode;
-}) {
-  const edge = tone === 'red' ? 'border-l-red-500' : 'border-l-amber-400';
-  const sevColor = tone === 'red' ? 'text-red-400' : 'text-amber-400';
-  return (
-    <div className={`grid grid-cols-[auto_minmax(0,1fr)] gap-4 bg-safe-gray border border-safe-border border-l-[3px] ${edge} rounded-lg p-4`}>
-      <span className={`font-mono text-[0.62rem] uppercase tracking-wider font-semibold pt-0.5 whitespace-nowrap ${sevColor}`}>{sev}</span>
-      <div>
-        <div className="font-semibold text-white text-[0.95rem]">{title}</div>
-        <div className="mt-1 text-sm text-safe-text leading-relaxed">{children}</div>
-      </div>
-    </div>
-  );
-}
-
 // -- Page -------------------------------------------------------------------
 export default function GuidePage() {
   const [active, setActive] = useState('overview');
@@ -450,7 +433,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p>Open a vault and select <Tok>New Proposal</Tok>. Choose an action, complete the form (the nonce is prefilled), and select <Tok>Submit Proposal</Tok>. Proposing records the proposer&apos;s first approval.</p>
               </Step>
               <Step n={2} title="Approve" img="/guide/step-approve.png" imgAlt="Approve Proposal view">
-                <p>Each remaining owner opens the proposal and selects <Tok>Approve Proposal</Tok>. Confirmations accrue until the threshold is met. If a proposal cannot proceed, the app disables the action and states why (see <a href="#warnings" className="text-safe-green hover:opacity-80 underline underline-offset-2">Reading the warnings</a>).</p>
+                <p>Each remaining owner opens the proposal and selects <Tok>Approve Proposal</Tok>. Confirmations accrue until the threshold is met. If a proposal cannot proceed, the app disables the action and states why, right on the proposal.</p>
               </Step>
               <Step n={3} title="Execute" img="/guide/step-execute.png" imgAlt="Execute Proposal view">
                 <p>When the threshold is met, select <Tok>Execute Proposal</Tok>. Any party can execute. If the vault balance is insufficient, execution is blocked.</p>
@@ -547,23 +530,6 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             <div className="mt-4 bg-safe-dark border border-dashed border-safe-border rounded-xl p-4 text-sm text-safe-text leading-relaxed">
               Create SubVault cannot be proposed offline, as it uses the guided wizard. A Create SubVault
               proposal can still be approved and executed offline.
-            </div>
-          </Section>
-
-          {/* WARNINGS */}
-          <Section
-            id="warnings"
-            eyebrow="Reference"
-            title="Reading the warnings"
-            intro={<>The app blocks invalid or unsafe actions and states the reason. The common messages are below.</>}
-          >
-            <div className="space-y-2.5">
-              <Warn tone="red" sev="Blocks" title="Outdated config nonce">The owner set or threshold changed after this proposal was created, so it can no longer execute. Create a new proposal.</Warn>
-              <Warn tone="amber" sev="Dead" title="Invalidated by a later nonce">A newer proposal reused this one&apos;s slot. Create a new proposal if the action is still required.</Warn>
-              <Warn tone="red" sev="Blocks" title="SubVault config does not match the signed proposal">The SubVault configuration differs from what the proposal was signed against. Approval is blocked to prevent a configuration swap.</Warn>
-              <Warn tone="amber" sev="Wait" title="SubVault config could not be verified">The SubVault events are not yet indexed. Wait for the indexer to catch up, then retry.</Warn>
-              <Warn tone="amber" sev="Check" title="Memo mismatch">The displayed memo does not match what the proposal was signed with. Verify before approving.</Warn>
-              <Warn tone="red" sev="Blocks" title="Insufficient balance">The source vault cannot cover the amount. Fund it or reduce the amount before executing.</Warn>
             </div>
           </Section>
 
