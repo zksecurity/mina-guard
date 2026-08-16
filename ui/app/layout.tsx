@@ -198,7 +198,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           </div>
         )}
         <div className="flex flex-1 min-h-0">
-          {pathname !== '/' && pathname !== '/accounts/new' && (
+          {pathname !== '/' && pathname !== '/accounts/new' && pathname !== '/guide' && (
             <Sidebar
               multisigAddress={multisig?.address ?? null}
               pendingTxCount={pendingCount}
