@@ -198,7 +198,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           </div>
         )}
         <div className="flex flex-1 min-h-0">
-          {pathname !== '/' && pathname !== '/accounts/new' && pathname !== '/guide' && (
+          {pathname !== '/' && pathname !== '/accounts/new' && (
             <Sidebar
               multisigAddress={multisig?.address ?? null}
               pendingTxCount={pendingCount}
@@ -208,6 +208,26 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             {children}
           </main>
         </div>
+
+        <footer className="shrink-0 border-t border-safe-border px-6 py-4">
+          <div className="flex items-center justify-center">
+            <a
+              href="/guide"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-safe-text transition-colors hover:text-white"
+              title="Open the user guide in a new tab"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+              User guide
+              <svg className="h-3 w-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14 5h5m0 0v5m0-5L10 14M9 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-3" />
+              </svg>
+            </a>
+          </div>
+        </footer>
 
         {/* Fixed toast notifications – bottom-right corner */}
         {(isOperating || operationBanner) && (
@@ -282,10 +302,14 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  // The guide is standalone reference documentation: render it bare — no app
+  // header, sidebar, footer, or wallet wiring — so it stands on its own and
+  // opens cleanly in its own tab, disconnected from the app shell.
   return (
     <html lang="en" className={inter.variable}>
       <body>
-        <AppProvider>{children}</AppProvider>
+        {pathname === '/guide' ? children : <AppProvider>{children}</AppProvider>}
       </body>
     </html>
   );

@@ -61,18 +61,6 @@ body {
   animation: toast-in 0.3s ease-out;
 }
 
-/* Soft breathing ring — first-visit nudge on the Guide link */
-@keyframes guide-hint-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(150, 131, 236, 0); }
-  50% { box-shadow: 0 0 0 4px rgba(150, 131, 236, 0.28); }
-}
-.animate-guide-hint {
-  animation: guide-hint-pulse 2s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .animate-guide-hint { animation: none; }
-}
-
 /* Truncate address */
 .address-truncate {
   max-width: 120px;
