@@ -202,7 +202,6 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             <Sidebar
               multisigAddress={multisig?.address ?? null}
               pendingTxCount={pendingCount}
-              indexerStatus={indexerStatus}
             />
           )}
           <main className="flex-1 min-w-0">

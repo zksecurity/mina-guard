@@ -2,12 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { IndexerStatus } from '@/lib/types';
 
 interface SidebarProps {
   multisigAddress: string | null;
   pendingTxCount: number;
-  indexerStatus: IndexerStatus | null;
 }
 
 const dashboardIcon = (
@@ -48,11 +46,10 @@ const navItems = [
   },
 ];
 
-/** Sidebar navigation + indexer status. Brand lives in the top Header. */
+/** Sidebar navigation. Brand lives in the top Header. */
 export default function Sidebar({
   multisigAddress,
   pendingTxCount,
-  indexerStatus,
 }: SidebarProps) {
   const pathname = usePathname();
 
@@ -96,29 +93,6 @@ export default function Sidebar({
           );
         })}
       </nav>
-
-      <div className="p-4 border-t border-safe-border space-y-2">
-        {indexerStatus && (
-          <div>
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${indexerStatus.running ? 'bg-safe-green' : 'bg-red-500'}`} />
-              <span className="text-xs text-safe-text">
-                Indexer {indexerStatus.running ? 'running' : 'stopped'}
-              </span>
-            </div>
-            {indexerStatus.lastSuccessfulRunAt && (
-              <p className="text-[10px] text-safe-text ml-4">
-                Synced {new Date(indexerStatus.lastSuccessfulRunAt).toLocaleTimeString()}
-              </p>
-            )}
-            {indexerStatus.lastError && (
-              <p className="text-[10px] text-red-400 ml-4 truncate" title={indexerStatus.lastError}>
-                {indexerStatus.lastError}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
     </aside>
   );
 }
