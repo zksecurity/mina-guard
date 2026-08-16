@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback, createContext, useContext, type ReactNode } from 'react';
+import CubeLogo from '@/components/CubeLogo';
 
 type OpenLightbox = (src: string, alt: string) => void;
 const LightboxContext = createContext<OpenLightbox>(() => {});
@@ -283,6 +284,16 @@ export default function GuidePage() {
 
   return (
     <LightboxContext.Provider value={openLightbox}>
+    <header className="sticky top-0 z-40 border-b border-safe-border bg-safe-dark/80 backdrop-blur-md">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-6 md:px-10">
+        <a href="#overview" className="flex items-center gap-2.5 transition-opacity hover:opacity-80" title="Back to top">
+          <CubeLogo className="h-7 w-auto shrink-0" />
+          <span className="text-sm font-medium tracking-[0.14em] text-white">MINAGUARD</span>
+        </a>
+        <span aria-hidden className="h-4 w-px bg-safe-border" />
+        <span className="text-sm text-safe-text">User Guide</span>
+      </div>
+    </header>
     <div className="px-6 md:px-10 py-10 md:py-14">
       <div className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_216px] xl:gap-14">
         {/* ---------- CONTENT ---------- */}
@@ -579,7 +590,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
 
         {/* ---------- IN-PAGE TOC (right rail, xl+) ---------- */}
         <aside className="hidden xl:block">
-          <nav className="sticky top-10 space-y-5">
+          <nav className="sticky top-20 space-y-5">
             {NAV.map((group) => (
               <div key={group.group}>
                 <p className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-safe-text/50 mb-2">{group.group}</p>
