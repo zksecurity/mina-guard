@@ -39,16 +39,21 @@ body {
 }
 
 /* Primary brand buttons — gradient fill + white ink, slicker than a flat accent.
-   Scoped to the filled-accent convention (bg-safe-green + text-safe-dark); the
-   compound selector out-specifies Tailwind's text-color utility, so the ink
-   flips to white with no !important. Tinted accents (bg-safe-green/10, accent
-   text, dots) are untouched. */
-.bg-safe-green.text-safe-dark {
+   Scoped to interactive elements (button / a) carrying the filled-accent
+   convention (bg-safe-green + text-safe-dark); the compound selector
+   out-specifies Tailwind's text-color utility, so the ink flips to white with
+   no !important. Non-interactive accents keep the flat fill — tinted accents
+   (bg-safe-green/10, accent text, dots) and solid round indicators (the pending
+   badge, approval avatars, wizard step dots) are deliberately excluded so they
+   don't inherit the button glow. */
+button.bg-safe-green.text-safe-dark,
+a.bg-safe-green.text-safe-dark {
   background-image: linear-gradient(135deg, #7454DE 0%, #5B42C6 100%);
   color: #ffffff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 8px 22px -12px rgba(124, 92, 224, 0.7);
 }
-.bg-safe-green.text-safe-dark:hover {
+button.bg-safe-green.text-safe-dark:hover,
+a.bg-safe-green.text-safe-dark:hover {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 10px 26px -10px rgba(124, 92, 224, 0.85);
 }
 

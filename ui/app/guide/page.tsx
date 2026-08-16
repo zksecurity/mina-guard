@@ -97,7 +97,7 @@ function Step({ n, title, img, imgAlt, children }: {
       <span className="absolute left-0 top-4 grid place-items-center w-9 h-9 rounded-lg font-mono font-semibold text-sm bg-safe-green/10 text-safe-green border border-safe-green/30">
         {n}
       </span>
-      <h4 className="font-semibold text-white">{title}</h4>
+      <h3 className="font-semibold text-white">{title}</h3>
       <div className="mt-1 text-sm text-safe-text leading-relaxed max-w-[64ch] space-y-2.5">{children}</div>
       {img && (
         <Zoomable
@@ -130,7 +130,7 @@ function ActionCard({ code, title, desc, chips }: {
         />
       </Zoomable>
       <span className="font-mono text-[0.66rem] text-safe-text/70">{code}</span>
-      <h4 className="font-semibold text-white">{title}</h4>
+      <h3 className="font-semibold text-white">{title}</h3>
       <p className="text-sm text-safe-text leading-relaxed flex-1">{desc}</p>
       <div className="flex flex-wrap gap-1.5">{chips}</div>
     </div>
@@ -174,6 +174,7 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const reset = useCallback(() => { setScale(1); setPan({ x: 0, y: 0 }); }, []);
   const zoomBy = useCallback((d: number) => {
@@ -194,7 +195,15 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
     window.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prevOverflow; };
+    // Move focus into the overlay on open and restore it on close, so a keyboard
+    // user isn't left tabbing through the page behind it.
+    const prevFocus = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      prevFocus?.focus?.();
+    };
   }, [onClose, zoomBy, reset]);
 
   useEffect(() => {
@@ -209,7 +218,9 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center"
+      ref={dialogRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center outline-none"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -368,7 +379,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                     {node.n}
                   </div>
                   <div className="pt-1">
-                    <h4 className="text-lg font-semibold text-white">{node.t}</h4>
+                    <h3 className="text-lg font-semibold text-white">{node.t}</h3>
                     <p className="mt-1.5 text-safe-text leading-relaxed max-w-[60ch]">{node.d}</p>
                     <div className="mt-2.5"><Chip tone="accent">{node.who}</Chip></div>
                   </div>
@@ -561,10 +572,10 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 { h: 'Air-gapped CLI', b: 'offline', p: <>The signing key never goes online. See <a href="#offline" className="text-safe-green hover:opacity-80 underline underline-offset-2">Air-gapped signing</a>.</> },
               ].map((w) => (
                 <div key={w.h} className="bg-safe-gray border border-safe-border rounded-xl p-4">
-                  <h4 className="flex items-center gap-2 font-semibold text-white mb-2">
+                  <h3 className="flex items-center gap-2 font-semibold text-white mb-2">
                     {w.h}
                     <span className="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-safe-green border border-safe-green/30 rounded px-1.5 py-0.5">{w.b}</span>
-                  </h4>
+                  </h3>
                   <p className="text-sm text-safe-text leading-relaxed">{w.p}</p>
                 </div>
               ))}

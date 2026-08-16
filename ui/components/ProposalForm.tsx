@@ -491,7 +491,7 @@ export default function ProposalForm({
       {!deleteMode && txType === 'destroyChild' && (
         <div className="space-y-2 rounded-lg border border-red-400/40 bg-red-400/5 px-4 py-3">
           <p className="text-xs text-red-300">
-            Destroy drains the SubVault&apos;s full balance to the parent Vault and disables its
+            Destroy drains the SubVault&apos;s full balance to the Vault and disables its
             multi-sig. The on-chain Vault remains but its lifecycle is permanently frozen.
           </p>
           <label className="inline-flex items-center gap-2 text-sm text-safe-text">
