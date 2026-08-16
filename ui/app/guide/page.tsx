@@ -557,7 +557,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             <div className="grid gap-3.5 sm:grid-cols-3">
               {[
                 { h: 'Auro', b: 'browser', p: <>The Auro browser extension. The standard option; its network follows the extension.</> },
-                { h: 'Ledger', b: 'hardware', p: <>A Ledger device over USB (WebHID). The app requests a Vault Index and allows switching networks in the header.</> },
+                { h: 'Ledger', b: 'hardware', p: <>A Ledger device over USB (WebHID). The app requests a Vault Index. The network is fixed by the vault&apos;s deployment.</> },
                 { h: 'Air-gapped CLI', b: 'offline', p: <>The signing key never goes online. See <a href="#offline" className="text-safe-green hover:opacity-80 underline underline-offset-2">Air-gapped signing</a>.</> },
               ].map((w) => (
                 <div key={w.h} className="bg-safe-gray border border-safe-border rounded-xl p-4">
