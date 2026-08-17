@@ -3,6 +3,13 @@
 import { useEffect, useState, useRef, useCallback, createContext, useContext, type ReactNode } from 'react';
 import CubeLogo from '@/components/CubeLogo';
 
+// Public screenshots live under /public/guide. Unlike next/link and _next
+// assets, a raw <img src> is NOT rewritten with the deployment's basePath, so
+// prefix it manually (empty locally; e.g. /preview/130 or /app in deployed
+// envs) or the images 404 under a basePath.
+const ASSET_BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+const asset = (p: string) => `${ASSET_BASE}${p}`;
+
 type OpenLightbox = (src: string, alt: string) => void;
 const LightboxContext = createContext<OpenLightbox>(() => {});
 
@@ -105,7 +112,7 @@ function Step({ n, title, img, imgAlt, children }: {
           alt={imgAlt ?? title}
           className="mt-3 rounded-lg overflow-hidden border border-safe-border bg-safe-dark max-w-[560px]"
         >
-          <img src={img} alt={imgAlt ?? title} loading="lazy" className="w-full block" />
+          <img src={asset(img)} alt={imgAlt ?? title} loading="lazy" className="w-full block" />
         </Zoomable>
       )}
     </li>
@@ -123,7 +130,7 @@ function ActionCard({ code, title, desc, chips }: {
         className="rounded-lg overflow-hidden border border-safe-border bg-safe-dark"
       >
         <img
-          src={`/guide/action-${code}.png`}
+          src={asset(`/guide/action-${code}.png`)}
           alt={`${title} form`}
           loading="lazy"
           className="w-full h-32 object-cover object-top"
@@ -142,7 +149,7 @@ function Figure({ src, alt, caption }: { src: string; alt: string; caption?: str
   return (
     <figure className="mt-5 rounded-xl border border-safe-border overflow-hidden bg-safe-dark">
       <Zoomable src={src} alt={alt} className="block">
-        <img src={src} alt={alt} loading="lazy" className="w-full block" />
+        <img src={asset(src)} alt={alt} loading="lazy" className="w-full block" />
       </Zoomable>
       {caption && (
         <figcaption className="px-4 py-2.5 text-xs text-safe-text border-t border-safe-border">{caption}</figcaption>
@@ -235,7 +242,7 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
       </div>
       <img
         ref={imgRef}
-        src={src}
+        src={asset(src)}
         alt={alt}
         draggable={false}
         onClick={(e) => { e.stopPropagation(); zoomBy(scale >= 2 ? 1 - scale : 1); }}

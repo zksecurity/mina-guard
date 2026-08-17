@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 const REPO = 'https://github.com/zksecurity/mina-guard';
 const VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? '';
 const COMMIT = process.env.NEXT_PUBLIC_COMMIT_SHA ?? '';
@@ -24,7 +26,7 @@ export default function AppFooter() {
 
         <Dot />
 
-        <a
+        <Link
           href="/guide"
           target="_blank"
           rel="noopener noreferrer"
@@ -38,7 +40,7 @@ export default function AppFooter() {
           <svg className="h-3 w-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14 5h5m0 0v5m0-5L10 14M9 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-3" />
           </svg>
-        </a>
+        </Link>
 
         <Dot />
 
