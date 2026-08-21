@@ -2,15 +2,27 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import localFont from 'next/font/local';
 import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
+import AppFooter from '@/components/AppFooter';
 import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
 import { AppContext, type OperationBanner } from '@/lib/app-context';
 import { warmupWorker, onLedgerSigningChange, type LedgerSigningContext } from '@/lib/multisigClient';
 import LedgerSigningModal from '@/components/LedgerSigningModal';
+
+// Brand typeface — Inter (the open equivalent of the system SF face the logo
+// uses), self-hosted so builds never fetch from a font CDN. Exposed as
+// --font-sans, which tailwind.config maps to the default sans.
+const inter = localFont({
+  src: './fonts/InterVariable.woff2',
+  variable: '--font-sans',
+  display: 'swap',
+  weight: '100 900',
+});
 
 /** Capitalizes a network name for display (e.g. "mainnet" -> "Mainnet"). */
 const capNetwork = (n: string) => n.charAt(0).toUpperCase() + n.slice(1);
@@ -191,13 +203,14 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             <Sidebar
               multisigAddress={multisig?.address ?? null}
               pendingTxCount={pendingCount}
-              indexerStatus={indexerStatus}
             />
           )}
           <main className="flex-1 min-w-0">
             {children}
           </main>
         </div>
+
+        <AppFooter />
 
         {/* Fixed toast notifications – bottom-right corner */}
         {(isOperating || operationBanner) && (
@@ -272,10 +285,14 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  // The guide is standalone reference documentation: render it bare — no app
+  // header, sidebar, footer, or wallet wiring — so it stands on its own and
+  // opens cleanly in its own tab, disconnected from the app shell.
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable}>
       <body>
-        <AppProvider>{children}</AppProvider>
+        {pathname === '/guide' ? children : <AppProvider>{children}</AppProvider>}
       </body>
     </html>
   );

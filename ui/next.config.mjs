@@ -1,12 +1,31 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { readFileSync } from 'fs';
+import { execSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Build stamp for the footer: version from package.json, short commit from git
+// (or NEXT_PUBLIC_COMMIT_SHA in CI). git is best-effort — a build without a
+// working tree (e.g. Docker layer) just omits the commit.
+const appVersion = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
+let commitSha = process.env.NEXT_PUBLIC_COMMIT_SHA ?? '';
+if (!commitSha) {
+  try {
+    commitSha = execSync('git rev-parse --short HEAD', { cwd: __dirname }).toString().trim();
+  } catch {
+    commitSha = '';
+  }
+}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  env: {
+    NEXT_PUBLIC_APP_VERSION: appVersion,
+    NEXT_PUBLIC_COMMIT_SHA: commitSha,
+  },
   productionBrowserSourceMaps: process.env.ENABLE_SOURCE_MAPS !== 'false',
   experimental: {
     // Workspace root — ensures standalone tracing follows workspace-linked deps

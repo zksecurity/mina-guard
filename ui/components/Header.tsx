@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import CubeLogo from './CubeLogo';
 import WalletConnect from './WalletConnect';
 import TestnetFundButton from './TestnetFundButton';
 import NodeEndpointsChip from './NodeEndpointsChip';
@@ -38,13 +39,11 @@ export default function Header({
       <div className="flex items-center gap-3 shrink-0">
         <Link
           href="/"
-          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-          title="Back to Vaults"
+          className="group -ml-2 flex items-center gap-2 px-2 py-1"
+          title="Home"
         >
-          <div className="w-8 h-8 bg-safe-green rounded-full flex items-center justify-center">
-            <span className="text-safe-dark font-bold text-sm">M</span>
-          </div>
-          <span className="text-sm font-semibold hidden sm:inline">MinaGuard</span>
+          <CubeLogo className="h-8 w-auto shrink-0 transition duration-200 ease-out group-hover:scale-[1.06] group-hover:drop-shadow-[0_0_6px_rgba(150,131,236,0.55)]" />
+          <span className="hidden text-sm font-medium tracking-[0.14em] text-white/85 transition-colors duration-200 group-hover:text-white sm:inline">MINAGUARD</span>
         </Link>
         <NodeEndpointsChip />
       </div>

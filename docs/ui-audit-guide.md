@@ -62,7 +62,7 @@ broadcast is advisory. (Mechanics in focus point 3.)
 "deleting" a pending proposal means minting a zero-value proposal that reuses the target's
 nonce and racing it to execution, since a nonce can only be spent once. This can't work for
 `CREATE_CHILD` (pinned to `nonce == 0`), so the UI disables Delete for it
-(`app/transactions/[id]/page.tsx:271-274`). Because the child is already deployed and
+(`app/transactions/[id]/page.tsx:307-310`). Because the child is already deployed and
 `reserveForParent()`'d (write-once) in the same propose tx, abandoning such a proposal leaves
 an **orphaned child account** — the creation fee is spent, and the account is not reusable or
 reclaimable.
@@ -224,8 +224,8 @@ decoded from the broadcast tx by the indexer (`indexer.ts:716`), which also
 computes both match flags (`proposal-record.ts:123-130`, `132-139`;
 execute-side hash at `indexer.ts:925-930`) that `MemoWarningTooltip` renders.
 On the display path, `memo`, `memoHash`, and the flags all come from the same
-indexer JSON (`api.ts:245-246`; rendered at `page.tsx:628`, tooltip logic
-`458-469`), and the UI deliberately does not re-derive `memoHash` from the
+indexer JSON (`api.ts:245-246`; rendered at `page.tsx:687`, tooltip logic
+`496-505`), and the UI deliberately does not re-derive `memoHash` from the
 node — reading chain events is the indexer's role, and the UI's only events
 source is `fetchAllEvents` (`api.ts:345`). Net: action paths are
 contract-anchored; the displayed memo and its match badge are advisory.
@@ -266,7 +266,8 @@ ui/
 ├── app/                         # Next.js App Router — pages & layout
 │   ├── layout.tsx               # Root provider: wires wallet + indexer state, global
 │   │                            #   operation banner, Ledger signing modal (the
-│   │                            #   AppContext every page trusts)
+│   │                            #   AppContext every page trusts — except the
+│   │                            #   standalone /guide route, rendered outside it)
 │   ├── page.tsx                 # Landing / connect
 │   ├── globals.css
 │   ├── accounts/
@@ -278,7 +279,9 @@ ui/
 │   │   ├── page.tsx             # Proposal list
 │   │   ├── new/page.tsx         # Proposal creation form
 │   │   └── [id]/page.tsx        # Proposal detail: approve / execute actions
-│   └── settings/page.tsx        # Compile-cache toggle & prefs
+│   ├── settings/page.tsx        # Compile-cache toggle & prefs
+│   └── guide/page.tsx           # Standalone user guide (docs only; rendered
+│                                #   outside the app shell — no security surface)
 │
 ├── components/                  # Presentational + interactive components
 │   ├── Header.tsx               # Wallet connect controls + node-endpoints chip;
@@ -300,12 +303,13 @@ ui/
 │   ├── ApprovalProgress.tsx     # Threshold progress from indexed approvals
 │   ├── OwnerList.tsx            # Owner set (rendered from backend data)
 │   ├── VaultCard.tsx
-│   ├── Sidebar.tsx              # Nav + indexer status
+│   ├── Sidebar.tsx              # Nav
 │   ├── AddExistingAccountModal.tsx  # Subscribe an already-deployed vault to the indexer
 │   ├── NodeEndpointsChip.tsx  NodeEndpointsModal.tsx  # Show/edit node endpoints
 │   │                            #   (runtime-editable only in the desktop shell)
 │   ├── ThresholdBadge.tsx  TxTypeIcon.tsx  ConnectNotice.tsx
 │   ├── SearchInput.tsx  LoadMore.tsx  TestnetFundButton.tsx
+│   ├── CubeLogo.tsx  AppFooter.tsx  # Brand mark + global footer (presentational)
 │
 ├── hooks/                       # Client state & polling
 │   ├── useWallet.ts             # Auro/Ledger connect, account/network change subs

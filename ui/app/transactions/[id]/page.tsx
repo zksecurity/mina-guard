@@ -394,12 +394,12 @@ export default function TransactionDetailPage() {
       if (isCreateChild) {
         const childAddr = captured.proposal.childAccount;
         if (!childAddr) throw new Error('createChild proposal missing childAccount');
-        onProgress('Fetching child config from events...');
+        onProgress('Fetching SubVault config from events...');
         const childConfig = await fetchChildConfigFromEvents(
           childAddr,
           captured.proposal.proposalHash,
         );
-        if (!childConfig) throw new Error('Child config not found in indexed events');
+        if (!childConfig) throw new Error('SubVault config not found in indexed events');
         const result = await executeSetupChildOnchain({
           parentAddress: captured.contractAddress,
           childAddress: childAddr,
@@ -630,21 +630,21 @@ export default function TransactionDetailPage() {
 
         {addOwnerDataCheck === 'mismatch' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
-            <p className="font-semibold mb-1">Owner order in this proposal is not canonical</p>
+            <p className="font-semibold mb-1">Don&apos;t approve: this would break the owner list</p>
             <p className="opacity-90">
-              This addOwner proposal commits to an owner-list order that does not match the sorted order this
-              app reconstructs from events. If executed, the Vault&apos;s owner list would become unusable through
-              standard tooling. Do not approve this proposal.
+              This Add Owner proposal arranges the owners in an order this app cannot reproduce. If it is
+              executed, the Vault&apos;s owner list could become unusable in normal tools. Do not approve it;
+              ask the proposer to recreate it from this app.
             </p>
           </div>
         )}
 
         {addOwnerDataCheck === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
-            <p className="font-semibold mb-1">Owner order commitment could not be verified</p>
+            <p className="font-semibold mb-1">Owner order not checked yet</p>
             <p className="opacity-90">
-              The owner list could not be rebuilt from indexed events, so the proposal&apos;s bound owner order was
-              not checked. It will be re-checked before signing if you approve.
+              The owner list could not be rebuilt from indexed data yet, so this proposal&apos;s owner order was
+              not verified. It will be checked again before you sign.
             </p>
           </div>
         )}
@@ -808,7 +808,7 @@ export default function TransactionDetailPage() {
                   {addOwnerDataCheck === 'mismatch' && proposal.status === 'pending' && isOwner && !hasApproved && (
                     <button
                       disabled
-                      title="Proposal data does not bind the canonical owner order"
+                      title="This proposal's owner order cannot be reproduced by this app"
                       className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
                     >
                       Approve blocked — owner order mismatch
@@ -870,8 +870,8 @@ export default function TransactionDetailPage() {
                           }
                           if (addOwnerDataCheck === 'mismatch') {
                             throw new Error(
-                              'addOwner proposal does not bind the canonical owner order. ' +
-                              'Do not approve this proposal.',
+                              'This Add Owner proposal arranges owners in an order this app cannot reproduce. ' +
+                              'Do not approve it.',
                             );
                           }
                           const p = proposal!;

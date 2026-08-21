@@ -1,4 +1,9 @@
 // -- UI Types ---------------------------------------------------------
+//
+// Terminology: user-facing copy uses "Vault" / "SubVault". The code and the
+// on-chain contract use "contract" / "parent" / "child" (createChild,
+// childAccount, parentAddress, etc.). Keep parent/child out of user-facing
+// strings and map them to Vault/SubVault at the presentation layer only.
 
 /** Indexed proposal lifecycle status used by list/detail screens. */
 export type ProposalStatus = 'pending' | 'executed' | 'expired' | 'invalidated';

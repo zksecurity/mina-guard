@@ -82,7 +82,9 @@ test('subvault appears in tree and child detail links its parent', async ({ page
   await expect(childRow.first()).toBeVisible({ timeout: 60_000 });
 
   await openVault(page, OPS_CHILD);
-  await expect(page.locator('text=Parent Vault')).toBeVisible({ timeout: 10_000 });
+  // The child detail page links its parent via the ParentCard's "Open Vault →"
+  // link (user-facing copy uses Vault/SubVault, not parent/child).
+  await expect(page.locator('text=Open Vault')).toBeVisible({ timeout: 10_000 });
   await expect(page.locator(`text=${TREASURY.slice(0, 10)}`).first()).toBeVisible();
 });
 

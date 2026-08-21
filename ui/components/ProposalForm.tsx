@@ -410,7 +410,7 @@ export default function ProposalForm({
           <label className="block text-sm text-safe-text mb-2">Target SubVault</label>
           {children.length === 0 ? (
             <p className="text-sm text-amber-400">
-              No indexed SubVaults to target. Create one first via the parent Vault &rarr; Create SubVault flow.
+              No indexed SubVaults to target. Create one first via the Vault &rarr; Create SubVault flow.
             </p>
           ) : (
             <div className="space-y-2">
@@ -491,7 +491,7 @@ export default function ProposalForm({
       {!deleteMode && txType === 'destroyChild' && (
         <div className="space-y-2 rounded-lg border border-red-400/40 bg-red-400/5 px-4 py-3">
           <p className="text-xs text-red-300">
-            Destroy drains the SubVault&apos;s full balance to the parent Vault and disables its
+            Destroy drains the SubVault&apos;s full balance to the Vault and disables its
             multi-sig. The on-chain Vault remains but its lifecycle is permanently frozen.
           </p>
           <label className="inline-flex items-center gap-2 text-sm text-safe-text">
@@ -521,7 +521,7 @@ export default function ProposalForm({
           </div>
           <p className="text-xs text-safe-text pt-1">
             {currentMultiSigEnabled
-              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.). Parent-Vault-authorized lifecycle actions remain available.'
+              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.). Vault-authorized lifecycle actions remain available.'
               : 'Enabling restores the SubVault\'s ability to run its own LOCAL proposals.'}
           </p>
         </div>
