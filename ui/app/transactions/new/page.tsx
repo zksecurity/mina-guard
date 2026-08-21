@@ -280,7 +280,11 @@ function NewTransactionPageInner() {
                   (p) =>
                     p.status === 'pending' &&
                     p.txType &&
-                    ['addOwner', 'removeOwner', 'changeThreshold', 'setDelegate'].includes(p.txType)
+                    // Only owner-set / threshold changes bump the config nonce and thus
+                    // invalidate other pending proposals (MinaGuard.executeOwnerChange /
+                    // executeThresholdChange). setDelegate does NOT bump it, so a pending
+                    // setDelegate invalidates nothing and must not trigger this warning.
+                    ['addOwner', 'removeOwner', 'changeThreshold'].includes(p.txType)
                 ) && (
                   <div className="rounded-lg px-4 py-3 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
                     There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
