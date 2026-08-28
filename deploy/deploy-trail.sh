@@ -80,6 +80,10 @@ add_caddy_route() {
             \"routes\": [{
               \"handle\": [
                 {
+                  \"handler\": \"rewrite\",
+                  \"strip_path_prefix\": \"/trail\"
+                },
+                {
                   \"handler\": \"headers\",
                   \"response\": {
                     \"set\": {

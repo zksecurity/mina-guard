@@ -76,18 +76,17 @@ services:
       context: ..
       dockerfile: preview-env/Dockerfile.frontend
       args:
-        # Public-facing URLs that the browser hits. Mirrors the localnet deploy's
-        # /app/* convention but under /trail/*. Substitute the actual host
-        # if you're not using mina-nodes.duckdns.org.
-        - NEXT_PUBLIC_BASE_PATH=/trail
-        - NEXT_PUBLIC_API_BASE_URL=https://mina-trail.duckdns.org/trail
-        - NEXT_PUBLIC_MINA_ENDPOINT=https://mina-trail.duckdns.org/trail/graphql
-        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-trail.duckdns.org/trail/archive
+        # Public-facing URLs that the browser hits. The Trail deployment owns
+        # testnet.minaguard.com, so the frontend is served at the domain root.
+        - NEXT_PUBLIC_BASE_PATH=
+        - NEXT_PUBLIC_API_BASE_URL=https://testnet.minaguard.com
+        - NEXT_PUBLIC_MINA_ENDPOINT=https://testnet.minaguard.com/graphql
+        - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://testnet.minaguard.com/archive
         - NEXT_PUBLIC_MINA_NETWORK=testnet
         # Mesa Trail has no built-in faucet; point users at the public Mina
         # faucet (the o1js Mina.faucet() helper also targets this host with
         # `?network=mesa`).
-        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://mina-trail.duckdns.org/trail/explorer
+        - NEXT_PUBLIC_BLOCK_EXPLORER_URL=https://testnet.minaguard.com/explorer
         - NEXT_PUBLIC_POLL_INTERVAL_MS=1000
         # Same host-computed hash the backend gets above — the worker rejects a
         # compile whose verification key doesn't match it.
@@ -102,7 +101,7 @@ services:
       context: ../preview-env
       dockerfile: Dockerfile.explorer
       args:
-        - NEXT_PUBLIC_BASE_PATH=/trail/explorer
+        - NEXT_PUBLIC_BASE_PATH=/explorer
         - TESTNET_GRAPHQL_URL=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set}:3085/graphql
     restart: unless-stopped
 
@@ -111,7 +110,8 @@ services:
     restart: unless-stopped
     # Inner Caddy for this compose project. Listens on container :80, host-
     # published at :10001. The outer host Caddy on this same box reverse-proxies
-    # /trail, /trail/* to localhost:10001 (see deploy-trail.sh add_caddy_route).
+    # testnet.minaguard.com to localhost:10001. The legacy hostnames strip their
+    # /trail prefix at the outer proxy before forwarding here.
     ports:
       - "10001:80"
     volumes:
