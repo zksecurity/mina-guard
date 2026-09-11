@@ -14,6 +14,7 @@ import {
   Struct,
   UInt32,
   UInt64,
+  AccountUpdate,
 } from 'o1js';
 
 
@@ -601,6 +602,13 @@ export class MinaGuard extends SmartContract {
     parentApprovalCount: Field,
   ): Field {
     const parentGuard = new MinaGuard(parentAddress);
+    // `self` on a foreign SmartContract instance creates an AccountUpdate but
+    // does not attach it to this method's call forest. Attach it explicitly so
+    // the parent state reads below become serialized RootVault preconditions
+    // that Mina nodes check against the on-chain account.
+    const parentUpdate = parentGuard.self;
+    AccountUpdate.attachToTransaction(parentUpdate);
+
     const parentOwnersCommitment = parentGuard.ownersCommitment.getAndRequireEquals();
     parentOwnersCommitment.assertNotEquals(Field(0), 'Parent not initialized');
 

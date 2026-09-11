@@ -38,6 +38,13 @@ import {
 import { computeOwnerChain } from '../list-commitment.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
+const ROOT_STATE_SLOT = {
+  ownersCommitment: 0,
+  threshold: 1,
+  approvalRoot: 5,
+  configNonce: 6,
+} as const;
+
 describe('MinaGuard - Child Lifecycle', () => {
   let parentCtx: TestContext;
   let childZkApp: MinaGuard;
@@ -1148,6 +1155,83 @@ describe('MinaGuard - Child Lifecycle', () => {
         await txn.prove();
         await txn.sign([parentCtx.deployerKey]).send();
       }).toThrow('Proposal not for this child');
+    });
+  });
+
+  // -- Parent state binding ---------------------------------------------------
+
+  describe('parent state binding', () => {
+    it('serializes RootVault state preconditions and rejects forged parent state', async () => {
+      await setupChildWithParentOwners();
+
+      const maliciousProposal = createDestroyChildProposal(
+        Field(1),
+        Field(0),
+        parentCtx.zkAppAddress,
+        Field(0),
+        childAddress,
+      );
+      const maliciousHash = maliciousProposal.hash();
+      const forgedApprovalCount = PROPOSED_MARKER.add(1);
+      const forgedApprovals = new MerkleMap();
+      forgedApprovals.set(maliciousHash, forgedApprovalCount);
+
+      const realNetwork = Mina.activeInstance;
+      const maliciousProverView = {
+        ...realNetwork,
+        getAccount(publicKey: PublicKey, tokenId?: Field) {
+          const account = realNetwork.getAccount(publicKey, tokenId);
+          if (!publicKey.equals(parentCtx.zkAppAddress).toBoolean()) return account;
+
+          const appState = [...account.zkapp!.appState];
+          appState[ROOT_STATE_SLOT.threshold] = Field(1);
+          appState[ROOT_STATE_SLOT.approvalRoot] = forgedApprovals.getRoot();
+          return { ...account, zkapp: { ...account.zkapp!, appState } };
+        },
+      };
+
+      let attack: Awaited<ReturnType<typeof Mina.transaction>>;
+      Mina.setActiveInstance(maliciousProverView);
+      try {
+        attack = await Mina.transaction(parentCtx.deployerAccount, async () => {
+          await childZkApp.executeDestroy(
+            maliciousProposal,
+            forgedApprovals.getWitness(maliciousHash),
+            forgedApprovalCount,
+            childExecutionWitnessFor(maliciousHash),
+          );
+        });
+        await attack.prove();
+      } finally {
+        Mina.setActiveInstance(realNetwork);
+      }
+
+      const json = JSON.parse(attack.toJSON()) as {
+        accountUpdates: Array<{
+          body: {
+            publicKey: string;
+            preconditions: { account: { state: unknown[] } };
+          };
+        }>;
+      };
+      const parentUpdates = json.accountUpdates.filter(
+        (update) => update.body.publicKey === parentCtx.zkAppAddress.toBase58(),
+      );
+      const constrainedParentUpdates = parentUpdates.filter((update) =>
+        update.body.preconditions.account.state.some((entry) => entry != null),
+      );
+
+      expect(constrainedParentUpdates).toHaveLength(1);
+      const parentState = constrainedParentUpdates[0].body.preconditions.account.state;
+      const constrainedSlots = parentState.flatMap((entry, index) =>
+        entry == null ? [] : [index],
+      );
+      expect(constrainedSlots).toEqual(Object.values(ROOT_STATE_SLOT));
+
+      // The proof was generated against Mallory's substituted parent view, but
+      // the attached preconditions are checked against the real RootVault when
+      // the transaction is applied and therefore must fail.
+      await expect(attack.sign([parentCtx.deployerKey]).send()).rejects.toThrow();
     });
   });
 
