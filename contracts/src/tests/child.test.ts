@@ -1161,16 +1161,13 @@ describe('MinaGuard - Child Lifecycle', () => {
   // -- Parent state binding ---------------------------------------------------
 
   describe('parent state binding', () => {
-    it('serializes RootVault state preconditions and rejects forged parent state', async () => {
-      await setupChildWithParentOwners();
-
-      const maliciousProposal = createDestroyChildProposal(
-        Field(1),
-        Field(0),
-        parentCtx.zkAppAddress,
-        Field(0),
-        childAddress,
-      );
+    async function expectForgedParentStateRejected(
+      maliciousProposal: TransactionProposal,
+      execute: (
+        parentApprovalWitness: MerkleMapWitness,
+        parentApprovalCount: Field,
+      ) => Promise<void>,
+    ) {
       const maliciousHash = maliciousProposal.hash();
       const forgedApprovalCount = PROPOSED_MARKER.add(1);
       const forgedApprovals = new MerkleMap();
@@ -1194,11 +1191,9 @@ describe('MinaGuard - Child Lifecycle', () => {
       Mina.setActiveInstance(maliciousProverView);
       try {
         attack = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          await childZkApp.executeDestroy(
-            maliciousProposal,
+          await execute(
             forgedApprovals.getWitness(maliciousHash),
             forgedApprovalCount,
-            childExecutionWitnessFor(maliciousHash),
           );
         });
         await attack.prove();
@@ -1210,19 +1205,36 @@ describe('MinaGuard - Child Lifecycle', () => {
         accountUpdates: Array<{
           body: {
             publicKey: string;
+            callDepth: number;
             preconditions: { account: { state: unknown[] } };
           };
         }>;
       };
-      const parentUpdates = json.accountUpdates.filter(
-        (update) => update.body.publicKey === parentCtx.zkAppAddress.toBase58(),
+      const constrainedParentUpdateIndexes = json.accountUpdates.flatMap((update, index) =>
+        update.body.publicKey === parentCtx.zkAppAddress.toBase58() &&
+        update.body.preconditions.account.state.some((entry) => entry != null)
+          ? [index]
+          : [],
       );
-      const constrainedParentUpdates = parentUpdates.filter((update) =>
-        update.body.preconditions.account.state.some((entry) => entry != null),
+      const proofUpdateIndex = json.accountUpdates.findIndex(
+        (update) => update.body.publicKey === childAddress.toBase58(),
       );
 
-      expect(constrainedParentUpdates).toHaveLength(1);
-      const parentState = constrainedParentUpdates[0].body.preconditions.account.state;
+      expect(constrainedParentUpdateIndexes).toHaveLength(1);
+      expect(proofUpdateIndex).toBeGreaterThanOrEqual(0);
+
+      const parentUpdateIndex = constrainedParentUpdateIndexes[0];
+      const parentUpdate = json.accountUpdates[parentUpdateIndex];
+      const proofUpdate = json.accountUpdates[proofUpdateIndex];
+
+      // Account updates are serialized in preorder. Being immediately after
+      // the SubVault proof at one greater callDepth proves that the RootVault
+      // precondition update is its direct child, and therefore committed to by
+      // the SubVault proof's call-forest hash rather than a removable sibling.
+      expect(parentUpdateIndex).toBe(proofUpdateIndex + 1);
+      expect(parentUpdate.body.callDepth).toBe(proofUpdate.body.callDepth + 1);
+
+      const parentState = parentUpdate.body.preconditions.account.state;
       const constrainedSlots = parentState.flatMap((entry, index) =>
         entry == null ? [] : [index],
       );
@@ -1232,6 +1244,110 @@ describe('MinaGuard - Child Lifecycle', () => {
       // the attached preconditions are checked against the real RootVault when
       // the transaction is applied and therefore must fail.
       await expect(attack.sign([parentCtx.deployerKey]).send()).rejects.toThrow();
+    }
+
+    it('rejects forged parent state for executeSetupChild', async () => {
+      const childOwners = parentCtx.owners.map((owner) => owner.pub);
+      const setupOwners = toFixedSetupOwners(childOwners);
+      const maliciousProposal = createCreateChildProposal(
+        childAddress,
+        computeOwnerChain(childOwners),
+        Field(2),
+        Field(childOwners.length),
+        Field(0),
+        Field(0),
+        parentCtx.zkAppAddress,
+        Field(0),
+        parentCtx.networkId,
+      );
+
+      const reserveTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          maliciousProposal.hash(),
+          Field(2),
+          Field(childOwners.length),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await reserveTxn.prove();
+      await reserveTxn.sign([parentCtx.deployerKey, childKey]).send();
+
+      await expectForgedParentStateRejected(
+        maliciousProposal,
+        (parentApprovalWitness, parentApprovalCount) =>
+          childZkApp.executeSetupChild(
+            Field(2),
+            Field(childOwners.length),
+            new SetupOwnersInput({ owners: setupOwners }),
+            maliciousProposal,
+            parentApprovalWitness,
+            parentApprovalCount,
+          ),
+      );
+    });
+
+    it('rejects forged parent state for executeReclaimToParent', async () => {
+      await setupChildWithParentOwners();
+      const amount = UInt64.from(1_000_000);
+      const maliciousProposal = createReclaimChildProposal(
+        amount, Field(1), Field(0), parentCtx.zkAppAddress,
+        Field(0), childAddress,
+      );
+
+      await expectForgedParentStateRejected(
+        maliciousProposal,
+        (parentApprovalWitness, parentApprovalCount) =>
+          childZkApp.executeReclaimToParent(
+            maliciousProposal,
+            parentApprovalWitness,
+            parentApprovalCount,
+            childExecutionWitnessFor(maliciousProposal.hash()),
+            amount,
+          ),
+      );
+    });
+
+    it('rejects forged parent state for executeDestroy', async () => {
+      await setupChildWithParentOwners();
+      const maliciousProposal = createDestroyChildProposal(
+        Field(1), Field(0), parentCtx.zkAppAddress,
+        Field(0), childAddress,
+      );
+
+      await expectForgedParentStateRejected(
+        maliciousProposal,
+        (parentApprovalWitness, parentApprovalCount) =>
+          childZkApp.executeDestroy(
+            maliciousProposal,
+            parentApprovalWitness,
+            parentApprovalCount,
+            childExecutionWitnessFor(maliciousProposal.hash()),
+          ),
+      );
+    });
+
+    it('rejects forged parent state for executeEnableChildMultiSig', async () => {
+      await setupChildWithParentOwners();
+      const enabled = Field(0);
+      const maliciousProposal = createEnableChildMultiSigProposal(
+        enabled, Field(1), Field(0), parentCtx.zkAppAddress,
+        Field(0), childAddress,
+      );
+
+      await expectForgedParentStateRejected(
+        maliciousProposal,
+        (parentApprovalWitness, parentApprovalCount) =>
+          childZkApp.executeEnableChildMultiSig(
+            maliciousProposal,
+            parentApprovalWitness,
+            parentApprovalCount,
+            childExecutionWitnessFor(maliciousProposal.hash()),
+            enabled,
+          ),
+      );
     });
   });
 
