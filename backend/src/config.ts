@@ -101,7 +101,10 @@ export function loadConfig(): BackendConfig {
     archiveFallbackEndpoint: process.env.ARCHIVE_FALLBACK_ENDPOINT ?? null,
     indexPollIntervalMs: numericEnv('INDEX_POLL_INTERVAL_MS', 15000),
     indexStartHeight: numericEnv('INDEX_START_HEIGHT', 0),
-    minaguardVkHash: process.env.MINAGUARD_VK_HASH ?? null,
+    // An empty value is the documented E2E/dev sentinel for disabling the VK
+    // filter. Normalize it to the same representation as an unset variable so
+    // downstream security checks do not try to match every vault against "".
+    minaguardVkHash: process.env.MINAGUARD_VK_HASH || null,
     indexerMode,
     indexerDisabled: process.env.INDEXER_DISABLED === 'true',
     fixedLatestSlot:
