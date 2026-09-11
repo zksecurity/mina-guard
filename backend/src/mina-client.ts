@@ -1,7 +1,11 @@
 import { Mina, PublicKey, fetchAccount, UInt32 } from 'o1js';
-import { MinaGuard } from 'contracts';
+import { GUARD_PERMISSION_KINDS, MinaGuard } from 'contracts';
 import type { Pool } from 'pg';
 import type { BackendConfig, } from './config.js';
+import {
+  validatePermissionVector,
+  type PermissionKindVector,
+} from './vault-security.js';
 
 const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
 
@@ -306,6 +310,64 @@ export async function fetchVerificationKeyHash(address: string): Promise<string 
     (accountResult.account as any)?.zkapp?.verificationKey?.hash ??
     (accountResult.account as any)?.verificationKey?.hash;
   return hash?.toString() ?? null;
+}
+
+export interface VaultSecurityStatus {
+  accountFound: boolean;
+  verificationKeyHash: string | null;
+  verificationKeyMatches: boolean;
+  permissionKinds: PermissionKindVector;
+  expectedPermissionKinds: typeof GUARD_PERMISSION_KINDS;
+  permissionMismatches: string[];
+  safe: boolean;
+}
+
+/**
+ * Authenticates a deployed MinaGuard account using both its verification key
+ * and its complete permission vector. A canonical VK by itself is insufficient:
+ * the signature-authorized deployment update can install that VK alongside
+ * creator-controlled permissions.
+ */
+export async function fetchVaultSecurityStatus(
+  address: string,
+  expectedVerificationKeyHash: string | null
+): Promise<VaultSecurityStatus> {
+  const pub = PublicKey.fromBase58(address);
+  const accountResult = await fetchAccount({ publicKey: pub });
+  const account = accountResult.account as any;
+  if (!account) {
+    return {
+      accountFound: false,
+      verificationKeyHash: null,
+      verificationKeyMatches: false,
+      permissionKinds: {},
+      expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+      permissionMismatches: [],
+      safe: false,
+    };
+  }
+
+  const verificationKeyHash =
+    account.zkapp?.verificationKey?.hash?.toString() ??
+    account.verificationKey?.hash?.toString() ??
+    null;
+  const verificationKeyMatches =
+    verificationKeyHash !== null &&
+    (expectedVerificationKeyHash === null ||
+      verificationKeyHash === expectedVerificationKeyHash);
+  const { permissionKinds, mismatches } = validatePermissionVector(
+    account.permissions
+  );
+
+  return {
+    accountFound: true,
+    verificationKeyHash,
+    verificationKeyMatches,
+    permissionKinds,
+    expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+    permissionMismatches: mismatches,
+    safe: verificationKeyMatches && mismatches.length === 0,
+  };
 }
 
 /** Reads the current on-chain MinaGuard state needed by the backend/indexer.

@@ -29,9 +29,14 @@ MinaGuard is a **non-custodial** hierarchical multisig vault. Funds held by a gu
 contract move only when a proposal reaches its owner-signature threshold and a proven
 contract method executes it. No server in the system holds a key that can move vault
 funds: owner signatures are produced in the owners' own wallets (Auro extension or
-Ledger via WebHID) or on an air-gapped machine via the offline CLI, and the contract's
-account permissions (`send: proof()`, `editState: proof()`, `setPermissions: impossible()`)
-rule out any non-proof path to the balance or state.
+Ledger via WebHID) or on an air-gapped machine via the offline CLI. For an authenticated
+MinaGuard deployment, the account permissions (`send: proof()`, `editState: proof()`,
+`setPermissions: impossible()`) rule out any non-proof path to the balance or state.
+Verification-key equality alone does not authenticate those signature-installed permissions:
+the backend and online UI must also verify the complete stored permission vector against
+`GUARD_PERMISSIONS` before accepting the vault. The UI fetches this snapshot directly from its
+configured Mina node and compares it with a build-time canonical vector; it does not trust the
+indexer to report either side of the comparison.
 
 ### Trusted computing base
 
@@ -129,7 +134,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Parent can always recover child funds | `executeReclaimToParent` / `executeDestroy` deliberately skip the `childMultiSigEnabled` check — disabling a child never strands its balance | `child.test.ts` |
 | Parent state drift voids REMOTE approvals | child pins parent state via AccountUpdate preconditions | `child.test.ts` |
 | Governance preserves `0 < threshold ≤ numOwners ≤ MAX_OWNERS` | `setup()`, `executeOwnerChange()`, `executeThresholdChange()` all assert the bounds — the vault can be neither locked (threshold unreachable) nor unbounded | `setup.test.ts`, `governance.test.ts` |
-| No permission downgrade / VK swap | `setPermissions: impossible()`, `setVerificationKey: impossibleDuringCurrentVersion()` set in `deploy()` | `setup.test.ts` |
+| No hidden signature authority / later permission downgrade | Backend and online UI reject any stored vector other than `GUARD_PERMISSIONS`; once accepted, `setPermissions: impossible()` and `setVerificationKey: impossibleDuringCurrentVersion()` prevent later changes | `vault-security.test.ts`, `routes-subscribe.test.ts`, `indexer-archive-discovery.test.ts`, `indexer-autosubscribe.test.ts` |
 
 Off-chain, one invariant matters for the trust argument above: **clients recompute the hash they
 sign from the fields they display and verify it equals the selected proposal's identity** —

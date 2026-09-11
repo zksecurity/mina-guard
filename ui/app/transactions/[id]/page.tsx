@@ -12,7 +12,14 @@ import {
   truncateAddress,
   type Proposal,
 } from '@/lib/types';
-import { fetchApprovals, extractTxHash, fetchBalance, recordSubmission } from '@/lib/api';
+import {
+  fetchApprovals,
+  extractTxHash,
+  fetchBalance,
+  fetchVaultSecurityStatus,
+  isCanonicalVaultSecurity,
+  recordSubmission,
+} from '@/lib/api';
 import {
   approveProposalOnchain,
   executeProposalOnchain,
@@ -29,6 +36,7 @@ import {
   savePendingTx,
 } from '@/lib/storage';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
+import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
 import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
 
@@ -110,6 +118,9 @@ export default function TransactionDetailPage() {
   // = events not indexed yet, so we can't check (not a mismatch).
   const [childConfigCheck, setChildConfigCheck] =
     useState<'checking' | 'match' | 'mismatch' | 'unavailable' | null>(null);
+  const [childPermissionCheck, setChildPermissionCheck] = useState<
+    'checking' | 'match' | 'mismatch' | null
+  >(null);
   useEffect(() => {
     if (!proposal || proposal.txType !== 'createChild') {
       setChildConfigCheck(null);
@@ -145,6 +156,29 @@ export default function TransactionDetailPage() {
     })();
     return () => { cancelled = true; };
   }, [proposal, proposalHash, multisig, proposalsAddress]);
+
+  // Child-targeting approvals must authenticate the deployed child account
+  // itself. Its VK can be canonical while its signature-authorized deployment
+  // update installed a creator withdrawal permission.
+  useEffect(() => {
+    if (!proposal?.childAccount) {
+      setChildPermissionCheck(null);
+      return;
+    }
+    if (proposal._localPending) return;
+    let cancelled = false;
+    setChildPermissionCheck('checking');
+    void fetchVaultSecurityStatus(proposal.childAccount).then((status) => {
+      if (!cancelled) {
+        setChildPermissionCheck(
+          isCanonicalVaultSecurity(status) ? 'match' : 'mismatch'
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [proposal?.txType, proposal?.childAccount, proposal?._localPending]);
 
   // For ADD_OWNER: recompute the canonical post-add owner commitment from the
   // indexed owner list and compare it to the signed proposal.data. A mismatch
@@ -272,6 +306,11 @@ export default function TransactionDetailPage() {
     [proposals, proposal?.proposalHash, threshold],
   );
   const contractLock = useContractTxLock(multisig?.address ?? null, proposalsForLock);
+  const parentPermissionCheck = useVaultSecurity(multisig?.address ?? null);
+  const permissionsSafe =
+    multisig?.permissionsVerified === true && parentPermissionCheck === 'safe';
+  const childPermissionsSafe =
+    !proposal?.childAccount || childPermissionCheck === 'match';
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -279,6 +318,8 @@ export default function TransactionDetailPage() {
     isOwner &&
     !hasApproved &&
     !isConfigStale &&
+    permissionsSafe &&
+    childPermissionsSafe &&
     // Block approval when the displayed SubVault config provably does not hash
     // to the signed proposal.data (config-swap). Only a computed mismatch
     // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
@@ -294,6 +335,8 @@ export default function TransactionDetailPage() {
     proposal.status === 'pending' &&
     proposal.approvalCount >= threshold &&
     !isConfigStale &&
+    permissionsSafe &&
+    childPermissionsSafe &&
     !executeInFlight &&
     !contractLock.locked &&
     !insufficientBalance;
@@ -302,6 +345,7 @@ export default function TransactionDetailPage() {
     !isLocalPending &&
     proposal.status === 'pending' &&
     isOwner &&
+    permissionsSafe &&
     proposal.nonce !== null &&
     !isDeleteProposal(proposal) &&
     // CREATE_CHILD uses the reserved nonce=0 sentinel, which the current
@@ -614,6 +658,21 @@ export default function TransactionDetailPage() {
               The owners and threshold shown for this SubVault do not hash to the config committed in this
               proposal&apos;s data. The displayed owners are NOT what would be approved — the config being signed
               differs from what you see. Do not approve this proposal; the on-chain execute would reject it.
+            </p>
+          </div>
+        )}
+
+        {(!permissionsSafe || childPermissionCheck === 'mismatch') && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
+            <p className="font-semibold mb-1">Unsafe permission vector</p>
+            <p className="opacity-90">
+              {!permissionsSafe
+                ? parentPermissionCheck === 'checking'
+                  ? 'The complete on-chain Vault permission check is still running.'
+                  : 'This Vault has not passed the complete canonical permission check.'
+                : 'The proposed SubVault has a missing or non-canonical on-chain permission field.'}{' '}
+              Approval, execution, deletion, and offline bundle creation are
+              blocked.
             </p>
           </div>
         )}

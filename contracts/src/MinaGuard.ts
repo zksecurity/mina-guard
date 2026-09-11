@@ -5,7 +5,6 @@ import {
   method,
   Field,
   PublicKey,
-  Permissions,
   MerkleMapWitness,
   Poseidon,
   Bool,
@@ -15,7 +14,7 @@ import {
   UInt32,
   UInt64,
 } from 'o1js';
-
+import { GUARD_PERMISSIONS } from './guard-permissions.js';
 
 import {
   MAX_OWNERS,
@@ -285,6 +284,14 @@ export class MinaGuard extends SmartContract {
   /**
    * Configures account permissions and emits a deploy discovery event.
    *
+   * SECURITY, authenticate the deployed account: deploy() is ordinary
+   * transaction-construction code, not part of MinaGuard's proved circuit. A
+   * creator can deploy the canonical verification key while changing this
+   * signature-authorized AccountUpdate's permissions. Never recognize or use
+   * a MinaGuard account based on its verification key alone. Clients and
+   * indexers MUST compare every on-chain permission against GUARD_PERMISSIONS
+   * before displaying, funding, proposing, approving, or executing for it.
+   *
    * SECURITY, initialize atomically: deploy() only publishes the account and its
    * proof-authorized permissions; it does NOT set governance. Between deploy()
    * and setup()/reserveForParent() the guard is uninitialized, and those init
@@ -298,20 +305,7 @@ export class MinaGuard extends SmartContract {
    */
   async deploy() {
     await super.deploy();
-    this.account.permissions.set({
-      ...Permissions.default(),
-      editState: Permissions.proof(),
-      send: Permissions.proof(),
-      receive: Permissions.none(),
-      setDelegate: Permissions.proof(),
-      setPermissions: Permissions.impossible(),
-      setVerificationKey: Permissions.VerificationKey.impossibleDuringCurrentVersion(),
-      setZkappUri: Permissions.impossible(),
-      setTokenSymbol: Permissions.impossible(),
-      incrementNonce: Permissions.impossible(),
-      setVotingFor: Permissions.impossible(),
-      setTiming: Permissions.impossible(),
-    });
+    this.account.permissions.set(GUARD_PERMISSIONS);
 
     this.emitEvent('deployed', {
       guardAddress: this.address,

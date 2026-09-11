@@ -303,7 +303,7 @@ describe('reconstruction after rollback', () => {
     const ownerB = PrivateKey.random().toPublicKey().toBase58();
 
     const contract = await prisma.contract.create({
-      data: { address, discoveredAtBlock: 4 },
+      data: { address, discoveredAtBlock: 4, permissionsVerified: true },
     });
     const indexer = new MinaGuardIndexer(stubConfig);
 

@@ -63,8 +63,10 @@ In full mode, the source of candidate addresses is itself pluggable via `DISCOVE
 | `daemon` (default) | bestChain scan over daemon GraphQL | ~290 blocks (transition-frontier cap) | none |
 | `archive` | direct SQL against the Mina archive postgres | unbounded (from genesis) | `ARCHIVE_DB_*` connection env vars + `MINAGUARD_VK_HASH` (the SQL filters on the VK hash to keep results bounded — config load fails fast without it) |
 
-Both backends funnel their candidates through the same dedup / VK re-verification / backfill
-path (`processCandidateAddresses`). The archive backend also reads the latest chain height from
+Both backends funnel their candidates through the same dedup / full on-chain security check /
+backfill path (`processCandidateAddresses`). That check requires both the expected verification key
+and the complete canonical `GUARD_PERMISSIONS` vector; verification-key equality alone does not
+authenticate the signature-authorized deployment permissions. The archive backend also reads the latest chain height from
 postgres (`fetchLatestBlockHeightFromArchive`) instead of archive-node-api, which has been
 observed to return generic errors mid-block.
 
@@ -111,10 +113,12 @@ has teeth on heights where MinaGuard activity landed — which is exactly where 
 
 ### Contract discovery and readiness
 
-A `Contract` row exists in one of two states:
+A `Contract` row has two independent admission flags:
 
 - **`ready = false`** — address is known (discovered or subscribed) but no MinaGuard event has been ingested yet. Hidden from most read routes.
 - **`ready = true`** — flipped on first event ingestion in `syncSingleContract`. Any event other than `setup`/`setupOwner` proves the contract actually initialized on-chain.
+- **`permissionsVerified = false`** — the complete on-chain permission vector has not passed the canonical comparison. Hidden from all contract-scoped read routes and ineligible to become ready.
+- **`permissionsVerified = true`** — every permission, including `access` and the `setVerificationKey` transaction-version guard, matched `GUARD_PERMISSIONS`.
 
 `ready` exists because a `Contract` row can be inserted speculatively — a user subscribing before
 the deploy tx lands, or `applyProposalEvent` eagerly inserting a child on a CREATE_CHILD proposal
@@ -122,11 +126,11 @@ before `executeSetupChild` actually runs. Read routes filter on `ready = true` s
 rows don't surface as ghost UI entries, while the unready-rescan loop keeps polling their address
 range until real events land and promote them.
 
-Three ways to become tracked:
+Every path fails closed on the same permission check before a contract can become usable:
 
-- **Full mode, daemon discovery**: `discoverCandidateAddresses` scans recent bestChain blocks, `fetchVerificationKeyHash` confirms it's a zkApp, and the hash is optionally matched against `MINAGUARD_VK_HASH`. Backfill window is `max(0, indexedHeight - 300)` — a safe margin around the ~290-block bestChain horizon, which is guaranteed to cover the deploy since that horizon is the only place daemon discovery could have seen it.
-- **Full mode, archive discovery**: `discoverCandidateAddressesFromArchive` queries the archive postgres for account updates that installed MinaGuard's VK (applied zkapp commands in non-orphaned blocks). Because this can surface contracts deployed at arbitrary historical heights, the backfill lower bound is `indexStartHeight` (default 0). The on-chain VK re-fetch via the daemon still runs per new candidate: it catches the edge case where the archive shows a VK install that has since been upgraded on-chain. The query includes `pending` blocks so fresh deploys are discoverable before finalization; orphaned pending deploys are cleaned up by `rollbackAboveFork`, which deletes `Contract` rows by `discoveredAtBlock` on every reorg rollback. The residual risk is the same as any reorg deeper than the ~290-block detection window: operator intervention.
-- **Lite mode subscribe**: user calls `POST /api/subscribe { address, fromBlock? }`. `fromBlock` omitted = `latestHeight - 5` (margin to cover a block landing mid-request), with **no on-chain check at all** — the auto-subscribe after a fresh deploy races the tx landing, so the address may still be in the mempool. `fromBlock` supplied = trusted explicit lower bound, and this manual path is the **only** one that runs a VK lookup (`routes.ts`): the address must already resolve to a deployed zkApp (a *missing* VK → HTTP 404, guarding against typos backfilling forever) and, when `MINAGUARD_VK_HASH` is set, a *mismatched* VK → HTTP 400.
+- **Full mode, daemon discovery**: `discoverCandidateAddresses` scans recent bestChain blocks. `fetchVaultSecurityStatus` then fetches the account and rejects it unless the VK matches (when configured) and every permission is canonical. Backfill window is `max(0, indexedHeight - 300)` — a safe margin around the ~290-block bestChain horizon, which is guaranteed to cover the deploy since that horizon is the only place daemon discovery could have seen it.
+- **Full mode, archive discovery**: `discoverCandidateAddressesFromArchive` queries the archive postgres for account updates that installed MinaGuard's VK (applied zkapp commands in non-orphaned blocks). Because this can surface contracts deployed at arbitrary historical heights, the backfill lower bound is `indexStartHeight` (default 0). The live account security check still runs per new candidate, catching either later VK drift or a canonical VK installed alongside weakened permissions. The query includes `pending` blocks so fresh deploys are discoverable before finalization; orphaned pending deploys are cleaned up by `rollbackAboveFork`, which deletes `Contract` rows by `discoveredAtBlock` on every reorg rollback. The residual risk is the same as any reorg deeper than the ~290-block detection window: operator intervention.
+- **Lite mode subscribe**: user calls `POST /api/subscribe { address, fromBlock? }`. `fromBlock` omitted = `latestHeight - 5` (margin to cover a block landing mid-request). This subscribe-before-deploy path cannot inspect an account still in the mempool, so it creates an unverified, unready row; `syncSingleContract` performs the full live check before ingesting events or marking it ready. `fromBlock` supplied = trusted explicit lower bound and performs the check immediately: a missing/non-zkApp account returns HTTP 404, while a wrong VK or any non-canonical permission returns HTTP 400.
 
 The `rescanUnreadyContracts` loop re-scans `[discoveredAtBlock, latestHeight]` every tick until
 events land. First event flips `ready = true` and the contract joins the forward sweep.
@@ -141,7 +145,7 @@ events land. First event flips `ready = true` and the contract joins the forward
 4. **Dedupe by fingerprint** (`address::type::blockHeight::txHash::payload`). `EventRaw.fingerprint` is unique; second writer is a no-op.
 5. **Upsert BlockHeader** for the event's `(height, blockHash, parentHash)`. First writer wins; mismatches across events at the same height get caught by the next tick's reorg detector.
 6. **Insert EventRaw** and dispatch to the appropriate `apply*` handler.
-7. **Flip `ready`** if any event was ingested.
+7. **Flip `ready`** if any event was ingested, after `permissionsVerified` has passed.
 
 ### Data model
 
@@ -163,7 +167,7 @@ block it became valid at. Current state is the latest row; reorg rollback is a s
 
 **Identity / pointer.**
 
-- **`Contract`** — `(address, parent?, ready, discoveredAtBlock, ...)`. Identity + latest-synced metadata. `parent` set from `setup.parent` (null/EMPTY for root guards).
+- **`Contract`** — `(address, parent?, ready, permissionsVerified, discoveredAtBlock, ...)`. Identity + latest-synced metadata. `parent` set from `setup.parent` (null/EMPTY for root guards). Read APIs require both admission flags.
 - **`Proposal`** — `(contractId, proposalHash, ...)`, unique per `@@unique([contractId, proposalHash])`. Identity + propose-time fields (`proposer`, `toAddress`, `tokenId`, `txType`, `data`, `nonce`, `configNonce`, `expirySlot`, `guardAddress`, `destination`, `childAccount`, `memo`/`memoHash`/`executionMemoHash`, `createdAtBlock`), plus last-submitted approve/execute tx hashes and error fields for UI polling. `ProposalReceiver` child rows carry per-slot receivers from `receiver` events (padded empties skipped); for governance proposals slot 0 is mirrored onto `Proposal.toAddress`. **There is no stored status column** — status is derived at read time (see [Proposal status](#proposal-status)).
 - **`IndexerCursor`** — key/value rows. `indexed_height` is the forward-sweep cursor. `archive_discovered_height` is the archive-discovery high-water mark, tracked separately so that switching `DISCOVERY_BACKEND` from `daemon` to `archive` triggers a from-genesis sweep instead of inheriting the (much narrower) daemon cursor position.
 
@@ -224,10 +228,11 @@ lookups positively succeed (a genuine `pending` from `fetchZkappTxStatus` — an
 treated as absent — **and** a real mempool set, `null` on network failure). Verify neither lookup
 failing can misclassify an included tx as dropped, since that flag releases the UI signer lock.
 
-**4. VK-hash filtering.** Discovery filters candidates by `MINAGUARD_VK_HASH` (required for archive,
-optional for daemon), and re-verifies the on-chain VK per candidate. Confirm a wrong/stale hash
-degrades to "discovers nothing" rather than "tracks arbitrary zkApps", and that the network-specific
-hash (`testnet=`/`mainnet=` in `contracts/.vk-hash`) matches the target chain.
+**4. Deployment authentication.** Discovery filters candidates by `MINAGUARD_VK_HASH` (required for
+archive, optional for daemon), then validates the live VK and every permission against
+`GUARD_PERMISSIONS`. Confirm that a canonical VK with even one altered field (especially
+`send: proofOrSignature`) never becomes `permissionsVerified` or `ready`, and that legacy rows are
+re-checked rather than grandfathered.
 
 ### Failure semantics
 
@@ -310,14 +315,18 @@ URL characters don't need percent-encoding.
 
 ### API routes
 
-Contract-scoped read routes only surface contracts with `ready = true` (at least one MinaGuard
-event ingested); speculative rows — subscribed-before-deploy addresses, eagerly inserted children
-— 404 until real events land.
+Contract-scoped read routes only surface contracts with `ready = true` and
+`permissionsVerified = true`; speculative or unsafe rows return 404.
+
+The deterministic UI harness has no chain. Only when `INDEXER_DISABLED=true`, the security endpoint
+synthesizes a canonical result for fixtures explicitly seeded with `permissionsVerified=true`.
+This branch is test-only and must never be enabled in a deployment that accepts real vaults.
 
 | Route | Purpose |
 |---|---|
 | `GET /health` | Process liveness (`{ ok, now }`). |
 | `GET /api/indexer/status` | In-memory indexer status: `running`, `lastRunAt`, `lastSuccessfulRunAt`, `latestChainHeight`, `latestSlot`, `indexedHeight`, `lastError`, `discoveredContracts`, `indexerMode`. |
+| `GET /api/accounts/:address/security` | Live VK and complete permission-vector comparison for diagnostics and the chainless deterministic UI harness. Production UI checks the configured Mina node directly. |
 | `GET /api/tx-status?hash=<txHash>` | Looks up a submitted zkApp tx hash on bestChain (used for CREATE proposals with no `Proposal` row yet). `{ status, reason? }`, status ∈ `pending`/`included`/`failed`/`unknown` — `unknown` means the lookup failed, not confirmed absent. |
 | `GET /api/contracts` | Lists tracked (`ready`) contracts merged with latest `ContractConfig` snapshot + `_count.owners`/`proposals`/`events`. Ordered `discoveredAt desc`. |
 | `GET /api/contracts/:address` | One tracked contract, same enriched shape. `404` if not found or not ready. |

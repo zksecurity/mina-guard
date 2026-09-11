@@ -100,8 +100,12 @@ reclaimable.
   installs whatever key compile produced, while afterwards a swap only yields proofs that fail on-chain.
   Unset ⇒ skipped, like the backend's `minaguardVkHash`.
 - **The backend is not trusted for integrity.** Data from the backend is used to construct
-  transactions and display information. Security-critical operations, such as proposal creation, approval,
-  and execution, are performed on-chain. Transactions are also submitted directly to the node.
+  transactions and display information. Before exposing vault actions, the browser queries the configured
+  Mina node directly and compares the account's verification key and every stored permission against its
+  built-in MinaGuard policy. Missing fields, RPC failures, or any mismatch fail closed. This check also runs
+  against a proposed child before CREATE_CHILD approval or execution. Security-critical operations, such as
+  proposal creation, approval, and execution, are performed on-chain. Transactions are also submitted
+  directly to the node.
 - **Interactions with the chain.** Interactions with the chain, like transactions submitted, reach the node
   directly. Note, however, that:
   - Transactions submitted through Auro wallet reach the node endpoint defined by Auro.
@@ -134,6 +138,8 @@ Assuming that the frontend (UI) is not compromised, the interactions are the fol
 - **Backend (indexer).** Read-only, *untrusted*. The indexer is used to retrieve on-chain
   data and events. The indexer cannot affect critical operations. For example, consider
   a propose-approve-execute flow:
+  - The UI does not rely on the indexer's `permissionsVerified` flag as its trust anchor. It independently
+    reads the account's verification key and complete permission vector from Mina before enabling actions.
   - Proposal is created in the UI and submitted directly to the node. The contract acts
     as the trust anchor here.
   - Owners see the proposal data (controlled by the indexer) and may choose to approve. A

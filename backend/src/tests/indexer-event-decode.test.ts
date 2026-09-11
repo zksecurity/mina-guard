@@ -56,7 +56,9 @@ async function ingest(
   const address = opts.address ?? PrivateKey.random().toPublicKey().toBase58();
   const toHeight = opts.toHeight ?? 20;
   const contract = await prisma.contract.create({
-    data: { address, discoveredAtBlock: 1 },
+    // Permission admission is covered separately; these tests exercise only
+    // event decoding after a vault has passed that boundary.
+    data: { address, discoveredAtBlock: 1, permissionsVerified: true },
   });
   stubMinaClient(() => ({
     fetchDecodedContractEvents: async () => events,

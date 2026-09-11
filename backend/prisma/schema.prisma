@@ -23,6 +23,7 @@ model Contract {
   address           String    @unique
   parent            String?
   ready             Boolean   @default(false)
+  permissionsVerified Boolean @default(false)
   discoveredAt      DateTime  @default(now())
   discoveredAtBlock Int?
   lastSyncedAt      DateTime?

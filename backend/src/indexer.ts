@@ -14,7 +14,7 @@ import {
   fetchLatestBlockHeight,
   fetchLatestBlockHeightFromArchive,
   fetchOnChainState,
-  fetchVerificationKeyHash,
+  fetchVaultSecurityStatus,
   fetchMempoolHashes,
   fetchZkappTxStatus,
   type DiscoveryCandidate,
@@ -305,18 +305,30 @@ export class MinaGuardIndexer {
         const existing = await prisma.contract.findUnique({ where: { address } });
         if (existing) continue;
 
-        const verificationKeyHash = await fetchVerificationKeyHash(address);
-        if (!verificationKeyHash) continue;
-
-        if (
-          this.config.minaguardVkHash &&
-          verificationKeyHash !== this.config.minaguardVkHash
-        ) {
+        const security = await fetchVaultSecurityStatus(
+          address,
+          this.config.minaguardVkHash
+        );
+        if (!security.safe) {
+          if (
+            security.accountFound &&
+            security.permissionMismatches.length > 0
+          ) {
+            console.warn(
+              `[indexer] refusing ${address}: non-canonical permissions (${security.permissionMismatches.join(
+                ', '
+              )})`
+            );
+          }
           continue;
         }
 
         const created = await prisma.contract.create({
-          data: { address, discoveredAtBlock: deployBlock },
+          data: {
+            address,
+            discoveredAtBlock: deployBlock,
+            permissionsVerified: true,
+          },
         });
 
         await this.backfillContract(created.id, address);
@@ -426,6 +438,38 @@ export class MinaGuardIndexer {
     fromHeight: number,
     toHeight: number
   ): Promise<void> {
+    const tracked = await prisma.contract.findUnique({
+      where: { id: contractId },
+      select: { permissionsVerified: true },
+    });
+    if (!tracked?.permissionsVerified) {
+      const security = await fetchVaultSecurityStatus(
+        address,
+        this.config.minaguardVkHash
+      );
+      if (!security.accountFound) return;
+      if (!security.safe) {
+        await prisma.contract.update({
+          where: { id: contractId },
+          data: { ready: false, permissionsVerified: false },
+        });
+        console.warn(
+          `[indexer] refusing ${address}: ${
+            security.verificationKeyMatches
+              ? `non-canonical permissions (${security.permissionMismatches.join(
+                  ', '
+                )})`
+              : 'verification key mismatch'
+          }`
+        );
+        return;
+      }
+      await prisma.contract.update({
+        where: { id: contractId },
+        data: { permissionsVerified: true },
+      });
+    }
+
     const rawEvents = await fetchDecodedContractEvents(address, fromHeight, toHeight);
 
     // o1js fetchEvents returns events within a single tx in *reverse* emission
