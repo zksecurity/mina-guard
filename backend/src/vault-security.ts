@@ -31,6 +31,16 @@ function readBool(value: BoolLike | undefined): boolean | null {
 
 /** Converts o1js' three-bit AuthRequired representation to its protocol name. */
 export function permissionKind(permission: unknown): PermissionKind | null {
+  if (
+    permission === 'None' ||
+    permission === 'Either' ||
+    permission === 'Proof' ||
+    permission === 'Signature' ||
+    permission === 'Impossible'
+  ) {
+    return permission;
+  }
+
   const value = permission as PermissionLike | undefined;
   const constant = readBool(value?.constant);
   const necessary = readBool(value?.signatureNecessary);

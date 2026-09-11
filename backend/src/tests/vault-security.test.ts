@@ -31,6 +31,32 @@ describe('canonical MinaGuard permissions', () => {
     expect(validatePermissionVector(altered).mismatches).toEqual(['send']);
   });
 
+  it('accepts the raw permission strings returned by Mina GraphQL', () => {
+    const raw = {
+      ...GUARD_PERMISSION_KINDS,
+      setVerificationKey: {
+        auth: GUARD_PERMISSION_KINDS.setVerificationKey,
+        txnVersion: GUARD_PERMISSIONS.setVerificationKey.txnVersion.toString(),
+      },
+    };
+
+    expect(validatePermissionVector(raw).mismatches).toEqual([]);
+  });
+
+  it('does not confuse raw setVerificationKey: None with Impossible', () => {
+    const raw = {
+      ...GUARD_PERMISSION_KINDS,
+      setVerificationKey: {
+        auth: 'None',
+        txnVersion: GUARD_PERMISSIONS.setVerificationKey.txnVersion.toString(),
+      },
+    };
+
+    expect(validatePermissionVector(raw).mismatches).toEqual([
+      'setVerificationKey',
+    ]);
+  });
+
   it('fails closed when any permission field is absent', () => {
     const actual = permissionKindVector(GUARD_PERMISSIONS);
     delete actual.access;

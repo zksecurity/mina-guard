@@ -307,7 +307,7 @@ export class MinaGuardIndexer {
 
         const security = await fetchVaultSecurityStatus(
           address,
-          this.config.minaguardVkHash
+          this.config
         );
         if (!security.safe) {
           if (
@@ -445,7 +445,7 @@ export class MinaGuardIndexer {
     if (!tracked?.permissionsVerified) {
       const security = await fetchVaultSecurityStatus(
         address,
-        this.config.minaguardVkHash
+        this.config
       );
       if (!security.accountFound) return;
       if (!security.safe) {

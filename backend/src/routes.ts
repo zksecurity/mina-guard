@@ -127,7 +127,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         });
         return;
       }
-      res.json(await fetchVaultSecurityStatus(address, config.minaguardVkHash));
+      res.json(await fetchVaultSecurityStatus(address, config));
     })
   );
 
@@ -627,7 +627,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     if (fromBlockNum !== null) {
       const security = await fetchVaultSecurityStatus(
         address,
-        config.minaguardVkHash
+        config
       );
       if (!security.accountFound || !security.verificationKeyHash) {
         res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });

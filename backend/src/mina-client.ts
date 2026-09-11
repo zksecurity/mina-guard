@@ -330,11 +330,37 @@ export interface VaultSecurityStatus {
  */
 export async function fetchVaultSecurityStatus(
   address: string,
-  expectedVerificationKeyHash: string | null
+  config: BackendConfig
 ): Promise<VaultSecurityStatus> {
-  const pub = PublicKey.fromBase58(address);
-  const accountResult = await fetchAccount({ publicKey: pub });
-  const account = accountResult.account as any;
+  const query = `query($publicKey: PublicKey!) {
+    account(publicKey: $publicKey) {
+      verificationKey { hash }
+      permissions {
+        editState
+        send
+        receive
+        setDelegate
+        setPermissions
+        setVerificationKey { auth txnVersion }
+        setZkappUri
+        editActionState
+        setTokenSymbol
+        incrementNonce
+        setVotingFor
+        setTiming
+        access
+      }
+    }
+  }`;
+  const response = await graphqlRequest<{
+    account?: {
+      verificationKey?: { hash?: string | null } | null;
+      permissions?: Record<string, unknown> | null;
+    } | null;
+  }>(query, config.minaEndpoint, config.minaFallbackEndpoint, {
+    publicKey: address,
+  });
+  const account = response.account;
   if (!account) {
     return {
       accountFound: false,
@@ -347,14 +373,11 @@ export async function fetchVaultSecurityStatus(
     };
   }
 
-  const verificationKeyHash =
-    account.zkapp?.verificationKey?.hash?.toString() ??
-    account.verificationKey?.hash?.toString() ??
-    null;
+  const verificationKeyHash = account.verificationKey?.hash ?? null;
   const verificationKeyMatches =
     verificationKeyHash !== null &&
-    (expectedVerificationKeyHash === null ||
-      verificationKeyHash === expectedVerificationKeyHash);
+    (config.minaguardVkHash === null ||
+      verificationKeyHash === config.minaguardVkHash);
   const { permissionKinds, mismatches } = validatePermissionVector(
     account.permissions
   );
