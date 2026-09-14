@@ -106,7 +106,8 @@ test.describe.configure({ mode: 'serial' });
 
 /**
  * Navigate to a path with the mock wallet active for the given account.
- * The first call does a full page.goto (which starts contract compilation).
+ * The first call does a full page.goto (which starts contract compilation on
+ * proof-enabled networks; proofless Lightnet E2E deliberately skips it).
  * Subsequent calls use client-side navigation to preserve the Web Worker.
  */
 async function gotoWithWallet(

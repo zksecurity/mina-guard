@@ -40,9 +40,6 @@ jobs:
       - name: Verify Docker Compose v2 available
         run: docker compose version
 
-      - name: Clean up previous run
-        run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v --remove-orphans 2>/dev/null || true
-
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
@@ -54,13 +51,27 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      # Lightnet runs with PROOF_LEVEL=none and the browser deliberately uses
+      # o1js dummy proofs.  Use the matching dummy verification key as this
+      # test stack's explicit trust anchor; the real network-specific MinaGuard
+      # keys are compiled and checked by the separate check-vk-hash job.
+      # Persist it through GITHUB_ENV because every later Compose invocation,
+      # including failure log collection and teardown, must be able to
+      # interpolate the required build argument.
+      - name: Configure proofless Lightnet verification key
+        run: |
+          e2e_dummy_vk_hash="$(cd contracts && bun -e "import { VerificationKey } from 'o1js'; console.log((await VerificationKey.dummy()).hash.toString())")"
+          [[ "$e2e_dummy_vk_hash" =~ ^[0-9]+$ ]]
+          echo "MINAGUARD_VK_HASH=$e2e_dummy_vk_hash" >> "$GITHUB_ENV"
+
+      - name: Clean up previous run
+        run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v --remove-orphans 2>/dev/null || true
+
       - name: Install Playwright browsers
         run: cd e2e && npx playwright install chromium --with-deps
 
       - name: Start compose stack
-        run: |
-          export MINAGUARD_VK_HASH="$(contracts/scripts/read-vk-hash.sh testnet)"
-          docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait --wait-timeout 600
+        run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait --wait-timeout 600
 
       - name: Wait for services
         run: |

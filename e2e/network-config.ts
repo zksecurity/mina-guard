@@ -65,10 +65,10 @@ const LIGHTNET_CONFIG: NetworkConfig = {
   blockTimeMs: 3_000,
   indexerPollIntervalMs: 5_000,
   indexerTimeoutMs: 240_000,
-  // Banner wait covers first-test compile + tx build + broadcast + inclusion.
-  // Local serial worst-case is ~90-120s on 8 vCPUs, but CI on 4 vCPUs with
-  // `next dev` on-demand bundling pushes first-test compile close to 180s.
-  // 5 min covers both environments without masking real hangs.
+  // Banner wait covers tx construction, broadcast, and inclusion. Proofless
+  // Lightnet E2E skips the real circuit compile; check-vk-hash and contract
+  // tests cover compilation separately. Keep enough headroom for a busy local
+  // daemon and indexer without masking a permanent operation hang.
   bannerTimeoutMs: 900_000,
   // Per-test hard cap, strictly greater than bannerTimeoutMs so the banner
   // wait has time to surface a clear error before the outer cap fires.

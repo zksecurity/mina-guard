@@ -208,6 +208,16 @@ async function assertExpectedVerificationKey(actualHash: string): Promise<void> 
 async function compileContract(): Promise<boolean> {
   if (compileSucceeded) return true;
 
+  // The Lightnet E2E build runs its daemon with PROOF_LEVEL=none and replaces
+  // lazy proofs with o1js dummy proofs. Compiling the real circuit here adds no
+  // proof-verification coverage and can exhaust the small shared runner after
+  // the circuit grows. Its Compose stack instead pins the matching dummy VK;
+  // check-vk-hash separately compiles and verifies the real network VKs.
+  if (skipProofs && process.env.NEXT_PUBLIC_E2E_TEST === 'true') {
+    console.log('[MultisigWorker] Skipping circuit compile in proofless E2E mode');
+    return true;
+  }
+
   if (!compilePromise) {
     compilePromise = (async () => {
       console.log('[MultisigWorker] MinaGuard.compile() starting');
@@ -1422,5 +1432,9 @@ export type WorkerApi = typeof workerApi;
 console.log('[MultisigWorker] worker module loaded, exposing API');
 Comlink.expose(workerApi);
 
-// Eagerly start compilation as soon as the worker loads
-compileContract().catch(() => { });
+// Eagerly start compilation as soon as the worker loads in real builds. The
+// E2E harness must first enable its explicit proofless mode, otherwise this
+// synchronous WASM work prevents the worker from receiving that configuration.
+if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') {
+  compileContract().catch(() => { });
+}
