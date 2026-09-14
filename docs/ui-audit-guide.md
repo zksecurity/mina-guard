@@ -252,10 +252,12 @@ deliberately ignores `kind='deploy'` (`useContractTxLock.ts:60-79`).
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
 (`generateKeypair`), generated for a single tx and not persisted. It is
-powerless after deploy: `deploy()` sets proofs-only account permissions in the
-same transaction (`MinaGuard.ts:282-295`). The same applies to the child key
-inside the CREATE_CHILD propose tx. `lib/storage.ts` holds non-secret prefs +
-pending-tx metadata.
+powerless after a successful atomic creation: proof-authorized `setup()` (root)
+or `reserveForParent()` (child) overwrites the signed deployment update with
+the canonical proof-only permission vector and permanently seals it in the
+same transaction. The UI must never broadcast `deploy()` alone. The same
+applies to the child key inside the CREATE_CHILD propose tx. `lib/storage.ts`
+holds non-secret prefs + pending-tx metadata.
 
 **6. Test-only escape hatches.**
 `setTestKey` / `setSkipProofs` enable direct signing and dummy proofs, gated

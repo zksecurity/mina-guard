@@ -4,6 +4,7 @@ import {
   MerkleMap,
   MerkleMapWitness,
   Mina,
+  Permissions,
   Poseidon,
   PrivateKey,
   PublicKey,
@@ -36,6 +37,10 @@ import {
   type TestContext,
 } from './test-helpers.js';
 import { computeOwnerChain } from '../list-commitment.js';
+import {
+  GUARD_DEPLOY_PERMISSIONS,
+  GUARD_PERMISSIONS,
+} from '../guard-permissions.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 describe('MinaGuard - Child Lifecycle', () => {
@@ -91,6 +96,62 @@ describe('MinaGuard - Child Lifecycle', () => {
   // -- executeSetupChild ------------------------------------------------------
 
   describe('executeSetupChild', () => {
+    it('overwrites creator-weakened child permissions during reservation', async () => {
+      const setupOwners = toFixedSetupOwners(
+        parentCtx.owners.map((owner) => owner.pub),
+      );
+
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        childZkApp.account.permissions.set({
+          ...GUARD_DEPLOY_PERMISSIONS,
+          send: Permissions.proofOrSignature(),
+        });
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress,
+          Field(1234),
+          Field(2),
+          Field(3),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await txn.prove();
+      await txn.sign([parentCtx.deployerKey, childKey]).send();
+
+      expect(Mina.getAccount(childAddress).permissions).toEqual(
+        GUARD_PERMISSIONS,
+      );
+    });
+
+    it('rejects a child creator blocking the reservation permission lock', async () => {
+      const setupOwners = toFixedSetupOwners(
+        parentCtx.owners.map((owner) => owner.pub),
+      );
+
+      await expect(async () => {
+        const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+          AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+          await childZkApp.deploy();
+          childZkApp.account.permissions.set({
+            ...GUARD_DEPLOY_PERMISSIONS,
+            setPermissions: Permissions.impossible(),
+          });
+          await childZkApp.reserveForParent(
+            parentCtx.zkAppAddress,
+            Field(1234),
+            Field(2),
+            Field(3),
+            new SetupOwnersInput({ owners: setupOwners }),
+          );
+        });
+        await txn.prove();
+        await txn.sign([parentCtx.deployerKey, childKey]).send();
+      }).toThrow();
+
+      expect(Mina.hasAccount(childAddress)).toBe(false);
+    });
+
     it('initializes a child guard with parent approval', async () => {
       const { proposalHash } = await setupChildWithParentOwners();
 
@@ -99,6 +160,9 @@ describe('MinaGuard - Child Lifecycle', () => {
       expect(childZkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
       expect(childZkApp.threshold.get()).toEqual(Field(2));
       expect(childZkApp.numOwners.get()).toEqual(Field(3));
+      expect(Mina.getAccount(childAddress).permissions).toEqual(
+        GUARD_PERMISSIONS,
+      );
 
       expect(proposalHash).toBeDefined();
     });

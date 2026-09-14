@@ -25,6 +25,17 @@ export const GUARD_PERMISSIONS = {
   access: Permissions.none(),
 };
 
+/**
+ * Permission vector used only by the signature-authorized deployment update.
+ * The proof-authorized setup()/reserveForParent() update replaces this with
+ * GUARD_PERMISSIONS in the same atomic transaction. The sole temporary
+ * difference is that a MinaGuard proof may close the permission vector.
+ */
+export const GUARD_DEPLOY_PERMISSIONS = {
+  ...GUARD_PERMISSIONS,
+  setPermissions: Permissions.proof(),
+};
+
 export const GUARD_PERMISSION_NAMES = [
   'editState',
   'send',

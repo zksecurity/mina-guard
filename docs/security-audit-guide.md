@@ -38,6 +38,13 @@ the backend and online UI must also verify the complete stored permission vector
 configured Mina node and compares it with a build-time canonical vector; it does not trust the
 indexer to report either side of the comparison.
 
+In the supported creation flow, the signed `deploy()` update installs a temporary permission
+vector whose `setPermissions` field is `proof()`. In the same atomic transaction, the proved
+`setup()` (root) or `reserveForParent()` (child) update overwrites the complete vector with
+`GUARD_PERMISSIONS`, including `setPermissions: impossible()`. This prevents the supported client
+from producing a vault with creator-retained signature authority. Stored-permission checks remain
+mandatory because a creator can bypass the supported flow and deploy a lookalike directly.
+
 ### Trusted computing base
 
 The code that must be correct for funds to be safe:
@@ -100,8 +107,10 @@ proof alone with no deployer binding, so a guard left deployed-but-uninitialized
 anyone can call `setup()` with their own owner set, or `reserveForParent()` to bind the address to
 an attacker parent (permanently blocking the legitimate `setup()`). Callers therefore MUST include
 `deploy()` and `setup()`/`reserveForParent()` in the SAME transaction so no uninitialized on-chain
-window exists — this is a caller obligation, not something the circuit enforces (see the #112
-doc-comments on `deploy()`/`setup()`/`reserveForParent()` in `MinaGuard.ts`).
+window exists. Atomicity is also required for permission safety: `deploy()` deliberately leaves
+`setPermissions` open to a MinaGuard proof until the initialization proof installs and seals the
+final vector. This is a caller obligation, not something the circuit enforces (see the doc-comments
+on `deploy()`/`setup()`/`reserveForParent()` in `MinaGuard.ts`).
 
 ## Invariants
 
@@ -134,7 +143,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Parent can always recover child funds | `executeReclaimToParent` / `executeDestroy` deliberately skip the `childMultiSigEnabled` check — disabling a child never strands its balance | `child.test.ts` |
 | Parent state drift voids REMOTE approvals | child pins parent state via AccountUpdate preconditions | `child.test.ts` |
 | Governance preserves `0 < threshold ≤ numOwners ≤ MAX_OWNERS` | `setup()`, `executeOwnerChange()`, `executeThresholdChange()` all assert the bounds — the vault can be neither locked (threshold unreachable) nor unbounded | `setup.test.ts`, `governance.test.ts` |
-| No hidden signature authority / later permission downgrade | Backend and online UI reject any stored vector other than `GUARD_PERMISSIONS`; once accepted, `setPermissions: impossible()` and `setVerificationKey: impossibleDuringCurrentVersion()` prevent later changes | `vault-security.test.ts`, `routes-subscribe.test.ts`, `indexer-archive-discovery.test.ts`, `indexer-autosubscribe.test.ts` |
+| No hidden signature authority / later permission downgrade | In the supported atomic flow, proof-authorized `setup()`/`reserveForParent()` overwrite the creator-controlled deployment vector with `GUARD_PERMISSIONS` and seal `setPermissions: impossible()`; backend and online UI reject externally deployed accounts whose stored vector differs | `setup.test.ts`, `child.test.ts`, `vault-security.test.ts`, `routes-subscribe.test.ts`, `indexer-archive-discovery.test.ts`, `indexer-autosubscribe.test.ts` |
 
 Off-chain, one invariant matters for the trust argument above: **clients recompute the hash they
 sign from the fields they display and verify it equals the selected proposal's identity** —

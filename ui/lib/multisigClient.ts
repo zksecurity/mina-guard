@@ -179,29 +179,6 @@ export async function generateKeypair(): Promise<{ privateKey: string; publicKey
 }
 
 
-/**
- * Deploys MinaGuard contract account update and submits via Auro or Ledger.
- * The zkApp private key remains in browser memory for this call only.
- */
-export async function deployContract(params: {
-  feePayerAddress: string;
-  zkAppPrivateKeyBase58: string;
-}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
-  await assertLedgerReady(signer);
-  return getWorkerApi().deployContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
-}
-
-/** Submits setup transaction with fixed-size owner list and threshold bootstrap. */
-export async function setupContract(params: {
-  zkAppAddress: string;
-  feePayerAddress: string;
-  owners: string[];
-  threshold: number;
-}, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
-  await assertLedgerReady(signer);
-  return getWorkerApi().setupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
-}
-
 /** Deploys and initializes the contract in a single transaction. */
 export async function deployAndSetupContract(params: {
   feePayerAddress: string;

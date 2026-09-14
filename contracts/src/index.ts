@@ -34,6 +34,7 @@ export {
 export { OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment } from './list-commitment.js';
 export {
   GUARD_PERMISSIONS,
+  GUARD_DEPLOY_PERMISSIONS,
   GUARD_PERMISSION_NAMES,
   GUARD_PERMISSION_KINDS,
   type GuardPermissionName,
