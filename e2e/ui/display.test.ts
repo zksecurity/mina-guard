@@ -10,6 +10,7 @@ import {
   TREASURY,
   OPS_CHILD,
   PERSONAL,
+  OWNER_2,
   RECIPIENT,
   TREASURY_STATE,
   PROPOSALS,
@@ -126,4 +127,102 @@ test('expired proposal has no approve/execute buttons', async ({ page }) => {
   await openProposal(page, PROPOSALS.expiredTransfer);
   await expect(page.getByText('expired', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
   await expectNoActionButtons(page, [/approve proposal/i, /execute proposal/i]);
+});
+
+test('unsafe CREATE_CHILD target blocks online and offline approval', async ({ page }) => {
+  // Re-shape the pending fixture as a remote CREATE_CHILD proposal while
+  // leaving the indexed parent canonical. This models the finding's malicious
+  // creator deploying an unsafe child outside the supported client.
+  await page.route(
+    new RegExp(`/api/contracts/${TREASURY}/proposals(?:\\?.*)?$`),
+    async (route) => {
+      const response = await route.fetch();
+      const proposals = (await response.json()) as Array<Record<string, unknown>>;
+      await route.fulfill({
+        response,
+        json: proposals.map((proposal) =>
+          proposal.proposalHash === PROPOSALS.pendingTransfer
+            ? {
+                ...proposal,
+                txType: 'createChild',
+                destination: 'remote',
+                childAccount: OPS_CHILD,
+                receivers: [],
+              }
+            : proposal,
+        ),
+      });
+    },
+  );
+  await page.route(
+    `**/api/contracts/${TREASURY}/proposals/${PROPOSALS.pendingTransfer}/approvals`,
+    (route) => route.fulfill({ json: [] }),
+  );
+  await page.route(`**/api/accounts/${OPS_CHILD}/security`, (route) =>
+    route.fulfill({
+      json: {
+        accountFound: true,
+        verificationKeyHash: 'canonical-vk',
+        verificationKeyMatches: true,
+        permissionKinds: { send: 'Either' },
+        expectedPermissionKinds: { send: 'Proof' },
+        permissionMismatches: ['send'],
+        safe: false,
+      },
+    }),
+  );
+
+  await openProposal(page, PROPOSALS.pendingTransfer);
+  await expect(page.getByText('Unsafe permission vector')).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(
+    page.getByRole('button', { name: /approve proposal/i }),
+  ).not.toBeVisible();
+
+  await page.getByRole('button', { name: 'Offline', exact: true }).click();
+  await expect(
+    page.getByText(/offline bundle creation and broadcast are blocked/i),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /export approve bundle/i }),
+  ).not.toBeVisible();
+  await expect(page.getByText(/drop signed \.json/i)).not.toBeVisible();
+});
+
+test('offline bundle export rechecks permissions instead of trusting page state', async ({ page }) => {
+  let unsafeNow = false;
+  await page.route(`**/api/accounts/${TREASURY}/security`, async (route) => {
+    if (!unsafeNow) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        accountFound: true,
+        verificationKeyHash: 'canonical-vk',
+        verificationKeyMatches: true,
+        permissionKinds: { send: 'Either' },
+        expectedPermissionKinds: { send: 'Proof' },
+        permissionMismatches: ['send'],
+        safe: false,
+      },
+    });
+  });
+
+  await openProposal(page, PROPOSALS.pendingTransfer);
+  await page.getByRole('button', { name: 'Offline', exact: true }).click();
+  await page.getByPlaceholder('B62q...').fill(OWNER_2);
+  const exportButton = page.getByRole('button', {
+    name: /export approve bundle/i,
+  });
+  await expect(exportButton).toBeVisible();
+
+  // The hook admitted the page while the account was safe. Flip only the live
+  // response and prove the export callback checks again before creating a file.
+  unsafeNow = true;
+  await exportButton.click();
+  await expect(
+    page.getByText(/vault permissions have not passed the canonical security check/i),
+  ).toBeVisible();
 });
