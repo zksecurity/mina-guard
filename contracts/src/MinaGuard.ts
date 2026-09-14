@@ -290,12 +290,15 @@ export class MinaGuard extends SmartContract {
    * SECURITY, authenticate the deployed account: deploy() is ordinary
    * transaction-construction code, not part of MinaGuard's proved circuit. A
    * creator can deploy the canonical verification key while changing this
-   * signature-authorized AccountUpdate's permissions. Never recognize or use
-   * a MinaGuard account based on its verification key alone. The supported
-   * atomic setup()/reserveForParent() flow overwrites creator-selected values
-   * with GUARD_PERMISSIONS under proof authorization. Clients and indexers
-   * MUST still compare every stored permission against GUARD_PERMISSIONS to
-   * reject deployments constructed outside that flow.
+   * signature-authorized AccountUpdate's permissions. setup() and
+   * reserveForParent() produce separate, proof-authorized AccountUpdates;
+   * putting them in one atomic transaction does not make their proof
+   * authenticate the signed deployment update. Never recognize or use a
+   * MinaGuard account based on its verification key alone. The supported
+   * atomic setup()/reserveForParent() flow instead overwrites creator-selected
+   * values with GUARD_PERMISSIONS under proof authorization. Clients and
+   * indexers MUST still compare every stored permission against
+   * GUARD_PERMISSIONS to reject deployments constructed outside that flow.
    *
    * SECURITY, initialize atomically: deploy() temporarily leaves
    * setPermissions proof-authorized. setup()/reserveForParent() installs and

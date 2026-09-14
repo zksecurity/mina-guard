@@ -3,9 +3,10 @@ import { Permissions } from 'o1js';
 /**
  * The only account-permission vector supported by MinaGuard.
  *
- * A verification-key match does not authenticate permissions because both are
- * installed by the signature-authorized deployment AccountUpdate. Every
- * component that accepts a vault must also compare its on-chain permissions
+ * A verification-key match does not authenticate permissions: a creator can
+ * bypass MinaGuard's proof-authorized initialization and install both the key
+ * and a different vector in a signature-authorized deployment AccountUpdate.
+ * Every component that accepts a vault must compare its stored permissions
  * against this complete vector.
  */
 export const GUARD_PERMISSIONS = {

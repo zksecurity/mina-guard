@@ -239,11 +239,13 @@ Defined in `constants.ts`:
 contract address for indexer discovery. The temporary vector matches the final vector except that
 `setPermissions` is `proof()`. `deploy()` is transaction-building code, not a proved method: the
 deployment signature authenticates the installed values, while the MinaGuard verification key does
-not. The proved `setup()` or `reserveForParent()` update MUST be included in the same transaction;
-it overwrites the entire vector with `GUARD_PERMISSIONS` and seals `setPermissions` as
-`impossible()`. A vault MUST NOT be recognized from its verification-key hash alone; online
-consumers must also compare every stored permission with `GUARD_PERMISSIONS` to reject accounts
-created outside the supported flow.
+not. `setup()` and `reserveForParent()` create separate, proof-authorized AccountUpdates. Atomicity
+alone does not make their proof authenticate the signed deployment update, so these methods
+explicitly overwrite its permissions. The proved `setup()` or `reserveForParent()` update MUST be
+included in the same transaction; it writes the entire vector as `GUARD_PERMISSIONS` and seals
+`setPermissions` as `impossible()`. A vault MUST NOT be recognized from its verification-key hash
+alone; online consumers must also compare every stored permission with `GUARD_PERMISSIONS` to
+reject accounts created outside the supported flow.
 
 **Setup.** `setup(threshold, numOwners, initialOwners)` — one-time root-guard
 initialization.

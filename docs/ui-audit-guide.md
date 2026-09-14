@@ -185,10 +185,8 @@ the signer decides what the user authorizes. The moving parts:
 A guard that is deployed but not yet configured could be controlled by whoever
 calls `setup()` first.
   - Top-level vaults use the atomic `deployAndSetupContract` — one tx doing
-    `fundNewAccount` + `deploy` + `setup` (`worker.ts:755-806`, tx at
-    `789-797`; called from `accounts/new/page.tsx:160`). Separate
-    `deployContract` / `setupContract` methods exist with no UI caller
-    (`worker.ts:718-753`, `808-857`).
+    `fundNewAccount` + `deploy` + `setup`; the worker exposes no separate
+    deploy-only or setup-only API.
   - CREATE_CHILD spans two transactions by design: the propose tx does
     `deploy(child)` + `reserveForParent(child)` + `propose(parent)` atomically
     (`worker.ts:979-1003`); the later `executeSetupChild` is bound on-chain to
