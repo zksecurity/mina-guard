@@ -243,9 +243,9 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   structurally distinct); the embed picks the line matching the configured
   network (`backend-embed.ts:112-128`, devnet sharing the testnet circuit) and
   still accepts the pre-#93 single-bare-number format. When the file is
-  missing, or a keyed file has no line for the configured network, the check
-  no-ops rather than blocking startup or comparing against a wrong-network
-  hash.
+  missing, or a keyed file has no line for the configured network, the backend
+  may start but vault authentication fails closed: no account can become
+  permission-verified or visible as ready.
 - **DB bootstrap & schema versioning:** when `minaguard.db` is missing — or
   stale — the bundled `assets/schema.sql` (generated from
   `schema.sqlite.prisma` via `prisma migrate diff`) is executed

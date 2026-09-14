@@ -39,8 +39,9 @@ ARG NEXT_PUBLIC_MINA_NETWORK
 ARG NEXT_PUBLIC_BLOCK_EXPLORER_URL
 ARG NEXT_PUBLIC_POLL_INTERVAL_MS
 ARG NEXT_PUBLIC_E2E_TEST=""
-# Expected MinaGuard VK hash for this build's network domain. Empty ⇒ the
-# worker's post-compile check is skipped, matching the backend's MINAGUARD_VK_HASH.
+# Expected MinaGuard VK hash for this build's network domain. An empty value
+# disables the worker's compile-cache check for development, but live browser
+# vault admission still fails closed until a hash is configured.
 ARG NEXT_PUBLIC_MINAGUARD_VK_HASH=""
 ARG ENABLE_SOURCE_MAPS=true
 

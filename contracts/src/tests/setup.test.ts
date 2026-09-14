@@ -58,6 +58,25 @@ describe('MinaGuard - Setup', () => {
         new SetupOwnersInput({ owners: setupOwners }),
       );
     });
+    const accountUpdates = (
+      JSON.parse(txn.toJSON()) as { accountUpdates: any[] }
+    ).accountUpdates.filter(
+      (update) => update.body.publicKey === ctx.zkAppAddress.toBase58(),
+    );
+    const signedDeploy = accountUpdates.find(
+      (update) => update.body.authorizationKind.isSigned === true,
+    );
+    const provedSetup = accountUpdates.find(
+      (update) => update.body.authorizationKind.isProved === true,
+    );
+
+    expect(accountUpdates).toHaveLength(2);
+    expect(signedDeploy?.body.update.permissions.send).toBe('Either');
+    expect(signedDeploy?.body.update.permissions.setPermissions).toBe('Proof');
+    expect(provedSetup?.body.update.permissions.send).toBe('Proof');
+    expect(provedSetup?.body.update.permissions.setPermissions).toBe(
+      'Impossible',
+    );
     await txn.prove();
     await txn.sign([deployerKey, zkAppKey]).send();
 

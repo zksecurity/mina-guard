@@ -2,19 +2,23 @@ import {
   GUARD_PERMISSION_KINDS,
   GUARD_PERMISSION_NAMES,
   GUARD_PERMISSIONS,
+  type GuardPermissionKind,
   type GuardPermissionName,
 } from 'contracts';
 
-export type PermissionKind =
-  | 'None'
-  | 'Either'
-  | 'Proof'
-  | 'Signature'
-  | 'Impossible';
+export type PermissionKind = GuardPermissionKind;
 
 export type PermissionKindVector = Partial<
   Record<GuardPermissionName, PermissionKind>
 >;
+
+/** A missing trust anchor must never turn an arbitrary zkApp VK into a match. */
+export function matchesExpectedVerificationKey(
+  actual: string | null,
+  expected: string | null,
+): boolean {
+  return actual !== null && expected !== null && actual === expected;
+}
 
 type BoolLike = boolean | { toBoolean(): boolean };
 type PermissionLike = {

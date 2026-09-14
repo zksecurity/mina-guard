@@ -1,8 +1,9 @@
 import { Mina, PublicKey, fetchAccount, UInt32 } from 'o1js';
 import { GUARD_PERMISSION_KINDS, MinaGuard } from 'contracts';
 import type { Pool } from 'pg';
-import type { BackendConfig, } from './config.js';
+import type { BackendConfig } from './config.js';
 import {
+  matchesExpectedVerificationKey,
   validatePermissionVector,
   type PermissionKindVector,
 } from './vault-security.js';
@@ -374,10 +375,10 @@ export async function fetchVaultSecurityStatus(
   }
 
   const verificationKeyHash = account.verificationKey?.hash ?? null;
-  const verificationKeyMatches =
-    verificationKeyHash !== null &&
-    (config.minaguardVkHash === null ||
-      verificationKeyHash === config.minaguardVkHash);
+  const verificationKeyMatches = matchesExpectedVerificationKey(
+    verificationKeyHash,
+    config.minaguardVkHash,
+  );
   const { permissionKinds, mismatches } = validatePermissionVector(
     account.permissions
   );

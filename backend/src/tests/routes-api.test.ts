@@ -18,6 +18,7 @@ const childTwoAddress = PrivateKey.random().toPublicKey().toBase58();
 // disturbed.
 const invalidStateContractAddress = PrivateKey.random().toPublicKey().toBase58();
 const invalidStateChildAddress = PrivateKey.random().toPublicKey().toBase58();
+const unverifiedChildAddress = PrivateKey.random().toPublicKey().toBase58();
 const ownerA = PrivateKey.random().toPublicKey().toBase58();
 const ownerB = PrivateKey.random().toPublicKey().toBase58();
 const ownerC = PrivateKey.random().toPublicKey().toBase58();
@@ -39,6 +40,7 @@ const localStaleHash = '602';
 const remoteStaleHash = '603';
 const createChildHash = '604';
 const freshHash = '605';
+const unverifiedChildHash = '606';
 
 function get(path: string) {
   return fetch(`${baseUrl}${path}`);
@@ -70,6 +72,12 @@ async function seedDatabase() {
         parent: invalidStateContractAddress,
         ready: true,
         permissionsVerified: true,
+      },
+      {
+        address: unverifiedChildAddress,
+        parent: invalidStateContractAddress,
+        ready: false,
+        permissionsVerified: false,
       },
     ],
   });
@@ -164,6 +172,9 @@ async function seedDatabase() {
   const invalidChild = await prisma.contract.findUniqueOrThrow({
     where: { address: invalidStateChildAddress },
   });
+  const unverifiedChild = await prisma.contract.findUniqueOrThrow({
+    where: { address: unverifiedChildAddress },
+  });
 
   await prisma.contractConfig.createMany({
     data: [
@@ -183,6 +194,17 @@ async function seedDatabase() {
         childMultiSigEnabled: true,
         nonce: 0,
         parentNonce: 4,
+        configNonce: 0,
+      },
+      {
+        // This state must never influence proposal status because the child
+        // has not passed the canonical vault-security check.
+        contractId: unverifiedChild.id,
+        validFromBlock: 100,
+        networkId: '1',
+        childMultiSigEnabled: true,
+        nonce: 0,
+        parentNonce: 99,
         configNonce: 0,
       },
     ],
@@ -238,6 +260,16 @@ async function seedDatabase() {
         configNonce: '3',
         nonce: '6',
         destination: 'local',
+      },
+      {
+        contractId: invalidContract.id,
+        proposalHash: unverifiedChildHash,
+        createdAtBlock: 115,
+        configNonce: '3',
+        nonce: '6',
+        destination: 'remote',
+        childAccount: unverifiedChildAddress,
+        txType: '7',
       },
     ],
   });
@@ -559,6 +591,21 @@ describe('proposal invalidation derivation', () => {
     const fresh = body.find((p) => p.proposalHash === freshHash);
     expect(fresh?.status).toBe('pending');
     expect(fresh?.invalidReason).toBeNull();
+  });
+
+  test('unverified child state cannot invalidate a REMOTE proposal', async () => {
+    const fromList = (await getProposalsByContract(
+      invalidStateContractAddress,
+    )).find((p) => p.proposalHash === unverifiedChildHash);
+    expect(fromList?.status).toBe('pending');
+    expect(fromList?.invalidReason).toBeNull();
+
+    const fromDetail = await getProposalByHash(
+      invalidStateContractAddress,
+      unverifiedChildHash,
+    );
+    expect(fromDetail.status).toBe('pending');
+    expect(fromDetail.invalidReason).toBeNull();
   });
 
   test('single-proposal endpoint reports invalidated status + reason', async () => {

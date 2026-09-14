@@ -810,9 +810,9 @@ function toContractState(
 async function resolveChildState(address: string): Promise<ContractState | null> {
   const child = await prisma.contract.findUnique({
     where: { address },
-    select: { id: true },
+    select: { id: true, ready: true, permissionsVerified: true },
   });
-  if (!child) return null;
+  if (!child?.ready || !child.permissionsVerified) return null;
   return toContractState(await latestContractConfig(child.id));
 }
 
@@ -831,7 +831,11 @@ async function buildChildStateMap(
   if (childAddresses.length === 0) return new Map();
 
   const childContracts = await prisma.contract.findMany({
-    where: { address: { in: childAddresses } },
+    where: {
+      address: { in: childAddresses },
+      ready: true,
+      permissionsVerified: true,
+    },
     select: { id: true, address: true },
   });
   if (childContracts.length === 0) return new Map();

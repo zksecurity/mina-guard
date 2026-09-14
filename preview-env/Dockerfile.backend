@@ -26,23 +26,21 @@ COPY dev-helpers/ dev-helpers/
 RUN cd contracts && bun run build
 
 # Compile contract circuit and extract verification key hash.
-# When MINAGUARD_VK_HASH is supplied as a build arg the compile is skipped —
+# When a decimal MINAGUARD_VK_HASH is supplied as a build arg the compile is skipped —
 # the host runner is expected to have computed it once (full host memory)
 # and threaded it through. The o1js circuit compile peaks well above the
 # memory available inside a typical CI Docker build, OOM-killing the step.
 ARG MINAGUARD_VK_HASH=
-RUN if [ "$MINAGUARD_VK_HASH" = "skip" ]; then \
-      echo "MINAGUARD_VK_HASH=skip — skipping VK filter (indexer accepts all contracts)"; \
-      echo "" > /app/.vk-hash; \
-    elif [ -n "$MINAGUARD_VK_HASH" ]; then \
+RUN if [ -n "$MINAGUARD_VK_HASH" ]; then \
+      case "$MINAGUARD_VK_HASH" in *[!0-9]*) echo "ERROR: MINAGUARD_VK_HASH must be decimal" >&2; exit 1;; esac; \
       echo "Using prebuilt MINAGUARD_VK_HASH: $MINAGUARD_VK_HASH"; \
       echo "$MINAGUARD_VK_HASH" > /app/.vk-hash; \
     else \
       echo "MINAGUARD_VK_HASH build arg not set — compiling circuit (memory-heavy)..."; \
-      vk_output="$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)" || { echo "$vk_output" >&2; echo "ERROR: VK hash compile failed — refusing to build with an empty VK filter (the indexer would accept ALL contracts as MinaGuard vaults)" >&2; exit 1; }; \
+      vk_output="$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)" || { echo "$vk_output" >&2; echo "ERROR: VK hash compile failed — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1; }; \
       echo "$vk_output"; \
       vk_hash="$(printf '%s\n' "$vk_output" | awk '/^vkHash/{print $NF; exit}')"; \
-      case "$vk_hash" in ''|*[!0-9]*) echo "ERROR: no decimal VK hash found in compile output — refusing to build with an empty VK filter" >&2; exit 1;; esac; \
+      case "$vk_hash" in ''|*[!0-9]*) echo "ERROR: no decimal VK hash found in compile output — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1;; esac; \
       printf '%s\n' "$vk_hash" > /app/.vk-hash; \
     fi
 

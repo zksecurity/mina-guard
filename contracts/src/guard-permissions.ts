@@ -1,4 +1,19 @@
 import { Permissions } from 'o1js';
+import {
+  GUARD_PERMISSION_KINDS,
+  GUARD_PERMISSION_NAMES,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
+  type GuardPermissionKind,
+  type GuardPermissionName,
+} from './guard-permission-policy.js';
+
+export {
+  GUARD_PERMISSION_KINDS,
+  GUARD_PERMISSION_NAMES,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
+  type GuardPermissionKind,
+  type GuardPermissionName,
+};
 
 /**
  * The only account-permission vector supported by MinaGuard.
@@ -35,42 +50,4 @@ export const GUARD_PERMISSIONS = {
 export const GUARD_DEPLOY_PERMISSIONS = {
   ...GUARD_PERMISSIONS,
   setPermissions: Permissions.proof(),
-};
-
-export const GUARD_PERMISSION_NAMES = [
-  'editState',
-  'send',
-  'receive',
-  'setDelegate',
-  'setPermissions',
-  'setVerificationKey',
-  'setZkappUri',
-  'editActionState',
-  'setTokenSymbol',
-  'incrementNonce',
-  'setVotingFor',
-  'setTiming',
-  'access',
-] as const;
-
-export type GuardPermissionName = (typeof GUARD_PERMISSION_NAMES)[number];
-
-/** JSON/GraphQL representation used by online clients for field-by-field checks. */
-export const GUARD_PERMISSION_KINDS: Record<
-  GuardPermissionName,
-  'None' | 'Either' | 'Proof' | 'Signature' | 'Impossible'
-> = {
-  editState: 'Proof',
-  send: 'Proof',
-  receive: 'None',
-  setDelegate: 'Proof',
-  setPermissions: 'Impossible',
-  setVerificationKey: 'Impossible',
-  setZkappUri: 'Impossible',
-  editActionState: 'Proof',
-  setTokenSymbol: 'Impossible',
-  incrementNonce: 'Impossible',
-  setVotingFor: 'Impossible',
-  setTiming: 'Impossible',
-  access: 'None',
 };

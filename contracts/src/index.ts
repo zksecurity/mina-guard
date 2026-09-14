@@ -35,10 +35,14 @@ export { OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership
 export {
   GUARD_PERMISSIONS,
   GUARD_DEPLOY_PERMISSIONS,
+} from './guard-permissions.js';
+export {
   GUARD_PERMISSION_NAMES,
   GUARD_PERMISSION_KINDS,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
   type GuardPermissionName,
-} from './guard-permissions.js';
+  type GuardPermissionKind,
+} from './guard-permission-policy.js';
 
 export { ownerKey } from './utils.js';
 

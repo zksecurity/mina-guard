@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 describe('backend configuration', () => {
-  it('normalizes an empty verification-key hash to an unset filter', () => {
+  it('normalizes an empty verification-key hash to a missing trust anchor', () => {
     process.env.DATABASE_URL = 'postgresql://localhost/minaguard';
     process.env.MINA_ENDPOINT = 'http://localhost:8080/graphql';
     process.env.ARCHIVE_ENDPOINT = 'http://localhost:8282';

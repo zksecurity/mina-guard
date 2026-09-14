@@ -116,6 +116,27 @@ describe('MinaGuard - Child Lifecycle', () => {
           new SetupOwnersInput({ owners: setupOwners }),
         );
       });
+      const accountUpdates = (
+        JSON.parse(txn.toJSON()) as { accountUpdates: any[] }
+      ).accountUpdates.filter(
+        (update) => update.body.publicKey === childAddress.toBase58(),
+      );
+      const signedDeploy = accountUpdates.find(
+        (update) => update.body.authorizationKind.isSigned === true,
+      );
+      const provedReservation = accountUpdates.find(
+        (update) => update.body.authorizationKind.isProved === true,
+      );
+
+      expect(accountUpdates).toHaveLength(2);
+      expect(signedDeploy?.body.update.permissions.send).toBe('Either');
+      expect(signedDeploy?.body.update.permissions.setPermissions).toBe(
+        'Proof',
+      );
+      expect(provedReservation?.body.update.permissions.send).toBe('Proof');
+      expect(
+        provedReservation?.body.update.permissions.setPermissions,
+      ).toBe('Impossible');
       await txn.prove();
       await txn.sign([parentCtx.deployerKey, childKey]).send();
 

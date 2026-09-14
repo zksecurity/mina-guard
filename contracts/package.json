@@ -13,6 +13,16 @@
   "type": "module",
   "main": "build/src/index.js",
   "types": "build/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/src/index.d.ts",
+      "default": "./build/src/index.js"
+    },
+    "./guard-permission-policy": {
+      "types": "./build/src/guard-permission-policy.d.ts",
+      "default": "./build/src/guard-permission-policy.js"
+    }
+  },
   "scripts": {
     "build": "rm -rf build && tsc",
     "buildw": "tsc --watch",

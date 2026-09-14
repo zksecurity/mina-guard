@@ -190,6 +190,31 @@ test('unsafe CREATE_CHILD target blocks online and offline approval', async ({ p
   await expect(page.getByText(/drop signed \.json/i)).not.toBeVisible();
 });
 
+test('unsafe parent blocks the dedicated SubVault creation wizard', async ({ page }) => {
+  await openVault(page, TREASURY);
+  await page.route(`**/api/accounts/${TREASURY}/security`, (route) =>
+    route.fulfill({
+      json: {
+        accountFound: true,
+        verificationKeyHash: 'canonical-vk',
+        verificationKeyMatches: true,
+        permissionKinds: { send: 'Either' },
+        expectedPermissionKinds: { send: 'Proof' },
+        permissionMismatches: ['send'],
+        safe: false,
+      },
+    }),
+  );
+
+  await navigateTo(page, `/accounts/new?parent=${TREASURY}`);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+
+  await expect(page.getByText(/unsafe parent vault/i)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Propose SubVault' }),
+  ).toBeDisabled();
+});
+
 test('offline bundle export rechecks permissions instead of trusting page state', async ({ page }) => {
   let unsafeNow = false;
   await page.route(`**/api/accounts/${TREASURY}/security`, async (route) => {

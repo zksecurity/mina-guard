@@ -35,8 +35,10 @@ MinaGuard deployment, the account permissions (`send: proof()`, `editState: proo
 Verification-key equality alone does not authenticate those signature-installed permissions:
 the backend and online UI must also verify the complete stored permission vector against
 `GUARD_PERMISSIONS` before accepting the vault. The UI fetches this snapshot directly from its
-configured Mina node and compares it with a build-time canonical vector; it does not trust the
-indexer to report either side of the comparison.
+configured Mina node and compares it with the pure serialized policy exported by
+`contracts/guard-permission-policy`; it does not trust the indexer to report either side of the
+comparison. A backend test compares that browser-safe policy with the actual o1js
+`GUARD_PERMISSIONS` value so the two representations cannot drift unnoticed.
 
 In the supported creation flow, the signed `deploy()` update installs a temporary permission
 vector whose `setPermissions` field is `proof()`. In the same atomic transaction, the proved

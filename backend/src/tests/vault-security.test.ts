@@ -4,14 +4,24 @@ import {
   GUARD_PERMISSION_KINDS,
   GUARD_PERMISSION_NAMES,
   GUARD_PERMISSIONS,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
 } from 'contracts';
 import {
+  matchesExpectedVerificationKey,
   permissionKindVector,
   permissionMismatches,
   validatePermissionVector,
 } from '../vault-security.js';
 
 describe('canonical MinaGuard permissions', () => {
+  it('fails closed when the expected verification-key hash is missing', () => {
+    expect(matchesExpectedVerificationKey('actual-vk', null)).toBe(false);
+    expect(matchesExpectedVerificationKey(null, 'expected-vk')).toBe(false);
+    expect(matchesExpectedVerificationKey('expected-vk', 'expected-vk')).toBe(
+      true,
+    );
+  });
+
   it('accepts every field of the canonical vector', () => {
     const result = validatePermissionVector(GUARD_PERMISSIONS);
 
@@ -19,6 +29,9 @@ describe('canonical MinaGuard permissions', () => {
     expect(result.permissionKinds).toEqual(GUARD_PERMISSION_KINDS);
     expect(Object.keys(result.permissionKinds).sort()).toEqual(
       [...GUARD_PERMISSION_NAMES].sort()
+    );
+    expect(GUARD_SET_VERIFICATION_KEY_TXN_VERSION).toBe(
+      GUARD_PERMISSIONS.setVerificationKey.txnVersion.toString(),
     );
   });
 

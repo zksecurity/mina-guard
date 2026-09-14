@@ -9,6 +9,12 @@ import {
   normalizeTxType,
 } from '@/lib/types';
 import { getMinaGuardConfig } from '@/lib/endpoints';
+import {
+  GUARD_PERMISSION_KINDS,
+  GUARD_PERMISSION_NAMES,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
+  type GuardPermissionName,
+} from 'contracts/guard-permission-policy';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
 
@@ -40,47 +46,16 @@ export interface VaultSecurityStatus {
   safe: boolean;
 }
 
-const PERMISSION_FIELD_NAMES = [
-  'editState',
-  'send',
-  'receive',
-  'setDelegate',
-  'setPermissions',
-  'setVerificationKey',
-  'setZkappUri',
-  'editActionState',
-  'setTokenSymbol',
-  'incrementNonce',
-  'setVotingFor',
-  'setTiming',
-  'access',
-] as const;
-type PermissionFieldName = (typeof PERMISSION_FIELD_NAMES)[number];
+type PermissionFieldName = GuardPermissionName;
 
 /**
  * Browser-side trust anchor. Keep this serialized form in lockstep with the
  * o1js GUARD_PERMISSIONS constant; unlike API-supplied expected values, it
  * cannot be changed by a compromised indexer response.
  */
-const EXPECTED_PERMISSION_KINDS: Record<PermissionFieldName, string> = {
-  editState: 'Proof',
-  send: 'Proof',
-  receive: 'None',
-  setDelegate: 'Proof',
-  setPermissions: 'Impossible',
-  setVerificationKey: 'Impossible',
-  setZkappUri: 'Impossible',
-  editActionState: 'Proof',
-  setTokenSymbol: 'Impossible',
-  incrementNonce: 'Impossible',
-  setVotingFor: 'Impossible',
-  setTiming: 'Impossible',
-  access: 'None',
-};
-
-// o1js@3.0.0-mesa.final's current transaction version, committed by
-// impossibleDuringCurrentVersion(). The backend compares the UInt32 directly.
-const EXPECTED_SET_VK_TXN_VERSION = '4';
+const EXPECTED_PERMISSION_KINDS: Record<PermissionFieldName, string> =
+  GUARD_PERMISSION_KINDS;
+const PERMISSION_FIELD_NAMES = GUARD_PERMISSION_NAMES;
 
 /**
  * Fetches and validates the account directly from the configured Mina node.
@@ -165,17 +140,19 @@ export async function fetchVaultSecurityStatus(
     );
     if (
       String(setVerificationKey?.txnVersion ?? '') !==
-        EXPECTED_SET_VK_TXN_VERSION &&
+        GUARD_SET_VERIFICATION_KEY_TXN_VERSION &&
       !permissionMismatches.includes('setVerificationKey')
     ) {
       permissionMismatches.push('setVerificationKey');
     }
 
     const verificationKeyHash = account.verificationKey?.hash ?? null;
-    const expectedVkHash = process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH;
+    const expectedVkHash =
+      process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH?.trim() || null;
     const verificationKeyMatches =
       verificationKeyHash !== null &&
-      (!expectedVkHash || verificationKeyHash === expectedVkHash);
+      expectedVkHash !== null &&
+      verificationKeyHash === expectedVkHash;
     return {
       accountFound: true,
       verificationKeyHash,

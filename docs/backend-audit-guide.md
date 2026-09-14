@@ -228,8 +228,8 @@ lookups positively succeed (a genuine `pending` from `fetchZkappTxStatus` — an
 treated as absent — **and** a real mempool set, `null` on network failure). Verify neither lookup
 failing can misclassify an included tx as dropped, since that flag releases the UI signer lock.
 
-**4. Deployment authentication.** Discovery filters candidates by `MINAGUARD_VK_HASH` (required for
-archive, optional for daemon), then validates the live VK and every permission against
+**4. Deployment authentication.** Discovery uses `MINAGUARD_VK_HASH` as its trust anchor (also as a
+required archive query filter), then validates the live VK and every permission against
 `GUARD_PERMISSIONS`. Confirm that a canonical VK with even one altered field (especially
 `send: proofOrSignature`) never becomes `permissionsVerified` or `ready`, and that legacy rows are
 re-checked rather than grandfathered.
@@ -303,7 +303,7 @@ From `backend/`:
 | `INDEXER_DISABLED` | `false` | Test-harness knob: when `true`, boot the API without starting the polling indexer (UI tests run against a pre-seeded DB with no chain behind it) |
 | `INDEXER_FIXED_LATEST_SLOT` | empty | Test-harness knob: with the indexer disabled there is no genesis to derive slots from, so `status.latestSlot` (used for read-time expiry) is primed with this fixed value |
 | `DISCOVERY_BACKEND` | `daemon` | Candidate source for full-mode discovery: `daemon` (bestChain scan, ~290-block reach) or `archive` (direct archive-postgres SQL, unbounded history) |
-| `MINAGUARD_VK_HASH` | empty | Verification key hash filter for discovery. Optional for `daemon`; **required** for `archive` (the SQL filters on it). The canonical value is committed at `contracts/.vk-hash` (two labeled entries: `testnet=` and `mainnet=`; use the one matching the target network) |
+| `MINAGUARD_VK_HASH` | empty | Verification-key trust anchor. If unset, live vault authentication fails closed and no candidate can become ready. It is also required at startup for `archive` discovery because the SQL uses it as a bounded filter. The canonical value is committed at `contracts/.vk-hash` (two labeled entries: `testnet=` and `mainnet=`; use the one matching the target network) |
 | `ARCHIVE_DB_HOST` | — | Archive postgres host (required when `DISCOVERY_BACKEND=archive`) |
 | `ARCHIVE_DB_PORT` | `5432` | Archive postgres port |
 | `ARCHIVE_DB_USER` | — | Archive postgres user (read-only role; required for `archive`) |

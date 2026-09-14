@@ -10,7 +10,7 @@
 # in .github/workflows/e2e.yml; internal service-to-service URLs are unchanged.
 #
 # Usage:
-#   MINAGUARD_VK_HASH=skip docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait
+#   MINAGUARD_VK_HASH=$(contracts/scripts/read-vk-hash.sh testnet) docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait
 #   docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v
 
 services:
@@ -54,7 +54,7 @@ services:
       context: ..
       dockerfile: preview-env/Dockerfile.backend
       args:
-        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-skip}
+        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:?MINAGUARD_VK_HASH must be set}
     restart: "no"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/minaguard
@@ -82,6 +82,7 @@ services:
         - NEXT_PUBLIC_E2E_TEST=true
         - NEXT_PUBLIC_POLL_INTERVAL_MS=3000
         - NEXT_PUBLIC_MINA_NETWORK=testnet
+        - NEXT_PUBLIC_MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:?MINAGUARD_VK_HASH must be set}
     restart: "no"
     ports:
       - "127.0.0.1:13000:3000"

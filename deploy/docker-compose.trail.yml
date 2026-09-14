@@ -47,7 +47,7 @@ services:
         # Skip the (memory-heavy) in-image circuit compile — host computes the
         # vk-hash once and threads it through. See preview-env/preview.sh for
         # how the localnet/preview path does the same.
-        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-}
+        - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:?MINAGUARD_VK_HASH must be set}
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
@@ -91,7 +91,7 @@ services:
         - NEXT_PUBLIC_POLL_INTERVAL_MS=1000
         # Same host-computed hash the backend gets above — the worker rejects a
         # compile whose verification key doesn't match it.
-        - NEXT_PUBLIC_MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-}
+        - NEXT_PUBLIC_MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:?MINAGUARD_VK_HASH must be set}
         - ENABLE_SOURCE_MAPS=false
     restart: unless-stopped
     depends_on:
