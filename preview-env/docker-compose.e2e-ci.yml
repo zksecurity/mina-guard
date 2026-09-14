@@ -10,8 +10,9 @@
 # in .github/workflows/e2e.yml; internal service-to-service URLs are unchanged.
 #
 # Usage:
-#   MINAGUARD_VK_HASH=$(contracts/scripts/read-vk-hash.sh testnet) docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait
-#   docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v
+#   E2E_VK_HASH=$(cd contracts && bun -e "import { VerificationKey } from 'o1js'; console.log((await VerificationKey.dummy()).hash.toString())")
+#   MINAGUARD_VK_HASH="$E2E_VK_HASH" docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait
+#   MINAGUARD_VK_HASH="$E2E_VK_HASH" docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v
 
 services:
   lightnet:
