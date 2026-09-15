@@ -337,8 +337,15 @@ proposals (which include `CREATE_CHILD`) can only be raised on a guard whose
 `parent == PublicKey.empty()` — so only root guards can spawn children, and children cannot
 themselves become parents.
 
-**Cross-contract precondition model.** When the child runs a REMOTE execute method, it reads
-the parent's on-chain state via:
+**Cross-contract precondition model.** On REMOTE non-`CREATE_CHILD` proposals and approvals,
+the parent reads the target child's `ownersCommitment`, `parent`, and `parentNonce` through a
+foreign `MinaGuard` instance. Its AccountUpdate is explicitly attached beneath the parent's proof
+update, binding those child-state freshness checks to the on-chain SubVault. For LOCAL and
+`CREATE_CHILD` proposals, the conditionally selected nonce authority is the current guard, so the
+same attached update safely carries redundant current-guard preconditions.
+
+In the other direction, when the child runs a REMOTE execute method, it reads the parent's
+on-chain state via:
 
 ```typescript
 const parentGuard = new MinaGuard(parentAddress);

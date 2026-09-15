@@ -486,6 +486,11 @@ export class MinaGuard extends SmartContract {
       this.address,
     );
     const childGuard = new MinaGuard(nonceAuthority);
+    // `self` on a foreign SmartContract instance is detached by default.
+    // Attach it so the child state used to validate REMOTE proposal freshness
+    // becomes on-chain preconditions committed to by this proof update.
+    const childUpdate = childGuard.self;
+    AccountUpdate.attachToTransaction(childUpdate);
     const childOwnersCommitment = childGuard.ownersCommitment.getAndRequireEquals();
     const childParent = childGuard.parent.getAndRequireEquals();
     const childParentNonce = childGuard.parentNonce.getAndRequireEquals();

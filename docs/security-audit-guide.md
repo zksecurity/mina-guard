@@ -128,6 +128,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Hierarchy depth capped at two levels | REMOTE proposals (including `CREATE_CHILD`) are rejected on any guard whose `parent != empty` — children cannot spawn children | `child.test.ts` |
 | Parent can always recover child funds | `executeReclaimToParent` / `executeDestroy` deliberately skip the `childMultiSigEnabled` check — disabling a child never strands its balance | `child.test.ts` |
 | Parent state drift and forged prover views void REMOTE approvals | child attaches a RootVault AccountUpdate beneath its proof update and pins parent state via account preconditions | `child.test.ts` (all four lifecycle methods plus an opt-in genuine-proof regression) |
+| REMOTE proposal freshness is bound to the target child | parent attaches the nonce-authority AccountUpdate beneath its propose/approve proof and pins child `ownersCommitment`, `parent`, and `parentNonce` | `child.test.ts` (forged child state during propose and approve) |
 | Governance preserves `0 < threshold ≤ numOwners ≤ MAX_OWNERS` | `setup()`, `executeOwnerChange()`, `executeThresholdChange()` all assert the bounds — the vault can be neither locked (threshold unreachable) nor unbounded | `setup.test.ts`, `governance.test.ts` |
 | No permission downgrade / VK swap | `setPermissions: impossible()`, `setVerificationKey: impossibleDuringCurrentVersion()` set in `deploy()` | `setup.test.ts` |
 

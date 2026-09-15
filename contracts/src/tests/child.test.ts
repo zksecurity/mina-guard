@@ -49,6 +49,13 @@ const ROOT_STATE_SLOT = {
   configNonce: 6,
 } as const;
 
+const CHILD_NONCE_STATE_SLOT = {
+  ownersCommitment: 0,
+  parentX: 7,
+  parentIsOdd: 8,
+  parentNonce: 9,
+} as const;
+
 describe('MinaGuard - Child Lifecycle', () => {
   let parentCtx: TestContext;
   let childZkApp: MinaGuard;
@@ -1385,6 +1392,143 @@ describe('MinaGuard - Child Lifecycle', () => {
             parentApprovalCount,
             childExecutionWitnessFor(maliciousProposal.hash()),
           ),
+        true,
+      );
+    }, 15 * 60_000);
+  });
+
+  // -- Child state binding during parent proposal / approval ---------------
+
+  describe('child nonce state binding', () => {
+    async function expectForgedChildStateRejected(
+      build: () => Promise<void>,
+      realProof = false,
+    ) {
+      const realNetwork = Mina.activeInstance;
+      if (realProof) realNetwork.proofsEnabled = true;
+      const maliciousProverView = {
+        ...realNetwork,
+        getAccount(publicKey: PublicKey, tokenId?: Field) {
+          const account = realNetwork.getAccount(publicKey, tokenId);
+          if (!publicKey.equals(childAddress).toBoolean()) return account;
+
+          const appState = [...account.zkapp!.appState];
+          appState[CHILD_NONCE_STATE_SLOT.ownersCommitment] = Field(123456);
+          return { ...account, zkapp: { ...account.zkapp!, appState } };
+        },
+      };
+
+      let attack: Awaited<ReturnType<typeof Mina.transaction>>;
+      Mina.setActiveInstance(maliciousProverView);
+      try {
+        attack = await Mina.transaction(parentCtx.deployerAccount, build);
+        const provedAttack = await attack.prove();
+        if (realProof) {
+          expect(provedAttack.proofs.some((proof) => proof !== undefined)).toBe(true);
+        }
+      } finally {
+        Mina.setActiveInstance(realNetwork);
+      }
+
+      const json = JSON.parse(attack.toJSON()) as {
+        accountUpdates: Array<{
+          body: {
+            publicKey: string;
+            callDepth: number;
+            preconditions: { account: { state: unknown[] } };
+          };
+        }>;
+      };
+      const proofUpdateIndex = json.accountUpdates.findIndex(
+        (update) => update.body.publicKey === parentCtx.zkAppAddress.toBase58(),
+      );
+      const constrainedChildUpdateIndexes = json.accountUpdates.flatMap((update, index) =>
+        update.body.publicKey === childAddress.toBase58() &&
+        update.body.preconditions.account.state.some((entry) => entry != null)
+          ? [index]
+          : [],
+      );
+
+      expect(proofUpdateIndex).toBeGreaterThanOrEqual(0);
+      expect(constrainedChildUpdateIndexes).toHaveLength(1);
+
+      const childUpdateIndex = constrainedChildUpdateIndexes[0];
+      const proofUpdate = json.accountUpdates[proofUpdateIndex];
+      const childUpdate = json.accountUpdates[childUpdateIndex];
+      expect(childUpdateIndex).toBe(proofUpdateIndex + 1);
+      expect(childUpdate.body.callDepth).toBe(proofUpdate.body.callDepth + 1);
+
+      const constrainedSlots = childUpdate.body.preconditions.account.state.flatMap(
+        (entry, index) => entry == null ? [] : [index],
+      );
+      expect(constrainedSlots).toEqual(Object.values(CHILD_NONCE_STATE_SLOT));
+
+      await expect(attack.sign([parentCtx.deployerKey]).send()).rejects.toThrow(
+        /Account_app_state_precondition_unsatisfied/,
+      );
+    }
+
+    it('rejects forged child state during propose', async () => {
+      await setupChildWithParentOwners();
+      const proposal = createDestroyChildProposal(
+        Field(1), Field(0), parentCtx.zkAppAddress,
+        Field(0), childAddress,
+      );
+      const proposalHash = proposal.hash();
+      const proposer = parentCtx.owners[0];
+
+      await expectForgedChildStateRejected(() =>
+        parentCtx.zkApp.propose(
+          proposal,
+          makeOwnerWitness(parentCtx.owners.map((owner) => owner.pub)),
+          proposer.pub,
+          Signature.create(proposer.key, [proposalHash]),
+          parentCtx.nullifierStore.getWitness(proposalHash, proposer.pub),
+          parentCtx.approvalStore.getWitness(proposalHash),
+        ),
+      );
+    });
+
+    it('rejects forged child state during approveProposal', async () => {
+      await setupChildWithParentOwners();
+      const proposal = createDestroyChildProposal(
+        Field(1), Field(0), parentCtx.zkAppAddress,
+        Field(0), childAddress,
+      );
+      const proposalHash = await proposeTransaction(parentCtx, proposal, 0);
+      const approver = parentCtx.owners[1];
+
+      await expectForgedChildStateRejected(() =>
+        parentCtx.zkApp.approveProposal(
+          proposal,
+          Signature.create(approver.key, [proposalHash]),
+          approver.pub,
+          makeOwnerWitness(parentCtx.owners.map((owner) => owner.pub)),
+          parentCtx.approvalStore.getWitness(proposalHash),
+          parentCtx.approvalStore.getCount(proposalHash),
+          parentCtx.nullifierStore.getWitness(proposalHash, approver.pub),
+        ),
+      );
+    });
+
+    realProofIt('rejects forged child state during propose with a genuine MinaGuard proof', async () => {
+      await setupChildWithParentOwners();
+      const proposal = createDestroyChildProposal(
+        Field(1), Field(0), parentCtx.zkAppAddress,
+        Field(0), childAddress,
+      );
+      const proposalHash = proposal.hash();
+      const proposer = parentCtx.owners[0];
+
+      await expectForgedChildStateRejected(
+        () => parentCtx.zkApp.propose(
+          proposal,
+          makeOwnerWitness(parentCtx.owners.map((owner) => owner.pub)),
+          proposer.pub,
+          Signature.create(proposer.key, [proposalHash]),
+          parentCtx.nullifierStore.getWitness(proposalHash, proposer.pub),
+          parentCtx.approvalStore.getWitness(proposalHash),
+        ),
         true,
       );
     }, 15 * 60_000);
