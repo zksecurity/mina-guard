@@ -235,13 +235,23 @@ Defined in `constants.ts`:
 
 ### On-chain multi-step flow
 
-**Deploy.** `deploy()` sets account permissions (see [Permissions](#permissions)) and emits
-a `DeployEvent` with the contract address for indexer discovery.
+**Deploy.** `deploy()` installs `GUARD_DEPLOY_PERMISSIONS` and emits a `DeployEvent` with the
+contract address for indexer discovery. The temporary vector matches the final vector except that
+`setPermissions` is `proof()`. `deploy()` is transaction-building code, not a proved method: the
+deployment signature authenticates the installed values, while the MinaGuard verification key does
+not. `setup()` and `reserveForParent()` create separate, proof-authorized AccountUpdates. Atomicity
+alone does not make their proof authenticate the signed deployment update, so these methods
+explicitly overwrite its permissions. The proved `setup()` or `reserveForParent()` update MUST be
+included in the same transaction; it writes the entire vector as `GUARD_PERMISSIONS` and seals
+`setPermissions` as `impossible()`. A vault MUST NOT be recognized from its verification-key hash
+alone; online consumers must also compare every stored permission with `GUARD_PERMISSIONS` to
+reject accounts created outside the supported flow.
 
 **Setup.** `setup(threshold, numOwners, initialOwners)` — one-time root-guard
 initialization.
 
 - Guard: `ownersCommitment == Field(0)` (not yet initialized)
+- Installs the complete `GUARD_PERMISSIONS` vector under proof authorization and permanently seals `setPermissions`
 - Computes `ownersCommitment` **on-chain** from `initialOwners` via `computeSetupOwnersChain`, after `assertCoherentSetupOwners` rejects non-empty padding slots and duplicate active owners
 - Validates: `threshold > 0`, `numOwners >= threshold`, `numOwners <= MAX_OWNERS`
 - Initializes the guard state: `nonce = 0`, `parentNonce = 0`, `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` set to `EMPTY_MERKLE_MAP_ROOT`; `parent = PublicKey.empty()`; `childMultiSigEnabled = Field(1)` (`reservedConfigHash` is untouched — `Field(0)` on a root guard)
@@ -385,6 +395,9 @@ on-chain-computed commitment (write-once — a second reserve is blocked by the 
 guard), and emits `CreateChildConfigEvent` + 20 `CreateChildOwnerEvent`s on-chain so the child's
 intended owner list is publicly available before `executeSetupChild` runs. (The indexer stores
 these as raw events but does not parse them; the UI and offline CLI fetch and parse them directly.)
+It also installs the complete `GUARD_PERMISSIONS` vector under proof authorization and permanently
+seals `setPermissions`; this must happen at reservation time, not later in `executeSetupChild`, so
+the child is never included on chain with creator-chosen permissions.
 
 - **Why this method exists:** `executeSetupChild` requires the child's owner list and threshold as arguments. Without `reserveForParent`, the `ProposalEvent` only contains a `data` hash (`Poseidon([ownersCommitment, threshold, numOwners])`) — the individual owner addresses are not recoverable from the hash. By emitting the full owner list on the child at propose time, any user can retrieve the config from on-chain events and execute `setupChild` without coordinating with the proposer.
 - **Anti-front-running:** Setting `this.parent` at propose time prevents attackers from calling `setup()` on the uninitialized child between deploy and execute. `setup()` asserts `this.parent == PublicKey.empty()`, which fails once `reserveForParent` has run. `executeSetupChild` verifies `this.parent == proposal.guardAddress`, ensuring only the designated parent can initialize the child.
@@ -462,7 +475,10 @@ parent-walk for REMOTE executions) live in
 
 ### Permissions
 
-Set in `deploy()`:
+The signature-authorized `deploy()` update installs `GUARD_DEPLOY_PERMISSIONS`. It is identical to
+the table below except that `setPermissions` is temporarily `proof()`. In the same transaction, the
+proof-authorized `setup()` or `reserveForParent()` update overwrites the complete vector with
+`GUARD_PERMISSIONS`:
 
 | Permission | Value | Rationale |
 | ---------- | ----- | --------- |
@@ -473,15 +489,31 @@ Set in `deploy()`:
 | `setPermissions` | `impossible()` | Prevents permission downgrade attacks |
 | `setVerificationKey` | `impossibleDuringCurrentVersion()` | Pins the verification key for the lifetime of the current version |
 | `setZkappUri` | `impossible()` | Metadata cannot be rewritten |
+| `editActionState` | `proof()` | Actions can only be edited by proof |
 | `setTokenSymbol` | `impossible()` | Token symbol cannot be rewritten |
 | `incrementNonce` | `impossible()` | Proof-authorized AUs don't set a nonce precondition |
 | `setVotingFor` | `impossible()` | Not used |
 | `setTiming` | `impossible()` | Not used |
+| `access` | `none()` | No additional access gate |
 
-All other permissions use `Permissions.default()`. The one-shot deploy key that sets these is
-**powerless afterward**: every state/fund knob requires a proof and every permission knob is
-`impossible`, so a leaked deploy key has no post-deploy authority (this is what makes the UI's
-in-browser ephemeral key safe — see [`ui-audit-guide.md`](./ui-audit-guide.md) focus point 5).
+Both vectors are defined in `contracts/src/guard-permissions.ts`, with the temporary vector derived
+from the canonical one by overriding only `setPermissions`. If the atomic initialization succeeds,
+the one-shot deploy key is powerless afterward: every state/fund knob requires a proof and every
+permission knob is `impossible`. If a creator weakens `send` in the deployment update, the proved
+initialization overwrites it. If the creator makes `setPermissions` impossible early, the proved
+write cannot execute and the entire atomic creation transaction fails.
+
+That statement is conditional on checking the stored vector. `deploy()` is not part of the proved
+circuit, and its AccountUpdate is authorized by the vault account signature. A creator can use the
+canonical MinaGuard verification key while changing `send` to `proofOrSignature()`, retain the
+deployment key, and later withdraw by signature. Therefore a verification-key match alone does not
+identify a safe MinaGuard vault. The backend and every online client MUST compare all on-chain
+permission fields (including `access` and the `setVerificationKey` transaction version) with
+`GUARD_PERMISSIONS` before displaying, funding, proposing, approving, or executing for an account.
+The browser must obtain the actual vector directly from its configured Mina node and compare it
+with a build-time canonical value, rather than trusting an indexer to supply both sides.
+The offline CLI cannot perform this authentication because its bundle is supplied by an untrusted
+online producer.
 
 ---
 
@@ -527,9 +559,11 @@ initialize the double-bound config (`proposal.data` **and** `reservedConfigHash`
 sequence of owner/threshold changes can drive threshold above the owner count (permanent lock) or
 past `MAX_OWNERS` (circuit-size overflow).
 
-**5. Permissions and VK immutability.** `deploy()` sets `setPermissions: impossible()` and
-`setVerificationKey: impossibleDuringCurrentVersion()`. Confirm there is no method path that
-re-authorizes state/fund movement outside a proof, and that the deployed VK matches the pinned
+**5. Permissions and VK immutability.** `deploy()` temporarily sets `setPermissions: proof()`;
+proof-authorized `setup()` or `reserveForParent()` overwrites the full vector and sets
+`setPermissions: impossible()` in the same transaction. Confirm no production path broadcasts
+`deploy()` alone, no other method writes permissions, and no method path re-authorizes state/fund
+movement outside a proof. Also confirm that the deployed VK matches the pinned
 `contracts/.vk-hash` (the `check-vk-hash` CI job enforces this per network).
 
 ## Security properties
@@ -558,7 +592,7 @@ re-authorizes state/fund movement outside a proof, and that the deployed VK matc
 | Anyone can execute | Execution is permissionless once threshold is met |
 | MINA receivable | `receive: Permissions.none()` allows deposits without proof |
 | State changes proof-only | `editState: Permissions.proof()` — no signature fallback |
-| Permission downgrade prevented | `setPermissions: Permissions.impossible()` |
+| Permission downgrade prevented after canonical deployment | `setPermissions: Permissions.impossible()`; online consumers first verify the complete stored vector against `GUARD_PERMISSIONS` |
 | Verification key immutable | `setVerificationKey: impossibleDuringCurrentVersion` |
 | Bounded circuit size | `MAX_OWNERS = 20`, `MAX_RECEIVERS = 9` |
 

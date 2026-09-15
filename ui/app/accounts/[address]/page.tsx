@@ -19,6 +19,7 @@ import TxTypeIcon from '@/components/TxTypeIcon';
 import { fetchBalance, fetchChildren } from '@/lib/api';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
+import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import {
   clearPendingTx,
   getPendingTx,
@@ -59,8 +60,12 @@ export default function AccountPage() {
     return allContractOwners.get(multisig.address)?.includes(wallet.address) ?? false;
   }, [wallet.address, multisig, allContractOwners]);
   const childMultiSigEnabled = multisig?.childMultiSigEnabled !== false;
-  const localProposalsEnabled = isOwner && (isRoot || childMultiSigEnabled);
-  const childActionsEnabled = isRoot && isOwner;
+  const liveSecurity = useVaultSecurity(multisig?.address ?? null);
+  const permissionsVerified =
+    multisig?.permissionsVerified === true && liveSecurity === 'safe';
+  const localProposalsEnabled =
+    permissionsVerified && isOwner && (isRoot || childMultiSigEnabled);
+  const childActionsEnabled = permissionsVerified && isRoot && isOwner;
   const hasChildren = useMemo(
     () => contracts.some((c) => c.parent === multisig?.address),
     [contracts, multisig?.address],
@@ -69,7 +74,9 @@ export default function AccountPage() {
     () => new Set(['allocateChild', 'reclaimChild', 'destroyChild', 'enableChildMultiSig']),
     [],
   );
-  const localDisabledReason = !isOwner
+  const localDisabledReason = !permissionsVerified
+    ? 'Vault permissions have not passed the canonical security check'
+    : !isOwner
     ? 'You are not an owner of this Vault'
     : !childMultiSigEnabled
       ? 'Multi-sig disabled by the Vault'
@@ -146,6 +153,13 @@ export default function AccountPage() {
           />
         ) : multisig && multisig.address === urlAddress ? (
           <div className="space-y-6">
+            {!permissionsVerified && (
+              <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+                {liveSecurity === 'checking'
+                  ? 'Checking the complete on-chain permission vector. Transaction actions remain blocked.'
+                  : 'Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Do not fund or use this account; transaction actions are blocked.'}
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">
                 <p className="text-xs text-safe-text uppercase tracking-wider mb-1">Vault Address</p>
@@ -237,7 +251,13 @@ export default function AccountPage() {
                     <ProposalButtonRow
                       types={CHILD_TX_TYPES}
                       enabled={childActionsEnabled}
-                      disabledReason={!isOwner ? 'You are not an owner of this Vault' : null}
+                      disabledReason={
+                        !permissionsVerified
+                          ? 'Vault permissions have not passed the canonical security check'
+                          : !isOwner
+                          ? 'You are not an owner of this Vault'
+                          : null
+                      }
                       hrefPrefix={`/transactions/new?account=${multisig.address}&type=`}
                       accountAddress={multisig.address}
                       disabledTypes={hasChildren ? undefined : childRequiresExisting}

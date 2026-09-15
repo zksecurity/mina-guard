@@ -62,6 +62,7 @@ async function seedVault(spec: VaultSpec): Promise<number> {
       address: spec.address,
       parent: spec.parent ?? null,
       ready: true,
+      permissionsVerified: true,
       discoveredAtBlock: 1,
       discoveredAt: at(-10 * spec.listOrder),
     },

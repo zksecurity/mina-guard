@@ -11,6 +11,16 @@
 
 set -euo pipefail
 
+# The local lightnet stack uses the testnet circuit domain. Thread the pinned
+# hash through both images so backend and browser enforce the same trust anchor.
+if [ -z "${MINAGUARD_VK_HASH:-}" ]; then
+    MINAGUARD_VK_HASH=$(contracts/scripts/read-vk-hash.sh testnet) || exit 1
+    export MINAGUARD_VK_HASH
+fi
+case "$MINAGUARD_VK_HASH" in
+    ''|*[!0-9]*) echo "MINAGUARD_VK_HASH must be a decimal hash (got '$MINAGUARD_VK_HASH')" >&2; exit 1 ;;
+esac
+
 COMMAND="${1:-}"
 PORT=10000
 CADDY_API="http://localhost:2019"

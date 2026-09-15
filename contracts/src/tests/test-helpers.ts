@@ -132,9 +132,18 @@ export async function deployAndSetup(
 ): Promise<void> {
   const { zkApp, zkAppKey, zkAppAddress, deployerKey, deployerAccount, owners } = ctx;
 
+  const setupOwners = toFixedSetupOwners(owners.map((o) => o.pub));
+
+  // deploy() deliberately leaves setPermissions proof-authorized only until
+  // setup() installs and seals the canonical vector. Keep both updates atomic.
   const deployTxn = await Mina.transaction(deployerAccount, async () => {
     AccountUpdate.fundNewAccount(deployerAccount);
     await zkApp.deploy();
+    await zkApp.setup(
+      Field(threshold),
+      Field(owners.length),
+      new SetupOwnersInput({ owners: setupOwners })
+    );
   });
   await deployTxn.prove();
   await deployTxn.sign([deployerKey, zkAppKey]).send();
@@ -146,17 +155,6 @@ export async function deployAndSetup(
   await fundTxn.prove();
   await fundTxn.sign([deployerKey]).send();
 
-  const setupOwners = toFixedSetupOwners(owners.map((o) => o.pub));
-
-  const setupTxn = await Mina.transaction(deployerAccount, async () => {
-    await zkApp.setup(
-      Field(threshold),
-      Field(owners.length),
-      new SetupOwnersInput({ owners: setupOwners })
-    );
-  });
-  await setupTxn.prove();
-  await setupTxn.sign([deployerKey, zkAppKey]).send();
 }
 
 // -- Proposal Helpers --------------------------------------------------------

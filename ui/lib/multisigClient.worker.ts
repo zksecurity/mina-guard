@@ -208,6 +208,16 @@ async function assertExpectedVerificationKey(actualHash: string): Promise<void> 
 async function compileContract(): Promise<boolean> {
   if (compileSucceeded) return true;
 
+  // The Lightnet E2E build runs its daemon with PROOF_LEVEL=none and replaces
+  // lazy proofs with o1js dummy proofs. Compiling the real circuit here adds no
+  // proof-verification coverage and can exhaust the small shared runner after
+  // the circuit grows. Its Compose stack instead pins the matching dummy VK;
+  // check-vk-hash separately compiles and verifies the real network VKs.
+  if (skipProofs && process.env.NEXT_PUBLIC_E2E_TEST === 'true') {
+    console.log('[MultisigWorker] Skipping circuit compile in proofless E2E mode');
+    return true;
+  }
+
   if (!compilePromise) {
     compilePromise = (async () => {
       console.log('[MultisigWorker] MinaGuard.compile() starting');
@@ -778,43 +788,6 @@ const workerApi = {
     skipProofs = skip;
   },
 
-  async deployContract(
-    params: { feePayerAddress: string; zkAppPrivateKeyBase58: string },
-    sendFn: SendTxFn | null,
-    progressFn: ProgressFn,
-    signFeePayerFn?: SignFeePayerFn
-  ): Promise<string | null> {
-    progressFn('Compiling contract...');
-    const ok = await compileContract();
-    if (!ok) return null;
-
-    progressFn('Building transaction...');
-    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
-    const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
-    const zkAppAddress = zkAppKey.toPublicKey();
-    const zkApp = new MinaGuard(zkAppAddress);
-
-    await fetchAccount({ publicKey: feePayer });
-    clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(feePayer), async () => {
-      AccountUpdate.fundNewAccount(feePayer);
-      await zkApp.deploy();
-    });
-
-    console.log('mina transaction constructed');
-
-    progressFn('Generating proof...');
-    await maybeProve(tx);
-
-    console.log('proof done');
-
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const deployHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
-    console.log('[MultisigWorker] deploy tx result:', deployHash);
-    if (!deployHash) return null;
-    return `Transaction submitted: ${deployHash}`;
-  },
-
   async deployAndSetupContract(
     params: {
       feePayerAddress: string;
@@ -864,57 +837,6 @@ const workerApi = {
 
     progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const txHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
-    if (!txHash) return null;
-    return `Transaction submitted: ${txHash}`;
-  },
-
-  async setupContract(
-    params: {
-      zkAppAddress: string;
-      feePayerAddress: string;
-      owners: string[];
-      threshold: number;
-    },
-    sendFn: SendTxFn | null,
-    progressFn: ProgressFn,
-    signFeePayerFn?: SignFeePayerFn
-  ): Promise<string | null> {
-    progressFn('Compiling contract...');
-    const ok = await compileContract();
-    if (!ok) return null;
-
-    progressFn('Building transaction...');
-    const ownerStore = new OwnerStore();
-    const ownerKeys = params.owners.map((address) => PublicKey.fromBase58(address));
-    for (const owner of ownerKeys) ownerStore.addSorted(owner);
-
-    const paddedOwners = [...ownerStore.owners];
-    while (paddedOwners.length < MAX_OWNERS) {
-      paddedOwners.push(PublicKey.empty());
-    }
-
-    const zkAppAddress = PublicKey.fromBase58(params.zkAppAddress);
-    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
-    const zkApp = new MinaGuard(zkAppAddress);
-
-    await fetchAccount({ publicKey: feePayer });
-    clearStaleTransaction();
-    const tx = await Mina.transaction(txSender(feePayer), async () => {
-      await zkApp.setup(
-        Field(params.threshold),
-        Field(ownerStore.length),
-        new SetupOwnersInput({
-          owners: paddedOwners.slice(0, MAX_OWNERS),
-        })
-      );
-    });
-
-    progressFn('Generating proof...');
-    await maybeProve(tx);
-
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
-    console.log('[MultisigWorker] setup tx result:', txHash);
     if (!txHash) return null;
     return `Transaction submitted: ${txHash}`;
   },
@@ -1510,5 +1432,9 @@ export type WorkerApi = typeof workerApi;
 console.log('[MultisigWorker] worker module loaded, exposing API');
 Comlink.expose(workerApi);
 
-// Eagerly start compilation as soon as the worker loads
-compileContract().catch(() => { });
+// Eagerly start compilation as soon as the worker loads in real builds. The
+// E2E harness must first enable its explicit proofless mode, otherwise this
+// synchronous WASM work prevents the worker from receiving that configuration.
+if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') {
+  compileContract().catch(() => { });
+}

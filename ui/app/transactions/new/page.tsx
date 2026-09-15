@@ -14,8 +14,14 @@ import {
 import TxTypeIcon from '@/components/TxTypeIcon';
 import { createOnchainProposal } from '@/lib/multisigClient';
 import { assertValidMinaAddress, buildOfflineProposeBundle } from '@/lib/offline-signing';
-import { fetchChildren, fetchContract } from '@/lib/api';
+import {
+  fetchChildren,
+  fetchContract,
+  fetchVaultSecurityStatus,
+  isCanonicalVaultSecurity,
+} from '@/lib/api';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
+import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { savePendingTx } from '@/lib/storage';
 import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
 
@@ -41,6 +47,9 @@ function NewTransactionPageInner() {
 
   const isRoot = !!multisig && !multisig.parent;
   const contractLock = useContractTxLock(multisig?.address ?? null, proposals);
+  const liveSecurity = useVaultSecurity(multisig?.address ?? null);
+  const permissionsSafe =
+    multisig?.permissionsVerified === true && liveSecurity === 'safe';
 
   // Available tx types: LOCAL on every guard; subaccount actions only on roots.
   // CREATE_CHILD is shown on roots so the action is discoverable here, but it
@@ -155,6 +164,11 @@ function NewTransactionPageInner() {
 
   const handleSubmit = async (data: NewProposalInput) => {
     if (!wallet.address || !multisig) return;
+    if (!permissionsSafe) {
+      throw new Error(
+        'Vault permissions have not passed the canonical security check'
+      );
+    }
 
     const contractAddress = multisig.address;
     const proposerAddress = wallet.address;
@@ -163,7 +177,15 @@ function NewTransactionPageInner() {
 
     let createdHash: string | null = null;
     await startOperation('Submitting proposal on-chain...', async (onProgress) => {
-      const fresh = await fetchContract(contractAddress);
+      const [fresh, security] = await Promise.all([
+        fetchContract(contractAddress),
+        fetchVaultSecurityStatus(contractAddress),
+      ]);
+      if (!fresh?.permissionsVerified || !isCanonicalVaultSecurity(security)) {
+        throw new Error(
+          'Vault permissions have not passed the canonical security check'
+        );
+      }
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
       const result = await createOnchainProposal({
         contractAddress,
@@ -218,6 +240,12 @@ function NewTransactionPageInner() {
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
             <p className="text-safe-text">Connect your wallet and select a contract to create proposals.</p>
+          </div>
+        ) : !permissionsSafe ? (
+          <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-5 text-sm text-red-200">
+            {liveSecurity === 'checking'
+              ? 'Checking the complete on-chain permission vector. Proposal creation remains blocked.'
+              : 'Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Proposal creation is blocked.'}
           </div>
         ) : multisig.ownersCommitment == null ? (
           <div className="text-center py-20">
@@ -342,7 +370,18 @@ function NewTransactionPageInner() {
                           throw new Error('Signer address is not an owner of this multisig');
                         }
                         const input = getFormInputRef.current!();
-                        const fresh = await fetchContract(multisig!.address);
+                        const [fresh, security] = await Promise.all([
+                          fetchContract(multisig!.address),
+                          fetchVaultSecurityStatus(multisig!.address),
+                        ]);
+                        if (
+                          !fresh?.permissionsVerified ||
+                          !isCanonicalVaultSecurity(security)
+                        ) {
+                          throw new Error(
+                            'Vault permissions have not passed the canonical security check'
+                          );
+                        }
                         const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
                         return buildOfflineProposeBundle({
                           contractAddress: multisig!.address,

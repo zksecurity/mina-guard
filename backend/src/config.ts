@@ -101,7 +101,10 @@ export function loadConfig(): BackendConfig {
     archiveFallbackEndpoint: process.env.ARCHIVE_FALLBACK_ENDPOINT ?? null,
     indexPollIntervalMs: numericEnv('INDEX_POLL_INTERVAL_MS', 15000),
     indexStartHeight: numericEnv('INDEX_START_HEIGHT', 0),
-    minaguardVkHash: process.env.MINAGUARD_VK_HASH ?? null,
+    // Normalize empty to null. Live vault authentication treats null as a
+    // missing trust anchor and fails closed; only the chainless
+    // INDEXER_DISABLED UI harness synthesizes fixture security responses.
+    minaguardVkHash: process.env.MINAGUARD_VK_HASH || null,
     indexerMode,
     indexerDisabled: process.env.INDEXER_DISABLED === 'true',
     fixedLatestSlot:
