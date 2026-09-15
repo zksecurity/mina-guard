@@ -347,21 +347,34 @@ proposals (which include `CREATE_CHILD`) can only be raised on a guard whose
 `parent == PublicKey.empty()` — so only root guards can spawn children, and children cannot
 themselves become parents.
 
-**Cross-contract precondition model.** When the child runs a REMOTE execute method, it reads
-the parent's on-chain state via:
+**Cross-contract precondition model.** On REMOTE non-`CREATE_CHILD` proposals and approvals,
+the parent reads the target child's `ownersCommitment`, `parent`, and `parentNonce` through a
+foreign `MinaGuard` instance. Its AccountUpdate is explicitly attached beneath the parent's proof
+update, binding those child-state freshness checks to the on-chain SubVault. For LOCAL and
+`CREATE_CHILD` proposals, the conditionally selected nonce authority is the current guard, so the
+same attached update safely carries redundant current-guard preconditions.
+
+In the other direction, when the child runs a REMOTE execute method, it reads the parent's
+on-chain state via:
 
 ```typescript
 const parentGuard = new MinaGuard(parentAddress);
+const parentUpdate = parentGuard.self;
+AccountUpdate.attachToTransaction(parentUpdate);
 const parentOwnersCommitment = parentGuard.ownersCommitment.getAndRequireEquals();
 const parentConfigNonce      = parentGuard.configNonce.getAndRequireEquals();
 const parentApprovalRoot     = parentGuard.approvalRoot.getAndRequireEquals();
 const parentThreshold        = parentGuard.threshold.getAndRequireEquals();
 ```
 
-Each `getAndRequireEquals()` call pins the parent's state as an AccountUpdate precondition. If
-any parent field changes between approval and execution (e.g. an `executeOwnerChange` bumps
-`configNonce`), the precondition fails and the child transaction aborts atomically. The child
-then verifies a Merkle witness proving the REMOTE proposal reached threshold on
+Accessing `parentGuard.self` alone creates a detached AccountUpdate. The explicit
+`attachToTransaction()` call places it directly beneath the child's proof-authorized update in
+the call forest, so the child proof commits to both the parent update and its preconditions.
+Each `getAndRequireEquals()` call then pins the parent's state as an AccountUpdate precondition
+that Mina checks against the RootVault account on chain. If any parent field changes between
+approval and execution (e.g. an `executeOwnerChange` bumps `configNonce`), or a prover supplies
+forged parent values, the precondition fails and the child transaction aborts atomically. The
+child then verifies a Merkle witness proving the REMOTE proposal reached threshold on
 `parentApprovalRoot`.
 
 **Child execution replay guard.** REMOTE proposals never touch the parent's `approvalRoot` —

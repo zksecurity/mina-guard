@@ -22,7 +22,14 @@ export async function runVkHashCompile(): Promise<void> {
 
   console.log(`Compiling MinaGuard to extract ${network} VK hash...`);
   const cache = Cache.FileSystem('./cache');
-  const { verificationKey } = await MinaGuard.compile({ cache });
+  // A cached artifact can be stale when a circuit change alters constant
+  // AccountUpdate output without changing the cache's constraint digest.
+  // Hash verification must compile the current source, never certify a
+  // previously cached verification key.
+  const { verificationKey } = await MinaGuard.compile({
+    cache,
+    forceRecompile: true,
+  });
   const hashText = verificationKey?.hash?.toString?.();
 
   if (!hashText) {
