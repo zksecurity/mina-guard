@@ -8,6 +8,13 @@ import {
   normalizeDestination,
   normalizeTxType,
 } from '@/lib/types';
+import { getMinaGuardConfig } from '@/lib/endpoints';
+import {
+  GUARD_PERMISSION_KINDS,
+  GUARD_PERMISSION_NAMES,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
+  type GuardPermissionName,
+} from 'contracts/guard-permission-policy';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
 
@@ -27,6 +34,152 @@ export async function fetchContracts(): Promise<ContractSummary[]> {
 export async function fetchContract(address: string): Promise<ContractSummary | null> {
   const data = await getJson<Record<string, unknown>>(`/api/contracts/${address}`);
   return data ? toContractSummary(data) : null;
+}
+
+export interface VaultSecurityStatus {
+  accountFound: boolean;
+  verificationKeyHash: string | null;
+  verificationKeyMatches: boolean;
+  permissionKinds: Partial<Record<PermissionFieldName, string>>;
+  expectedPermissionKinds: Partial<Record<PermissionFieldName, string>>;
+  permissionMismatches: string[];
+  safe: boolean;
+}
+
+type PermissionFieldName = GuardPermissionName;
+
+/**
+ * Browser-side trust anchor. Keep this serialized form in lockstep with the
+ * o1js GUARD_PERMISSIONS constant; unlike API-supplied expected values, it
+ * cannot be changed by a compromised indexer response.
+ */
+const EXPECTED_PERMISSION_KINDS: Record<PermissionFieldName, string> =
+  GUARD_PERMISSION_KINDS;
+const PERMISSION_FIELD_NAMES = GUARD_PERMISSION_NAMES;
+
+/**
+ * Fetches and validates the account directly from the configured Mina node.
+ * The browser does not trust the indexer to report either the actual or the
+ * expected permission vector. The deterministic UI harness is the sole
+ * exception because it intentionally runs without a chain.
+ */
+export async function fetchVaultSecurityStatus(
+  address: string
+): Promise<VaultSecurityStatus | null> {
+  if (process.env.NEXT_PUBLIC_E2E_TEST === 'true') {
+    return getJson<VaultSecurityStatus>(`/api/accounts/${address}/security`);
+  }
+
+  const query = `query($publicKey: PublicKey!) {
+    account(publicKey: $publicKey) {
+      verificationKey { hash }
+      permissions {
+        editState
+        send
+        receive
+        setDelegate
+        setPermissions
+        setVerificationKey { auth txnVersion }
+        setZkappUri
+        editActionState
+        setTokenSymbol
+        incrementNonce
+        setVotingFor
+        setTiming
+        access
+      }
+    }
+  }`;
+
+  try {
+    const response = await fetch(getMinaGuardConfig().minaEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ query, variables: { publicKey: address } }),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as {
+      data?: {
+        account?: {
+          verificationKey?: { hash?: string | null } | null;
+          permissions?: Record<string, unknown> | null;
+        } | null;
+      };
+      errors?: unknown;
+    };
+    if (body.errors) return null;
+    const account = body.data?.account;
+    if (!account) {
+      return {
+        accountFound: false,
+        verificationKeyHash: null,
+        verificationKeyMatches: false,
+        permissionKinds: {},
+        expectedPermissionKinds: EXPECTED_PERMISSION_KINDS,
+        permissionMismatches: [...PERMISSION_FIELD_NAMES],
+        safe: false,
+      };
+    }
+
+    const raw = account.permissions ?? {};
+    const setVerificationKey = raw.setVerificationKey as
+      | {
+          auth?: unknown;
+          txnVersion?: unknown;
+        }
+      | undefined;
+    const permissionKinds: Partial<Record<PermissionFieldName, string>> = {};
+    for (const name of PERMISSION_FIELD_NAMES) {
+      const value =
+        name === 'setVerificationKey' ? setVerificationKey?.auth : raw[name];
+      if (typeof value === 'string') permissionKinds[name] = value;
+    }
+    const permissionMismatches = PERMISSION_FIELD_NAMES.filter(
+      (name) => permissionKinds[name] !== EXPECTED_PERMISSION_KINDS[name]
+    );
+    if (
+      String(setVerificationKey?.txnVersion ?? '') !==
+        GUARD_SET_VERIFICATION_KEY_TXN_VERSION &&
+      !permissionMismatches.includes('setVerificationKey')
+    ) {
+      permissionMismatches.push('setVerificationKey');
+    }
+
+    const verificationKeyHash = account.verificationKey?.hash ?? null;
+    const expectedVkHash =
+      process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH?.trim() || null;
+    const verificationKeyMatches =
+      verificationKeyHash !== null &&
+      expectedVkHash !== null &&
+      verificationKeyHash === expectedVkHash;
+    return {
+      accountFound: true,
+      verificationKeyHash,
+      verificationKeyMatches,
+      permissionKinds,
+      expectedPermissionKinds: EXPECTED_PERMISSION_KINDS,
+      permissionMismatches,
+      safe: verificationKeyMatches && permissionMismatches.length === 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** UI-side, field-by-field permission check. Fails closed on missing fields. */
+export function isCanonicalVaultSecurity(
+  status: VaultSecurityStatus | null
+): boolean {
+  return (
+    status !== null &&
+    status.accountFound &&
+    status.verificationKeyMatches &&
+    status.safe &&
+    PERMISSION_FIELD_NAMES.every(
+      (name) => status.permissionKinds[name] === EXPECTED_PERMISSION_KINDS[name]
+    )
+  );
 }
 
 /** Lists direct subaccounts of a parent contract. */
@@ -210,6 +363,7 @@ async function getJson<T>(path: string): Promise<T | null> {
 function toContractSummary(input: Record<string, unknown>): ContractSummary {
   return {
     address: asString(input.address) ?? '',
+    permissionsVerified: input.permissionsVerified === true,
     ownersCommitment: asNullableString(input.ownersCommitment),
     threshold: asNullableNumber(input.threshold),
     numOwners: asNullableNumber(input.numOwners),

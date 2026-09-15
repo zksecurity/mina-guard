@@ -4,8 +4,18 @@ import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { MinaGuardIndexer } from '../indexer.js';
 import { stubMinaClient } from './stub-mina-client.js';
+import { GUARD_PERMISSION_KINDS } from 'contracts';
 
 const VK_HASH = '22592591136635241954458728867125272730912271761728581931779127524287952990537';
+const securityStatus = (verificationKeyHash = VK_HASH) => ({
+  accountFound: true,
+  verificationKeyHash,
+  verificationKeyMatches: verificationKeyHash === VK_HASH,
+  permissionKinds: GUARD_PERMISSION_KINDS,
+  expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+  permissionMismatches: [],
+  safe: verificationKeyHash === VK_HASH,
+});
 
 const archiveConfig = {
   minaEndpoint: 'http://stub',
@@ -84,7 +94,7 @@ describe('archive discovery: happy path', () => {
         return candidates;
       },
       // All 3 candidates verify with the matching MinaGuard VK on-chain.
-      fetchVerificationKeyHash: async () => VK_HASH,
+      fetchVaultSecurityStatus: async () => securityStatus(),
       // Backfill is a no-op (no events emitted yet).
       fetchDecodedContractEvents: async () => [],
     }));
@@ -127,8 +137,8 @@ describe('archive discovery: happy path', () => {
         { address: matching, deployBlock: 200 },
         { address: mismatched, deployBlock: 300 },
       ],
-      fetchVerificationKeyHash: async (addr: string) =>
-        addr === matching ? VK_HASH : 'different-vk-hash',
+      fetchVaultSecurityStatus: async (addr: string) =>
+        securityStatus(addr === matching ? VK_HASH : 'different-vk-hash'),
       fetchDecodedContractEvents: async () => [],
     }));
 
@@ -138,6 +148,34 @@ describe('archive discovery: happy path', () => {
 
     const contracts = await prisma.contract.findMany();
     expect(contracts.map((c) => c.address)).toEqual([matching]);
+  });
+
+  test('skips a canonical VK whose on-chain send permission is Either', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({
+        genesisTimestampMs: 0,
+        slotDurationMs: 90000,
+      }),
+      fetchLatestBlockHeightFromArchive: async () => 500,
+      fetchBestChainHeaders: async () => [],
+      discoverCandidateAddressesFromArchive: async () => [
+        { address, deployBlock: 200 },
+      ],
+      fetchVaultSecurityStatus: async () => ({
+        ...securityStatus(),
+        permissionKinds: { ...GUARD_PERMISSION_KINDS, send: 'Either' },
+        permissionMismatches: ['send'],
+        safe: false,
+      }),
+      fetchDecodedContractEvents: async () => [],
+    }));
+
+    const indexer = new MinaGuardIndexer(archiveConfig);
+    await indexer.start();
+    indexer.stop();
+
+    expect(await prisma.contract.findUnique({ where: { address } })).toBeNull();
   });
 });
 
@@ -161,9 +199,9 @@ describe('archive discovery: per-iteration failure isolation', () => {
         { address: bad, deployBlock: 200 },
         { address: ok2, deployBlock: 300 },
       ],
-      fetchVerificationKeyHash: async (addr: string) => {
+      fetchVaultSecurityStatus: async (addr: string) => {
         if (addr === bad) throw new Error('simulated daemon hiccup on VK fetch');
-        return VK_HASH;
+        return securityStatus();
       },
       fetchDecodedContractEvents: async () => [],
     }));
@@ -207,7 +245,7 @@ describe('archive discovery: per-iteration failure isolation', () => {
         { address: bad, deployBlock: 100 },
         { address: ok, deployBlock: 200 },
       ],
-      fetchVerificationKeyHash: async () => VK_HASH,
+      fetchVaultSecurityStatus: async () => securityStatus(),
       fetchDecodedContractEvents: async (addr: string) => {
         if (addr === bad) {
           backfillCallCountForBad += 1;
@@ -261,7 +299,7 @@ describe('archive discovery: backfill range', () => {
       fetchLatestBlockHeightFromArchive: async () => 50_000,
       fetchBestChainHeaders: async () => [],
       discoverCandidateAddressesFromArchive: async () => [{ address: addr, deployBlock: 12_345 }],
-      fetchVerificationKeyHash: async () => VK_HASH,
+      fetchVaultSecurityStatus: async () => securityStatus(),
       fetchDecodedContractEvents: async (_addr: string, from: number, to: number) => {
         backfillCalls.push({ from, to });
         return [];
@@ -302,7 +340,7 @@ describe('archive discovery: cursor progression', () => {
         calls.push({ from, to });
         return [];
       },
-      fetchVerificationKeyHash: async () => VK_HASH,
+      fetchVaultSecurityStatus: async () => securityStatus(),
       fetchDecodedContractEvents: async () => [],
     }));
 

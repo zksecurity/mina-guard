@@ -45,7 +45,11 @@ async function seedPendingProposal(
   txHash: string,
 ): Promise<number> {
   const contract = await prisma.contract.create({
-    data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: true },
+    data: {
+      address: PrivateKey.random().toPublicKey().toBase58(),
+      ready: true,
+      permissionsVerified: true,
+    },
   });
   const proposal = await prisma.proposal.create({
     data: {

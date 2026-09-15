@@ -32,6 +32,17 @@ export {
 } from './constants.js';
 
 export { OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment } from './list-commitment.js';
+export {
+  GUARD_PERMISSIONS,
+  GUARD_DEPLOY_PERMISSIONS,
+} from './guard-permissions.js';
+export {
+  GUARD_PERMISSION_NAMES,
+  GUARD_PERMISSION_KINDS,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
+  type GuardPermissionName,
+  type GuardPermissionKind,
+} from './guard-permission-policy.js';
 
 export { ownerKey } from './utils.js';
 

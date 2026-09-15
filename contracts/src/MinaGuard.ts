@@ -5,7 +5,6 @@ import {
   method,
   Field,
   PublicKey,
-  Permissions,
   MerkleMapWitness,
   Poseidon,
   Bool,
@@ -15,7 +14,10 @@ import {
   UInt32,
   UInt64,
 } from 'o1js';
-
+import {
+  GUARD_DEPLOY_PERMISSIONS,
+  GUARD_PERMISSIONS,
+} from './guard-permissions.js';
 
 import {
   MAX_OWNERS,
@@ -283,35 +285,34 @@ export class MinaGuard extends SmartContract {
   };
 
   /**
-   * Configures account permissions and emits a deploy discovery event.
+   * Configures temporary deployment permissions and emits a discovery event.
    *
-   * SECURITY, initialize atomically: deploy() only publishes the account and its
-   * proof-authorized permissions; it does NOT set governance. Between deploy()
-   * and setup()/reserveForParent() the guard is uninitialized, and those init
-   * methods are authorized by proof alone with no deployer binding, so anyone
-   * can front-run initialization: call setup() with their own owner set, or
-   * reserveForParent() to bind the address to an attacker parent (which then
-   * permanently blocks the legitimate setup()). Callers MUST include deploy()
-   * and setup()/reserveForParent() in the SAME transaction, so no uninitialized
-   * on-chain window exists. Never deploy a guard in one transaction and
-   * initialize it in a later one.
+   * SECURITY, authenticate the deployed account: deploy() is ordinary
+   * transaction-construction code, not part of MinaGuard's proved circuit. A
+   * creator can deploy the canonical verification key while changing this
+   * signature-authorized AccountUpdate's permissions. setup() and
+   * reserveForParent() produce separate, proof-authorized AccountUpdates;
+   * putting them in one atomic transaction does not make their proof
+   * authenticate the signed deployment update. Never recognize or use a
+   * MinaGuard account based on its verification key alone. The supported
+   * atomic setup()/reserveForParent() flow instead overwrites creator-selected
+   * values with GUARD_PERMISSIONS under proof authorization. Clients and
+   * indexers MUST still compare every stored permission against
+   * GUARD_PERMISSIONS to reject deployments constructed outside that flow.
+   *
+   * SECURITY, initialize atomically: deploy() temporarily leaves
+   * setPermissions proof-authorized. setup()/reserveForParent() installs and
+   * seals the final canonical vector while also initializing governance. A
+   * creator who weakens another deployment permission is overwritten; a
+   * creator who makes setPermissions impossible causes the entire transaction
+   * to fail. These init methods are also authorized by proof alone with no
+   * deployer binding, so a separately deployed guard could be front-run.
+   * Callers MUST include deploy() and setup()/reserveForParent() in the SAME
+   * transaction. Never broadcast deploy() by itself.
    */
   async deploy() {
     await super.deploy();
-    this.account.permissions.set({
-      ...Permissions.default(),
-      editState: Permissions.proof(),
-      send: Permissions.proof(),
-      receive: Permissions.none(),
-      setDelegate: Permissions.proof(),
-      setPermissions: Permissions.impossible(),
-      setVerificationKey: Permissions.VerificationKey.impossibleDuringCurrentVersion(),
-      setZkappUri: Permissions.impossible(),
-      setTokenSymbol: Permissions.impossible(),
-      incrementNonce: Permissions.impossible(),
-      setVotingFor: Permissions.impossible(),
-      setTiming: Permissions.impossible(),
-    });
+    this.account.permissions.set(GUARD_DEPLOY_PERMISSIONS);
 
     this.emitEvent('deployed', {
       guardAddress: this.address,
@@ -319,6 +320,11 @@ export class MinaGuard extends SmartContract {
   }
 
   // -- Shared validation helpers ---------------------------------------------
+
+  /** Permanently installs the only permission vector accepted by MinaGuard. */
+  private lockPermissions(): void {
+    this.account.permissions.set(GUARD_PERMISSIONS);
+  }
 
   private getInitializedOwnersCommitment(): Field {
     const ownersCommitment = this.ownersCommitment.getAndRequireEquals();
@@ -727,14 +733,16 @@ export class MinaGuard extends SmartContract {
    * with the owner set — no client-side cross-check is required.
    *
    * MUST be called in the SAME transaction as deploy() (see deploy()): this
-   * method is authorized by proof alone with no deployer binding, so a guard
-   * left deployed-but-uninitialized can be front-run and set up by anyone.
+   * method installs and permanently seals GUARD_PERMISSIONS. It is authorized
+   * by proof alone with no deployer binding, so a guard left
+   * deployed-but-uninitialized can be front-run and set up by anyone.
    */
   @method async setup(
     threshold: Field,
     numOwners: Field,
     initialOwners: SetupOwnersInput
   ) {
+    this.lockPermissions();
     this.parent.requireEquals(PublicKey.empty());
     this.initializeState(
       threshold,
@@ -757,9 +765,10 @@ export class MinaGuard extends SmartContract {
    * Can only be called once (parent must be empty).
    *
    * SECURITY: this MUST share the deploy() transaction (see deploy()). It is
-   * authorized by proof alone with no deployer binding, so a child left
-   * deployed-but-unreserved can be front-run: an attacker reserves it to their
-   * own parent, permanently bricking the intended child address.
+   * the child path that installs and permanently seals GUARD_PERMISSIONS. It
+   * is authorized by proof alone with no deployer binding, so a child left
+   * deployed-but-unreserved can be front-run: an attacker reserves it to
+   * their own parent, permanently bricking the intended child address.
    */
   @method async reserveForParent(
     parentAddress: PublicKey,
@@ -768,6 +777,7 @@ export class MinaGuard extends SmartContract {
     numOwners: Field,
     initialOwners: SetupOwnersInput,
   ) {
+    this.lockPermissions();
     this.ownersCommitment.requireEquals(Field(0));
     this.parent.requireEquals(PublicKey.empty());
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address must not be empty');

@@ -12,7 +12,15 @@ import {
   truncateAddress,
   type Proposal,
 } from '@/lib/types';
-import { fetchApprovals, extractTxHash, fetchBalance, recordSubmission } from '@/lib/api';
+import {
+  fetchApprovals,
+  extractTxHash,
+  fetchBalance,
+  fetchContract,
+  fetchVaultSecurityStatus,
+  isCanonicalVaultSecurity,
+  recordSubmission,
+} from '@/lib/api';
 import {
   approveProposalOnchain,
   executeProposalOnchain,
@@ -29,8 +37,40 @@ import {
   savePendingTx,
 } from '@/lib/storage';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
+import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
 import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
+
+/**
+ * Re-authenticates every account involved in a proposal immediately before an
+ * online or offline action. The target SubVault is intentionally checked via
+ * Mina directly: a malicious CREATE_CHILD deployment must never become safe
+ * merely because the parent proposal itself was indexed.
+ */
+async function assertProposalVaultSecurity(
+  parentAddress: string,
+  childAddress: string | null,
+): Promise<void> {
+  const [freshParent, parentSecurity, childSecurity] = await Promise.all([
+    fetchContract(parentAddress),
+    fetchVaultSecurityStatus(parentAddress),
+    childAddress ? fetchVaultSecurityStatus(childAddress) : Promise.resolve(null),
+  ]);
+
+  if (
+    !freshParent?.permissionsVerified ||
+    !isCanonicalVaultSecurity(parentSecurity)
+  ) {
+    throw new Error(
+      'Vault permissions have not passed the canonical security check',
+    );
+  }
+  if (childAddress && !isCanonicalVaultSecurity(childSecurity)) {
+    throw new Error(
+      'SubVault permissions have not passed the canonical security check',
+    );
+  }
+}
 
 /** Proposal detail page with approve/execute actions and lifecycle status. */
 export default function TransactionDetailPage() {
@@ -110,6 +150,9 @@ export default function TransactionDetailPage() {
   // = events not indexed yet, so we can't check (not a mismatch).
   const [childConfigCheck, setChildConfigCheck] =
     useState<'checking' | 'match' | 'mismatch' | 'unavailable' | null>(null);
+  const [childPermissionCheck, setChildPermissionCheck] = useState<
+    'checking' | 'match' | 'mismatch' | null
+  >(null);
   useEffect(() => {
     if (!proposal || proposal.txType !== 'createChild') {
       setChildConfigCheck(null);
@@ -145,6 +188,29 @@ export default function TransactionDetailPage() {
     })();
     return () => { cancelled = true; };
   }, [proposal, proposalHash, multisig, proposalsAddress]);
+
+  // Child-targeting approvals must authenticate the deployed child account
+  // itself. Its VK can be canonical while its signature-authorized deployment
+  // update installed a creator withdrawal permission.
+  useEffect(() => {
+    if (!proposal?.childAccount) {
+      setChildPermissionCheck(null);
+      return;
+    }
+    if (proposal._localPending) return;
+    let cancelled = false;
+    setChildPermissionCheck('checking');
+    void fetchVaultSecurityStatus(proposal.childAccount).then((status) => {
+      if (!cancelled) {
+        setChildPermissionCheck(
+          isCanonicalVaultSecurity(status) ? 'match' : 'mismatch'
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [proposal?.txType, proposal?.childAccount, proposal?._localPending]);
 
   // For ADD_OWNER: recompute the canonical post-add owner commitment from the
   // indexed owner list and compare it to the signed proposal.data. A mismatch
@@ -272,6 +338,11 @@ export default function TransactionDetailPage() {
     [proposals, proposal?.proposalHash, threshold],
   );
   const contractLock = useContractTxLock(multisig?.address ?? null, proposalsForLock);
+  const parentPermissionCheck = useVaultSecurity(multisig?.address ?? null);
+  const permissionsSafe =
+    multisig?.permissionsVerified === true && parentPermissionCheck === 'safe';
+  const childPermissionsSafe =
+    !proposal?.childAccount || childPermissionCheck === 'match';
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -279,6 +350,8 @@ export default function TransactionDetailPage() {
     isOwner &&
     !hasApproved &&
     !isConfigStale &&
+    permissionsSafe &&
+    childPermissionsSafe &&
     // Block approval when the displayed SubVault config provably does not hash
     // to the signed proposal.data (config-swap). Only a computed mismatch
     // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
@@ -294,6 +367,8 @@ export default function TransactionDetailPage() {
     proposal.status === 'pending' &&
     proposal.approvalCount >= threshold &&
     !isConfigStale &&
+    permissionsSafe &&
+    childPermissionsSafe &&
     !executeInFlight &&
     !contractLock.locked &&
     !insufficientBalance;
@@ -302,6 +377,7 @@ export default function TransactionDetailPage() {
     !isLocalPending &&
     proposal.status === 'pending' &&
     isOwner &&
+    permissionsSafe &&
     proposal.nonce !== null &&
     !isDeleteProposal(proposal) &&
     // CREATE_CHILD uses the reserved nonce=0 sentinel, which the current
@@ -329,6 +405,10 @@ export default function TransactionDetailPage() {
     }
     let success = false;
     await startOperation('Submitting approval on-chain...', async (onProgress) => {
+      await assertProposalVaultSecurity(
+        captured.contractAddress,
+        captured.proposal.childAccount,
+      );
       const result = await approveProposalOnchain({
         contractAddress: captured.contractAddress,
         approverAddress: captured.approverAddress,
@@ -366,6 +446,10 @@ export default function TransactionDetailPage() {
     }
     let success = false;
     await startOperation('Building execute transaction...', async (onProgress) => {
+      await assertProposalVaultSecurity(
+        captured.contractAddress,
+        captured.proposal.childAccount,
+      );
       const isCreateChild = captured.proposal.txType === 'createChild';
       const isRemoteLifecycle =
         captured.proposal.destination === 'remote' &&
@@ -618,6 +702,21 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {(!permissionsSafe || childPermissionCheck === 'mismatch') && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
+            <p className="font-semibold mb-1">Unsafe permission vector</p>
+            <p className="opacity-90">
+              {!permissionsSafe
+                ? parentPermissionCheck === 'checking'
+                  ? 'The complete on-chain Vault permission check is still running.'
+                  : 'This Vault has not passed the complete canonical permission check.'
+                : 'The proposed SubVault has a missing or non-canonical on-chain permission field.'}{' '}
+              Approval, execution, deletion, and offline bundle creation are
+              blocked.
+            </p>
+          </div>
+        )}
+
         {childConfigCheck === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">SubVault config could not be verified</p>
@@ -847,82 +946,105 @@ export default function TransactionDetailPage() {
                     <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                   </div>
                   <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
-                  <div className="flex flex-wrap gap-3">
-                    {proposal.approvalCount < owners.length && (
-                      <OfflineSigningFlow
-                        action="approve"
-                        label="Approve"
-                        onExported={setExportedBundleName}
-                        cliBinaryName={cliBinaryName}
-                        onBuildBundle={() => {
-                          assertValidMinaAddress(offlineFeePayerAddress);
-                          if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
-                            throw new Error('Signer address is not an owner of this multisig');
-                          }
-                          if (approvalAddresses.includes(offlineFeePayerAddress)) {
-                            throw new Error('This address has already approved this proposal');
-                          }
-                          if (childConfigCheck === 'mismatch') {
-                            throw new Error(
-                              'SubVault config mismatch: the displayed owners/threshold do not match the ' +
-                              'signed proposal data. Do not approve this proposal.',
+                  {permissionsSafe && childPermissionsSafe ? (
+                    <div className="flex flex-wrap gap-3">
+                      {proposal.approvalCount < owners.length && (
+                        <OfflineSigningFlow
+                          action="approve"
+                          label="Approve"
+                          onExported={setExportedBundleName}
+                          cliBinaryName={cliBinaryName}
+                          onBuildBundle={async () => {
+                            assertValidMinaAddress(offlineFeePayerAddress);
+                            if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
+                              throw new Error('Signer address is not an owner of this multisig');
+                            }
+                            if (approvalAddresses.includes(offlineFeePayerAddress)) {
+                              throw new Error('This address has already approved this proposal');
+                            }
+                            if (childConfigCheck === 'mismatch') {
+                              throw new Error(
+                                'SubVault config mismatch: the displayed owners/threshold do not match the ' +
+                                'signed proposal data. Do not approve this proposal.',
+                              );
+                            }
+                            if (addOwnerDataCheck === 'mismatch') {
+                              throw new Error(
+                                'This Add Owner proposal arranges owners in an order this app cannot reproduce. ' +
+                                'Do not approve it.',
+                              );
+                            }
+                            const p = proposal!;
+                            await assertProposalVaultSecurity(
+                              multisig!.address,
+                              p.childAccount,
                             );
-                          }
-                          if (addOwnerDataCheck === 'mismatch') {
-                            throw new Error(
-                              'This Add Owner proposal arranges owners in an order this app cannot reproduce. ' +
-                              'Do not approve it.',
+                            return buildOfflineApproveBundle({
+                              contractAddress: multisig!.address,
+                              feePayerAddress: offlineFeePayerAddress,
+                              proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                            });
+                          }}
+                        />
+                      )}
+                      {proposal.approvalCount >= threshold && (
+                        <OfflineSigningFlow
+                          action="execute"
+                          label="Execute"
+                          onExported={setExportedBundleName}
+                          cliBinaryName={cliBinaryName}
+                          onBuildBundle={async () => {
+                            assertValidMinaAddress(offlineFeePayerAddress);
+                            const p = proposal!;
+                            await assertProposalVaultSecurity(
+                              multisig!.address,
+                              p.childAccount,
                             );
-                          }
-                          const p = proposal!;
-                          return buildOfflineApproveBundle({
-                            contractAddress: multisig!.address,
-                            feePayerAddress: offlineFeePayerAddress,
-                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
-                          });
-                        }}
-                      />
-                    )}
-                    {proposal.approvalCount >= threshold && (
-                      <OfflineSigningFlow
-                        action="execute"
-                        label="Execute"
-                        onExported={setExportedBundleName}
-                        cliBinaryName={cliBinaryName}
-                        onBuildBundle={() => {
-                          assertValidMinaAddress(offlineFeePayerAddress);
-                          const p = proposal!;
-                          return buildOfflineExecuteBundle({
-                            contractAddress: multisig!.address,
-                            feePayerAddress: offlineFeePayerAddress,
-                            proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
-                          });
-                        }}
-                      />
-                    )}
-                  </div>
-                  <UploadSignedResponse
-                    acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
-                    expectedContractAddress={multisig!.address}
-                    expectedProposalHash={proposal!.proposalHash}
-                    onComplete={(response, txHash) => {
-                      const kind = response.action as 'approve' | 'execute';
-                      void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
-                      savePendingTx({
-                        kind,
-                        contractAddress: multisig!.address,
-                        proposalHash: proposal!.proposalHash,
-                        txHash,
-                        signerPubkey: offlineFeePayerAddress,
-                        createdAt: new Date().toISOString(),
-                      });
-                      if (kind === 'execute') {
-                        router.push(`/accounts/${multisig!.address}`);
-                      } else {
-                        router.push('/transactions');
+                            return buildOfflineExecuteBundle({
+                              contractAddress: multisig!.address,
+                              feePayerAddress: offlineFeePayerAddress,
+                              proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
+                            });
+                          }}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-red-400">
+                      Offline bundle creation and broadcast are blocked until
+                      the Vault and target SubVault pass their live permission checks.
+                    </p>
+                  )}
+                  {permissionsSafe && childPermissionsSafe && (
+                    <UploadSignedResponse
+                      acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
+                      expectedContractAddress={multisig!.address}
+                      expectedProposalHash={proposal!.proposalHash}
+                      beforeBroadcast={() =>
+                        assertProposalVaultSecurity(
+                          multisig!.address,
+                          proposal!.childAccount,
+                        )
                       }
-                    }}
-                  />
+                      onComplete={(response, txHash) => {
+                        const kind = response.action as 'approve' | 'execute';
+                        void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
+                        savePendingTx({
+                          kind,
+                          contractAddress: multisig!.address,
+                          proposalHash: proposal!.proposalHash,
+                          txHash,
+                          signerPubkey: offlineFeePayerAddress,
+                          createdAt: new Date().toISOString(),
+                        });
+                        if (kind === 'execute') {
+                          router.push(`/accounts/${multisig!.address}`);
+                        } else {
+                          router.push('/transactions');
+                        }
+                      }}
+                    />
+                  )}
                 </>
               )}
             </div>

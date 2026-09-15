@@ -106,9 +106,9 @@ export async function startEmbeddedBackend(
   // configured network selects which line applies — devnet shares the testnet
   // circuit (anything except mainnet does, mirroring contracts/src/constants.ts).
   // Files predating the per-network format (a comment header + one bare
-  // decimal) parse via the legacy fallback. Left unset if the file is missing
-  // or yields no usable value — the VK match check then no-ops rather than the
-  // backend failing to start.
+  // decimal) parse via the legacy fallback. If the file is missing or has no
+  // usable value, the backend starts but vault authentication fails closed:
+  // no account can become permission-verified or visible as ready.
   if (opts.vkHashPath && existsSync(opts.vkHashPath)) {
     const lines = readFileSync(opts.vkHashPath, 'utf8')
       .split('\n')

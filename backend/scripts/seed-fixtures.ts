@@ -110,6 +110,7 @@ async function seedVault(spec: VaultSpec, walletAddresses: string[]): Promise<vo
       address: spec.address,
       parent: spec.parent,
       ready: true,
+      permissionsVerified: true,
       discoveredAtBlock: 1,
     },
   });

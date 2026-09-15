@@ -4,6 +4,7 @@ import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { MinaGuardIndexer } from '../indexer.js';
 import { stubMinaClient } from './stub-mina-client.js';
+import { GUARD_PERMISSION_KINDS } from 'contracts';
 
 const liteConfig = {
   minaEndpoint: 'http://stub',
@@ -42,6 +43,17 @@ async function setCursor(height: number) {
 
 beforeEach(async () => {
   await clearAll();
+  stubMinaClient(() => ({
+    fetchVaultSecurityStatus: async () => ({
+      accountFound: true,
+      verificationKeyHash: 'vk-hash-stub',
+      verificationKeyMatches: true,
+      permissionKinds: GUARD_PERMISSION_KINDS,
+      expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+      permissionMismatches: [],
+      safe: true,
+    }),
+  }));
 });
 
 afterEach(() => {
@@ -413,6 +425,50 @@ describe('tick: rescanUnreadyContracts', () => {
 
     const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(true);
+    expect(updated.permissionsVerified).toBe(true);
+  });
+
+  test('never readies a vault with the canonical VK but weakened permissions', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: false, discoveredAtBlock: 50 },
+    });
+    await setCursor(100);
+
+    let fetchedEvents = false;
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({
+        genesisTimestampMs: 0,
+        slotDurationMs: 90000,
+      }),
+      fetchLatestBlockHeight: async () => 100,
+      fetchBestChainHeaders: async () => [],
+      fetchVaultSecurityStatus: async () => ({
+        accountFound: true,
+        verificationKeyHash: 'vk-hash-stub',
+        verificationKeyMatches: true,
+        permissionKinds: { ...GUARD_PERMISSION_KINDS, send: 'Either' as const },
+        expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+        permissionMismatches: ['send'],
+        safe: false,
+      }),
+      fetchDecodedContractEvents: async () => {
+        fetchedEvents = true;
+        return [makeExecutionEvent('must-not-ingest', 60)];
+      },
+    }));
+
+    await runSingleTick(liteConfig);
+
+    const updated = await prisma.contract.findUniqueOrThrow({
+      where: { id: contract.id },
+    });
+    expect(updated.ready).toBe(false);
+    expect(updated.permissionsVerified).toBe(false);
+    expect(fetchedEvents).toBe(false);
+    expect(
+      await prisma.eventRaw.count({ where: { contractId: contract.id } })
+    ).toBe(0);
   });
 
   test('uses discoveredAtBlock as the lower bound of the rescan range', async () => {

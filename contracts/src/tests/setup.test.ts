@@ -1,5 +1,9 @@
-import { Field, Mina, AccountUpdate, UInt64 } from 'o1js';
+import { Field, Mina, AccountUpdate, Permissions, UInt64 } from 'o1js';
 import { EMPTY_MERKLE_MAP_ROOT } from '../constants.js';
+import {
+  GUARD_DEPLOY_PERMISSIONS,
+  GUARD_PERMISSIONS,
+} from '../guard-permissions.js';
 import { SetupOwnersInput } from '../MinaGuard.js';
 import {
   setupLocalBlockchain,
@@ -29,6 +33,84 @@ describe('MinaGuard - Setup', () => {
     expect(ctx.zkApp.configNonce.get()).toEqual(Field(0));
     expect(ctx.zkApp.approvalRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
     expect(ctx.zkApp.voteNullifierRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
+    expect(Mina.getAccount(ctx.zkAppAddress).permissions).toEqual(
+      GUARD_PERMISSIONS,
+    );
+  });
+
+  it('should overwrite creator-weakened deploy permissions during setup', async () => {
+    const { zkApp, zkAppKey, deployerKey, deployerAccount, owners } = ctx;
+    const setupOwners = toFixedSetupOwners(owners.map((owner) => owner.pub));
+
+    const txn = await Mina.transaction(deployerAccount, async () => {
+      AccountUpdate.fundNewAccount(deployerAccount);
+      await zkApp.deploy();
+
+      // A malicious creator controls the signed deployment update. setup() is
+      // a separate proof-authorized update and must replace this weakened send.
+      zkApp.account.permissions.set({
+        ...GUARD_DEPLOY_PERMISSIONS,
+        send: Permissions.proofOrSignature(),
+      });
+      await zkApp.setup(
+        Field(2),
+        Field(owners.length),
+        new SetupOwnersInput({ owners: setupOwners }),
+      );
+    });
+    const accountUpdates = (
+      JSON.parse(txn.toJSON()) as { accountUpdates: any[] }
+    ).accountUpdates.filter(
+      (update) => update.body.publicKey === ctx.zkAppAddress.toBase58(),
+    );
+    const signedDeploy = accountUpdates.find(
+      (update) => update.body.authorizationKind.isSigned === true,
+    );
+    const provedSetup = accountUpdates.find(
+      (update) => update.body.authorizationKind.isProved === true,
+    );
+
+    expect(accountUpdates).toHaveLength(2);
+    expect(signedDeploy?.body.update.permissions.send).toBe('Either');
+    expect(signedDeploy?.body.update.permissions.setPermissions).toBe('Proof');
+    expect(provedSetup?.body.update.permissions.send).toBe('Proof');
+    expect(provedSetup?.body.update.permissions.setPermissions).toBe(
+      'Impossible',
+    );
+    await txn.prove();
+    await txn.sign([deployerKey, zkAppKey]).send();
+
+    expect(Mina.getAccount(ctx.zkAppAddress).permissions).toEqual(
+      GUARD_PERMISSIONS,
+    );
+  });
+
+  it('should reject a creator blocking the proof-authorized permission lock', async () => {
+    const { zkApp, zkAppKey, deployerKey, deployerAccount, owners } = ctx;
+    const setupOwners = toFixedSetupOwners(owners.map((owner) => owner.pub));
+
+    await expect(async () => {
+      const txn = await Mina.transaction(deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(deployerAccount);
+        await zkApp.deploy();
+
+        // This prevents setup() from writing GUARD_PERMISSIONS. Atomicity must
+        // make the complete deployment fail rather than leave an unsafe vault.
+        zkApp.account.permissions.set({
+          ...GUARD_DEPLOY_PERMISSIONS,
+          setPermissions: Permissions.impossible(),
+        });
+        await zkApp.setup(
+          Field(2),
+          Field(owners.length),
+          new SetupOwnersInput({ owners: setupOwners }),
+        );
+      });
+      await txn.prove();
+      await txn.sign([deployerKey, zkAppKey]).send();
+    }).toThrow();
+
+    expect(Mina.hasAccount(ctx.zkAppAddress)).toBe(false);
   });
 
   it('should emit deploy and setup bootstrap events', async () => {

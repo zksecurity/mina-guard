@@ -50,11 +50,10 @@ if [ -z "${MINAGUARD_VK_HASH:-}" ] && [ -f contracts/.vk-hash ]; then
   MINAGUARD_VK_HASH=$(contracts/scripts/read-vk-hash.sh testnet) || exit 1
   export MINAGUARD_VK_HASH
 fi
-# A pre-set MINAGUARD_VK_HASH bypasses the helper's validation; still reject
-# empty/garbage and allow the explicit "skip" opt-out (indexer accepts all).
+# A pre-set MINAGUARD_VK_HASH bypasses the helper's parser, so still reject
+# empty or non-decimal values. Production admission has no skip mode.
 case "${MINAGUARD_VK_HASH:-}" in
-  skip) ;;
-  ''|*[!0-9]*) echo "MINAGUARD_VK_HASH must be a decimal hash or 'skip' (got '${MINAGUARD_VK_HASH:-}')" >&2; exit 1 ;;
+  ''|*[!0-9]*) echo "MINAGUARD_VK_HASH must be a decimal hash (got '${MINAGUARD_VK_HASH:-}')" >&2; exit 1 ;;
 esac
 
 COMMAND="${1:-}"

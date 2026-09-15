@@ -7,6 +7,7 @@ import { prisma } from '../db.js';
 import type { MinaGuardIndexer } from '../indexer.js';
 import { stubMinaClient } from './stub-mina-client.js';
 import { createApiRouter } from '../routes.js';
+import { GUARD_PERMISSION_KINDS } from 'contracts';
 
 let server: Server;
 let baseUrl = '';
@@ -17,6 +18,15 @@ const subscribedAddress = PrivateKey.random().toPublicKey().toBase58();
 
 const liteConfig = { indexerMode: 'lite' } as unknown as BackendConfig;
 const fullConfig = { indexerMode: 'full' } as unknown as BackendConfig;
+const safeSecurity = {
+  accountFound: true,
+  verificationKeyHash: 'vk-hash-stub',
+  verificationKeyMatches: true,
+  permissionKinds: GUARD_PERMISSION_KINDS,
+  expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+  permissionMismatches: [],
+  safe: true,
+};
 
 async function clearDatabase() {
   await prisma.approval.deleteMany();
@@ -74,7 +84,7 @@ beforeAll(async () => {
   // the "not a zkApp" test overrides this to null.
   stubMinaClient(() => ({
     fetchLatestBlockHeight: async () => 0,
-    fetchVerificationKeyHash: async () => 'vk-hash-stub',
+    fetchVaultSecurityStatus: async () => safeSecurity,
   }));
 
   ({ server, baseUrl } = await startServer(liteConfig));
@@ -87,7 +97,7 @@ afterEach(async () => {
   mock.restore();
   stubMinaClient(() => ({
     fetchLatestBlockHeight: async () => 0,
-    fetchVerificationKeyHash: async () => 'vk-hash-stub',
+    fetchVaultSecurityStatus: async () => safeSecurity,
   }));
 });
 
@@ -155,7 +165,7 @@ describe('POST /api/subscribe', () => {
         fetchLatestCalls += 1;
         return 9999;
       },
-      fetchVerificationKeyHash: async () => 'vk-hash-stub',
+      fetchVaultSecurityStatus: async () => safeSecurity,
     }));
 
     const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 0 });
@@ -170,7 +180,13 @@ describe('POST /api/subscribe', () => {
   test('rejects explicit fromBlock when address is not a deployed zkApp (manual add-existing path)', async () => {
     stubMinaClient(() => ({
       fetchLatestBlockHeight: async () => 0,
-      fetchVerificationKeyHash: async () => null,
+      fetchVaultSecurityStatus: async () => ({
+        ...safeSecurity,
+        accountFound: false,
+        verificationKeyHash: null,
+        verificationKeyMatches: false,
+        safe: false,
+      }),
     }));
 
     const res = await post('/api/subscribe', { address: subscribedAddress, fromBlock: 0 });
@@ -187,9 +203,9 @@ describe('POST /api/subscribe', () => {
     let vkCalls = 0;
     stubMinaClient(() => ({
       fetchLatestBlockHeight: async () => 0,
-      fetchVerificationKeyHash: async () => {
+      fetchVaultSecurityStatus: async () => {
         vkCalls += 1;
-        return null;
+        return safeSecurity;
       },
     }));
 
@@ -207,6 +223,32 @@ describe('POST /api/subscribe', () => {
     expect(res.status).toBe(200);
     const stored = await prisma.contract.findUnique({ where: { address: subscribedAddress } });
     expect(stored?.discoveredAtBlock).toBe(500);
+  });
+
+  test('rejects a canonical VK with a weakened send permission', async () => {
+    stubMinaClient(() => ({
+      fetchVaultSecurityStatus: async () => ({
+        ...safeSecurity,
+        permissionKinds: {
+          ...GUARD_PERMISSION_KINDS,
+          send: 'Either',
+        },
+        permissionMismatches: ['send'],
+        safe: false,
+      }),
+    }));
+
+    const res = await post('/api/subscribe', {
+      address: subscribedAddress,
+      fromBlock: 0,
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('send');
+    expect(
+      await prisma.contract.findUnique({
+        where: { address: subscribedAddress },
+      })
+    ).toBeNull();
   });
 
   test('rejects negative fromBlock', async () => {
@@ -351,7 +393,9 @@ describe('ready flag visibility', () => {
   test('GET /api/contracts hides unready rows', async () => {
     const readyAddress = PrivateKey.random().toPublicKey().toBase58();
     const unreadyAddress = PrivateKey.random().toPublicKey().toBase58();
-    await prisma.contract.create({ data: { address: readyAddress, ready: true } });
+    await prisma.contract.create({
+      data: { address: readyAddress, ready: true, permissionsVerified: true },
+    });
     await prisma.contract.create({ data: { address: unreadyAddress, ready: false } });
 
     const res = await fetch(`${baseUrl}/api/contracts`);
@@ -360,6 +404,32 @@ describe('ready flag visibility', () => {
     const addresses = body.map((c) => c.address);
     expect(addresses).toContain(readyAddress);
     expect(addresses).not.toContain(unreadyAddress);
+  });
+
+  test('GET /api/contracts hides ready rows without verified permissions', async () => {
+    const verifiedAddress = PrivateKey.random().toPublicKey().toBase58();
+    const unverifiedAddress = PrivateKey.random().toPublicKey().toBase58();
+    await prisma.contract.create({
+      data: {
+        address: verifiedAddress,
+        ready: true,
+        permissionsVerified: true,
+      },
+    });
+    await prisma.contract.create({
+      data: {
+        address: unverifiedAddress,
+        ready: true,
+        permissionsVerified: false,
+      },
+    });
+
+    const res = await fetch(`${baseUrl}/api/contracts`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Array<{ address: string }>;
+    const addresses = body.map((contract) => contract.address);
+    expect(addresses).toContain(verifiedAddress);
+    expect(addresses).not.toContain(unverifiedAddress);
   });
 
   test('GET /api/contracts/:address returns 404 for unready rows', async () => {
@@ -375,9 +445,16 @@ describe('ready flag visibility', () => {
     const readyChild = PrivateKey.random().toPublicKey().toBase58();
     const unreadyChild = PrivateKey.random().toPublicKey().toBase58();
 
-    await prisma.contract.create({ data: { address: parentAddress, ready: true } });
     await prisma.contract.create({
-      data: { address: readyChild, parent: parentAddress, ready: true },
+      data: { address: parentAddress, ready: true, permissionsVerified: true },
+    });
+    await prisma.contract.create({
+      data: {
+        address: readyChild,
+        parent: parentAddress,
+        ready: true,
+        permissionsVerified: true,
+      },
     });
     await prisma.contract.create({
       data: { address: unreadyChild, parent: parentAddress, ready: false },

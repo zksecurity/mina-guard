@@ -1,11 +1,16 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { PublicKey, fetchAccount } from 'o1js';
+import { GUARD_PERMISSION_KINDS } from 'contracts';
 
 import { prisma } from './db.js';
 import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
-import { fetchLatestBlockHeight, fetchVerificationKeyHash, fetchZkappTxStatus } from './mina-client.js';
+import {
+  fetchLatestBlockHeight,
+  fetchVaultSecurityStatus,
+  fetchZkappTxStatus,
+} from './mina-client.js';
 import { serializeProposalRecord, type ContractState } from './proposal-record.js';
 import {
   acquireLightnetAccount,
@@ -89,10 +94,47 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json(result);
   }));
 
+  /** Performs a live VK + complete permission-vector check for any address.
+   *  CREATE_CHILD approvers use this even when the child is intentionally not
+   *  present in the accepted-contract index. */
+  router.get(
+    '/api/accounts/:address/security',
+    addressParamsMiddleware,
+    safe(async (req, res) => {
+      if (!config) {
+        res.status(503).json({ error: 'Backend config unavailable' });
+        return;
+      }
+      const { address } = addressParamsSchema.parse(req.params) as AddressParams;
+      // The deterministic UI harness deliberately has no chain endpoint. It
+      // may synthesize only the canonical snapshot for a fixture that was
+      // explicitly seeded as permission-verified; production never takes
+      // this branch because INDEXER_DISABLED is a test-only setting.
+      if (config.indexerDisabled) {
+        const fixture = await prisma.contract.findUnique({
+          where: { address },
+          select: { permissionsVerified: true },
+        });
+        const accepted = fixture?.permissionsVerified === true;
+        res.json({
+          accountFound: accepted,
+          verificationKeyHash: accepted ? config.minaguardVkHash : null,
+          verificationKeyMatches: accepted,
+          permissionKinds: accepted ? GUARD_PERMISSION_KINDS : {},
+          expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+          permissionMismatches: accepted ? [] : Object.keys(GUARD_PERMISSION_KINDS),
+          safe: accepted,
+        });
+        return;
+      }
+      res.json(await fetchVaultSecurityStatus(address, config));
+    })
+  );
+
   /** Lists tracked contracts with derived config + aggregate counts. */
   router.get('/api/contracts', safe(async (_req, res) => {
     const contracts = await prisma.contract.findMany({
-      where: { ready: true },
+      where: { ready: true, permissionsVerified: true },
       orderBy: { discoveredAt: 'desc' },
       include: {
         _count: {
@@ -133,7 +175,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       },
     });
 
-    if (!contract || !contract.ready) {
+    if (!contract || !contract.ready || !contract.permissionsVerified) {
       res.status(404).json({ error: 'Contract not found' });
       return;
     }
@@ -150,7 +192,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     const { address } = addressParamsSchema.parse(req.params) as AddressParams;
 
     const children = await prisma.contract.findMany({
-      where: { parent: address, ready: true },
+      where: { parent: address, ready: true, permissionsVerified: true },
       orderBy: { discoveredAt: 'asc' },
     });
 
@@ -175,10 +217,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
-      if (!contract || !contract.ready) {
+      if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -199,10 +241,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
-      if (!contract || !contract.ready) {
+      if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -261,10 +303,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
-      if (!contract || !contract.ready) {
+      if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -315,9 +357,9 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
-      if (!contract) {
+      if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -348,10 +390,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
-      if (!contract || !contract.ready) {
+      if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -391,10 +433,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
-      if (!contract || !contract.ready) {
+      if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
         return;
       }
@@ -577,33 +619,49 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       fromBlockNum = fromBlock;
     }
 
-    const existing = await prisma.contract.findUnique({ where: { address } });
-    if (existing) {
-      res.json(existing);
-      return;
-    }
-
-    // VK lookup only on the manual path. The auto-subscribe path races the
-    // deploy tx (account still in mempool → VK null), so we skip it; the
-    // unready rescan validates once the deploy lands.
+    // Live account authentication only on the manual path. The auto-subscribe
+    // path races the deploy tx (account still in mempool), so it creates an
+    // unverified row; syncSingleContract performs this same fail-closed check
+    // before it can mark that row ready.
+    let permissionsVerified = false;
     if (fromBlockNum !== null) {
-      const verificationKeyHash = await fetchVerificationKeyHash(address);
-      if (!verificationKeyHash) {
+      const security = await fetchVaultSecurityStatus(
+        address,
+        config
+      );
+      if (!security.accountFound || !security.verificationKeyHash) {
         res.status(404).json({ error: 'Account not found on-chain or not a zkApp' });
         return;
       }
-      // Reject a VK from a different MinaGuard release — its proofs fail
-      // on-chain. No-op when minaguardVkHash is unset. Mirrors indexer.ts.
-      if (
-        config?.minaguardVkHash &&
-        verificationKeyHash !== config.minaguardVkHash
-      ) {
+      if (!security.verificationKeyMatches) {
         res.status(400).json({
           error: 'Contract verification key does not match this app version. '
             + 'It was likely deployed with a different MinaGuard release.',
         });
         return;
       }
+      if (security.permissionMismatches.length > 0) {
+        res.status(400).json({
+          error: `Contract has non-canonical MinaGuard permissions: ${security.permissionMismatches.join(
+            ', '
+          )}`,
+        });
+        return;
+      }
+      permissionsVerified = true;
+    }
+
+    const existing = await prisma.contract.findUnique({ where: { address } });
+    if (existing) {
+      const accepted =
+        permissionsVerified && !existing.permissionsVerified
+          ? await prisma.contract.update({
+              where: { id: existing.id },
+              data: { permissionsVerified: true },
+            })
+          : existing;
+      res.json(accepted);
+      return;
     }
 
     // Safety margin on the default path: the UI calls subscribe right
@@ -617,7 +675,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       Math.max(0, (await fetchLatestBlockHeight(config)) - SUBSCRIBE_MARGIN);
 
     const created = await prisma.contract.create({
-      data: { address, discoveredAtBlock },
+      data: { address, discoveredAtBlock, permissionsVerified },
     });
 
     res.json(created);
@@ -752,9 +810,9 @@ function toContractState(
 async function resolveChildState(address: string): Promise<ContractState | null> {
   const child = await prisma.contract.findUnique({
     where: { address },
-    select: { id: true },
+    select: { id: true, ready: true, permissionsVerified: true },
   });
-  if (!child) return null;
+  if (!child?.ready || !child.permissionsVerified) return null;
   return toContractState(await latestContractConfig(child.id));
 }
 
@@ -773,7 +831,11 @@ async function buildChildStateMap(
   if (childAddresses.length === 0) return new Map();
 
   const childContracts = await prisma.contract.findMany({
-    where: { address: { in: childAddresses } },
+    where: {
+      address: { in: childAddresses },
+      ready: true,
+      permissionsVerified: true,
+    },
     select: { id: true, address: true },
   });
   if (childContracts.length === 0) return new Map();

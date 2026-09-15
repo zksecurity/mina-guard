@@ -13,8 +13,15 @@ import {
   generateKeypair,
 } from '@/lib/multisigClient';
 import { saveAccountName, savePendingTx } from '@/lib/storage';
-import { extractTxHash, subscribeAddress } from '@/lib/api';
+import {
+  extractTxHash,
+  fetchContract,
+  fetchVaultSecurityStatus,
+  isCanonicalVaultSecurity,
+  subscribeAddress,
+} from '@/lib/api';
 import { resolveIndexerMode } from '@/lib/indexer-mode';
+import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', enabled: true },
@@ -53,6 +60,9 @@ function CreateAccountWizard() {
     () => (parentAddress ? contracts.find((c) => c.address === parentAddress) ?? null : null),
     [contracts, parentAddress],
   );
+  const parentLiveSecurity = useVaultSecurity(parentContract?.address ?? null);
+  const parentPermissionsSafe =
+    parentContract?.permissionsVerified === true && parentLiveSecurity === 'safe';
 
   const [step, setStep] = useState<1 | 2>(1);
 
@@ -206,6 +216,19 @@ function CreateAccountWizard() {
     const childAddress = keypair.publicKey;
 
     void startOperation('Preparing SubVault proposal…', async (onProgress) => {
+      const [freshParent, parentSecurity] = await Promise.all([
+        fetchContract(parentAddress),
+        fetchVaultSecurityStatus(parentAddress),
+      ]);
+      if (
+        !freshParent?.permissionsVerified ||
+        !isCanonicalVaultSecurity(parentSecurity)
+      ) {
+        throw new Error(
+          'Vault permissions have not passed the canonical security check',
+        );
+      }
+
       onProgress('Computing SubVault config hash…');
       const { configHash } = await computeCreateChildConfigHash({
         childOwners: parsedOwners,
@@ -432,6 +455,13 @@ function CreateAccountWizard() {
                       </div>
                     </label>
 
+                    {isSubaccount && parentContract && !parentPermissionsSafe && (
+                      <p className="text-sm text-red-400">
+                        {parentLiveSecurity === 'checking'
+                          ? 'Checking the parent Vault permission vector. SubVault creation remains blocked.'
+                          : 'Unsafe parent Vault: its permission vector has not passed the canonical security check.'}
+                      </p>
+                    )}
                     {formError && <p className="text-sm text-red-400">{formError}</p>}
                   </div>
                 )}
@@ -463,10 +493,18 @@ function CreateAccountWizard() {
                   </button>
                 ) : isSubaccount ? (
                   <button
-                    disabled={isOperating || !parentContract}
+                    disabled={
+                      isOperating || !parentContract || !parentPermissionsSafe
+                    }
                     onClick={handleProposeSubaccount}
                     className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
-                    title={!parentContract ? 'Loading Vault…' : undefined}
+                    title={
+                      !parentContract
+                        ? 'Loading Vault…'
+                        : !parentPermissionsSafe
+                          ? 'Parent Vault permissions have not passed the canonical security check'
+                          : undefined
+                    }
                   >
                     {isOperating ? 'Proposing…' : 'Propose SubVault'}
                   </button>

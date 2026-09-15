@@ -312,10 +312,18 @@ interface UploadSignedResponseProps {
   expectedContractAddress?: string;
   /** When set, reject signed responses that target a different proposal hash. */
   expectedProposalHash?: string;
+  /** Live, online policy check performed immediately before broadcasting. */
+  beforeBroadcast?: (response: OfflineSignedTxResponse) => Promise<void>;
   onComplete?: (response: OfflineSignedTxResponse, txHash: string) => void;
 }
 
-export function UploadSignedResponse({ acceptActions, expectedContractAddress, expectedProposalHash, onComplete }: UploadSignedResponseProps) {
+export function UploadSignedResponse({
+  acceptActions,
+  expectedContractAddress,
+  expectedProposalHash,
+  beforeBroadcast,
+  onComplete,
+}: UploadSignedResponseProps) {
   const [broadcasting, setBroadcasting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -371,6 +379,12 @@ export function UploadSignedResponse({ acceptActions, expectedContractAddress, e
           `${response.proposalHash}. Not broadcasting.`,
         );
       }
+
+      // A signed offline response can outlive the page state from which its
+      // bundle was exported. Re-run the caller's live security policy at the
+      // final online boundary instead of trusting an old UI check or any
+      // account snapshot carried inside the untrusted bundle.
+      await beforeBroadcast?.(response);
 
       setBroadcasting(true);
       const txJson = typeof response.transaction === 'string'

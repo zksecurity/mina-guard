@@ -80,6 +80,8 @@ export interface OwnerRecord {
 /** Contract summary returned by backend contract listing endpoints. */
 export interface ContractSummary {
   address: string;
+  /** True only after the backend compared every on-chain permission field. */
+  permissionsVerified: boolean;
   ownersCommitment: string | null;
   threshold: number | null;
   numOwners: number | null;
