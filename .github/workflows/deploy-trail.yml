@@ -67,7 +67,7 @@ jobs:
         run: |
           echo "Waiting for trail backend to be ready..."
           for i in $(seq 1 36); do
-            if curl -sf "http://localhost:10001/trail/health" > /dev/null 2>&1; then
+            if curl -sf "http://localhost:10001/health" > /dev/null 2>&1; then
               echo "Trail backend is ready!"
               exit 0
             fi

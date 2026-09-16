@@ -21,13 +21,13 @@ The deployment assets serve the prod-facing box, which hosts three coexisting pa
 | Pattern | Path prefix | Compose project | Inner-Caddy host port | Chain |
 |---|---|---|---|---|
 | Main (localnet) | `/app/*` | `minaguard` | `10000` | Lightnet, in-stack |
-| Mesa Trail | `/trail/*` | `minaguard-trail` | `10001` | Mesa Trail (mesa-mut), on a separate node-stack box |
+| Mesa Trail | `testnet.minaguard.com/*` | `minaguard-trail` | `10001` | Mesa Trail, on a separate node-stack box |
 | PR previews | `/preview/<PR>/*` | per-PR | `1000N` | Lightnet, per-preview (see `preview-env/`) |
 
-All three share one routing model: a host-level **outer Caddy** exposes its admin API on
-`localhost:2019`, and each deploy script dynamically adds/removes a path-prefixed reverse-proxy
-route (`@id: app-main` / `trail-main`) pointing at that stack's **inner Caddy** on its per-project
-host port. The outer route also sets `Cross-Origin-Opener-Policy: same-origin` +
+The localnet and preview stacks use dynamic, path-prefixed routes on their box. The Trail box uses
+a static outer Caddy site for `testnet.minaguard.com` and forwards the whole host to its **inner
+Caddy** on port `10001`; legacy `/trail/*` hostnames strip that prefix before proxying. The outer
+route sets `Cross-Origin-Opener-Policy: same-origin` +
 `Cross-Origin-Embedder-Policy: credentialless` — the cross-origin isolation o1js needs for
 `SharedArrayBuffer` proof generation in the browser — and strips duplicates coming up from the
 inner Caddy.
@@ -44,7 +44,7 @@ inner Caddy.
 | `deploy-trail.sh` | `up`/`down` for the Mesa Trail deploy: env checks, VK-hash sourcing, compose + outer-Caddy route for `/trail/*` |
 | `docker-compose.trail.yml` | Trail app stack, **on-box build** (interim): postgres, backend (archive discovery), frontend, explorer, inner Caddy — node stack is remote |
 | `docker-compose.trail.pull.yml` | Trail app stack, **pull-based**: same services, but app images are pulled from GHCR by attestation-verified digest instead of built on-box (see *Pull-based deploy*) |
-| `Caddyfile.trail` | Inner-Caddy routes for the trail stack (`/trail/*`), including cross-host proxies to the node-stack box |
+| `Caddyfile.trail` | Root-based inner-Caddy routes for `testnet.minaguard.com`, including cross-host proxies to the node-stack box |
 | `trail-pull-deploy.sh` | Box-side pull agent (phase 2): pulls the latest signed `/trail` images, verifies each build-provenance attestation with `gh attestation verify`, rolling-`up -d`s on digest change |
 | `systemd/trail-pull-deploy.{service,timer}` | User-level systemd oneshot + 2-minute timer that drives `trail-pull-deploy.sh` |
 | `.env.example` | Template for `deploy/.env` (gitignored), sourced by `deploy-trail.sh` |
@@ -63,7 +63,7 @@ Both scripts expect to be run from the repo root.
 - URLs after deploy: `https://mina-nodes.duckdns.org/app/` (app), `/app/health`, `/app/graphql`, `/app/accounts/acquire-account`, `/app/explorer`.
 - Auto-deployed on every push to `main` by `.github/workflows/deploy-lightnet.yml` (self-hosted runner on the box); `.github/workflows/reset.yml` runs the same `down` + `up` on a 3-day schedule so the stack self-heals from bloat/drift during quiet periods.
 
-### Mesa Trail deployment (`/trail/*`, mesa-mut)
+### Mesa Trail deployment (`testnet.minaguard.com`, Mesa Trail)
 
 ```bash
 ./deploy/deploy-trail.sh up
@@ -99,8 +99,8 @@ MINA_NETWORK_DOMAIN=mainnet bun run dev-helpers/cli.ts vk-hash compile
 
 then update the two lines in `contracts/.vk-hash`.
 
-- URLs after deploy: `https://mina-trail.duckdns.org/trail/` (app), `/trail/health`, `/trail/graphql`, `/trail/archive`, `/trail/explorer`. The frontend bundle bakes these `mina-trail.duckdns.org/trail` URLs (both the on-box `docker-compose.trail.yml` build args and the pull-based `trail-release.yml` build) — **not** `mina-nodes` (which serves `/app/*`).
-- **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). What fires on every push to `main` is instead `.github/workflows/trail-release.yml`, which **builds, pushes, and attests** the `/trail` GHCR images and deploys nothing — the box pulls and verifies them itself (see *Pull-based deploy* below).
+- URLs after deploy: `https://testnet.minaguard.com/` (app), `/health`, `/graphql`, `/archive`, `/explorer`. The frontend bundle bakes these root-based URLs in both the on-box `docker-compose.trail.yml` build args and the pull-based `trail-release.yml` build.
+- **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). What fires on every push to `main` is instead `.github/workflows/trail-release.yml`, which **builds, pushes, and attests** the Trail GHCR images and deploys nothing — the box pulls and verifies them itself (see *Pull-based deploy* below).
 
 **Why `down` wipes the DB (`down -v`).** During active contract development the VK hash changes
 with every circuit-touching merge, and discovery filters by VK hash — so previously-indexed
@@ -111,18 +111,18 @@ specific to the interim `deploy-trail.sh` path**; the pull-based deploy reverses
 production the VK is stable, so it does a rolling `up -d` with **no** volume wipe, wiping only when
 a release deliberately changes the VK (see below).
 
-### Pull-based deploy (`/trail`, GHCR pull + attestation verify)
+### Pull-based deploy (Trail, GHCR pull + attestation verify)
 
 Replacing the push-to-box `deploy` runner, the trail app is moving to a **pull** model in two
 phases. Nothing pushes to the box; the box pulls — so no party with repo write access can execute
 on it via a pushed-branch workflow.
 
 - **Phase 1 — build & attest (CI, `.github/workflows/trail-release.yml`).** On every push to
-  `main`, this workflow builds the three `/trail` images (backend, frontend, explorer), pushes them
+  `main`, this workflow builds the three Trail images (backend, frontend, explorer), pushes them
   to GHCR by digest, and attaches a GitHub **build-provenance attestation** to each digest
   (`actions/attest-build-provenance` — keyless, Sigstore-backed: GitHub OIDC → Fulcio → Rekor). It
   touches the box for nothing. The frontend's `NEXT_PUBLIC_*` are baked here for
-  **`mina-trail.duckdns.org/trail`** (kept in sync with `docker-compose.trail.yml`'s build args
+  **`testnet.minaguard.com`** (kept in sync with `docker-compose.trail.yml`'s build args
   until the on-box build is retired).
 - **Phase 2 — pull, verify & deploy (box, `deploy/trail-pull-deploy.sh`).** A **user-level systemd
   timer** (`deploy/systemd/trail-pull-deploy.{service,timer}`) fires every 2 minutes and runs the
@@ -174,9 +174,9 @@ proving, not security — but it's an availability footgun worth knowing.
 
 ### Caddyfile notes
 
-The inner Caddyfiles (`Caddyfile` for `/app/*`, `Caddyfile.trail` for `/trail/*`) are near-mirrors:
+The inner Caddyfiles (`Caddyfile` for `/app/*`, root-based `Caddyfile.trail` for the testnet host) are near-mirrors:
 
-- **`/app/archive` and `/trail/archive` rewrite the upstream path to `/`** — archive-node-api serves GraphQL only at its root, so merely stripping the prefix would forward `/archive` and 404.
+- **`/app/archive` and `/archive` rewrite the upstream path to `/`** — archive-node-api serves GraphQL only at its root, so forwarding `/archive` would 404.
 - GraphQL/archive routes answer `OPTIONS` preflights themselves and set permissive CORS headers, deleting any duplicates from upstream.
 - The main stack's `/app/accounts/*` routes match only the two lightnet account-manager endpoints (`acquire-account`, `release-account`) so the frontend's own `/accounts/*` pages fall through to the Next.js catch-all.
 - The trail inner Caddy also sets COOP/COEP headers itself (redundant behind the outer Caddy, necessary when hitting the inner Caddy directly).
@@ -194,7 +194,7 @@ deploy/
 ├── deploy-trail.sh                 # trail up/down (interim): env checks, VK-hash sourcing, /trail/* route
 ├── docker-compose.trail.yml        # trail app stack, on-box build (remote node stack via $MESA_NODE_HOST)
 ├── docker-compose.trail.pull.yml   # trail app stack, pull-based (GHCR images by verified digest)
-├── Caddyfile.trail                 # inner-Caddy routes for /trail/* + cross-host node proxies
+├── Caddyfile.trail                 # root-based testnet routes + cross-host node proxies
 ├── trail-pull-deploy.sh            # box-side pull agent: pull + attestation-verify + rolling up -d
 ├── systemd/
 │   ├── trail-pull-deploy.service   # user-level oneshot that runs trail-pull-deploy.sh
