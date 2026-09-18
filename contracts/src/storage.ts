@@ -89,6 +89,15 @@ export class OwnerStore {
     return this.owners.some((o) => o.toBase58() === owner.toBase58());
   }
 
+  /**
+   * True if an owner shares `owner`'s x-coordinate. A key and its negation
+   * (same x, flipped parity) are held by the same secret; the circuit rejects
+   * adding one while the other is an owner. Use for ADD_OWNER pre-validation.
+   */
+  hasOwnerWithSameX(owner: PublicKey): boolean {
+    return this.owners.some((o) => o.x.equals(owner.x).toBoolean());
+  }
+
   getCommitment(): Field {
     return computeOwnerChain(this.owners);
   }

@@ -70,6 +70,23 @@ export function sortedInsertAfter(owners: PublicKey[], newOwner: PublicKey): Pub
 // -- Setup Helpers -----------------------------------------------------------
 
 /** Pads the owner list to the fixed setup input length required by the contract. */
+/** The negation of `pk`: same x, flipped parity, same secret (q - s). */
+export function negatePublicKey(pk: PublicKey): PublicKey {
+  return PublicKey.fromGroup(pk.toGroup().neg());
+}
+
+/** A PublicKey whose x is not on the curve (x^3 + 5 is a non-residue). */
+export function nonCurvePublicKey(): PublicKey {
+  for (let k = 2n; k < 1000n; k++) {
+    try {
+      Field(k * k * k + 5n).sqrt();
+    } catch {
+      return PublicKey.from({ x: Field(k), isOdd: Bool(false) });
+    }
+  }
+  throw new Error('nonCurvePublicKey: no non-residue found');
+}
+
 export function toFixedSetupOwners(owners: PublicKey[]): PublicKey[] {
   const padded = [...owners];
   while (padded.length < MAX_OWNERS) {

@@ -1,4 +1,4 @@
-import { Field, Mina, AccountUpdate, Permissions, UInt64 } from 'o1js';
+import { Field, Mina, AccountUpdate, Permissions, UInt64, PublicKey } from 'o1js';
 import { EMPTY_MERKLE_MAP_ROOT } from '../constants.js';
 import {
   GUARD_DEPLOY_PERMISSIONS,
@@ -11,6 +11,8 @@ import {
   getOwnersCommitment,
   toFixedSetupOwners,
   type TestContext,
+  negatePublicKey,
+  nonCurvePublicKey,
 } from './test-helpers.js';
 import { computeOwnerChain } from '../list-commitment.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -191,6 +193,56 @@ describe('MinaGuard - Setup', () => {
       await txn.prove();
       await txn.sign([deployerKey]).send();
     }).toThrow('Owners must be >= threshold');
+  });
+
+  describe('owner identity checks', () => {
+    async function deployOnly() {
+      const { zkApp, zkAppKey, deployerKey, deployerAccount } = ctx;
+      const deployTxn = await Mina.transaction(deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(deployerAccount);
+        await zkApp.deploy();
+      });
+      await deployTxn.prove();
+      await deployTxn.sign([deployerKey, zkAppKey]).send();
+    }
+
+    async function trySetup(owners: PublicKey[], threshold: number) {
+      const { zkApp, zkAppKey, deployerKey, deployerAccount } = ctx;
+      const txn = await Mina.transaction(deployerAccount, async () => {
+        await zkApp.setup(
+          Field(threshold),
+          Field(owners.length),
+          new SetupOwnersInput({ owners: toFixedSetupOwners(owners) })
+        );
+      });
+      await txn.prove();
+      await txn.sign([deployerKey, zkAppKey]).send();
+    }
+
+    it('should reject an owner list containing a key and its negation', async () => {
+      await deployOnly();
+      const [a, b] = ctx.owners.map((o) => o.pub);
+      // [a, -a, b] with threshold 2 is really 1-of-2 for a's holder
+      await expect(trySetup([a, negatePublicKey(a), b], 2)).rejects.toThrow(
+        'Duplicate owner in setup list'
+      );
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(Field(0));
+    });
+
+    it('should reject an empty key in an active owner slot', async () => {
+      await deployOnly();
+      const [a, b] = ctx.owners.map((o) => o.pub);
+      await expect(trySetup([PublicKey.empty(), a, b], 2)).rejects.toThrow(
+        'Active owner must be non-empty'
+      );
+    });
+
+    it('should reject an owner that is not a curve point', async () => {
+      await deployOnly();
+      const [a, b] = ctx.owners.map((o) => o.pub);
+      await expect(trySetup([a, b, nonCurvePublicKey()], 2)).rejects.toThrow(/Constraint unsatisfied|no square root/);
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(Field(0));
+    });
   });
 
   // TODO: fix

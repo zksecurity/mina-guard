@@ -9,8 +9,10 @@ import {
   assertOwnerMembership,
   addOwnerToCommitment,
   removeOwnerFromCommitment,
+  assertOnCurveIf,
 } from '../list-commitment.js';
 import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from '../constants.js';
+import { negatePublicKey, nonCurvePublicKey } from './test-helpers.js';
 
 /** Build an OwnerWitness from a plain PublicKey[]. */
 function makeWitness(owners: PublicKey[]): OwnerWitness {
@@ -181,6 +183,31 @@ describe('addOwnerToCommitment', () => {
 
     await Provable.runAndCheck(() => {
       const [, valid] = addOwnerToCommitment(commitment, keyA, witness, PublicKeyOption.none());
+      valid.assertFalse();
+    });
+  });
+
+  it('returns invalid if adding the negation of an existing owner', async () => {
+    // -A shares A's x-coordinate and secret: one keyholder, two slots
+    const owners = [keyA, keyB];
+    const commitment = computeOwnerChain(owners);
+    const witness = makeWitness(owners);
+    const negA = negatePublicKey(keyA);
+    expect(negA.toBase58()).not.toBe(keyA.toBase58());
+
+    await Provable.runAndCheck(() => {
+      const [, valid] = addOwnerToCommitment(commitment, negA, witness, after(keyB));
+      valid.assertFalse();
+    });
+  });
+
+  it('returns invalid if adding the negation of an existing owner with prepend', async () => {
+    const owners = [keyA, keyB];
+    const commitment = computeOwnerChain(owners);
+    const witness = makeWitness(owners);
+
+    await Provable.runAndCheck(() => {
+      const [, valid] = addOwnerToCommitment(commitment, negatePublicKey(keyB), witness, PublicKeyOption.none());
       valid.assertFalse();
     });
   });
@@ -414,5 +441,71 @@ describe('assertCoherentSetupOwners', () => {
         assertCoherentSetupOwners(padToMax([keyA, keyB, keyC]), Field(2));
       })
     ).rejects.toThrow();
+  });
+});
+
+describe('assertCoherentSetupOwners - owner identity', () => {
+  it('fails on an owner and its negation (same x-coordinate)', async () => {
+    await expect(
+      Provable.runAndCheck(() => {
+        assertCoherentSetupOwners(padToMax([keyA, negatePublicKey(keyA), keyB]), Field(3));
+      })
+    ).rejects.toThrow('Duplicate owner in setup list');
+  });
+
+  it('fails on an empty active owner slot', async () => {
+    // [empty, A] with numOwners = 2 has one signer
+    await expect(
+      Provable.runAndCheck(() => {
+        assertCoherentSetupOwners(padToMax([PublicKey.empty(), keyA]), Field(2));
+      })
+    ).rejects.toThrow('Active owner must be non-empty');
+  });
+
+  it('fails on an active owner that is not a curve point', async () => {
+    await expect(
+      Provable.runAndCheck(() => {
+        assertCoherentSetupOwners(padToMax([keyA, nonCurvePublicKey()]), Field(2));
+      })
+    ).rejects.toThrow(/Constraint unsatisfied|no square root/);
+  });
+
+  it('accepts the negation of a key as long as the original is not an owner', async () => {
+    await Provable.runAndCheck(() => {
+      assertCoherentSetupOwners(padToMax([negatePublicKey(keyA), keyB]), Field(2));
+    });
+  });
+});
+
+describe('assertOnCurveIf', () => {
+  it('passes for random keys and their negations', async () => {
+    await Provable.runAndCheck(() => {
+      assertOnCurveIf(Bool(true), keyA);
+      assertOnCurveIf(Bool(true), negatePublicKey(keyA));
+      assertOnCurveIf(Bool(true), keyD);
+    });
+  });
+
+  it('fails for PublicKey.empty() (x = 0 is not on the curve)', async () => {
+    await expect(
+      Provable.runAndCheck(() => {
+        assertOnCurveIf(Bool(true), PublicKey.empty());
+      })
+    ).rejects.toThrow(/Constraint unsatisfied|no square root/);
+  });
+
+  it('fails for an x-coordinate with no square root of x^3 + 5', async () => {
+    await expect(
+      Provable.runAndCheck(() => {
+        assertOnCurveIf(Bool(true), nonCurvePublicKey());
+      })
+    ).rejects.toThrow(/Constraint unsatisfied|no square root/);
+  });
+
+  it('skips the check when the flag is false', async () => {
+    await Provable.runAndCheck(() => {
+      assertOnCurveIf(Bool(false), PublicKey.empty());
+      assertOnCurveIf(Bool(false), nonCurvePublicKey());
+    });
   });
 });

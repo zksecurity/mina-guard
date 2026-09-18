@@ -1,4 +1,4 @@
-import { Option, Poseidon, Field, Provable, PublicKey, Bool, Struct } from "o1js";
+import { Option, Poseidon, Field, Provable, PublicKey, Bool, Struct, Group } from "o1js";
 import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from "./constants.js";
 
 class PublicKeyOption extends Option(PublicKey) { }
@@ -39,13 +39,31 @@ function computeSetupOwnersChain(owners: PublicKey[], numOwners: Field): Field {
   return currentChain;
 }
 
+// -- Public key validity ------------------------------------------------------
+
+/**
+ * Stand-in for unchecked slots. Must itself be a curve point; PublicKey.empty()
+ * (x = 0) is not, since 5 is a non-residue.
+ */
+const ON_CURVE_KEY = PublicKey.fromGroup(Group.generator);
+
+/**
+ * Asserts `pk` is a curve point when `check` is true. o1js only constrains
+ * `isOdd` to a boolean; `toGroup()` adds the curve equation through its
+ * in-circuit sqrt. A key that is no point can never sign.
+ */
+function assertOnCurveIf(check: Bool, pk: PublicKey): void {
+  Provable.if(check, PublicKey, pk, ON_CURVE_KEY).toGroup();
+}
+
 /**
  * Asserts the setup owner array is coherent w.r.t. `numOwners`:
- *  1. Every inactive slot (index >= numOwners) is PublicKey.empty() — padding
- *     must be empty (the dedup gate below intentionally ignores padding).
- *  2. No two active owners are equal — rejects a committed duplicate set
- *     (e.g. [A, A]), which the `commitment == ownersCommitment` bind cannot
- *     catch on its own.
+ *  1. Every inactive slot (index >= numOwners) is PublicKey.empty().
+ *  2. Every active slot is non-empty and a curve point: a slot that cannot
+ *     sign silently lowers the effective signer count below `numOwners`.
+ *  3. No two active slots share an x-coordinate. A key and its negation
+ *     (same x, flipped parity) are held by the same secret, so `[A, -A]` is
+ *     one keyholder in two slots and is rejected like `[A, A]`.
  *
  * Ordering is NOT checked here: the canonical order is base58, which is
  * infeasible in-circuit, and ordering is already pinned by the separate
@@ -57,13 +75,18 @@ function assertCoherentSetupOwners(owners: PublicKey[], numOwners: Field): void 
   const active = owners.map((_, i) => Field(i).lessThan(numOwners));
 
   for (let i = 0; i < owners.length; i++) {
+    const isEmpty = owners[i].equals(empty);
 
     // check if padding positions are indeed empty
-    active[i].or(owners[i].equals(empty)).assertTrue('Padding slot must be empty');
+    active[i].or(isEmpty).assertTrue('Padding slot must be empty');
 
-    // pairwise dedup: slot i against all later active slots (O(N^2) overall)
+    // active slots must hold a signable key
+    active[i].and(isEmpty).assertFalse('Active owner must be non-empty');
+    assertOnCurveIf(active[i], owners[i]);
+
+    // pairwise dedup on x: slot i against all later active slots (O(N^2))
     for (let j = i + 1; j < owners.length; j++) {
-      owners[i].equals(owners[j]).and(active[i]).and(active[j])
+      owners[i].x.equals(owners[j].x).and(active[i]).and(active[j])
         .assertFalse('Duplicate owner in setup list');
     }
   }
@@ -101,9 +124,11 @@ function assertOwnerMembership(
  * start of the chain). When it is `some`, the new owner is inserted after
  * the specified key (which must exist in the list).
  *
- * IMPORTANT: Caller needs to check `valid` return value.
- * Caller needs to check size, insertion after last element will
- * break the commitment in the state irreversibly.
+ * Owner identity is the x-coordinate (a key and its negation share one
+ * secret), so the negation of an existing owner is reported as present.
+ *
+ * IMPORTANT: Caller must check `valid` and enforce the size bound.
+ * Insert-after-last appends correctly (matches computeOwnerChain).
  *
  * @param ownerCommitment
  * @param ownerToAdd
@@ -145,7 +170,8 @@ function addOwnerToCommitment(
     foundPosition = Provable.if(isPosition, Bool(true), foundPosition);
     newChain = Provable.if(isPosition, toAdd, newChain);
 
-    foundOwner = Provable.if(pk.equals(ownerToAdd).and(isSome), Bool(true), foundOwner);
+    // x-only: the negation of an existing owner counts as present
+    foundOwner = Provable.if(pk.x.equals(ownerToAdd.x).and(isSome), Bool(true), foundOwner);
   });
 
 
@@ -200,5 +226,6 @@ function removeOwnerFromCommitment(
 
 export {
   OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, computeSetupOwnersChain,
-  assertCoherentSetupOwners, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment
+  assertCoherentSetupOwners, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment,
+  assertOnCurveIf,
 };

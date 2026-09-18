@@ -876,6 +876,18 @@ const workerApi = {
     progressFn('Rebuilding stores...');
     const { ownerStore, approvalStore, nullifierStore } = await rebuildStoresFromBackend(params.contractAddress);
 
+    if (params.input.txType === 'addOwner' && params.input.newOwner) {
+      // Owners are identified by x-coordinate (a key and its negation share
+      // one secret); executeOwnerChange rejects adding one while the other is
+      // an owner. Refuse before anyone signs.
+      const candidate = PublicKey.fromBase58(params.input.newOwner);
+      if (ownerStore.hasOwnerWithSameX(candidate)) {
+        throw new Error(
+          'This address is the negation of an existing owner (same key holder) and cannot be added.'
+        );
+      }
+    }
+
     const receivers = buildReceiversForProposal(params.input);
     const txType = uiTxTypeToField(params.input.txType);
     const data = buildProposalDataField(params.input, ownerStore);
