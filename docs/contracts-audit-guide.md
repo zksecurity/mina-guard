@@ -102,7 +102,8 @@ Two more circuit functions serve the setup path (`setup`, `reserveForParent`,
 (`SetupOwnersInput.owners`, `PublicKey.empty()` padding) rather than an `OwnerWitness`:
 
 - **`computeSetupOwnersChain(owners, numOwners)`** — Folds the first `numOwners` slots into the chain hash, skipping padding. This is how the commitment is derived **on-chain** from the supplied owner list instead of being trusted as a caller argument. Canonical (base58) ordering is not enforced in-circuit — it is pinned implicitly wherever the result is bound to an approved commitment, since any reordering changes the hash.
-- **`assertCoherentSetupOwners(owners, numOwners)`** — Companion coherence check: every inactive slot (index ≥ `numOwners`) must be `PublicKey.empty()`, and no two active slots may hold the same key (O(N²) pairwise check). Rejects a committed duplicate set like `[A, A]`, which a commitment-equality bind alone cannot catch.
+- **`assertCoherentSetupOwners(owners, numOwners)`** — Companion coherence check: every inactive slot (index ≥ `numOwners`) must be `PublicKey.empty()`; every active slot must be non-empty and a curve point (`assertOnCurveIf`); and no two active slots may share an **x-coordinate** (O(N²) pairwise check). Owner identity is the x-coordinate rather than the `(x, isOdd)` pair because a key and its negation are controlled by the same secret, so `[A, -A]` is rejected exactly like `[A, A]` — a commitment-equality bind alone cannot catch either.
+- **`assertOnCurveIf(check, pk)`** — Calls o1js `PublicKey.toGroup()` on `pk` (or on a known-good key when `check` is false); its in-circuit square root constrains `x` to the curve equation. o1js does not constrain `x` to the curve on its own, so a raw field element that no private key can ever sign for would otherwise be accepted as an owner, parent or receiver. `PublicKey.empty()` is *not* on the curve, which is why unchecked slots substitute the generator rather than the empty key. Used for setup owners and every non-empty receiver slot in `propose`; `reserveForParent` calls `toGroup()` on the parent directly.
 
 ### Off-chain storage
 
@@ -213,6 +214,7 @@ Propose-time rules enforced in `propose()`:
 - Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, `ENABLE_CHILD_MULTI_SIG`, or `ADD_OWNER`. For `ADD_OWNER`, `data` must be non-zero (the expected post-add owners commitment).
 - `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
+- Every non-empty receiver slot must be a curve point (`assertOnCurveIf`), so no proposal can be signed that pays, adds as owner, or delegates to an address no private key exists for.
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
 - `nonce` must be fresh for the relevant execution domain:
   - LOCAL propose/approve requires `proposal.nonce > this.nonce`
@@ -252,7 +254,7 @@ initialization.
 
 - Guard: `ownersCommitment == Field(0)` (not yet initialized)
 - Installs the complete `GUARD_PERMISSIONS` vector under proof authorization and permanently seals `setPermissions`
-- Computes `ownersCommitment` **on-chain** from `initialOwners` via `computeSetupOwnersChain`, after `assertCoherentSetupOwners` rejects non-empty padding slots and duplicate active owners
+- Computes `ownersCommitment` **on-chain** from `initialOwners` via `computeSetupOwnersChain`, after `assertCoherentSetupOwners` rejects non-empty padding slots, empty or non-curve active slots, and active slots sharing an x-coordinate (a key and its negation)
 - Validates: `threshold > 0`, `numOwners >= threshold`, `numOwners <= MAX_OWNERS`
 - Initializes the guard state: `nonce = 0`, `parentNonce = 0`, `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` set to `EMPTY_MERKLE_MAP_ROOT`; `parent = PublicKey.empty()`; `childMultiSigEnabled = Field(1)` (`reservedConfigHash` is untouched — `Field(0)` on a root guard)
 - Emits `SetupEvent` + one `SetupOwnerEvent` per `MAX_OWNERS` slot
@@ -579,7 +581,9 @@ movement outside a proof. Also confirm that the deployed VK matches the pinned
 | Stale proposals rejected | `configNonce` in proposal must match on-chain value |
 | Time-bounded proposals | Optional `expirySlot` checked against `globalSlotSinceGenesis` |
 | No proposal substitution | Approvals keyed by content hash, not sequential ID |
-| Setup owner list coherent with commitment | `ownersCommitment` computed in-circuit from `initialOwners` (`computeSetupOwnersChain`); non-empty padding and duplicate active owners rejected (`assertCoherentSetupOwners`) |
+| Setup owner list coherent with commitment | `ownersCommitment` computed in-circuit from `initialOwners` (`computeSetupOwnersChain`); non-empty padding, empty/non-curve active slots and duplicate x-coordinates rejected (`assertCoherentSetupOwners`) |
+| One secret, one owner slot | Owner identity is the x-coordinate: `assertCoherentSetupOwners` and `addOwnerToCommitment` compare `x` only, so the negation of an owner (same secret, flipped parity, distinct base58) cannot be committed alongside it |
+| Every committed key is a real key | `toGroup()` (via `assertOnCurveIf`) proves setup owners, the reserved parent and every non-empty receiver are curve points; a key no private key exists for can never be an owner, parent or transfer target |
 | Executed child config matches the displayed config | `reserveForParent` stores `reservedConfigHash` (write-once); `executeSetupChild` asserts the recomputed config hash equals both `proposal.data` and `reservedConfigHash` |
 | Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet) baked into every proposal hash produces distinct VKs per network (pinned by the `check-vk-hash` CI job) |
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |

@@ -36,6 +36,7 @@ import {
   toFixedSetupOwners,
   getBalance,
   type TestContext,
+  nonCurvePublicKey,
 } from './test-helpers.js';
 import { computeOwnerChain } from '../list-commitment.js';
 import {
@@ -478,6 +479,28 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(
         proposeTransaction(childCtx, proposal, 0),
       ).rejects.toThrow('Remote destination proposals must be proposed on a root guard');
+    });
+
+    it('rejects reserveForParent with a parent address that is not a curve point', async () => {
+      // no guard can ever live at such an address
+      const proposer = parentCtx.owners[0];
+      const setupOwners = toFixedSetupOwners(parentCtx.owners.map((o) => o.pub));
+
+      await expect(async () => {
+        const txn = await Mina.transaction(proposer.pub, async () => {
+          AccountUpdate.fundNewAccount(proposer.pub);
+          await childZkApp.deploy();
+          await childZkApp.reserveForParent(
+            nonCurvePublicKey(),
+            Field(0),
+            Field(2),
+            Field(3),
+            new SetupOwnersInput({ owners: setupOwners }),
+          );
+        });
+        await txn.prove();
+        await txn.sign([proposer.key, childKey]).send();
+      }).toThrow(/Constraint unsatisfied|no square root/);
     });
 
     it('rejects reserveForParent on an already-initialized root vault', async () => {

@@ -12,6 +12,7 @@ import {
   makeOwnerWitness,
   sortedInsertAfter,
   type TestContext,
+  negatePublicKey,
 } from './test-helpers.js';
 import { PublicKeyOption, computeOwnerChain } from '../list-commitment.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
@@ -85,6 +86,41 @@ describe('MinaGuard - Governance', () => {
         await txn.prove();
         await txn.sign([ctx.deployerKey]).send();
       }).toThrow('Owner change not valid');
+    });
+
+    it('should reject adding the negation of an existing owner', async () => {
+      // -B has B's x-coordinate and is derivable from B's secret. It is a
+      // valid address, so propose/approve accept it; execute must not.
+      const existingOwner = ctx.owners[1].pub;
+      const negated = negatePublicKey(existingOwner);
+      expect(negated.toBase58()).not.toBe(existingOwner.toBase58());
+      const ownerPubs = ctx.owners.map((o) => o.pub);
+
+      const proposal = createAddOwnerProposal(negated, ownerPubs, Field(1), Field(0), ctx.zkAppAddress);
+      const proposalHash = await proposeTransaction(ctx, proposal, 0);
+      await approveTransaction(ctx, proposal, 1);
+
+      const ownerWitness = makeOwnerWitness(ownerPubs);
+      const insertAfter = sortedInsertAfter(ownerPubs, negated);
+      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
+      const commitmentBefore = ctx.zkApp.ownersCommitment.get();
+
+      await expect(async () => {
+        const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+          await ctx.zkApp.executeOwnerChange(
+            proposal,
+            approvalWitness,
+            Field(3),
+            ownerWitness,
+            insertAfter
+          );
+        });
+        await txn.prove();
+        await txn.sign([ctx.deployerKey]).send();
+      }).toThrow('Owner change not valid');
+
+      expect(ctx.zkApp.ownersCommitment.get()).toEqual(commitmentBefore);
+      expect(ctx.zkApp.numOwners.get()).toEqual(Field(3));
     });
 
     it('should reject unproposed owner change with approvalCount = 0', async () => {
