@@ -543,6 +543,7 @@ function SubaccountsCard({ parentAddress }: { parentAddress: string }) {
             isOwner={isOwnerOf(child.address)}
             isChild
             showBalance={false}
+            parentAddress={parentAddress}
           />
         ))}
       </div>

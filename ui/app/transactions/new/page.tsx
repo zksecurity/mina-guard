@@ -39,11 +39,23 @@ function NewTransactionPageInner() {
   const {
     wallet,
     multisig,
+    contracts,
+    selectContract,
     owners,
     proposals,
     isOperating,
     startOperation,
   } = useAppContext();
+
+  // Sync ?account= → selection, as the account page does for its URL param, so
+  // deep links (e.g. the reclaim cue on a SubVault card) open on the right vault.
+  const accountParam = searchParams.get('account');
+  useEffect(() => {
+    if (!accountParam) return;
+    if (multisig?.address === accountParam) return;
+    const exists = contracts.some((c) => c.address === accountParam);
+    if (exists) void selectContract(accountParam);
+  }, [accountParam, contracts, multisig?.address, selectContract]);
 
   const isRoot = !!multisig && !multisig.parent;
   const contractLock = useContractTxLock(multisig?.address ?? null, proposals);
@@ -72,6 +84,9 @@ function NewTransactionPageInner() {
     [deleteMode, deleteTargetHash, proposals],
   );
   const rawType = searchParams.get('type');
+  // Deep link from a SubVault card: preselect the child and prefill the reclaim amount.
+  const initialTargetChild = searchParams.get('child');
+  const prefillReclaimMax = searchParams.get('amount') === 'max';
   // CREATE_CHILD is wizard-only — bounce back to /accounts/new.
   useEffect(() => {
     if (!deleteMode && rawType === 'createChild' && multisig) {
@@ -345,6 +360,8 @@ function NewTransactionPageInner() {
                   submitDisabledReason={contractLock.locked ? contractLock.reason : null}
                   txType={txType}
                   children={children}
+                  initialTargetChild={initialTargetChild}
+                  prefillReclaimMax={prefillReclaimMax}
                   initialNonce={initialNonce}
                   currentNonce={currentNonce}
                   proposals={proposals}

@@ -63,7 +63,7 @@ two-field `PublicKey` — which exceeds the legacy 8-slot cap and requires the M
 | 3 | `nonce` | Last executed LOCAL nonce on this guard |
 | 4 | `voteNullifierRoot` | MerkleMap root preventing double-voting |
 | 5 | `approvalRoot` | MerkleMap root of approval counts (`proposalHash → count`) |
-| 6 | `configNonce` | Incremented on governance changes; invalidates stale proposals |
+| 6 | `configNonce` | Incremented on governance changes and on child destroy/disable; invalidates stale proposals |
 | 7-8 | `parent` | Parent guard address (`PublicKey.empty()` for a root guard) |
 | 9 | `parentNonce` | Last executed REMOTE nonce on this child (`0` on root guards) |
 | 10 | `childExecutionRoot` | MerkleMap root marking REMOTE proposals executed on this child |
@@ -438,8 +438,8 @@ alongside their specific event.
 
 - **`executeSetupChild(threshold, numOwners, initialOwners, proposal, parentApprovalWitness, parentApprovalCount)`** — Called on a child that was already deployed and reserved (via `reserveForParent`) at propose time but not yet fully initialized. Computes `ownersCommitment` on-chain from `initialOwners` (with `assertCoherentSetupOwners`), then asserts `this.parent == proposal.guardAddress` (verifying the reservation matches), `txType == CREATE_CHILD`, `destination == REMOTE`, `proposal.childAccount == this.address`, `proposal.nonce == 0`, and that `Poseidon([ownersCommitment, threshold, numOwners])` equals **both** `proposal.data` and the `reservedConfigHash` stored at reserve time. Initializes all state with `nonce = 0` and `parentNonce = 0`, emits `SetupEvent`, `SetupOwnerEvent`s, `ExecutionEvent`, `CreateChildEvent`.
 - **`executeReclaimToParent(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, amount)`** — Sends `amount` MINA back to `this.parent`. Asserts `proposal.data == amount.value`, `proposal.nonce == this.parentNonce + 1`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `ReclaimChildEvent { proposalHash, parentAddress, amount }`. Does **not** check `childMultiSigEnabled` — this is a deliberate recovery path that works even when the child is disabled.
-- **`executeDestroy(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness)`** — Sends the full child balance to the parent, sets `childMultiSigEnabled = 0`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. The child can later be re-enabled by `executeEnableChildMultiSig`; nonce state is preserved across disable/enable cycles. Reuses `ReclaimChildEvent` (same "MINA flowed child → parent" semantics — `ExecutionEvent.txType == DESTROY_CHILD` disambiguates from a partial reclaim).
-- **`executeEnableChildMultiSig(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, enabled)`** — Asserts `proposal.data == enabled`, `enabled ∈ {0, 1}`, and `proposal.nonce == this.parentNonce + 1`. Sets `childMultiSigEnabled`, increments `parentNonce`, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `EnableChildMultiSigEvent { proposalHash, parentAddress, enabled }`.
+- **`executeDestroy(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness)`** — Sends the child balance observed at proving time to the parent under a lower-bound balance precondition, so a deposit that lands before inclusion cannot invalidate the proof; any excess stays in the child and `executeReclaimToParent` can recover it. Sets `childMultiSigEnabled = 0`, increments `parentNonce` and `configNonce` (pending LOCAL proposals die with the recovery), and marks the proposal in `childExecutionRoot`. The child can later be re-enabled by `executeEnableChildMultiSig`; execution-nonce state is preserved across disable/enable cycles. Reuses `ReclaimChildEvent` (same "MINA flowed child → parent" semantics — `ExecutionEvent.txType == DESTROY_CHILD` disambiguates from a partial reclaim).
+- **`executeEnableChildMultiSig(proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitness, enabled)`** — Asserts `proposal.data == enabled`, `enabled ∈ {0, 1}`, and `proposal.nonce == this.parentNonce + 1`. Sets `childMultiSigEnabled`, increments `parentNonce`, increments `configNonce` when disabling (`enabled == 0`) so pending LOCAL proposals cannot survive a disable/enable cycle, and marks the proposal in `childExecutionRoot`. Emits `ExecutionEvent` + `EnableChildMultiSigEvent { proposalHash, parentAddress, enabled, configNonce }`.
 
 ### Events
 
@@ -463,7 +463,7 @@ slimmed: per-execution events carry only what is **not** already derivable from 
 | `CreateChildOwnerEvent` | `proposalHash, owner, index` | `reserveForParent` on child (one per `MAX_OWNERS` slot) |
 | `CreateChildEvent` | `proposalHash, parentAddress` | `executeSetupChild` (config fields duplicated in the sibling `SetupEvent`) |
 | `ReclaimChildEvent` | `proposalHash, parentAddress, amount` | `executeReclaimToParent`, `executeDestroy` |
-| `EnableChildMultiSigEvent` | `proposalHash, parentAddress, enabled` | `executeEnableChildMultiSig`, `executeDestroy` (destroy emits this with `enabled: 0` so a single event carries the state flip for both flows) |
+| `EnableChildMultiSigEvent` | `proposalHash, parentAddress, enabled, configNonce` | `executeEnableChildMultiSig`, `executeDestroy` (destroy emits this with `enabled: 0` so a single event carries the state flip for both flows) |
 
 **Indexer reconstruction.** Every contract state field is reconstructable from events alone — no
 on-chain state reads required. The mechanics of that reconstruction (the append-only tables, the
@@ -473,7 +473,7 @@ parent-walk for REMOTE executions) live in
 - **LOCAL proposal lifecycle:** `ProposalEvent` → `ApprovalEvent`(s) → `ExecutionEvent` (with the corresponding governance sibling event) on the same guard.
 - **REMOTE proposal lifecycle:** `ProposalEvent` on the parent → `ApprovalEvent`(s) on the parent → `ExecutionEvent` on the **child**. `applyExecutionEvent` marks the parent's `Proposal` row executed by trying `(emittingContractId, proposalHash)` first and, on a miss, walking the child's `Contract.parent` field to retry against the parent's contractId.
 - **`Contract.parent`** populated from `SetupEvent.parent` (empty for root, real parent for child).
-- **`Contract.childMultiSigEnabled`** initialized `true` at `SetupEvent`. Flipped on `EnableChildMultiSigEvent` by reading `event.enabled` directly; `executeDestroy` emits the same event with `enabled: 0`, so a single indexer handler covers both flows.
+- **`Contract.childMultiSigEnabled`** initialized `true` at `SetupEvent`. Flipped on `EnableChildMultiSigEvent` by reading `event.enabled` directly, and `event.configNonce` is applied from the same event; `executeDestroy` emits the same event with `enabled: 0`, so a single indexer handler covers both flows.
 
 ### Permissions
 
@@ -578,7 +578,7 @@ movement outside a proof. Also confirm that the deployed VK matches the pinned
 | Proposal existence verified | `PROPOSED_MARKER` in approval map |
 | No LOCAL re-execution | `EXECUTED_MARKER` replaces count after execution |
 | No REMOTE re-execution | `EXECUTED_MARKER` written to child's `childExecutionRoot` |
-| Stale proposals rejected | `configNonce` in proposal must match on-chain value |
+| Stale proposals rejected | `configNonce` in proposal must match on-chain value; bumped by governance changes and by child destroy/disable |
 | Time-bounded proposals | Optional `expirySlot` checked against `globalSlotSinceGenesis` |
 | No proposal substitution | Approvals keyed by content hash, not sequential ID |
 | Setup owner list coherent with commitment | `ownersCommitment` computed in-circuit from `initialOwners` (`computeSetupOwnersChain`); non-empty padding, empty/non-curve active slots and duplicate x-coordinates rejected (`assertCoherentSetupOwners`) |

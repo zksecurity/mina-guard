@@ -357,6 +357,7 @@ function RootGroup({ root, expanded, onToggle, isOwnerOf, matches, filterActive 
               isOwner={isOwnerOf(child.contract.address)}
               isChild
               showBalance={false}
+              parentAddress={root.contract.address}
             />
           ))}
         </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchBalance } from '@/lib/api';
 import { conflictsWithOwner } from '@/lib/pubkey';
 import { MEMO_MAX_BYTES, memoByteLength, isValidMemoLength } from '@/lib/memo';
@@ -31,6 +31,10 @@ interface ProposalFormProps {
   txType: TxType;
   /** Indexed subaccounts of this guard, used as targets for CHILD_TX_TYPES. */
   children?: ContractSummary[];
+  /** Child to preselect for CHILD_TX_TYPES (deep link from a SubVault card). */
+  initialTargetChild?: string | null;
+  /** Prefill the reclaim amount with the child's full balance once known. */
+  prefillReclaimMax?: boolean;
   /** Delete-mode only: target's nonce from URL params. Ignored otherwise;
    *  the form derives the default nonce from the active txType's nonce space. */
   initialNonce: number | null;
@@ -59,6 +63,8 @@ export default function ProposalForm({
   submitDisabledReason = null,
   txType,
   children = [],
+  initialTargetChild = null,
+  prefillReclaimMax = false,
   initialNonce,
   currentNonce,
   proposals,
@@ -100,8 +106,10 @@ export default function ProposalForm({
   }, [deleteMode]);
 
   // Subaccount-action fields.
-  const [targetChild, setTargetChild] = useState<string>('');
+  const [targetChild, setTargetChild] = useState<string>(initialTargetChild ?? '');
   const [reclaimAmount, setReclaimAmount] = useState('');
+  // one-shot: the deep link asks for "max", applied when the balance arrives
+  const prefillMaxRef = useRef(prefillReclaimMax);
   const [destroyConfirm, setDestroyConfirm] = useState(false);
 
   useEffect(() => {
@@ -193,7 +201,12 @@ export default function ProposalForm({
     let cancelled = false;
     setTargetBalance(null);
     fetchBalance(targetChild).then((b) => {
-      if (!cancelled) setTargetBalance(b);
+      if (cancelled) return;
+      setTargetBalance(b);
+      if (prefillMaxRef.current && b && b !== '0') {
+        setReclaimAmount(formatMina(b));
+        prefillMaxRef.current = false;
+      }
     });
     return () => {
       cancelled = true;

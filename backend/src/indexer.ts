@@ -1145,12 +1145,17 @@ export class MinaGuardIndexer {
     const enabled = asNumber(chainEvent.event.enabled);
     if (enabled === null) return;
 
+    // destroy and disable bump configNonce on chain; the event carries the new value
+    const configNonce = asNumber(chainEvent.event.configNonce);
+    const changes: ContractConfigChanges = { childMultiSigEnabled: enabled === 1 };
+    if (configNonce !== null) changes.configNonce = configNonce;
+
     await this.appendContractConfigSnapshot(
       contractId,
       chainEvent.blockHeight,
       eventOrder,
       sourceEventId,
-      { childMultiSigEnabled: enabled === 1 },
+      changes,
     );
   }
 

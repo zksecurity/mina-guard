@@ -1233,6 +1233,187 @@ describe('MinaGuard - Child Lifecycle', () => {
 
   // -- Cross-child hash isolation ---------------------------------------------
 
+  // -- recovery invalidates pending child proposals ---------------------------
+
+  describe('recovery invalidates pending LOCAL proposals', () => {
+    const DUST = UInt64.from(1_000);
+
+    function childCtx(): TestContext {
+      return {
+        ...parentCtx,
+        zkApp: childZkApp,
+        zkAppKey: childKey,
+        zkAppAddress: childAddress,
+        approvalStore: new ApprovalStore(),
+        nullifierStore: new VoteNullifierStore(),
+      };
+    }
+
+    /** Propose + approve (2-of-3) a LOCAL transfer on the child at configNonce 0. */
+    async function approveChildTransfer(ctx: TestContext) {
+      const transfer = createTransferProposal(
+        [new Receiver({ address: parentCtx.owners[2].pub, amount: UInt64.from(1_000_000_000) })],
+        Field(1), Field(0), childAddress,
+      );
+      await proposeTransaction(ctx, transfer, 0);
+      await approveTransaction(ctx, transfer, 1);
+      return transfer;
+    }
+
+    async function executeChildTransfer(ctx: TestContext, transfer: TransactionProposal) {
+      const hash = transfer.hash();
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await childZkApp.executeTransfer(
+          transfer,
+          ctx.approvalStore.getWitness(hash),
+          ctx.approvalStore.getCount(hash),
+        );
+      });
+      await txn.prove();
+      await txn.sign([parentCtx.deployerKey]).send();
+    }
+
+    async function destroyChild(parentNonce: Field) {
+      const proposal = createDestroyChildProposal(
+        parentNonce, Field(0), parentCtx.zkAppAddress, Field(0), childAddress,
+      );
+      const { parentApprovalWitness, parentApprovalCount, proposalHash } =
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await childZkApp.executeDestroy(
+          proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitnessFor(proposalHash),
+        );
+      });
+      await txn.prove();
+      await txn.sign([parentCtx.deployerKey]).send();
+      markChildExecutedOffChain(proposalHash);
+    }
+
+    async function setEnabled(enabled: Field, parentNonce: Field) {
+      const proposal = createEnableChildMultiSigProposal(
+        enabled, parentNonce, Field(0), parentCtx.zkAppAddress, Field(0), childAddress,
+      );
+      const { parentApprovalWitness, parentApprovalCount, proposalHash } =
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await childZkApp.executeEnableChildMultiSig(
+          proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitnessFor(proposalHash), enabled,
+        );
+      });
+      await txn.prove();
+      await txn.sign([parentCtx.deployerKey]).send();
+      markChildExecutedOffChain(proposalHash);
+    }
+
+    async function fundChild(amount: UInt64) {
+      const funder = parentCtx.owners[2];
+      const txn = await Mina.transaction(funder.pub, async () => {
+        AccountUpdate.createSigned(funder.pub).send({ to: childAddress, amount });
+      });
+      await txn.prove();
+      await txn.sign([funder.key]).send();
+    }
+
+    async function emittedConfigNonces(): Promise<string[]> {
+      const events = await childZkApp.fetchEvents();
+      return events
+        .filter((e) => e.type === 'enableChildMultiSig')
+        .map((e) => (e.event.data as unknown as { configNonce: Field }).configNonce.toString());
+    }
+
+    it('an approved LOCAL transfer cannot execute after destroy, re-fund and re-enable', async () => {
+      await setupChildWithParentOwners();
+      const ctx = childCtx();
+      const transfer = await approveChildTransfer(ctx);
+
+      await destroyChild(Field(1));
+      expect(childZkApp.configNonce.get()).toEqual(Field(1));
+
+      await fundChild(UInt64.from(5_000_000_000));
+      await setEnabled(Field(1), Field(2));
+      // re-enable leaves the nonce alone: nothing can accumulate while disabled
+      expect(childZkApp.configNonce.get()).toEqual(Field(1));
+      expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(1));
+
+      await expect(executeChildTransfer(ctx, transfer)).rejects.toThrow(
+        'Config nonce mismatch',
+      );
+      expect(await emittedConfigNonces()).toEqual(['1', '1']);
+    });
+
+    it('an approved LOCAL transfer cannot execute after disable and re-enable', async () => {
+      await setupChildWithParentOwners();
+      const ctx = childCtx();
+      const transfer = await approveChildTransfer(ctx);
+
+      await setEnabled(Field(0), Field(1));
+      expect(childZkApp.configNonce.get()).toEqual(Field(1));
+      await setEnabled(Field(1), Field(2));
+      expect(childZkApp.configNonce.get()).toEqual(Field(1));
+
+      await expect(executeChildTransfer(ctx, transfer)).rejects.toThrow(
+        'Config nonce mismatch',
+      );
+    });
+
+    it('a transfer approved after re-enable executes normally', async () => {
+      await setupChildWithParentOwners();
+      await setEnabled(Field(0), Field(1));
+      await setEnabled(Field(1), Field(2));
+
+      const ctx = childCtx();
+      const transfer = createTransferProposal(
+        [new Receiver({ address: parentCtx.owners[2].pub, amount: UInt64.from(1_000_000_000) })],
+        Field(1), Field(1), childAddress,
+      );
+      await proposeTransaction(ctx, transfer, 0);
+      await approveTransaction(ctx, transfer, 1);
+      await executeChildTransfer(ctx, transfer);
+      expect(childZkApp.nonce.get()).toEqual(Field(1));
+    });
+
+    it('destroy tolerates a deposit that lands between proving and inclusion', async () => {
+      await setupChildWithParentOwners();
+      const proposal = createDestroyChildProposal(
+        Field(1), Field(0), parentCtx.zkAppAddress, Field(0), childAddress,
+      );
+      const { parentApprovalWitness, parentApprovalCount, proposalHash } =
+        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
+
+      const childBalanceBefore = getBalance(childAddress);
+      const parentBalanceBefore = getBalance(parentCtx.zkAppAddress);
+
+      // build and prove first, then let dust arrive, then submit
+      const destroyTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await childZkApp.executeDestroy(
+          proposal, parentApprovalWitness, parentApprovalCount, childExecutionWitnessFor(proposalHash),
+        );
+      });
+      await destroyTxn.prove();
+      await fundChild(DUST);
+      await destroyTxn.sign([parentCtx.deployerKey]).send();
+      markChildExecutedOffChain(proposalHash);
+
+      expect(getBalance(parentCtx.zkAppAddress).sub(parentBalanceBefore)).toEqual(childBalanceBefore);
+      expect(getBalance(childAddress)).toEqual(DUST);
+      expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(0));
+
+      // the dust is not stranded: reclaim still works on a disabled child
+      const reclaim = createReclaimChildProposal(
+        DUST, Field(2), Field(0), parentCtx.zkAppAddress, Field(0), childAddress,
+      );
+      const r = await proposeAndApproveOnParent(parentCtx, reclaim, [0, 1]);
+      const reclaimTxn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        await childZkApp.executeReclaimToParent(
+          reclaim, r.parentApprovalWitness, r.parentApprovalCount, childExecutionWitnessFor(r.proposalHash), DUST,
+        );
+      });
+      await reclaimTxn.prove();
+      await reclaimTxn.sign([parentCtx.deployerKey]).send();
+      expect(getBalance(childAddress)).toEqual(UInt64.from(0));
+    });
+  });
+
   describe('cross-child isolation', () => {
     it('a reclaim proposal targeted at child A cannot execute on child B', async () => {
       await setupChildWithParentOwners();
