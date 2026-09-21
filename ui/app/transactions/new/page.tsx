@@ -115,6 +115,15 @@ function NewTransactionPageInner() {
       ? (rawType as TxType)
       : 'transfer';
   const [txType, setTxType] = useState<TxType>(initialType);
+  // Apply the type param once the active vault allows it: on a deep link the
+  // vault may still be loading at first render, when only LOCAL types exist.
+  const typeParamApplied = useRef(false);
+  useEffect(() => {
+    if (typeParamApplied.current || deleteMode || !rawType || rawType === 'createChild') return;
+    if (!availableTypes.some((t) => t.value === rawType)) return;
+    typeParamApplied.current = true;
+    setTxType(rawType as TxType);
+  }, [availableTypes, rawType, deleteMode]);
   const [currentNonce, setCurrentNonce] = useState<number | null>(multisig?.nonce ?? null);
 
   // Delete-mode pins the form's nonce to the target proposal's nonce; the
