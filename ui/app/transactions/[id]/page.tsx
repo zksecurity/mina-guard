@@ -12,6 +12,7 @@ import {
   truncateAddress,
   type Proposal,
 } from '@/lib/types';
+import { conflictsWithOwner } from '@/lib/pubkey';
 import {
   fetchApprovals,
   extractTxHash,
@@ -219,7 +220,7 @@ export default function TransactionDetailPage() {
   // list could not be rebuilt (backend down / not indexed), which doesn't
   // block; the worker re-asserts canonicity before signing anyway.
   const [addOwnerDataCheck, setAddOwnerDataCheck] =
-    useState<'checking' | 'match' | 'mismatch' | 'unavailable' | null>(null);
+    useState<'checking' | 'match' | 'mismatch' | 'sameKeyHolder' | 'unavailable' | null>(null);
   useEffect(() => {
     if (!proposal || proposal.txType !== 'addOwner') {
       setAddOwnerDataCheck(null);
@@ -236,7 +237,11 @@ export default function TransactionDetailPage() {
           proposal,
         });
         if (cancelled) return;
-        setAddOwnerDataCheck(result == null || result.valid ? 'match' : 'mismatch');
+        setAddOwnerDataCheck(
+          result == null || result.valid
+            ? 'match'
+            : result.reason === 'sameKeyHolder' ? 'sameKeyHolder' : 'mismatch',
+        );
       } catch {
         if (!cancelled) setAddOwnerDataCheck('unavailable');
       }
@@ -247,6 +252,15 @@ export default function TransactionDetailPage() {
   const isOwner = useMemo(() => {
     return owners.some((owner) => owner.address === wallet.address);
   }, [owners, wallet.address]);
+
+  // Local, instant version of the worker's same-key check: an addOwner whose
+  // target an owner already holds (same key, either parity) can never execute.
+  const addOwnerConflict = useMemo(() => {
+    if (!proposal || proposal.txType !== 'addOwner' || proposal.status !== 'pending') return false;
+    const target = proposal.receivers?.[0]?.address;
+    return !!target && conflictsWithOwner(target, owners.map((owner) => owner.address));
+  }, [proposal, owners]);
+  const addOwnerBlocked = addOwnerConflict || addOwnerDataCheck === 'sameKeyHolder';
 
   const hasApproved = useMemo(() => {
     if (!wallet.address) return false;
@@ -359,6 +373,7 @@ export default function TransactionDetailPage() {
     // Same for addOwner: block when proposal.data provably binds a
     // non-canonical owner order.
     addOwnerDataCheck !== 'mismatch' &&
+    !addOwnerBlocked &&
     !myPendingApprove &&
     !contractLock.locked;
   const canExecute =
@@ -727,6 +742,16 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {addOwnerBlocked && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
+            <p className="font-semibold mb-1">Don&apos;t approve: this proposal can never execute</p>
+            <p className="opacity-90">
+              The address to add is already an owner or the negation of one, so it belongs to a key the
+              Vault already counts. The contract rejects it at execution; approving only spends your time.
+            </p>
+          </div>
+        )}
+
         {addOwnerDataCheck === 'mismatch' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
             <p className="font-semibold mb-1">Don&apos;t approve: this would break the owner list</p>
@@ -913,6 +938,15 @@ export default function TransactionDetailPage() {
                       Approve blocked — owner order mismatch
                     </button>
                   )}
+                  {addOwnerBlocked && proposal.status === 'pending' && isOwner && !hasApproved && (
+                    <button
+                      disabled
+                      title="The target is already an owner or the negation of one (same key holder)"
+                      className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
+                    >
+                      Approve blocked — cannot execute
+                    </button>
+                  )}
                   {canExecute && (
                     <button
                       onClick={handleExecute}
@@ -972,6 +1006,12 @@ export default function TransactionDetailPage() {
                               throw new Error(
                                 'This Add Owner proposal arranges owners in an order this app cannot reproduce. ' +
                                 'Do not approve it.',
+                              );
+                            }
+                            if (addOwnerBlocked) {
+                              throw new Error(
+                                'The address to add is already an owner or the negation of one; ' +
+                                'this proposal can never execute. Do not approve it.',
                               );
                             }
                             const p = proposal!;

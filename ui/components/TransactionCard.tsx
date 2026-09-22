@@ -9,6 +9,7 @@ import {
   truncateAddress,
 } from '@/lib/types';
 import ApprovalProgress from './ApprovalProgress';
+import { conflictsWithOwner } from '@/lib/pubkey';
 
 interface TransactionCardProps {
   proposal: Proposal;
@@ -38,6 +39,13 @@ export default function TransactionCard({
       ? proposal.lastExecuteError ?? proposal.lastApproveError
       : null;
   const attemptErrorKind = proposal.lastExecuteError ? 'Execute' : 'Approve';
+  // an addOwner whose target an owner already holds (same key, either parity)
+  // passes propose and approve but the contract rejects it at execute
+  const unexecutableAddOwner =
+    proposal.txType === 'addOwner' &&
+    proposal.status === 'pending' &&
+    !!proposal.receivers?.[0]?.address &&
+    conflictsWithOwner(proposal.receivers[0].address, owners);
   const isLocalPending = proposal._localPending === true;
   const executeInFlight =
     !isLocalPending &&
@@ -92,6 +100,14 @@ export default function TransactionCard({
                     execute pending
                   </span>
                 )}
+                {unexecutableAddOwner && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full text-red-300 bg-red-400/10 border border-red-400/30"
+                    title="The target is already an owner or the negation of one (same key holder); the contract rejects this at execute"
+                  >
+                    cannot execute
+                  </span>
+                )}
               </div>
               <p className="text-xs text-safe-text mt-0.5">{secondaryLine}</p>
               {(proposal.txType === 'transfer' || proposal.txType === 'allocateChild') && !isDelete && (
@@ -103,7 +119,11 @@ export default function TransactionCard({
                 <p className="text-xs text-safe-text mt-0.5">Change threshold to {proposal.data ?? '?'}</p>
               )}
               {(proposal.txType === 'addOwner' || proposal.txType === 'removeOwner') && (
-                <p className="text-xs text-safe-text mt-0.5">Owner governance request</p>
+                <p className="text-xs text-safe-text mt-0.5">
+                  {unexecutableAddOwner
+                    ? 'Add owner — target shares a key with an existing owner'
+                    : 'Owner governance request'}
+                </p>
               )}
               {proposal.txType === 'setDelegate' && (
                 <p className="text-xs text-safe-text mt-0.5">Delegate update request</p>

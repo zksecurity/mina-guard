@@ -270,7 +270,7 @@ export async function computeCreateChildConfigHash(params: {
 export async function validateAddOwnerProposalData(params: {
   contractAddress: string;
   proposal: Proposal;
-}): Promise<{ valid: boolean } | null> {
+}): Promise<{ valid: boolean; reason: 'sameKeyHolder' | 'nonCanonicalOrder' | null } | null> {
   return getWorkerApi().validateAddOwnerProposalData(params);
 }
 

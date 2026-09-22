@@ -552,6 +552,13 @@ function buildProposalDataField(
   return Field(0);
 }
 
+/** Result of the chainless addOwner pre-check. */
+export interface AddOwnerDataCheck {
+  valid: boolean;
+  /** Why an addOwner proposal cannot execute; null when valid. */
+  reason: 'sameKeyHolder' | 'nonCanonicalOrder' | null;
+}
+
 /**
  * For ADD_OWNER proposals, checks proposal.data equals the commitment of the
  * current owner list with the target inserted in canonical sorted order.
@@ -564,7 +571,14 @@ function assertCanonicalAddOwnerData(
   ownerStore: InstanceType<typeof OwnerStore>
 ): void {
   if (!proposal.txType.equals(uiTxTypeToField('addOwner')).toBoolean()) return;
-  const expected = ownerStore.commitmentWithSortedAdd(proposal.receivers[0].address);
+  const target = proposal.receivers[0].address;
+  // the circuit rejects a key an owner already holds (same x, either parity)
+  if (ownerStore.hasOwnerWithSameX(target)) {
+    throw new Error(
+      'addOwner target is already an owner or the negation of one (same key holder); the proposal can never execute, approval refused'
+    );
+  }
+  const expected = ownerStore.commitmentWithSortedAdd(target);
   if (!proposal.data.equals(expected).toBoolean()) {
     throw new Error(
       'addOwner proposal does not bind the canonical owner order, approval refused'
@@ -883,7 +897,7 @@ const workerApi = {
       const candidate = PublicKey.fromBase58(params.input.newOwner);
       if (ownerStore.hasOwnerWithSameX(candidate)) {
         throw new Error(
-          'This address is the negation of an existing owner (same key holder) and cannot be added.'
+          'This address is already an owner or the negation of one (same key holder) and cannot be added.'
         );
       }
     }
@@ -1024,12 +1038,14 @@ const workerApi = {
   async validateAddOwnerProposalData(params: {
     contractAddress: string;
     proposal: Proposal;
-  }): Promise<{ valid: boolean } | null> {
+  }): Promise<AddOwnerDataCheck | null> {
     if (normalizeTxType(params.proposal.txType) !== 'addOwner') return null;
     const { ownerStore } = await rebuildStoresFromBackend(params.contractAddress);
     const target = PublicKey.fromBase58(params.proposal.receivers[0].address);
+    if (ownerStore.hasOwnerWithSameX(target)) return { valid: false, reason: 'sameKeyHolder' };
     const expected = ownerStore.commitmentWithSortedAdd(target);
-    return { valid: Field(params.proposal.data ?? '0').equals(expected).toBoolean() };
+    const valid = Field(params.proposal.data ?? '0').equals(expected).toBoolean();
+    return valid ? { valid: true, reason: null } : { valid: false, reason: 'nonCanonicalOrder' };
   },
 
   /**

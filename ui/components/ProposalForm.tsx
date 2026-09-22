@@ -3,6 +3,7 @@
 import { MAX_OWNERS, MAX_RECEIVERS } from '@/lib/constants';
 import { useEffect, useMemo, useState } from 'react';
 import { fetchBalance } from '@/lib/api';
+import { conflictsWithOwner } from '@/lib/pubkey';
 import { MEMO_MAX_BYTES, memoByteLength, isValidMemoLength } from '@/lib/memo';
 import MemoWarningTooltip from '@/components/MemoWarningTooltip';
 import {
@@ -248,6 +249,9 @@ export default function ProposalForm({
     }
     if (effectiveTxType === 'addOwner' && owners.includes(newOwner.trim())) {
       throw new Error('This address is already an owner.');
+    }
+    if (effectiveTxType === 'addOwner' && conflictsWithOwner(newOwner.trim(), owners)) {
+      throw new Error('This address is the negation of an existing owner (same key holder) and cannot be added.');
     }
     if (effectiveTxType === 'removeOwner' && !owners.includes(removeOwnerAddress.trim())) {
       throw new Error('This address is not a current owner.');

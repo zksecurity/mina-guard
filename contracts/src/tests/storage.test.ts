@@ -1,10 +1,22 @@
-import { Field, PrivateKey } from 'o1js';
+import { Field, PrivateKey, PublicKey } from 'o1js';
 import { OwnerStore, ApprovalStore, VoteNullifierStore } from '../storage.js';
 import { EXECUTED_MARKER } from '../constants.js';
 import { computeOwnerChain } from '../list-commitment.js';
 import { describe, expect, it } from 'bun:test';
 
 describe('OwnerStore', () => {
+  it('hasOwnerWithSameX treats a key and its negation as one holder', () => {
+    const store = new OwnerStore();
+    const owner = PrivateKey.random().toPublicKey();
+    const negated = PublicKey.fromGroup(owner.toGroup().neg());
+    store.addSorted(owner);
+
+    expect(store.isOwner(negated)).toBe(false);
+    expect(store.hasOwnerWithSameX(negated)).toBe(true);
+    expect(store.hasOwnerWithSameX(owner)).toBe(true);
+    expect(store.hasOwnerWithSameX(PrivateKey.random().toPublicKey())).toBe(false);
+  });
+
   it('should add and check owners', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
