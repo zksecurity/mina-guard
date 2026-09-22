@@ -499,7 +499,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               <ActionCard code="createChild" title="Create SubVault" desc="Deploy a SubVault owned by this Vault." chips={<Chip tone="accent">REMOTE</Chip>} />
               <ActionCard code="allocateChild" title="Allocate to SubVaults" desc="Fund one or more SubVaults from this Vault." chips={<Chip>LOCAL</Chip>} />
               <ActionCard code="reclaimChild" title="Reclaim from SubVault" desc="Return an amount from a SubVault to this Vault." chips={<Chip tone="accent">REMOTE</Chip>} />
-              <ActionCard code="destroyChild" title="Destroy SubVault" desc="Drain a SubVault's balance to this Vault and permanently disable its multisig. Irreversible." chips={<><Chip tone="accent">REMOTE</Chip><Chip tone="danger">Irreversible</Chip></>} />
+              <ActionCard code="destroyChild" title="Destroy SubVault" desc="Return a SubVault's balance to this Vault, disable its multisig and cancel its pending proposals. The Vault can re-enable it later." chips={<><Chip tone="accent">REMOTE</Chip><Chip tone="danger">Disables SubVault</Chip></>} />
               <ActionCard code="enableChildMultiSig" title="Toggle SubVault Multi-sig" desc="Enable or disable a SubVault running its own proposals." chips={<Chip tone="accent">REMOTE</Chip>} />
               <div className="sm:col-span-2 lg:col-span-3 bg-safe-dark border border-dashed border-safe-border rounded-xl p-4 text-sm text-safe-text leading-relaxed">
                 <b className="text-white">Deleting a proposal</b> is not a separate action. The app creates a
@@ -527,7 +527,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p><Tok>Toggle SubVault Multi-sig</Tok> controls whether a SubVault can run its own proposals. When disabled, the SubVault is controlled only by its Vault; Vault-authorized actions still apply.</p>
               </Step>
               <Step n={4} title="Destroy" img="/guide/action-destroyChild.png" imgAlt="Destroy SubVault">
-                <p><Tok>Destroy SubVault</Tok> drains the SubVault to its Vault and permanently disables it. The action is irreversible and requires confirmation.</p>
+                <p><Tok>Destroy SubVault</Tok> returns the SubVault&apos;s balance to its Vault, disables its multi-sig and cancels its pending local proposals. A balance may remain and needs a separate Reclaim; the Vault can re-enable the SubVault later. The action requires confirmation.</p>
               </Step>
             </ol>
           </Section>

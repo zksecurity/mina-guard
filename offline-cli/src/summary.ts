@@ -159,11 +159,19 @@ function renderBody(
         line('Amount', `${formatMina(src.reclaimAmount)} MINA`),
       ];
     case 'destroyChild':
-      return [line('SubVault', src.childAddress ?? '(unknown)')];
+      return [
+        line('SubVault', src.childAddress ?? '(unknown)'),
+        line('Effect', 'disables the SubVault multi-sig and cancels its pending local proposals'),
+        line('Funds', 'returned to the parent Vault; a balance may remain and needs a separate Reclaim'),
+        line('Later', 'the parent Vault can re-enable the SubVault'),
+      ];
     case 'enableChildMultiSig':
       return [
         line('SubVault', src.childAddress ?? '(unknown)'),
         line('Multi-sig', src.enableMultiSig ? 'enable' : 'disable'),
+        ...(src.enableMultiSig
+          ? []
+          : [line('Effect', 'cancels the SubVault\'s pending local proposals')]),
       ];
     default:
       return [line('Details', '(unrecognized action type)')];

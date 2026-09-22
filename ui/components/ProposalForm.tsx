@@ -258,7 +258,7 @@ export default function ProposalForm({
       }
     }
     if (!deleteMode && txType === 'destroyChild' && !destroyConfirm) {
-      throw new Error('Confirm the destroy action — this drains the SubVault and disables its multi-sig.');
+      throw new Error('Confirm the destroy action — this disables the SubVault\'s multi-sig, cancels its pending proposals and returns its funds to the Vault.');
     }
     if (effectiveTxType === 'addOwner' && owners.includes(newOwner.trim())) {
       throw new Error('This address is already an owner.');
@@ -508,8 +508,9 @@ export default function ProposalForm({
       {!deleteMode && txType === 'destroyChild' && (
         <div className="space-y-2 rounded-lg border border-red-400/40 bg-red-400/5 px-4 py-3">
           <p className="text-xs text-red-300">
-            Destroy drains the SubVault&apos;s full balance to the Vault and disables its
-            multi-sig. The on-chain Vault remains but its lifecycle is permanently frozen.
+            Destroy disables the SubVault&apos;s multi-sig and cancels its pending local proposals.
+            It returns funds to the parent Vault, but may leave a balance that needs a separate
+            Reclaim. The parent Vault can re-enable the SubVault later.
           </p>
           <label className="inline-flex items-center gap-2 text-sm text-safe-text">
             <input
@@ -538,7 +539,7 @@ export default function ProposalForm({
           </div>
           <p className="text-xs text-safe-text pt-1">
             {currentMultiSigEnabled
-              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.). Vault-authorized lifecycle actions remain available.'
+              ? 'Disabling blocks the SubVault from running its own LOCAL proposals (transfers, owner changes, etc.) and cancels the ones still pending. Vault-authorized lifecycle actions remain available.'
               : 'Enabling restores the SubVault\'s ability to run its own LOCAL proposals.'}
           </p>
         </div>
