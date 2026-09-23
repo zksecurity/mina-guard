@@ -32,7 +32,7 @@ import {
   NETWORK_DOMAIN,
 } from './constants.js';
 
-import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners } from './list-commitment.js';
+import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners, assertOnCurveIf } from './list-commitment.js';
 
 // -- Types -------------------------------------------------------------------
 
@@ -794,6 +794,9 @@ export class MinaGuard extends SmartContract {
     this.ownersCommitment.requireEquals(Field(0));
     this.parent.requireEquals(PublicKey.empty());
     parentAddress.equals(PublicKey.empty()).assertFalse('Parent address must not be empty');
+    // a non-point parent can never host a guard: the child could never be
+    // initialized or reclaimed
+    parentAddress.toGroup();
     this.parent.set(parentAddress);
 
     // Compute the commitment on-chain from the owner list so the emitted
@@ -999,6 +1002,16 @@ export class MinaGuard extends SmartContract {
     // the default token, so a non-zero tokenId would be approved as a MINA send.
     // Reject it at proposal time so no such proposal can exist on-chain.
     proposal.tokenId.assertEquals(Field(0), 'Only the native MINA token (tokenId 0) is supported');
+
+    // Rule 6: non-empty receivers must be curve points. o1js does not
+    // constrain `x` to the curve; a non-point receiver would be an
+    // unspendable transfer target, an owner that can never sign, or an
+    // unusable delegate.
+    for (let i = 0; i < MAX_RECEIVERS; i++) {
+      const r = proposal.receivers[i];
+      const nonEmpty = r.address.equals(PublicKey.empty()).not();
+      assertOnCurveIf(nonEmpty, r.address);
+    }
 
     const proposalHash = proposal.hash();
 

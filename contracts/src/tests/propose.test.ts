@@ -11,6 +11,7 @@ import {
   createDeleteProposal,
   makeOwnerWitness,
   type TestContext,
+  nonCurvePublicKey,
 } from './test-helpers.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
@@ -369,6 +370,35 @@ describe('MinaGuard - Propose shape rules', () => {
   });
 
   // -- Delete-flow (zero-value transfer) -------------------------------------
+
+  // -- Rule 6: non-empty receivers must be curve points -----------------------
+
+  it('should reject TRANSFER to a receiver that is not a curve point', async () => {
+    const proposal = buildProposal({ receivers: receiversWithSlot0(nonCurvePublicKey()) });
+    await expect(async () => {
+      await tryPropose(proposal);
+    }).toThrow(/Constraint unsatisfied|no square root/);
+  });
+
+  it('should reject ADD_OWNER of a key that is not a curve point', async () => {
+    const proposal = buildProposal({
+      txType: TxType.ADD_OWNER,
+      receivers: receiversWithSlot0(nonCurvePublicKey()),
+      data: Field(1),
+    });
+    await expect(async () => {
+      await tryPropose(proposal);
+    }).toThrow(/Constraint unsatisfied|no square root/);
+  });
+
+  it('should reject a non-curve receiver in a later slot of a batch transfer', async () => {
+    const receivers = emptyReceivers();
+    receivers[0] = new Receiver({ address: ctx.owners[1].pub, amount: UInt64.from(1) });
+    receivers[3] = new Receiver({ address: nonCurvePublicKey(), amount: UInt64.from(1) });
+    await expect(async () => {
+      await tryPropose(buildProposal({ receivers }));
+    }).toThrow(/Constraint unsatisfied|no square root/);
+  });
 
   it('should accept a zero-value transfer to the empty pubkey (delete flow)', async () => {
     const proposal = createDeleteProposal(Field(1), Field(0), ctx.zkAppAddress);

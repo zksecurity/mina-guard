@@ -365,7 +365,14 @@ function assertCanonicalAddOwnerData(
   ownerStore: InstanceType<typeof OwnerStore>,
 ): void {
   if (!proposal.txType.equals(uiTxTypeToField('addOwner')).toBoolean()) return;
-  const expected = ownerStore.commitmentWithSortedAdd(proposal.receivers[0].address);
+  const target = proposal.receivers[0].address;
+  // the circuit rejects a key an owner already holds (same x, either parity)
+  if (ownerStore.hasOwnerWithSameX(target)) {
+    throw new Error(
+      'addOwner target is already an owner or the negation of one (same key holder); the proposal can never execute, approval refused',
+    );
+  }
+  const expected = ownerStore.commitmentWithSortedAdd(target);
   if (!proposal.data.equals(expected).toBoolean()) {
     throw new Error(
       'addOwner proposal does not bind the canonical owner order, approval refused',
@@ -810,6 +817,15 @@ export async function handlePropose(
 
   log('Rebuilding Merkle stores from events...');
   const { ownerStore, approvalStore, nullifierStore } = rebuildStores(bundle.events);
+
+  if (input.txType === 'addOwner' && input.newOwner) {
+    // same check as the web client: a key an owner already holds can never be added
+    if (ownerStore.hasOwnerWithSameX(PublicKey.fromBase58(input.newOwner))) {
+      throw new Error(
+        'This address is already an owner or the negation of one (same key holder) and cannot be added.',
+      );
+    }
+  }
 
   // Build proposal struct
   const receivers = buildReceiversForProposal(input);

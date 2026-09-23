@@ -101,8 +101,10 @@ non-custodial design above, even host-root compromise cannot move vault funds di
 The account that deploys and runs `setup()` chooses the initial owner set (`setup()` takes
 `threshold`, `numOwners`, `initialOwners`). The owners commitment is computed **in-circuit** from
 the supplied owner list (`computeSetupOwnersChain` + `assertCoherentSetupOwners`), so the stored
-commitment cannot disagree with the announced owners — but the *choice* of owners at genesis is
-the deployer's, as in any multisig. Verify the setup events before depositing.
+commitment cannot disagree with the announced owners, every active owner is a real curve point,
+and no two owners share an x-coordinate (a key and its negation are the same signer) — but the
+*choice* of owners at genesis is the deployer's, as in any multisig. Verify the setup events
+before depositing.
 
 `deploy()`, `setup()`, and `reserveForParent()` are separately callable and each authorized by
 proof alone with no deployer binding, so a guard left deployed-but-uninitialized can be front-run:
