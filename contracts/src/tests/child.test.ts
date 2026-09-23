@@ -692,6 +692,13 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const parentBalanceAfter = getBalance(parentCtx.zkAppAddress);
       expect(parentBalanceAfter.sub(parentBalanceBefore)).toEqual(reclaimAmount);
+
+      // a REMOTE execution emits the child execution root it wrote
+      const execution = (await childZkApp.fetchEvents())
+        .filter((e) => e.type === 'execution')
+        .map((e) => e.event.data as unknown as { proposalHash: Field; root: Field })
+        .find((x) => x.proposalHash.toString() === proposalHash.toString());
+      expect(execution?.root).toEqual(childZkApp.childExecutionRoot.get());
     });
 
     it('rejects replay of an already-executed reclaim', async () => {
