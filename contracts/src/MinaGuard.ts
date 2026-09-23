@@ -981,6 +981,13 @@ export class MinaGuard extends SmartContract {
     isChangeThreshold.and(slot0Empty.not())
       .assertFalse('changeThreshold must have empty receivers[0]');
 
+    // Rule 2b: the child-lifecycle types never read receivers, so slot 0 must
+    // be empty; a filled slot would only decorate the events with a payment
+    // that never happens.
+    const isChildLifecycle = isCreateChild.or(isReclaimChild).or(isDestroyChild).or(isEnableChildMultiSig);
+    isChildLifecycle.and(slot0Empty.not())
+      .assertFalse('Child lifecycle proposal must have empty receivers[0]');
+
     // Rule 3: Only transfer-like txTypes (TRANSFER, ALLOCATE_CHILD) may use
     // multiple receiver slots. Everything else is limited to at most one.
     const isTransferLike = isTransfer.or(isAllocateChild);
@@ -1015,10 +1022,15 @@ export class MinaGuard extends SmartContract {
     // constrain `x` to the curve; a non-point receiver would be an
     // unspendable transfer target, an owner that can never sign, or an
     // unusable delegate.
+    // Rule 7: an empty receiver slot carries a zero amount. Events and
+    // execution zero the amount of an empty slot, but the hash commits the raw
+    // value, so a non-zero amount here would be a proposal nobody can rebuild.
     for (let i = 0; i < MAX_RECEIVERS; i++) {
       const r = proposal.receivers[i];
-      const nonEmpty = r.address.equals(PublicKey.empty()).not();
-      assertOnCurveIf(nonEmpty, r.address);
+      const isEmpty = r.address.equals(PublicKey.empty());
+      assertOnCurveIf(isEmpty.not(), r.address);
+      isEmpty.and(r.amount.equals(UInt64.zero).not())
+        .assertFalse('Empty receiver must have zero amount');
     }
 
     const proposalHash = proposal.hash();

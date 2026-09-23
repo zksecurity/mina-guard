@@ -998,6 +998,8 @@ function parseRecipients(rows: Array<{ address: string; amount: string }>): Reci
 
     if (!address) errors.push('Address required');
     else if (!/^B62[1-9A-HJ-NP-Za-km-z]+$/.test(address)) errors.push('Invalid Mina address');
+    // the contract rejects a non-zero amount on the empty address (rule 7)
+    else if (address === EMPTY_PUBKEY_B58) errors.push('The empty address cannot receive funds');
     else if ((addressCounts.get(address) ?? 0) > 1) errors.push('Duplicate recipient');
 
     if (!amountText) errors.push('Amount required');

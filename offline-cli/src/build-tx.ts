@@ -290,12 +290,19 @@ function governanceTargetAddress(input: NewProposalInput): string | null {
 export function buildTransferReceivers(
   receivers: BundleReceiver[],
 ): InstanceType<typeof Receiver>[] {
-  const normalized = receivers.map((r) => new Receiver({
-    address: r.address === EMPTY_PUBKEY_B58
-      ? PublicKey.empty()
-      : PublicKey.fromBase58(r.address),
-    amount: UInt64.from(r.amount),
-  }));
+  const normalized = receivers.map((r) => {
+    // the contract rejects a non-zero amount on the empty address (rule 7);
+    // fail here, before the compile, with the same message
+    if (r.address === EMPTY_PUBKEY_B58 && BigInt(r.amount) !== 0n) {
+      throw new Error('Empty receiver must have zero amount');
+    }
+    return new Receiver({
+      address: r.address === EMPTY_PUBKEY_B58
+        ? PublicKey.empty()
+        : PublicKey.fromBase58(r.address),
+      amount: UInt64.from(r.amount),
+    });
+  });
 
   while (normalized.length < MAX_RECEIVERS) {
     normalized.push(Receiver.empty());
