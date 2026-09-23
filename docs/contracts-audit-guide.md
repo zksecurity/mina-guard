@@ -456,8 +456,8 @@ slimmed: per-execution events carry only what is **not** already derivable from 
 | `SetupOwnerEvent` | `owner, index` | `setup`, `executeSetupChild` (one per `MAX_OWNERS` slot) |
 | `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, memoHash, nonce, configNonce, expirySlot, guardAddress, destination, childAccount` | `propose` |
 | `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
-| `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
-| `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |
+| `ApprovalEvent` | `proposalHash, approver, approvalCount, approvalRoot, voteNullifierRoot` | `propose`, `approveProposal` (the two roots are the values just written) |
+| `ExecutionEvent` | `proposalHash, txType, root` | all LOCAL and REMOTE execute methods (`root` is the root just written: `approvalRoot` for LOCAL types, `childExecutionRoot` for REMOTE ones, the empty-map root after `executeSetupChild`) |
 | `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners, newOwnersCommitment, configNonce` | `executeOwnerChange` (`owner` = the added/removed key; `added` = `1` for ADD_OWNER, `0` for REMOVE_OWNER; `newOwnersCommitment` = the post-change owner chain, emitted for both add and remove so event-sourced clients track it without re-deriving) |
 | `ThresholdChangeEvent` | `proposalHash, oldThreshold, newThreshold, configNonce` | `executeThresholdChange` |
 | `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` (`delegate` == the guard's own address means undelegated) |
@@ -472,6 +472,7 @@ on-chain state reads required. The mechanics of that reconstruction (the append-
 parent-walk for REMOTE executions) live in
 [`backend-audit-guide.md`](./backend-audit-guide.md#data-model). In brief:
 
+- **Checkpoints:** every write to `approvalRoot`, `voteNullifierRoot` or `childExecutionRoot` emits the resulting root, so a consumer rebuilding the Merkle maps can verify its state after each event and locate a dropped or misapplied one. The roots are checkpoints only: anyone can append events to a vault, so the authority for a rebuilt map is the on-chain root, not an emitted one.
 - **LOCAL proposal lifecycle:** `ProposalEvent` → `ApprovalEvent`(s) → `ExecutionEvent` (with the corresponding governance sibling event) on the same guard.
 - **REMOTE proposal lifecycle:** `ProposalEvent` on the parent → `ApprovalEvent`(s) on the parent → `ExecutionEvent` on the **child**. `applyExecutionEvent` marks the parent's `Proposal` row executed by trying `(emittingContractId, proposalHash)` first and, on a miss, walking the child's `Contract.parent` field to retry against the parent's contractId.
 - **`Contract.parent`** populated from `SetupEvent.parent` (empty for root, real parent for child).
