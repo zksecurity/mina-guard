@@ -278,6 +278,16 @@ describe('offline-cli', () => {
     // MAX_RECEIVERS, so >MAX_RECEIVERS source rows collapse to the canonical set
     // and the count can never exceed MAX_RECEIVERS — regardless of how many extra
     // rows an untrusted bundle/backend appended.
+    it('rejects the empty address with a non-zero amount, accepts it with zero', () => {
+      const real = PrivateKey.random().toPublicKey().toBase58();
+      expect(() =>
+        buildTransferReceivers([{ address: real, amount: '1' }, { address: EMPTY_PUBKEY_B58, amount: '5' }]),
+      ).toThrow('Empty receiver must have zero amount');
+      // the delete flow's zero-value row stays valid
+      const rows = buildTransferReceivers([{ address: EMPTY_PUBKEY_B58, amount: '0' }]);
+      expect(rows[0].amount.toBigInt()).toBe(0n);
+    });
+
     it('cannot exceed MAX_RECEIVERS even with extra untrusted rows', () => {
       const extraRows = Array.from({ length: MAX_RECEIVERS + 25 }, (_, i) => ({
         address: PrivateKey.random().toPublicKey().toBase58(),

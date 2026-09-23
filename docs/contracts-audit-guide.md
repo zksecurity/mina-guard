@@ -211,10 +211,12 @@ runs an execute method for them. Replay protection lives on the child in `childE
 Propose-time rules enforced in `propose()`:
 - `receivers[0]` must be non-empty for `ADD_OWNER`/`REMOVE_OWNER`.
 - `receivers[0]` must be empty for `CHANGE_THRESHOLD`.
+- `receivers[0]` must be empty for `CREATE_CHILD`, `RECLAIM_CHILD`, `DESTROY_CHILD` and `ENABLE_CHILD_MULTI_SIG`: their execute paths never read receivers, so a filled slot could only advertise a payment that never happens.
 - Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, `ENABLE_CHILD_MULTI_SIG`, or `ADD_OWNER`. For `ADD_OWNER`, `data` must be non-zero (the expected post-add owners commitment).
 - `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
 - Every non-empty receiver slot must be a curve point (`assertOnCurveIf`), so no proposal can be signed that pays, adds as owner, or delegates to an address no private key exists for.
+- Every empty receiver slot must carry a zero amount. Receiver events and `executeTransfers` zero the amount of an empty slot while the proposal hash commits the raw value, so a non-zero amount there would produce a proposal that event-sourced clients cannot rebuild or approve.
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
 - `nonce` must be fresh for the relevant execution domain:
   - LOCAL propose/approve requires `proposal.nonce > this.nonce`
