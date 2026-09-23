@@ -14,6 +14,9 @@ interface VaultCardProps {
   showBalance?: boolean;
   /** Visually marks this card as a child/sub-vault. */
   isChild?: boolean;
+  /** Parent vault address. On a disabled child that still holds funds this
+   *  turns the card's cue into a link to a prefilled reclaim proposal. */
+  parentAddress?: string;
 }
 
 export default function VaultCard({
@@ -21,13 +24,19 @@ export default function VaultCard({
   isOwner = true,
   showBalance = true,
   isChild = false,
+  parentAddress,
 }: VaultCardProps) {
   const [balance, setBalance] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
 
+  // A disabled child can still hold funds (deposits after destroy, dust, a
+  // partial destroy). Fetch its balance even in dense grids so the reclaim cue
+  // below can show; it is the only way those funds get noticed.
+  const disabledChild = isChild && contract.childMultiSigEnabled === false;
+
   useEffect(() => {
     setName(getAccountName(contract.address));
-    if (!showBalance) return;
+    if (!showBalance && !disabledChild) return;
     let cancelled = false;
     fetchBalance(contract.address).then((b) => {
       if (!cancelled) setBalance(b);
@@ -35,7 +44,9 @@ export default function VaultCard({
     return () => {
       cancelled = true;
     };
-  }, [contract.address, showBalance]);
+  }, [contract.address, showBalance, disabledChild]);
+
+  const strandedBalance = disabledChild && balance && balance !== '0' ? balance : null;
 
   return (
     <div
@@ -97,6 +108,19 @@ export default function VaultCard({
           )}
         </div>
       </Link>
+      {strandedBalance && (
+        <div className="flex items-center justify-between gap-2 px-4 pb-3 text-xs text-amber-400">
+          <span>Disabled SubVault still holds {formatMina(strandedBalance)} MINA.</span>
+          {parentAddress && (
+            <Link
+              href={`/transactions/new?account=${parentAddress}&type=reclaimChild&child=${contract.address}&amount=max`}
+              className="font-semibold uppercase tracking-wider text-safe-green hover:underline shrink-0"
+            >
+              Reclaim
+            </Link>
+          )}
+        </div>
+      )}
     </div>
   );
 }

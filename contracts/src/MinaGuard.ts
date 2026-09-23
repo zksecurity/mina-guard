@@ -212,6 +212,7 @@ export class EnableChildMultiSigEvent extends Struct({
   proposalHash: Field,
   parentAddress: PublicKey,
   enabled: Field,
+  configNonce: Field,
 }) { }
 
 /** Emitted by reserveForParent to publish child vault config for a CREATE_CHILD proposal. */
@@ -365,6 +366,13 @@ export class MinaGuard extends SmartContract {
   private setGovernanceState(threshold: Field, numOwners: Field): void {
     this.threshold.set(threshold);
     this.numOwners.set(numOwners);
+  }
+
+  /** Advances configNonce, which invalidates every pending proposal. */
+  private bumpConfigNonce(): Field {
+    const next = this.configNonce.getAndRequireEquals().add(1);
+    this.configNonce.set(next);
+    return next;
   }
 
   private getNonceState(): Field {
@@ -1265,8 +1273,7 @@ export class MinaGuard extends SmartContract {
 
     this.markExecuted(approvalWitness);
 
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    this.configNonce.set(currentConfigNonce.add(1));
+    const newConfigNonce = this.bumpConfigNonce();
 
     this.emitEvent('execution', {
       proposalHash,
@@ -1279,7 +1286,7 @@ export class MinaGuard extends SmartContract {
       added: isAdd.toField(),
       newNumOwners,
       newOwnersCommitment,
-      configNonce: currentConfigNonce.add(1),
+      configNonce: newConfigNonce,
     });
   }
 
@@ -1330,8 +1337,7 @@ export class MinaGuard extends SmartContract {
 
     this.markExecuted(approvalWitness);
 
-    const currentConfigNonce = this.configNonce.getAndRequireEquals();
-    this.configNonce.set(currentConfigNonce.add(1));
+    const newConfigNonce = this.bumpConfigNonce();
 
     this.emitEvent('execution', {
       proposalHash,
@@ -1342,7 +1348,7 @@ export class MinaGuard extends SmartContract {
       proposalHash,
       oldThreshold: currentThreshold,
       newThreshold,
-      configNonce: currentConfigNonce.add(1),
+      configNonce: newConfigNonce,
     });
   }
 
@@ -1479,13 +1485,20 @@ export class MinaGuard extends SmartContract {
     );
     this.assertAndIncrementParentNonce(proposal);
 
-    const balance = this.account.balance.getAndRequireEquals();
+    // Lower bound, not equality, so a deposit landing before inclusion cannot
+    // invalidate the proof. `balance` is prover-supplied: the ledger only checks
+    // the real balance is at least this, so an executor may send less than the
+    // full balance. Whatever stays behind is reclaimable by the parent.
+    const balance = this.account.balance.get();
+    this.account.balance.requireBetween(balance, UInt64.MAXINT());
     const parentAddress = this.parent.getAndRequireEquals();
     this.send({ to: parentAddress, amount: balance });
 
     this.markChildExecuted(childExecutionWitness);
 
     this.childMultiSigEnabled.set(Field(0));
+    // pending LOCAL proposals must not outlive the recovery
+    const configNonce = this.bumpConfigNonce();
 
     this.emitEvent('execution', {
       proposalHash,
@@ -1502,6 +1515,7 @@ export class MinaGuard extends SmartContract {
       proposalHash,
       parentAddress,
       enabled: Field(0),
+      configNonce,
     });
   }
 
@@ -1543,6 +1557,12 @@ export class MinaGuard extends SmartContract {
 
     this.childMultiSigEnabled.set(enabled);
 
+    // disabling kills pending LOCAL proposals; enabling changes nothing
+    const configNonce = this.configNonce
+      .getAndRequireEquals()
+      .add(enabled.equals(Field(0)).toField());
+    this.configNonce.set(configNonce);
+
     this.markChildExecuted(childExecutionWitness);
 
     const parentAddress = this.parent.getAndRequireEquals();
@@ -1556,6 +1576,7 @@ export class MinaGuard extends SmartContract {
       proposalHash,
       parentAddress,
       enabled,
+      configNonce,
     });
   }
 }

@@ -197,6 +197,19 @@ describe('config-mutating event decoding', () => {
     ]);
     expect((await latestConfig(contractId)).childMultiSigEnabled).toBe(false);
   });
+
+  test('enableChildMultiSig applies the configNonce the contract bumped on disable/destroy', async () => {
+    const { contractId } = await ingest([
+      ...setupEvents(owner),
+      {
+        type: 'enableChildMultiSig', blockHeight: 5, txHash: 'tx-dis', ...HASHES(5),
+        event: { enabled: '0', configNonce: '1' },
+      },
+    ]);
+    const config = await latestConfig(contractId);
+    expect(config.childMultiSigEnabled).toBe(false);
+    expect(config.configNonce).toBe(1);
+  });
 });
 
 describe('proposal event decoding', () => {
