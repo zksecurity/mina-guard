@@ -28,8 +28,6 @@ import {
   MinaGuard,
   Receiver,
   TransactionProposal,
-  EXECUTED_MARKER,
-  PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
   SetupOwnersInput,
@@ -39,6 +37,10 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
+  rebuildStores,
+  rebuildChildExecutionMap,
+  assertStoresMatchChain,
+  assertChildExecutionMapMatchesChain,
 } from 'contracts';
 
 import {
@@ -154,6 +156,7 @@ interface ContractState {
   voteNullifierRoot: string;
   approvalRoot: string;
   configNonce: number;
+  childExecutionRoot: string;
 }
 
 async function configureNetwork() {
@@ -262,6 +265,7 @@ async function fetchContractState(
       voteNullifierRoot: zkApp.voteNullifierRoot.get().toString(),
       approvalRoot: zkApp.approvalRoot.get().toString(),
       configNonce: Number(zkApp.configNonce.get().toString()),
+      childExecutionRoot: zkApp.childExecutionRoot.get().toString(),
     };
   } catch (error) {
     console.error('[MultisigWorker] Failed to fetch contract state', error);
@@ -316,112 +320,24 @@ async function signAndSend(
   return `Transaction submitted: ${hash}`;
 }
 
+/** Rebuilds a guard's stores from its indexed events (shared with the offline CLI). */
 async function rebuildStoresFromBackend(contractAddress: string) {
-  const ownerStore = new OwnerStore();
-  const approvalStore = new ApprovalStore();
-  const nullifierStore = new VoteNullifierStore();
-  const events = await fetchAllEvents(contractAddress);
+  return rebuildStores(await fetchAllEvents(contractAddress));
+}
 
-  // Owners are kept in ascending base58 order so the commitment is
-  // deterministic regardless of archive event ordering.
-  const emptyKey = PublicKey.empty().toBase58();
-  const setupOwnerEntries = events
-    .filter(e => e.eventType === 'setupOwner')
-    .map(e => {
-      const p = e.payload as Record<string, unknown>;
-      return { owner: p.owner };
-    })
-    .filter(({ owner }) => typeof owner === 'string' && (owner as string).length > 10 && owner !== emptyKey)
-    .sort((a, b) => (a.owner as string) > (b.owner as string) ? 1 : -1);
-  for (const { owner } of setupOwnerEntries) {
-    ownerStore.addSorted(PublicKey.fromBase58(owner as string));
-  }
+/** On-chain state, or a clear error: rebuilt stores are never used unchecked. */
+async function requireContractState(contractAddress: string, label = 'vault'): Promise<ContractState> {
+  const state = await fetchContractState(contractAddress);
+  if (!state) throw new Error(`Could not read the ${label}'s on-chain state from the Mina node; retry shortly.`);
+  return state;
+}
 
-  for (const event of events) {
-    if (event.eventType === 'setupOwner') {
-      continue; // handled above with explicit index ordering
-    }
-
-    if (event.eventType === 'ownerChange' || event.eventType === 'ownerChangeBatch') {
-      const payload = event.payload as Record<string, unknown>;
-      const owner = payload.owner;
-      const added = payload.added;
-      if (typeof owner === 'string' && owner.length > 10) {
-        if (added === '1' || added === 1 || added === true) {
-          ownerStore.addSorted(PublicKey.fromBase58(owner));
-        } else {
-          ownerStore.remove(PublicKey.fromBase58(owner));
-        }
-      }
-      continue;
-    }
-
-    if (event.eventType === 'proposal') {
-      const payload = event.payload as Record<string, unknown>;
-      const proposalHash = payload.proposalHash;
-      const proposer = payload.proposer;
-      if (typeof proposalHash === 'string') {
-        approvalStore.setCount(Field(proposalHash), PROPOSED_MARKER.add(1));
-      }
-      // The contract's propose() also nullifies the proposer's vote
-      if (
-        typeof proposalHash === 'string' &&
-        typeof proposer === 'string' &&
-        proposer.length > 10
-      ) {
-        nullifierStore.nullify(
-          Field(proposalHash),
-          PublicKey.fromBase58(proposer)
-        );
-      }
-      continue;
-    }
-
-    if (event.eventType === 'approval') {
-      const payload = event.payload as Record<string, unknown>;
-      const proposalHash = payload.proposalHash;
-      const approver = payload.approver;
-      const approvalCount = payload.approvalCount;
-
-      if (
-        typeof proposalHash === 'string' &&
-        typeof approvalCount === 'string'
-      ) {
-        approvalStore.setCount(Field(proposalHash), Field(approvalCount));
-      }
-
-      if (
-        typeof proposalHash === 'string' &&
-        typeof approver === 'string' &&
-        approver.length > 10
-      ) {
-        nullifierStore.nullify(
-          Field(proposalHash),
-          PublicKey.fromBase58(approver)
-        );
-      }
-      continue;
-    }
-
-    if (event.eventType === 'execution' || event.eventType === 'executionBatch') {
-      const payload = event.payload as Record<string, unknown>;
-      const proposalHash = payload.proposalHash;
-      const txType = payload.txType;
-      // REMOTE child-lifecycle methods (CREATE_CHILD=5, RECLAIM_CHILD=7,
-      // DESTROY_CHILD=8, ENABLE_CHILD_MULTI_SIG=9) emit `execution` events on
-      // the child, but they touch `childExecutionRoot` — NOT `approvalRoot`.
-      // Skip those here so the reconstructed approvalStore stays in sync with
-      // the on-chain approvalRoot (rebuildChildExecutionMap handles the other
-      // map separately).
-      const isRemoteExecution =
-        typeof txType === 'string' && (txType === '5' || txType === '7' || txType === '8' || txType === '9');
-      if (typeof proposalHash === 'string' && !isRemoteExecution) {
-        approvalStore.setCount(Field(proposalHash), EXECUTED_MARKER);
-      }
-    }
-  }
-
-  return { ownerStore, approvalStore, nullifierStore };
+/** Parent stores for a child lifecycle action; only the approval map is proved against. */
+async function rebuildVerifiedParentApprovals(parentAddress: string) {
+  const stores = await rebuildStoresFromBackend(parentAddress);
+  const parentState = await requireContractState(parentAddress, 'parent Vault');
+  assertStoresMatchChain(stores, { approvalRoot: parentState.approvalRoot }, 'parent Vault');
+  return stores;
 }
 
 /**
@@ -477,32 +393,9 @@ function logProposeDiagnostics(args: {
   console.log('[propose debug]\n' + JSON.stringify(dump, null, 2));
 }
 
-/**
- * Rebuilds the child's `childExecutionRoot` MerkleMap from indexed events.
- *
- * The child writes EXECUTED_MARKER at proposalHash on each lifecycle method
- * (executeReclaim / executeDestroy / executeEnableChildMultiSig). Reconstruct
- * by scanning the child's `execution` events and inserting EXECUTED_MARKER
- * for every REMOTE-execution proposalHash.
- */
-async function rebuildChildExecutionMap(childAddress: string): Promise<InstanceType<typeof MerkleMap>> {
-  const map = new MerkleMap();
-  const events = await fetchAllEvents(childAddress);
-
-  // The numeric TxType field values for REMOTE child-lifecycle methods.
-  const remoteExecutionTypes = new Set(['7', '8', '9']); // RECLAIM, DESTROY, ENABLE_CHILD_MULTI_SIG
-
-  for (const event of events) {
-    if (event.eventType !== 'execution' && event.eventType !== 'executionBatch') continue;
-    const payload = event.payload as Record<string, unknown>;
-    const proposalHash = payload.proposalHash;
-    const txType = payload.txType;
-    if (typeof proposalHash !== 'string') continue;
-    if (typeof txType !== 'string' || !remoteExecutionTypes.has(txType)) continue;
-    map.set(Field(proposalHash), EXECUTED_MARKER);
-  }
-
-  return map;
+/** Rebuilds a child's childExecutionRoot map from its indexed events. */
+async function rebuildChildExecutionMapFromBackend(childAddress: string): Promise<InstanceType<typeof MerkleMap>> {
+  return rebuildChildExecutionMap(await fetchAllEvents(childAddress));
 }
 
 /** Safely parses a base58 public key, falling back to PublicKey.empty() for the zero point. */
@@ -895,7 +788,9 @@ const workerApi = {
 
     // stores are needed up front, addOwner derives proposal.data from the owner list
     progressFn('Rebuilding stores...');
-    const { ownerStore, approvalStore, nullifierStore } = await rebuildStoresFromBackend(params.contractAddress);
+    const stores = await rebuildStoresFromBackend(params.contractAddress);
+    const { ownerStore, approvalStore, nullifierStore } = stores;
+    assertStoresMatchChain(stores, await requireContractState(params.contractAddress));
 
     if (params.input.txType === 'addOwner' && params.input.newOwner) {
       // Owners are identified by x-coordinate (a key and its negation share
@@ -1080,7 +975,9 @@ const workerApi = {
     if (!contractState) return null;
 
     progressFn('Rebuilding stores...');
-    const { ownerStore, approvalStore, nullifierStore } = await rebuildStoresFromBackend(params.contractAddress);
+    const stores = await rebuildStoresFromBackend(params.contractAddress);
+    assertStoresMatchChain(stores, contractState);
+    const { ownerStore, approvalStore, nullifierStore } = stores;
 
     const proposalStruct = buildProposalStruct({
       ...params.proposal,
@@ -1154,7 +1051,9 @@ const workerApi = {
     if (!contractState) return null;
 
     progressFn('Rebuilding stores...');
-    const { ownerStore, approvalStore } = await rebuildStoresFromBackend(params.contractAddress);
+    const stores = await rebuildStoresFromBackend(params.contractAddress);
+    assertStoresMatchChain(stores, contractState);
+    const { ownerStore, approvalStore } = stores;
 
     const txType = normalizeTxType(params.proposal.txType);
     const proposalStruct = buildProposalStruct({
@@ -1270,19 +1169,20 @@ const workerApi = {
     if (!ok) return null;
 
     progressFn('Rebuilding parent stores...');
-    const { approvalStore } = await rebuildStoresFromBackend(params.parentAddress);
+    const { approvalStore } = await rebuildVerifiedParentApprovals(params.parentAddress);
 
     const childAddress = PublicKey.fromBase58(params.childAddress);
     const executor = PublicKey.fromBase58(params.executorAddress);
 
+    // Keep the order reserveForParent committed (its slot index), not base58
+    // order: the reserved config hash binds that exact order.
     const ownerStore = new OwnerStore();
-    const ownerKeys = params.childOwners.map((address) => PublicKey.fromBase58(address));
-    for (const owner of ownerKeys) ownerStore.addSorted(owner);
+    ownerStore.owners = params.childOwners.map((address) => PublicKey.fromBase58(address));
     const paddedOwners = [...ownerStore.owners];
     while (paddedOwners.length < MAX_OWNERS) paddedOwners.push(PublicKey.empty());
 
     const ownersCommitment = ownerStore.getCommitment();
-    const numOwners = Field(ownerKeys.length);
+    const numOwners = Field(ownerStore.owners.length);
     const threshold = Field(params.childThreshold);
 
     const expectedData = Poseidon.hash([ownersCommitment, threshold, numOwners]);
@@ -1373,10 +1273,12 @@ const workerApi = {
     }
 
     progressFn('Rebuilding parent approval store...');
-    const { approvalStore } = await rebuildStoresFromBackend(params.parentAddress);
+    const { approvalStore } = await rebuildVerifiedParentApprovals(params.parentAddress);
 
     progressFn('Rebuilding child execution map...');
-    const childExecutionMap = await rebuildChildExecutionMap(params.childAddress);
+    const childExecutionMap = await rebuildChildExecutionMapFromBackend(params.childAddress);
+    const childState = await requireContractState(params.childAddress, 'SubVault');
+    assertChildExecutionMapMatchesChain(childExecutionMap, childState.childExecutionRoot);
 
     const proposalStruct = buildProposalStruct({
       ...params.proposal,
