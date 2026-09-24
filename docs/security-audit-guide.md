@@ -156,7 +156,12 @@ sign from the fields they display and verify it equals the selected proposal's i
 `TransactionProposal` struct and call `.hash()` locally, then `assertRecomputedProposalHash` aborts
 the approve or execute before any signature if the recomputed hash does not match the proposal the
 owner selected. (Propose mints a fresh proposal with no prior identity, so it has nothing to match
-against and skips the check.)
+against and skips the check.) Both clients also rebuild the owner list, approval map and nullifier
+map from indexed events with the shared, order-independent `contracts/src/event-rebuild.ts`, and
+refuse to prove unless the result reproduces on-chain state (the worker reads the Mina node, the
+CLI the bundle's account snapshot); events are unauthenticated, so the per-event roots the
+contract emits only locate a divergence and are never trusted on their own. Covered by
+`event-rebuild.test.ts` and the offline CLI end-to-end tamper test.
 
 The deployed verification key is pinned in CI: `contracts/.vk-hash` holds canonical hashes for
 testnet and mainnet (`testnet=` and `mainnet=` labeled entries — each network produces a structurally

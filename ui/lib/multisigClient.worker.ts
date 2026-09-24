@@ -445,6 +445,25 @@ function buildProposalDataField(
   return Field(0);
 }
 
+/**
+ * insertAfter for executing an ADD_OWNER: the position whose chain equals the
+ * approved `data`, found in the owner list as committed on chain (whatever its
+ * order), rather than assumed from base58 order.
+ */
+function approvedInsertAfter(
+  ownerStore: InstanceType<typeof OwnerStore>,
+  target: InstanceType<typeof PublicKey>,
+  data: InstanceType<typeof Field>,
+): InstanceType<typeof PublicKeyOption> {
+  const position = ownerStore.insertPositionFor(target, data);
+  if (position < 0) {
+    throw new Error('No position in the current owner list produces this addOwner proposal\'s approved owner commitment; it can never execute.');
+  }
+  return position === 0
+    ? PublicKeyOption.none()
+    : new PublicKeyOption({ value: ownerStore.owners[position - 1], isSome: Bool(true) });
+}
+
 /** Result of the chainless addOwner pre-check. */
 export interface AddOwnerDataCheck {
   valid: boolean;
@@ -1110,11 +1129,8 @@ const workerApi = {
 
       if (txType === 'addOwner' || txType === 'removeOwner') {
         const target = proposalStruct.receivers[0].address;
-        const pred = ownerStore.sortedPredecessor(target);
         const insertAfter =
-          txType === 'addOwner' && pred
-            ? new PublicKeyOption({ value: pred, isSome: Bool(true) })
-            : PublicKeyOption.none();
+          txType === 'addOwner' ? approvedInsertAfter(ownerStore, target, proposalStruct.data) : PublicKeyOption.none();
         await contract.executeOwnerChange(
           proposalStruct, approvalWitness, approvalCount, ownerStore.getWitness(), insertAfter
         );
@@ -1348,10 +1364,16 @@ const workerApi = {
   computeCreateChildConfigHash(params: {
     childOwners: string[];
     childThreshold: number;
+    /** Hash the owners as given (a reserved config read from events) instead of sorting them. */
+    preserveOrder?: boolean;
   }): { ownersCommitment: string; configHash: string } {
     const ownerStore = new OwnerStore();
-    for (const addr of params.childOwners) {
-      ownerStore.addSorted(PublicKey.fromBase58(addr));
+    if (params.preserveOrder) {
+      ownerStore.owners = params.childOwners.map((addr) => PublicKey.fromBase58(addr));
+    } else {
+      for (const addr of params.childOwners) {
+        ownerStore.addSorted(PublicKey.fromBase58(addr));
+      }
     }
     const ownersCommitment = ownerStore.getCommitment();
     const numOwners = Field(params.childOwners.length);

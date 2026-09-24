@@ -103,6 +103,20 @@ export class OwnerStore {
   }
 
   /**
+   * Index at which inserting `owner` makes the chain equal `commitment`, or -1.
+   * Works for any list order, so an add lands where the approved or emitted
+   * commitment says rather than where base58 order would put it.
+   */
+  insertPositionFor(owner: PublicKey, commitment: Field | string): number {
+    const target = commitment.toString();
+    for (let i = 0; i <= this.owners.length; i++) {
+      const candidate = [...this.owners.slice(0, i), owner, ...this.owners.slice(i)];
+      if (computeOwnerChain(candidate).toString() === target) return i;
+    }
+    return -1;
+  }
+
+  /**
    * Commitment of the list with `owner` inserted in canonical sorted order,
    * without mutating this store. Used to set/verify ADD_OWNER proposal.data.
    */
