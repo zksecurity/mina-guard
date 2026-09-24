@@ -474,8 +474,8 @@ export interface AddOwnerDataCheck {
 /**
  * For ADD_OWNER proposals, checks proposal.data equals the commitment of the
  * current owner list with the target inserted in canonical sorted order.
- * executeOwnerChange enforces data on-chain, so a mismatched proposal either
- * can never execute or would store an owner order clients cannot reconstruct.
+ * Such a proposal would still execute (clients rebuild any order), but the app
+ * refuses to co-sign it so every vault it touches keeps one owner order.
  * No-op for other txTypes.
  */
 function assertCanonicalAddOwnerData(
