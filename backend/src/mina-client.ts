@@ -526,6 +526,16 @@ export async function fetchMempoolHashes(
   }
 }
 
+/**
+ * False for events of a transaction the chain reports as failed. Its account
+ * updates never applied, so its events describe changes that did not happen
+ * (e.g. an approval that lost a same-block race). Only an explicit failure is
+ * dropped: a missing or unknown status (local chains report '') is kept.
+ */
+export function isFromAppliedTransaction(transactionStatus: unknown): boolean {
+  return typeof transactionStatus !== 'string' || transactionStatus.toLowerCase() !== 'failed';
+}
+
 /** Fetches decoded MinaGuard events for a contract within a block range. */
 export async function fetchDecodedContractEvents(
   address: string,
@@ -536,18 +546,20 @@ export async function fetchDecodedContractEvents(
   // TODO: restore toHeight once archive node supports upper-bound filtering
   const rawEvents = await contract.fetchEvents(UInt32.from(fromHeight));
 
-  return rawEvents.map((entry) => {
-    const txInfo = (entry.event as any).transactionInfo;
-    return {
-      type: entry.type,
-      event: toSerializableObject((entry.event as any).data),
-      blockHeight: Number(entry.blockHeight.toString()),
-      blockHash: (entry as any).blockHash as string,
-      parentHash: (entry as any).parentBlockHash as string,
-      txHash: (txInfo?.transactionHash as string | undefined) ?? null,
-      txMemo: (txInfo?.transactionMemo as string | undefined) ?? null,
-    };
-  });
+  return rawEvents
+    .filter((entry) => isFromAppliedTransaction((entry.event as any).transactionInfo?.transactionStatus))
+    .map((entry) => {
+      const txInfo = (entry.event as any).transactionInfo;
+      return {
+        type: entry.type,
+        event: toSerializableObject((entry.event as any).data),
+        blockHeight: Number(entry.blockHeight.toString()),
+        blockHash: (entry as any).blockHash as string,
+        parentHash: (entry as any).parentBlockHash as string,
+        txHash: (txInfo?.transactionHash as string | undefined) ?? null,
+        txMemo: (txInfo?.transactionMemo as string | undefined) ?? null,
+      };
+    });
 }
 
 /** Runs a GraphQL request with optional endpoint fallback. */
