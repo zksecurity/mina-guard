@@ -217,8 +217,9 @@ export default function TransactionDetailPage() {
 
   // For ADD_OWNER: recompute the canonical post-add owner commitment from the
   // indexed owner list and compare it to the signed proposal.data. A mismatch
-  // means execution would store an owner order no client can reconstruct, so
-  // approvers are warned and blocked before signing. 'unavailable' = the owner
+  // means the proposal places the new owner outside the app's owner order; it
+  // would still execute, but approvers are blocked so every vault the app
+  // touches keeps one order. 'unavailable' = the owner
   // list could not be rebuilt (backend down / not indexed), which doesn't
   // block; the worker re-asserts canonicity before signing anyway.
   const [addOwnerDataCheck, setAddOwnerDataCheck] =
@@ -372,8 +373,8 @@ export default function TransactionDetailPage() {
     // to the signed proposal.data (config-swap). Only a computed mismatch
     // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
     childConfigCheck !== 'mismatch' &&
-    // Same for addOwner: block when proposal.data provably binds a
-    // non-canonical owner order.
+    // Same for addOwner: block when proposal.data provably places the new
+    // owner outside the app's owner order.
     addOwnerDataCheck !== 'mismatch' &&
     !addOwnerBlocked &&
     !myPendingApprove &&
@@ -756,11 +757,11 @@ export default function TransactionDetailPage() {
 
         {addOwnerDataCheck === 'mismatch' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
-            <p className="font-semibold mb-1">Don&apos;t approve: this would break the owner list</p>
+            <p className="font-semibold mb-1">Don&apos;t approve: this doesn&apos;t follow the app&apos;s owner order</p>
             <p className="opacity-90">
-              This Add Owner proposal arranges the owners in an order this app cannot reproduce. If it is
-              executed, the Vault&apos;s owner list could become unusable in normal tools. Do not approve it;
-              ask the proposer to recreate it from this app.
+              This Add Owner proposal places the new owner somewhere other than where this app puts new
+              owners. It would still execute, but the app keeps every Vault&apos;s owners in one order, so it
+              won&apos;t approve it. Ask the proposer to recreate it from this app.
             </p>
           </div>
         )}
@@ -934,7 +935,7 @@ export default function TransactionDetailPage() {
                   {addOwnerDataCheck === 'mismatch' && proposal.status === 'pending' && isOwner && !hasApproved && (
                     <button
                       disabled
-                      title="This proposal's owner order cannot be reproduced by this app"
+                      title="This proposal places the new owner outside the app's owner order"
                       className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
                     >
                       Approve blocked — owner order mismatch
@@ -1006,8 +1007,8 @@ export default function TransactionDetailPage() {
                             }
                             if (addOwnerDataCheck === 'mismatch') {
                               throw new Error(
-                                'This Add Owner proposal arranges owners in an order this app cannot reproduce. ' +
-                                'Do not approve it.',
+                                'This Add Owner proposal places the new owner outside the app\'s owner order. ' +
+                                'Ask the proposer to recreate it from this app.',
                               );
                             }
                             if (addOwnerBlocked) {

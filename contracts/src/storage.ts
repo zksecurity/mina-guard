@@ -109,9 +109,15 @@ export class OwnerStore {
    */
   insertPositionFor(owner: PublicKey, commitment: Field | string): number {
     const target = commitment.toString();
+    const matches = (i: number) =>
+      computeOwnerChain([...this.owners.slice(0, i), owner, ...this.owners.slice(i)]).toString() === target;
+    // the app always adds at the sorted position (addSorted), so try that first
+    const b58 = owner.toBase58();
+    const sortedIndex = this.owners.findIndex((o) => o.toBase58() > b58);
+    const preferred = sortedIndex === -1 ? this.owners.length : sortedIndex;
+    if (matches(preferred)) return preferred;
     for (let i = 0; i <= this.owners.length; i++) {
-      const candidate = [...this.owners.slice(0, i), owner, ...this.owners.slice(i)];
-      if (computeOwnerChain(candidate).toString() === target) return i;
+      if (i !== preferred && matches(i)) return i;
     }
     return -1;
   }

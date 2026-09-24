@@ -38,6 +38,16 @@ describe('OwnerStore', () => {
     throw new Error('no divergent case found');
   });
 
+  it('insertPositionFor returns the sorted position for an app-made add', () => {
+    const keys = Array.from({ length: 5 }, () => PrivateKey.random().toPublicKey());
+    const store = new OwnerStore();
+    for (const k of keys.slice(0, 4)) store.addSorted(k);
+    const target = keys[4];
+    const expected = store.owners.findIndex((o) => o.toBase58() > target.toBase58());
+    const sortedIndex = expected === -1 ? store.owners.length : expected;
+    expect(store.insertPositionFor(target, store.commitmentWithSortedAdd(target))).toBe(sortedIndex);
+  });
+
   it('insertPositionFor returns -1 when no slot yields the commitment', () => {
     const store = new OwnerStore();
     store.owners = [PrivateKey.random().toPublicKey(), PrivateKey.random().toPublicKey()];
