@@ -39,7 +39,8 @@ lifecycle, and each one is an independent transaction that the browser/worker **
 proves, and submits directly to the Mina node** — never through the backend. The backend is a
 read-only indexer: it is queried to reconstruct proposal data and Merkle witnesses, but it
 never relays a transaction, and any data it tampers with is caught on-chain (a bad
-reconstruction at worst makes the proof fail). *Propose* creates the proposal and
+reconstruction is refused before proving: the worker checks the rebuilt stores against the
+vault's on-chain state). *Propose* creates the proposal and
 auto-records the proposer's own approval in the same transaction (propose == create + first
 approval). *Approve* has each additional owner rebuild the proposal struct from indexer data,
 re-hash it, and sign that hash — the contract re-hashes on-chain and rejects any mismatch, so

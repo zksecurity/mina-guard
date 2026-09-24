@@ -1,6 +1,5 @@
 import { Field, MerkleMap, PublicKey } from 'o1js';
 import { ApprovalStore, OwnerStore, VoteNullifierStore } from './storage.js';
-import { computeOwnerChain } from './list-commitment.js';
 import { EXECUTED_MARKER, PROPOSED_MARKER, TxType } from './constants.js';
 
 /**
@@ -116,20 +115,11 @@ function rebuildOwners(events: readonly IndexedEvent[]): OwnerStore {
       continue;
     }
     const target = field(e.payload, 'newOwnersCommitment');
-    const position = target === null ? -1 : insertPositionFor(store.owners, owner, target);
+    const position = target === null ? -1 : store.insertPositionFor(owner, target);
     if (position < 0) store.addSorted(owner); // no commitment to match: fall back to the canonical order
     else store.owners.splice(position, 0, owner);
   }
   return store;
-}
-
-/** Index at which inserting `owner` yields `commitment`, or -1. */
-function insertPositionFor(owners: readonly PublicKey[], owner: PublicKey, commitment: string): number {
-  for (let i = 0; i <= owners.length; i++) {
-    const candidate = [...owners.slice(0, i), owner, ...owners.slice(i)];
-    if (computeOwnerChain(candidate).toString() === commitment) return i;
-  }
-  return -1;
 }
 
 // -- approval and nullifier maps ----------------------------------------------

@@ -180,6 +180,8 @@ export default function TransactionDetailPage() {
         const { configHash } = await computeCreateChildConfigHash({
           childOwners: config.owners,
           childThreshold: config.threshold,
+          // the reserved order (slot index) is what the signed data binds
+          preserveOrder: true,
         });
         if (cancelled) return;
         setChildConfigCheck(configHash === signedData ? 'match' : 'mismatch');

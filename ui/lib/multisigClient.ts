@@ -256,6 +256,7 @@ export async function executeProposalOnchain(params: {
 export async function computeCreateChildConfigHash(params: {
   childOwners: string[];
   childThreshold: number;
+  preserveOrder?: boolean;
 }): Promise<{
   ownersCommitment: string;
   configHash: string;
