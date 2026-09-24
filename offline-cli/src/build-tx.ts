@@ -379,13 +379,12 @@ function approvedInsertAfter(
 }
 
 /**
- * For ADD_OWNER proposals, checks proposal.data equals the commitment of the
- * current owner list with the target inserted in canonical sorted order.
- * Such a proposal would still execute (clients rebuild any order), but the app
- * refuses to co-sign it so every vault it touches keeps one owner order.
- * No-op for other txTypes.
+ * For ADD_OWNER proposals, refuses to co-sign one that can never execute: the
+ * target already holds an owner key, or proposal.data matches inserting the
+ * target at no position in the current owner list. Any position is accepted,
+ * not just the sorted one the app itself proposes. No-op for other txTypes.
  */
-function assertCanonicalAddOwnerData(
+export function assertExecutableAddOwnerData(
   proposal: InstanceType<typeof TransactionProposal>,
   ownerStore: InstanceType<typeof OwnerStore>,
 ): void {
@@ -397,10 +396,9 @@ function assertCanonicalAddOwnerData(
       'addOwner target is already an owner or the negation of one (same key holder); the proposal can never execute, approval refused',
     );
   }
-  const expected = ownerStore.commitmentWithSortedAdd(target);
-  if (!proposal.data.equals(expected).toBoolean()) {
+  if (ownerStore.insertPositionFor(target, proposal.data) < 0) {
     throw new Error(
-      'addOwner proposal does not bind the canonical owner order, approval refused',
+      'addOwner proposal data matches no position in the current owner list; it can never execute, approval refused',
     );
   }
 }
@@ -910,8 +908,8 @@ export async function handleApprove(
     bundle.contractAddress,
   );
 
-  // refuse to co-sign an addOwner with a non-canonical bound owner order
-  assertCanonicalAddOwnerData(proposalStruct, ownerStore);
+  // refuse to co-sign an addOwner that can never execute
+  assertExecutableAddOwnerData(proposalStruct, ownerStore);
 
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();

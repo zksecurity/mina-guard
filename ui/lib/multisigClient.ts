@@ -265,13 +265,13 @@ export async function computeCreateChildConfigHash(params: {
 }
 
 /**
- * For addOwner proposals, verifies proposal.data binds the canonical sorted
- * owner order. Returns null for other txTypes.
+ * For addOwner proposals, verifies the proposal can execute: its data matches
+ * inserting the target at some position. Returns null for other txTypes.
  */
 export async function validateAddOwnerProposalData(params: {
   contractAddress: string;
   proposal: Proposal;
-}): Promise<{ valid: boolean; reason: 'sameKeyHolder' | 'nonCanonicalOrder' | null } | null> {
+}): Promise<{ valid: boolean; reason: 'sameKeyHolder' | 'noMatchingPosition' | null } | null> {
   return getWorkerApi().validateAddOwnerProposalData(params);
 }
 

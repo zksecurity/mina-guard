@@ -468,17 +468,16 @@ function approvedInsertAfter(
 export interface AddOwnerDataCheck {
   valid: boolean;
   /** Why an addOwner proposal cannot execute; null when valid. */
-  reason: 'sameKeyHolder' | 'nonCanonicalOrder' | null;
+  reason: 'sameKeyHolder' | 'noMatchingPosition' | null;
 }
 
 /**
- * For ADD_OWNER proposals, checks proposal.data equals the commitment of the
- * current owner list with the target inserted in canonical sorted order.
- * Such a proposal would still execute (clients rebuild any order), but the app
- * refuses to co-sign it so every vault it touches keeps one owner order.
- * No-op for other txTypes.
+ * For ADD_OWNER proposals, refuses to co-sign one that can never execute: the
+ * target already holds an owner key, or proposal.data matches inserting the
+ * target at no position in the current owner list. Any position is accepted,
+ * not just the sorted one the app itself proposes. No-op for other txTypes.
  */
-function assertCanonicalAddOwnerData(
+function assertExecutableAddOwnerData(
   proposal: InstanceType<typeof TransactionProposal>,
   ownerStore: InstanceType<typeof OwnerStore>
 ): void {
@@ -490,10 +489,9 @@ function assertCanonicalAddOwnerData(
       'addOwner target is already an owner or the negation of one (same key holder); the proposal can never execute, approval refused'
     );
   }
-  const expected = ownerStore.commitmentWithSortedAdd(target);
-  if (!proposal.data.equals(expected).toBoolean()) {
+  if (ownerStore.insertPositionFor(target, proposal.data) < 0) {
     throw new Error(
-      'addOwner proposal does not bind the canonical owner order, approval refused'
+      'addOwner proposal data matches no position in the current owner list; it can never execute, approval refused'
     );
   }
 }
@@ -953,8 +951,8 @@ const workerApi = {
 
   /**
    * Chainless pre-check for the approve UI: for addOwner proposals, verifies
-   * proposal.data binds the canonical sorted owner order. Returns null for
-   * other txTypes so callers can skip the warning entirely.
+   * the proposal can execute (see assertExecutableAddOwnerData). Returns null
+   * for other txTypes so callers can skip the warning entirely.
    */
   async validateAddOwnerProposalData(params: {
     contractAddress: string;
@@ -964,9 +962,8 @@ const workerApi = {
     const { ownerStore } = await rebuildStoresFromBackend(params.contractAddress);
     const target = PublicKey.fromBase58(params.proposal.receivers[0].address);
     if (ownerStore.hasOwnerWithSameX(target)) return { valid: false, reason: 'sameKeyHolder' };
-    const expected = ownerStore.commitmentWithSortedAdd(target);
-    const valid = Field(params.proposal.data ?? '0').equals(expected).toBoolean();
-    return valid ? { valid: true, reason: null } : { valid: false, reason: 'nonCanonicalOrder' };
+    const position = ownerStore.insertPositionFor(target, Field(params.proposal.data ?? '0'));
+    return position >= 0 ? { valid: true, reason: null } : { valid: false, reason: 'noMatchingPosition' };
   },
 
   /**
@@ -1004,8 +1001,8 @@ const workerApi = {
       guardAddress: params.proposal.guardAddress ?? params.contractAddress,
     }, params.contractAddress);
 
-    // refuse to co-sign an addOwner with a non-canonical bound owner order
-    assertCanonicalAddOwnerData(proposalStruct, ownerStore);
+    // refuse to co-sign an addOwner that can never execute
+    assertExecutableAddOwnerData(proposalStruct, ownerStore);
 
     const proposalHash = proposalStruct.hash();
     const hashStr = proposalHash.toString();
