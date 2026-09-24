@@ -202,9 +202,17 @@ calls `setup()` first.
 **3. Indexer-supplied data feeding into signed transactions.**
 The backend is untrusted (see threat model), yet its data rebuilds the Merkle
 stores and proposal structs that get hashed and signed
-(`rebuildStoresFromBackend`, `worker.ts:273`; `buildProposalStruct` — memoHash
-included — `worker.ts:565`; owner ordering reconstructed by sorting event
-payloads, `279-292`). On action paths the recomputed `proposalHash` must key
+(`rebuildStoresFromBackend`, a thin wrapper over the shared `rebuildStores` in
+`contracts/src/event-rebuild.ts` that the offline CLI also uses; `buildProposalStruct`
+— memoHash included). The rebuild does not depend on delivery order: approval
+leaves keep the largest value seen, owners come from the emitted setup slot index,
+and owner changes replay in `configNonce` order with each insert placed where the
+emitted post-change commitment says. Before any proof the worker compares the
+rebuilt owner commitment, approval root and nullifier root with the vault state it
+reads from the Mina node, and on SubVault paths the parent's approval root and the
+child's execution root (`assertStoresMatchChain`,
+`assertChildExecutionMapMatchesChain`); a mismatch refuses with a retry message,
+naming the first block whose emitted roots disagree. On action paths the recomputed `proposalHash` must key
 into a proposal that exists on-chain and the owner's signature covers it
 (`MinaGuard.ts:1011`, `1014`, `1032`), so the contract re-checks what the
 indexer supplied. The client also guards this seam locally: on

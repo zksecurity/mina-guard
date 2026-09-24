@@ -108,9 +108,10 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
    never dials out), the bundled account snapshots injected into o1js's
    account cache, and the Merkle stores rebuilt by replaying the bundled
-   event history (`rebuildStores`) — the same event-sourcing the web worker
-   does from indexer data, with child executions feeding a separate
-   `childExecutionRoot` map.
+   event history with the shared `rebuildStores` / `rebuildChildExecutionMap`
+   (`contracts/src/event-rebuild.ts`, the same code the web worker runs), then
+   checked against the bundled account snapshots before any proof
+   (`rebuildVerifiedStores`, `snapshotState`); a mismatch aborts.
 3. **Proposal hash + in-circuit signature** — the proposal struct is built
    from `bundle.input` (propose) or rebuilt from `bundle.proposal`
    (approve/execute), mirroring the worker 1:1; the CLI recomputes
@@ -179,7 +180,7 @@ takes over.
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |
-| `events` | `Array<{eventType, payload}>` | Full contract event history for Merkle-store reconstruction |
+| `events` | `Array<{eventType, payload, blockHeight?}>` | Full contract event history for Merkle-store reconstruction; the optional `blockHeight` only locates a divergence in the error message (older bundles without it still work) |
 
 Event types replayed: `setupOwner`, `ownerChange`, `ownerChangeBatch`,
 `proposal`, `approval`, `execution`, `executionBatch`.
@@ -308,7 +309,11 @@ gate is what keeps them from silently diverging.
 as the worker's indexer-fed reconstruction (UI guide, focus point 3), but the
 inputs come from the *bundle file*: the replayed events determine owner
 ordering, approval counts, and nullifier roots, which become the witnesses
-the contract checks on-chain.
+the contract checks on-chain. The rebuild is order-independent and shared
+with the worker, and its result must reproduce the bundle's own account
+snapshot before the CLI proves; the snapshot and the events come from the
+same bundle producer, so the check catches an incomplete or reordered event
+history, not a forged bundle.
 
 **5. Fee counting & account snapshots.** `countNewReceiverAccounts` derives
 strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond

@@ -28,7 +28,6 @@ import {
   Signature,
   Bool,
   Cache,
-  MerkleMap,
   Poseidon,
   addCachedAccount,
   TokenId,
@@ -42,16 +41,16 @@ import {
   Receiver,
   TransactionProposal,
   SetupOwnersInput,
-  EXECUTED_MARKER,
-  PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
   OwnerStore,
-  VoteNullifierStore,
-  ApprovalStore,
   PublicKeyOption,
   Destination,
   memoToField,
+  rebuildStores,
+  rebuildChildExecutionMap,
+  assertStoresMatchChain,
+  assertChildExecutionMapMatchesChain,
 } from 'contracts';
 
 // ---------------------------------------------------------------------------
@@ -104,7 +103,7 @@ interface BundleBase {
   contractAddress: string;
   feePayerAddress: string;
   accounts: Record<string, BundleAccount>;
-  events: Array<{ eventType: string; payload: unknown }>;
+  events: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
 }
 
 export interface OfflineProposeBundle extends BundleBase {
@@ -141,7 +140,7 @@ export interface OfflineExecuteBundle extends BundleBase {
   proposal: BundleProposal;
   receiverAccountExists: Record<string, boolean>;
   childAddress?: string;
-  childEvents?: Array<{ eventType: string; payload: unknown }>;
+  childEvents?: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
   childOwners?: string[];
   childThreshold?: number;
 }
@@ -438,115 +437,6 @@ function assertRecomputedProposalHash(
 // Store rebuilding from bundled events
 // ---------------------------------------------------------------------------
 
-function rebuildStores(events: Array<{ eventType: string; payload: unknown }>) {
-  const ownerStore = new OwnerStore();
-  const approvalStore = new ApprovalStore();
-  const nullifierStore = new VoteNullifierStore();
-
-  const emptyKey = PublicKey.empty().toBase58();
-  const setupOwnerEntries = events
-    .filter((e) => e.eventType === 'setupOwner')
-    .map((e) => {
-      const p = e.payload as Record<string, unknown>;
-      return { owner: p.owner };
-    })
-    .filter(({ owner }) => typeof owner === 'string' && (owner as string).length > 10 && owner !== emptyKey)
-    .sort((a, b) => ((a.owner as string) > (b.owner as string) ? 1 : -1));
-  for (const { owner } of setupOwnerEntries) {
-    ownerStore.addSorted(PublicKey.fromBase58(owner as string));
-  }
-
-  for (const event of events) {
-    if (event.eventType === 'setupOwner') continue;
-
-    if (event.eventType === 'ownerChange' || event.eventType === 'ownerChangeBatch') {
-      const payload = event.payload as Record<string, unknown>;
-      const owner = payload.owner;
-      const added = payload.added;
-      if (typeof owner === 'string' && owner.length > 10) {
-        if (added === '1' || added === 1 || added === true) {
-          ownerStore.addSorted(PublicKey.fromBase58(owner));
-        } else {
-          ownerStore.remove(PublicKey.fromBase58(owner));
-        }
-      }
-      continue;
-    }
-
-    if (event.eventType === 'proposal') {
-      const payload = event.payload as Record<string, unknown>;
-      const proposalHash = payload.proposalHash;
-      const proposer = payload.proposer;
-      if (typeof proposalHash === 'string') {
-        const key = Field(proposalHash);
-        const proposeCount = PROPOSED_MARKER.add(1);
-        if (proposeCount.toBigInt() > approvalStore.getCount(key).toBigInt()) {
-          approvalStore.setCount(key, proposeCount);
-        }
-      }
-      if (
-        typeof proposalHash === 'string' &&
-        typeof proposer === 'string' &&
-        proposer.length > 10
-      ) {
-        nullifierStore.nullify(Field(proposalHash), PublicKey.fromBase58(proposer));
-      }
-      continue;
-    }
-
-    if (event.eventType === 'approval') {
-      const payload = event.payload as Record<string, unknown>;
-      const proposalHash = payload.proposalHash;
-      const approver = payload.approver;
-      const approvalCount = payload.approvalCount;
-      if (typeof proposalHash === 'string' && typeof approvalCount === 'string') {
-        const key = Field(proposalHash);
-        const newCount = Field(approvalCount);
-        const existing = approvalStore.getCount(key);
-        if (newCount.toBigInt() > existing.toBigInt()) {
-          approvalStore.setCount(key, newCount);
-        }
-      }
-      if (
-        typeof proposalHash === 'string' &&
-        typeof approver === 'string' &&
-        approver.length > 10
-      ) {
-        nullifierStore.nullify(Field(proposalHash), PublicKey.fromBase58(approver));
-      }
-      continue;
-    }
-
-    if (event.eventType === 'execution' || event.eventType === 'executionBatch') {
-      const payload = event.payload as Record<string, unknown>;
-      const proposalHash = payload.proposalHash;
-      const txType = payload.txType;
-      const isRemoteExecution =
-        typeof txType === 'string' && (txType === '5' || txType === '7' || txType === '8' || txType === '9');
-      if (typeof proposalHash === 'string' && !isRemoteExecution) {
-        approvalStore.setCount(Field(proposalHash), EXECUTED_MARKER);
-      }
-    }
-  }
-
-  return { ownerStore, approvalStore, nullifierStore };
-}
-
-function rebuildChildExecutionMap(childEvents: Array<{ eventType: string; payload: unknown }>): InstanceType<typeof MerkleMap> {
-  const map = new MerkleMap();
-  const remoteExecutionTypes = new Set(['7', '8', '9']);
-  for (const event of childEvents) {
-    if (event.eventType !== 'execution' && event.eventType !== 'executionBatch') continue;
-    const payload = event.payload as Record<string, unknown>;
-    const proposalHash = payload.proposalHash;
-    const txType = payload.txType;
-    if (typeof proposalHash !== 'string') continue;
-    if (typeof txType !== 'string' || !remoteExecutionTypes.has(txType)) continue;
-    map.set(Field(proposalHash), EXECUTED_MARKER);
-  }
-  return map;
-}
-
 // ---------------------------------------------------------------------------
 // Network + account injection
 // ---------------------------------------------------------------------------
@@ -625,6 +515,33 @@ function injectAccounts(bundle: BundleBase) {
       process.stderr.write(`[offline-cli] Warning: could not inject account ${address}: ${err}\n`);
     }
   }
+}
+
+/**
+ * On-chain state of `address` from the injected bundle snapshot, used to check
+ * stores rebuilt from events before proving. Fails closed: proving needs the
+ * same snapshot, so a bundle without it cannot produce a valid transaction.
+ */
+function snapshotState(address: string) {
+  const zkApp = new MinaGuard(PublicKey.fromBase58(address));
+  try {
+    return {
+      ownersCommitment: zkApp.ownersCommitment.get(),
+      approvalRoot: zkApp.approvalRoot.get(),
+      voteNullifierRoot: zkApp.voteNullifierRoot.get(),
+      childExecutionRoot: zkApp.childExecutionRoot.get(),
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message.split('\n')[0] : String(err);
+    throw new Error(`Bundle has no usable account snapshot for ${address}: ${reason}`);
+  }
+}
+
+/** Rebuilds the vault's stores from the bundle events and checks them against its snapshot. */
+function rebuildVerifiedStores(bundle: BundleBase) {
+  const stores = rebuildStores(bundle.events);
+  assertStoresMatchChain(stores, snapshotState(bundle.contractAddress));
+  return stores;
 }
 
 // ---------------------------------------------------------------------------
@@ -823,7 +740,7 @@ export async function handlePropose(
   await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
-  const { ownerStore, approvalStore, nullifierStore } = rebuildStores(bundle.events);
+  const { ownerStore, approvalStore, nullifierStore } = rebuildVerifiedStores(bundle);
 
   if (input.txType === 'addOwner' && input.newOwner) {
     // same check as the web client: a key an owner already holds can never be added
@@ -963,7 +880,7 @@ export async function handleApprove(
   await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
-  const { ownerStore, approvalStore, nullifierStore } = rebuildStores(bundle.events);
+  const { ownerStore, approvalStore, nullifierStore } = rebuildVerifiedStores(bundle);
 
   // Build proposal struct
   const proposalStruct = buildProposalStruct(
@@ -1056,7 +973,7 @@ export async function handleExecute(
   await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
-  const { ownerStore, approvalStore } = rebuildStores(bundle.events);
+  const { ownerStore, approvalStore } = rebuildVerifiedStores(bundle);
 
   // Build proposal struct
   const proposalStruct = buildProposalStruct(
@@ -1088,8 +1005,10 @@ export async function handleExecute(
       throw new Error('createChild execute bundle missing childOwners/childThreshold');
     }
 
+    // Keep the order reserveForParent committed (its slot index), not base58
+    // order: the reserved config hash binds that exact order.
     const childOwnerStore = new OwnerStore();
-    for (const addr of bundle.childOwners) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
+    childOwnerStore.owners = bundle.childOwners.map((addr) => PublicKey.fromBase58(addr));
     const paddedOwners = [...childOwnerStore.owners];
     while (paddedOwners.length < MAX_OWNERS) paddedOwners.push(PublicKey.empty());
 
@@ -1157,6 +1076,7 @@ export async function handleExecute(
 
     log('Rebuilding child execution map...');
     const childExecutionMap = rebuildChildExecutionMap(bundle.childEvents);
+    assertChildExecutionMapMatchesChain(childExecutionMap, snapshotState(childAddr).childExecutionRoot);
     const childExecutionWitness = childExecutionMap.getWitness(proposalHash);
 
     const childZkApp = new MinaGuard(PublicKey.fromBase58(childAddr));

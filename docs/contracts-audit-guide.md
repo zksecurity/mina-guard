@@ -111,6 +111,8 @@ Three independent store classes in `storage.ts` mirror on-chain roots. Each is
 self-contained; two of the three (`OwnerStore`, `ApprovalStore`) also implement
 `serialize`/`deserialize` — `VoteNullifierStore` does not.
 
+**`event-rebuild.ts`** — rebuilds the three stores (and a child's `childExecutionRoot` map) from indexed events for both the web worker and the offline CLI. The fold is order-independent: approval leaves keep the largest value seen (proposed < counts < `EXECUTED_MARKER`), nullifier writes are idempotent, owners come from the `setupOwner` slot `index`, and owner changes replay in `configNonce` order, each add placed at the position whose chain equals the emitted `newOwnersCommitment`. `assertStoresMatchChain` compares the result with on-chain state before any proof; the per-event roots (see Events) only locate the first divergent block.
+
 **`OwnerStore`** — an ordered `PublicKey[]` array. Methods: `addSorted()`, `sortedPredecessor()`
 (derives the `insertAfter` key for the add-owner flow), `insertAfter()`, `remove()`, `isOwner()`,
 `getCommitment()` (computes chain hash), `getWitness()` (returns `OwnerWitness` padded to
