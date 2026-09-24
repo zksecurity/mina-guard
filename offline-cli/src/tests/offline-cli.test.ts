@@ -25,8 +25,10 @@ import {
   PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
+
+  TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58 } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertExecutableAddOwnerData } from '../build-tx.ts';
 import { renderBundleSummary } from '../summary.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
@@ -515,3 +517,37 @@ describe('offline-cli', () => {
     });
   });
 });
+
+describe('assertExecutableAddOwnerData', () => {
+  const owners = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
+  const store = new OwnerStore();
+  store.owners = [...owners];
+
+  function addOwnerProposal(target: PublicKey, data: InstanceType<typeof Field>) {
+    const receivers = [new Receiver({ address: target, amount: UInt64.from(0) })];
+    while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
+    return new TransactionProposal({
+      receivers, tokenId: Field(0), txType: TxType.ADD_OWNER, data, memoHash: Field(0),
+      nonce: Field(1), configNonce: Field(0), expirySlot: Field(0),
+      guardAddress: PrivateKey.random().toPublicKey(), destination: Destination.LOCAL, childAccount: PublicKey.empty(),
+    });
+  }
+
+  it('accepts an addition at any position, not only the sorted one', () => {
+    const target = PrivateKey.random().toPublicKey();
+    for (let i = 0; i <= owners.length; i++) {
+      const placed = [...owners.slice(0, i), target, ...owners.slice(i)];
+      expect(() => assertExecutableAddOwnerData(addOwnerProposal(target, computeOwnerChain(placed)), store)).not.toThrow();
+    }
+  });
+
+  it('refuses data that matches no position', () => {
+    const target = PrivateKey.random().toPublicKey();
+    expect(() => assertExecutableAddOwnerData(addOwnerProposal(target, Field(123)), store)).toThrow('can never execute');
+  });
+
+  it('refuses a target that already holds an owner key', () => {
+    expect(() => assertExecutableAddOwnerData(addOwnerProposal(owners[1], Field(123)), store)).toThrow('already an owner');
+  });
+});
+

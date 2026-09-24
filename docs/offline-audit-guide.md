@@ -151,7 +151,7 @@ bundle array; CREATE_CHILD executes re-derive the child config hash against
 `proposal.data` and refuse an already-initialized child. The broadcast memo
 on executes is the bundle's advisory `proposal.memo` (see the UI guide).
 
-Before compiling, the CLI also refuses proposals the contract is certain to reject, with the contract's own reasoning, so no operator spends a proof on them: an `ADD_OWNER` whose target an owner already holds, the same key or its negation (propose and approve, `hasOwnerWithSameX`), and a transfer row that sends a non-zero amount to the empty address (`buildTransferReceivers`). The web worker carries the same checks.
+Before compiling, the CLI also refuses proposals the contract is certain to reject, with the contract's own reasoning, so no operator spends a proof on them: an `ADD_OWNER` whose target an owner already holds, the same key or its negation (propose and approve, `hasOwnerWithSameX`), an `ADD_OWNER` whose `data` matches inserting the target at no position of the current owner list (approve, `assertExecutableAddOwnerData`; any position is accepted, not only the sorted one the app proposes), and a transfer row that sends a non-zero amount to the empty address (`buildTransferReceivers`). The web worker carries the same checks.
 
 ### 3. Broadcast (`UploadSignedResponse`, `ui/components/OfflineSigningFlow.tsx`)
 

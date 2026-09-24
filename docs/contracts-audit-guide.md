@@ -200,7 +200,7 @@ runs an execute method for them. Replay protection lives on the child in `childE
 | TxType | Value | `destination` | `data` contains | `receivers[0]` contains |
 | ------ | ----- | ------------- | --------------- | ----------------------- |
 | `TRANSFER` | 0 | `LOCAL` | `Field(0)` | Any recipient (multi-slot allowed) |
-| `ADD_OWNER` | 1 | `LOCAL` | Expected post-add `ownersCommitment` (canonical sorted insert, never 0) | The owner pubkey to add |
+| `ADD_OWNER` | 1 | `LOCAL` | Expected post-add `ownersCommitment` (never 0; the app computes it for the sorted insert position, but any position is valid and clients rebuild whichever was committed) | The owner pubkey to add |
 | `REMOVE_OWNER` | 2 | `LOCAL` | `Field(0)` | The owner pubkey to remove |
 | `CHANGE_THRESHOLD` | 3 | `LOCAL` | New threshold value | Empty |
 | `SET_DELEGATE` | 4 | `LOCAL` | `Field(0)` | Delegate pubkey (empty = undelegate to self) |

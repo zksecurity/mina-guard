@@ -215,15 +215,14 @@ export default function TransactionDetailPage() {
     };
   }, [proposal?.txType, proposal?.childAccount, proposal?._localPending]);
 
-  // For ADD_OWNER: recompute the canonical post-add owner commitment from the
-  // indexed owner list and compare it to the signed proposal.data. A mismatch
-  // means the proposal places the new owner outside the app's owner order; it
-  // would still execute, but approvers are blocked so every vault the app
-  // touches keeps one order. 'unavailable' = the owner
-  // list could not be rebuilt (backend down / not indexed), which doesn't
-  // block; the worker re-asserts canonicity before signing anyway.
+  // For ADD_OWNER: check the signed proposal.data matches inserting the target
+  // at some position of the indexed owner list (any position, not only the
+  // sorted one). 'unexecutable' = no position does, so the contract would reject
+  // it and approvers are blocked. 'unavailable' = the owner list could not be
+  // rebuilt (backend down / not indexed), which doesn't block; the worker
+  // re-checks before signing anyway.
   const [addOwnerDataCheck, setAddOwnerDataCheck] =
-    useState<'checking' | 'match' | 'mismatch' | 'sameKeyHolder' | 'unavailable' | null>(null);
+    useState<'checking' | 'match' | 'unexecutable' | 'sameKeyHolder' | 'unavailable' | null>(null);
   useEffect(() => {
     if (!proposal || proposal.txType !== 'addOwner') {
       setAddOwnerDataCheck(null);
@@ -243,7 +242,7 @@ export default function TransactionDetailPage() {
         setAddOwnerDataCheck(
           result == null || result.valid
             ? 'match'
-            : result.reason === 'sameKeyHolder' ? 'sameKeyHolder' : 'mismatch',
+            : result.reason === 'sameKeyHolder' ? 'sameKeyHolder' : 'unexecutable',
         );
       } catch {
         if (!cancelled) setAddOwnerDataCheck('unavailable');
@@ -373,9 +372,8 @@ export default function TransactionDetailPage() {
     // to the signed proposal.data (config-swap). Only a computed mismatch
     // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
     childConfigCheck !== 'mismatch' &&
-    // Same for addOwner: block when proposal.data provably places the new
-    // owner outside the app's owner order.
-    addOwnerDataCheck !== 'mismatch' &&
+    // Same for addOwner: block when proposal.data provably matches no position.
+    addOwnerDataCheck !== 'unexecutable' &&
     !addOwnerBlocked &&
     !myPendingApprove &&
     !contractLock.locked;
@@ -755,23 +753,23 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {addOwnerDataCheck === 'mismatch' && (
+        {addOwnerDataCheck === 'unexecutable' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
-            <p className="font-semibold mb-1">Don&apos;t approve: this doesn&apos;t follow the app&apos;s owner order</p>
+            <p className="font-semibold mb-1">Don&apos;t approve: this proposal can never execute</p>
             <p className="opacity-90">
-              This Add Owner proposal places the new owner somewhere other than where this app puts new
-              owners. It would still execute, but the app keeps every Vault&apos;s owners in one order, so it
-              won&apos;t approve it. Ask the proposer to recreate it from this app.
+              The owner list this Add Owner proposal commits to doesn&apos;t match adding this address anywhere
+              in the Vault&apos;s current owner list, so the contract would reject it at execution. Ask the
+              proposer to recreate it.
             </p>
           </div>
         )}
 
         {addOwnerDataCheck === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
-            <p className="font-semibold mb-1">Owner order not checked yet</p>
+            <p className="font-semibold mb-1">Owner list not checked yet</p>
             <p className="opacity-90">
-              The owner list could not be rebuilt from indexed data yet, so this proposal&apos;s owner order was
-              not verified. It will be checked again before you sign.
+              The owner list could not be rebuilt from indexed data yet, so this proposal was not checked
+              against it. It will be checked again before you sign.
             </p>
           </div>
         )}
@@ -932,13 +930,13 @@ export default function TransactionDetailPage() {
                       Approve blocked — config mismatch
                     </button>
                   )}
-                  {addOwnerDataCheck === 'mismatch' && proposal.status === 'pending' && isOwner && !hasApproved && (
+                  {addOwnerDataCheck === 'unexecutable' && proposal.status === 'pending' && isOwner && !hasApproved && (
                     <button
                       disabled
-                      title="This proposal places the new owner outside the app's owner order"
+                      title="The committed owner list matches adding this address at no position"
                       className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
                     >
-                      Approve blocked — owner order mismatch
+                      Approve blocked — cannot execute
                     </button>
                   )}
                   {addOwnerBlocked && proposal.status === 'pending' && isOwner && !hasApproved && (
@@ -1005,10 +1003,10 @@ export default function TransactionDetailPage() {
                                 'signed proposal data. Do not approve this proposal.',
                               );
                             }
-                            if (addOwnerDataCheck === 'mismatch') {
+                            if (addOwnerDataCheck === 'unexecutable') {
                               throw new Error(
-                                'This Add Owner proposal places the new owner outside the app\'s owner order. ' +
-                                'Ask the proposer to recreate it from this app.',
+                                'This Add Owner proposal commits to an owner list that adding this address ' +
+                                'cannot produce; it can never execute. Do not approve it.',
                               );
                             }
                             if (addOwnerBlocked) {
