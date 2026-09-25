@@ -1,6 +1,6 @@
 name: Trail release (build · sign · publish)
 
-# Pull-based deploy, phase 1. Builds the /trail images, pushes them
+# Pull-based deploy, phase 1. Builds the Trail images, pushes them
 # to GHCR by digest, and attaches a GitHub build-provenance attestation to each
 # digest (actions/attest-build-provenance — keyless, Sigstore-backed: GitHub OIDC
 # → Fulcio → Rekor). The box verifies with `gh attestation verify` before running
@@ -44,13 +44,13 @@ env:
   # Public build-time config baked into the frontend bundle. KEEP IN SYNC with
   # deploy/docker-compose.trail.yml's frontend build args until the on-box build
   # is retired (then this workflow is the single source). Change if the trail
-  # domain moves off mina-trail.duckdns.org/trail.
-  NEXT_PUBLIC_BASE_PATH: /trail
-  NEXT_PUBLIC_API_BASE_URL: https://mina-trail.duckdns.org/trail
-  NEXT_PUBLIC_MINA_ENDPOINT: https://mina-trail.duckdns.org/trail/graphql
-  NEXT_PUBLIC_ARCHIVE_ENDPOINT: https://mina-trail.duckdns.org/trail/archive
+  # domain changes.
+  NEXT_PUBLIC_BASE_PATH: ""
+  NEXT_PUBLIC_API_BASE_URL: https://testnet.minaguard.com
+  NEXT_PUBLIC_MINA_ENDPOINT: https://testnet.minaguard.com/graphql
+  NEXT_PUBLIC_ARCHIVE_ENDPOINT: https://testnet.minaguard.com/archive
   NEXT_PUBLIC_MINA_NETWORK: testnet
-  NEXT_PUBLIC_BLOCK_EXPLORER_URL: https://mina-trail.duckdns.org/trail/explorer
+  NEXT_PUBLIC_BLOCK_EXPLORER_URL: https://testnet.minaguard.com/explorer
   NEXT_PUBLIC_POLL_INTERVAL_MS: "1000"
 
 jobs:
@@ -122,7 +122,7 @@ jobs:
             ${{ env.IMAGE_PREFIX }}-explorer:${{ github.sha }}
             ${{ env.IMAGE_PREFIX }}-explorer:main
           build-args: |
-            NEXT_PUBLIC_BASE_PATH=/trail/explorer
+            NEXT_PUBLIC_BASE_PATH=/explorer
 
       # Build-provenance attestations (SLSA), pushed to GHCR as OCI referrers
       # alongside each image so the box can verify with `gh attestation verify`.
