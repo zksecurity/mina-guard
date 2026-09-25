@@ -385,6 +385,55 @@ describe('offline-cli e2e', () => {
     console.log('[e2e] Approve OK');
   }, 600_000);
 
+  it('refuses a bundle whose events do not reproduce the vault snapshot', async () => {
+    // Anyone can append events to a vault; one forged approval must stop the CLI before it proves.
+    const rawEvents = await zkApp.fetchEvents();
+    const bundleEvents = rawEvents.map((e) => ({
+      eventType: e.type,
+      payload: JSON.parse(safeStringify(e.event.data)),
+    }));
+    bundleEvents.push({
+      eventType: 'approval',
+      payload: { proposalHash: '12345', approver: owners[2].pub.toBase58(), approvalCount: '2' },
+    });
+
+    const bundle = {
+      version: 1,
+      action: 'approve',
+      minaNetwork: 'testnet',
+      contractAddress: zkAppAddress.toBase58(),
+      feePayerAddress: owners[2].pub.toBase58(),
+      accounts: {
+        [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
+        [owners[2].pub.toBase58()]: snapshotAccount(owners[2].pub),
+      },
+      events: bundleEvents,
+      proposal: {
+        proposalHash,
+        proposer: owners[0].pub.toBase58(),
+        toAddress: null,
+        tokenId: '0',
+        txType: 'transfer',
+        data: '0',
+        nonce: '1',
+        configNonce: '0',
+        expirySlot: '0',
+        networkId: '1',
+        guardAddress: zkAppAddress.toBase58(),
+        destination: 'local',
+        childAccount: null,
+        receivers: proposalReceivers,
+      },
+    };
+    const bundlePath = join(tmpDir, 'tampered-approve-bundle.json');
+    writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+    const result = await runCLI(bundlePath, owners[2].key.toBase58(), 120_000, { SKIP_PROOFS: '1' });
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Rebuilt approval map does not match');
+    expect(result.stdout).not.toContain('offline-signed-tx');
+  });
+
   it('execute transfer', async () => {
     expect(proposalHash).toBeTruthy();
     const executor = owners[2];
