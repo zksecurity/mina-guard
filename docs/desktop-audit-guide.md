@@ -42,7 +42,8 @@ On launch (`src/main.ts`):
    archive endpoint (pre-filled with minascan mainnet defaults — never used
    silently). Save probes both endpoints with a real GraphQL query, detects the
    network id from the node, and persists `config.json`. Unreachable endpoints
-   are rejected before anything is persisted.
+   or nodes without an explicit, supported `networkID` are rejected before
+   anything is persisted. Saved endpoints are rechecked on every startup.
 2. The **backend is booted in-process** (`src/backend-embed.ts`): the same
    `backend/` package (Express API router + indexer), esbuild-bundled at
    packaging time, running against **SQLite** (`minaguard.db` in the user-data
@@ -206,10 +207,9 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   `config:set-endpoints` also rejects any non-main-window sender
   (`assertMainWindow`, focus point 1).
 - **Endpoints are probed before persisting** (`verifyEndpoints`,
-  `src/config-store.ts:93-115`): both must answer a real GraphQL POST within
-  10 s. The network id is taken from the node's `networkID` field; only if the
-  node doesn't expose one does a URL heuristic guess, defaulting to `mainnet`
-  (`detectNetwork`, `119-130`). A node whose proof domain doesn't match this
+  `src/config-store.ts`): both must answer a real GraphQL POST within
+  10 s. The network id must be explicitly reported in the node's `networkID`
+  field; URL names are never used to guess it. A node whose proof domain doesn't match this
   build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet, testnet, or devnet;
   each distinct) is rejected at save time — the bundled circuit can only
   prove against one domain.
@@ -305,13 +305,14 @@ allowlist, and the id rides a URL handed to the OS browser
 (`GET /auro/payload?id=`).
 
 **3. Endpoint lifecycle & network-id detection (`src/config-store.ts`).**
-Probing requires both endpoints to answer a GraphQL query. The detected network id
-(node-reported, URL-heuristic fallback, `mainnet` default) must clear the
-  build's exact proof domain (`BUILD_NETWORK_DOMAIN`) to be persisted, and from there
+Probing requires both endpoints to answer a GraphQL query. The node-reported
+network ID must match the build's exact proof domain (`BUILD_NETWORK_DOMAIN`)
+to be persisted; saved endpoints are revalidated on startup. The ID then
 feeds `requestNetwork`, the worker's `Mina.Network` id, the offline bundles'
 `minaNetwork`, and `.vk-hash` line selection. Cross-network proposal replay
-itself is blocked in-circuit (compile-time `NETWORK_DOMAIN` + per-network VK,
-PR #93). Endpoint changes (with their DB wipe) are reachable only through the
+is blocked by the compile-time `NETWORK_DOMAIN` when the correct per-network
+VK is deployed; endpoint checks cannot repair a misdeployed vault. Endpoint changes
+(with their DB wipe) are reachable only through the
 settings-modal and setup-window IPC.
 
 **4. Electron hardening posture (`src/main.ts`).**

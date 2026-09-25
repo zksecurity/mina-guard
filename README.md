@@ -118,7 +118,7 @@ NETWORK=devnet bun run test:e2e
 ```bash
 bun run --filter contracts build
 bun run --filter backend build
-bun run --filter ui build
+NEXT_PUBLIC_MINA_NETWORK=testnet NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet bun run --filter ui build
 ```
 
 ## PR Preview Environments

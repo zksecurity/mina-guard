@@ -52,6 +52,7 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
+  NETWORK_DOMAIN_NAME,
 } from 'contracts';
 
 // ---------------------------------------------------------------------------
@@ -546,7 +547,7 @@ function rebuildChildExecutionMap(childEvents: Array<{ eventType: string; payloa
 
 function configureNetwork(bundle: BundleBase) {
   const network = Mina.Network({
-    networkId: bundle.minaNetwork === 'mainnet' ? 'mainnet' : 'testnet',
+    networkId: bundle.minaNetwork,
     mina: 'http://localhost:0',
     archive: 'http://localhost:0',
   });
@@ -772,7 +773,7 @@ export function assertBundleNetwork(bundleNetwork: string, binaryNetwork: string
 async function compileContract(bundle: BundleBase, log: LogFn) {
   // NETWORK_DOMAIN is selected when contracts are imported. The offline
   // protocol supports mainnet/testnet only and requires an exact match.
-  assertBundleNetwork(bundle.minaNetwork, process.env.MINA_NETWORK_DOMAIN);
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   if (compiled || skipProofs) return;
 
   log('Compiling MinaGuard contract (this may take a few minutes on first run)...');
@@ -805,6 +806,7 @@ export async function handlePropose(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   const input = bundle.input as NewProposalInput;
   const isCreateChild = input.txType === 'createChild';
 
@@ -952,6 +954,7 @@ export async function handleApprove(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
   injectAccounts(bundle);
@@ -1041,6 +1044,7 @@ export async function handleExecute(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   const txType = normalizeTxType(bundle.proposal.txType);
   const isCreateChild = txType === 'createChild';
   const isChildLifecycle = txType != null && CHILD_LIFECYCLE_TYPES.has(txType);

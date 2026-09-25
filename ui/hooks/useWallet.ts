@@ -17,6 +17,7 @@ import {
 import { WalletState } from '@/lib/types';
 import { setLedgerSigning } from '@/lib/multisigClient';
 import { getMinaGuardConfig } from '@/lib/endpoints';
+import { matchesDeploymentNetwork } from '@/lib/network-match';
 
 /** Capitalizes a network name for display (e.g. "mainnet" -> "Mainnet"). */
 const capNet = (n: string) => n.charAt(0).toUpperCase() + n.slice(1);
@@ -176,16 +177,15 @@ export function useWallet() {
   walletRef.current = wallet;
 
   // Proactive WARNING banner: derived from the cached Auro network. A connected
-  // Auro wallet on a different proof domain than this deployment makes owner
-  // approvals fail the in-circuit verify (which always uses the devnet prefix)
-  // and sends broadcasts to the wrong chain. Only mainnet vs not matters
-  // (devnet/testnet share the domain). Ledger's id is pinned to the deployment,
-  // so this applies only to Auro. Null cache => no banner (see the fail-closed
-  // enforcement below, which does not trust the cache).
+  // Auro wallet on a different network than this deployment can send a
+  // transaction to the wrong chain. Each network has its own proposal domain;
+  // devnet and testnet must not be treated as interchangeable. Ledger's id is
+  // pinned to the deployment, so this applies only to Auro. Null cache means
+  // no banner; the fail-closed check below does not trust the cache.
   const networkMismatch = useMemo(() => {
     if (!wallet.connected || wallet.type !== 'auro' || !wallet.network) return null;
     const deploymentNetwork = getMinaGuardConfig().networkId;
-    if ((wallet.network === 'mainnet') === (deploymentNetwork === 'mainnet')) return null;
+    if (matchesDeploymentNetwork(wallet.network, deploymentNetwork)) return null;
     return { walletNetwork: wallet.network, deploymentNetwork };
   }, [wallet.connected, wallet.type, wallet.network]);
 
@@ -202,7 +202,7 @@ export function useWallet() {
     if (!auroNetwork) {
       return `Can't confirm your Auro wallet's network. Unlock Auro and set it to ${capNet(deploymentNetwork)}, then retry.`;
     }
-    if ((auroNetwork === 'mainnet') !== (deploymentNetwork === 'mainnet')) {
+    if (!matchesDeploymentNetwork(auroNetwork, deploymentNetwork)) {
       return `Your Auro wallet is on ${capNet(auroNetwork)}, but this app runs on ${capNet(deploymentNetwork)}. Switch networks in Auro, then retry.`;
     }
     return null;

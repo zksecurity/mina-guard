@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
+import { parseNodeNetworkId } from './network-id.js';
+import type { NetworkId } from './network-id.js';
 
-export type NetworkId = 'mainnet' | 'devnet' | 'testnet';
+export type { NetworkId } from './network-id.js';
 
 /** Proof-domain network this build's UI bundle was compiled for. Must match the
  *  NEXT_PUBLIC_MINA_NETWORK_DOMAIN passed to `build:ui` in package.json — the
@@ -77,11 +79,8 @@ async function probeGraphql(
   return (json as { data?: Record<string, unknown> }).data;
 }
 
-/** Verifies both endpoints actually answer GraphQL and detects the network ID
- *  from the node. Throws with a user-displayable message when either endpoint
- *  is unreachable — callers must not persist the endpoints in that case. URL
- *  heuristics are used only when the node is reachable but does not expose
- *  `networkID`; reachability itself is never guessed. */
+/** Verifies both endpoints and requires the Mina node to report its network ID.
+ *  Callers must not persist endpoints when this check fails. */
 export async function verifyEndpoints(
   minaEndpoint: string,
   archiveEndpoint: string,
@@ -90,7 +89,7 @@ export async function verifyEndpoints(
     probeGraphql('Mina endpoint', minaEndpoint, '{ networkID }'),
     probeGraphql('Archive endpoint', archiveEndpoint, '{ __typename }'),
   ]);
-  const detected = detectNetwork(minaEndpoint, minaData?.networkID);
+  const detected = parseNodeNetworkId(minaData?.networkID);
   // This build's proof circuit is compiled for one network (BUILD_NETWORK_DOMAIN);
   // proposals proved here won't verify against contracts on a different network.
   // Reject a mismatched node loudly at setup instead of letting proofs fail
@@ -104,21 +103,6 @@ export async function verifyEndpoints(
     );
   }
   return detected;
-}
-
-/** Resolves the node's network from its reported networkID, falling back to URL
- *  heuristics when the node is reachable but exposes no usable networkID. */
-function detectNetwork(minaEndpoint: string, networkID: unknown): NetworkId {
-  const raw = typeof networkID === 'string' ? networkID.toLowerCase() : '';
-  if (raw.includes('mainnet')) return 'mainnet';
-  if (raw.includes('devnet')) return 'devnet';
-  if (raw.includes('testnet')) return 'testnet';
-  const lower = minaEndpoint.toLowerCase();
-  if (lower.includes('devnet')) return 'devnet';
-  if (lower.includes('testnet') || lower.includes('lightnet') || lower.includes('localhost') || lower.includes('127.0.0.1')) {
-    return 'testnet';
-  }
-  return 'mainnet';
 }
 
 export function readConfig(): UserConfig | null {

@@ -51,4 +51,23 @@ describe('compile-time network domain selection', () => {
     });
     expect(new Set(hashes).size).toBe(3);
   });
+
+  it('keeps the selected domain fixed after module initialization', () => {
+    const constantsUrl = new URL('../constants.ts', import.meta.url).href;
+    const script = `
+      import { NETWORK_DOMAIN_NAME } from '${constantsUrl}';
+      process.env.MINA_NETWORK_DOMAIN = 'mainnet';
+      console.log(NETWORK_DOMAIN_NAME);
+    `;
+    const env = { ...process.env, MINA_NETWORK_DOMAIN: 'testnet' };
+    delete env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN;
+    delete env.NEXT_PUBLIC_MINA_NETWORK;
+    const result = spawnSync(process.execPath, ['-e', script], {
+      cwd: new URL('../../..', import.meta.url).pathname,
+      env,
+      encoding: 'utf8',
+    });
+    if (result.status !== 0) throw new Error(result.stderr);
+    expect(result.stdout.trim()).toBe('testnet');
+  });
 });

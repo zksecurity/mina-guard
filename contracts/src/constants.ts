@@ -13,11 +13,12 @@ import { NETWORK_DOMAIN_IDS, resolveNetworkDomain } from './network-domain.js';
 //     NEXT_PUBLIC_MINA_NETWORK_DOMAIN=<mainnet|testnet|devnet>. Next only inlines
 //     NEXT_PUBLIC_* vars into browser code. Missing, invalid, or conflicting
 //     values abort instead of silently compiling for another network.
-export const NETWORK_DOMAIN = Field(NETWORK_DOMAIN_IDS[resolveNetworkDomain(
+export const NETWORK_DOMAIN_NAME = resolveNetworkDomain(
   process.env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN,
   process.env.MINA_NETWORK_DOMAIN,
   process.env.NEXT_PUBLIC_MINA_NETWORK,
-)]);
+);
+export const NETWORK_DOMAIN = Field(NETWORK_DOMAIN_IDS[NETWORK_DOMAIN_NAME]);
 
 export const MAX_OWNERS = 20;
 

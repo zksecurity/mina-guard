@@ -39,6 +39,7 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
+  NETWORK_DOMAIN_NAME,
 } from 'contracts';
 
 import {
@@ -158,6 +159,12 @@ interface ContractState {
 
 async function configureNetwork() {
   const cfg = runtimeConfig ?? (await configReady);
+  // Electron can override endpoints and networkId at runtime, but not the
+  // circuit domain baked into this worker. Reject any mismatch before proving
+  // or building a transaction, including in proofless E2E mode.
+  if (cfg.networkId !== NETWORK_DOMAIN_NAME) {
+    throw new Error(`Network mismatch: this build is for ${NETWORK_DOMAIN_NAME}, but the runtime config is ${cfg.networkId}`);
+  }
   const network = Mina.Network({
     networkId: cfg.networkId,
     mina: cfg.minaEndpoint,

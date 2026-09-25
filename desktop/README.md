@@ -49,7 +49,9 @@ Run from `desktop/`.
 | `bun run package` | `build` + `electron-builder --dir` (outputs under `release/`). |
 
 The packaged desktop circuit is for testnet/lightnet. The endpoint check rejects
-mainnet and devnet nodes; those networks require their own circuit build and VK.
+mainnet and devnet nodes, and nodes that do not report a supported `networkID`;
+saved endpoints are rechecked at startup. Those networks require their own
+circuit build and VK.
 
 ## Quick start (dev)
 

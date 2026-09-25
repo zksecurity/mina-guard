@@ -121,7 +121,8 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:98`) and into
    the per-network VK (see focus point 3).
 4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
-   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:758-776`),
+   disagrees with the domain captured when contracts were imported from the
+   process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:758-779`),
    `MinaGuard.compile` runs against the local `offline-cli/cache/`
    (gitignored, generated on first run; circuit-keyed, so per-domain; a cold
    cache regenerates in minutes).
