@@ -696,9 +696,7 @@ export function decodeTxMemo(base58Memo: string): string {
 let compiled = false;
 const skipProofs = process.env.SKIP_PROOFS === '1';
 
-async function compileContract(bundle: BundleBase, log: LogFn) {
-  if (compiled || skipProofs) return;
-
+function assertBundleNetworkMatchesBinary(bundle: BundleBase) {
   // NETWORK_DOMAIN is a compile-time constant baked into the circuit.
   // A testnet-compiled binary (MINA_NETWORK_DOMAIN unset or != 'mainnet') produces
   // a different VK than a mainnet-compiled one. Reject mismatched bundles so a
@@ -712,6 +710,15 @@ async function compileContract(bundle: BundleBase, log: LogFn) {
       `Set MINA_NETWORK_DOMAIN=${bundle.minaNetwork === 'mainnet' ? 'mainnet' : 'testnet'} when running.`
     );
   }
+}
+
+/**
+ * Handlers call this after their refusal checks, just before Mina.transaction:
+ * only the transaction build (deploy reads the VK) and proving need the
+ * compiled circuit, so a doomed bundle fails without waiting for the compile.
+ */
+async function compileContract(log: LogFn) {
+  if (compiled || skipProofs) return;
 
   log('Compiling MinaGuard contract (this may take a few minutes on first run)...');
   const t0 = performance.now();
@@ -750,11 +757,11 @@ export async function handlePropose(
     throw new Error('createChild proposal requires childPrivateKey, childOwners, and childThreshold in the bundle');
   }
 
+  assertBundleNetworkMatchesBinary(bundle);
+
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
   injectAccounts(bundle);
-
-  await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
   const { ownerStore, approvalStore, nullifierStore } = rebuildVerifiedStores(bundle);
@@ -828,6 +835,7 @@ export async function handlePropose(
   }
 
   // Build transaction
+  await compileContract(log);
   log('Building transaction...');
   const contractAddress = PublicKey.fromBase58(bundle.contractAddress);
   const contract = new MinaGuard(contractAddress);
@@ -890,11 +898,11 @@ export async function handleApprove(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
+  assertBundleNetworkMatchesBinary(bundle);
+
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
   injectAccounts(bundle);
-
-  await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
   const { ownerStore, approvalStore, nullifierStore } = rebuildVerifiedStores(bundle);
@@ -934,6 +942,7 @@ export async function handleApprove(
   const currentApprovalCount = approvalStore.getCount(proposalHash);
 
   // Build transaction
+  await compileContract(log);
   log('Building transaction...');
   const contract = new MinaGuard(PublicKey.fromBase58(bundle.contractAddress));
 
@@ -983,11 +992,11 @@ export async function handleExecute(
   const isCreateChild = txType === 'createChild';
   const isChildLifecycle = txType != null && CHILD_LIFECYCLE_TYPES.has(txType);
 
+  assertBundleNetworkMatchesBinary(bundle);
+
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
   injectAccounts(bundle);
-
-  await compileContract(bundle, log);
 
   log('Rebuilding Merkle stores from events...');
   const { ownerStore, approvalStore } = rebuildVerifiedStores(bundle);
@@ -1055,6 +1064,7 @@ export async function handleExecute(
 
     const childZkApp = new MinaGuard(PublicKey.fromBase58(childAddr));
 
+    await compileContract(log);
     log('Building transaction...');
     const tx = await Mina.transaction(txSender(executor), async () => {
       await childZkApp.executeSetupChild(
@@ -1098,6 +1108,7 @@ export async function handleExecute(
 
     const childZkApp = new MinaGuard(PublicKey.fromBase58(childAddr));
 
+    await compileContract(log);
     log('Building transaction...');
     const childMemo = bundle.proposal.memo ?? undefined;
     const tx = await Mina.transaction(txSender(executor, childMemo), async () => {
@@ -1158,6 +1169,7 @@ export async function handleExecute(
     }
   }
 
+  await compileContract(log);
   log('Building transaction...');
   const contract = new MinaGuard(PublicKey.fromBase58(bundle.contractAddress));
 
