@@ -89,15 +89,16 @@ unless these are set:
 `MINAGUARD_VK_HASH` is deliberately **not** deploy-time config: it's a property of the contract
 source, committed at `contracts/.vk-hash`, and read from there automatically (override by
 exporting it). The backend indexer filters contract discovery by this hash for the target network.
-`contracts/.vk-hash` contains two labeled entries (`testnet=` and `mainnet=`); the deploy scripts
-pick the entry matching the target network. To regenerate after a contract change, run both:
+`contracts/.vk-hash` contains three labeled entries (`testnet=`, `mainnet=`, and `devnet=`); the deploy scripts
+pick the entry matching the target network. To regenerate after a contract change, run all three:
 
 ```
-bun run dev-helpers/cli.ts vk-hash compile
+MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile
 MINA_NETWORK_DOMAIN=mainnet bun run dev-helpers/cli.ts vk-hash compile
+MINA_NETWORK_DOMAIN=devnet bun run dev-helpers/cli.ts vk-hash compile
 ```
 
-then update the two lines in `contracts/.vk-hash`.
+then update the three lines in `contracts/.vk-hash`.
 
 - URLs after deploy: `https://mina-trail.duckdns.org/trail/` (app), `/trail/health`, `/trail/graphql`, `/trail/archive`, `/trail/explorer`. The frontend bundle bakes these `mina-trail.duckdns.org/trail` URLs (both the on-box `docker-compose.trail.yml` build args and the pull-based `trail-release.yml` build) — **not** `mina-nodes` (which serves `/app/*`).
 - **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). What fires on every push to `main` is instead `.github/workflows/trail-release.yml`, which **builds, pushes, and attests** the `/trail` GHCR images and deploys nothing — the box pulls and verifies them itself (see *Pull-based deploy* below).

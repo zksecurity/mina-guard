@@ -1,16 +1,18 @@
 # Canonical MinaGuard verification-key hashes, one per network.
 #
 # NETWORK_DOMAIN is baked into the circuit as a compile-time constant
-# (Field(1) for mainnet, Field(2) for testnet/devnet), so each network
-# produces a structurally distinct VK. Cross-network proposal replay is
-# therefore impossible at the proof level, not just application-level.
+# (Field(1) for mainnet, Field(2) for testnet, Field(3) for devnet), so each network
+# produces a structurally distinct VK. Verify that the deployed account has
+# the VK for its actual network; the circuit cannot detect a misdeployment.
 #
 # Backend deployments: set MINAGUARD_VK_HASH to the hash for your target
 # network (testnet hash for a testnet backend, mainnet hash for mainnet).
 #
 # Regenerate after any change under contracts/src:
-#   bun run dev-helpers/cli.ts vk-hash compile
+#   MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile
 #   MINA_NETWORK_DOMAIN=mainnet bun run dev-helpers/cli.ts vk-hash compile
-# Then update the two lines below with the printed hashes.
+#   MINA_NETWORK_DOMAIN=devnet bun run dev-helpers/cli.ts vk-hash compile
+# Then update all three lines below with the printed hashes.
 testnet=17378279678034021124220008233306177946864257033494126195271400438273176628528
 mainnet=4414387421979603694503794870561243291501572622843633740961901709756431338605
+devnet=18675361962866013312581646343497170847297160500624038821762987993418719486572

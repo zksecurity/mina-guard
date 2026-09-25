@@ -1,4 +1,5 @@
 import { MerkleMap, Poseidon, Field } from "o1js";
+import { NETWORK_DOMAIN_IDS, resolveNetworkDomain } from './network-domain.js';
 
 // Compile-time network domain separator baked into every proposal hash.
 // Produces distinct VKs per network so a proposal signed on testnet cannot be
@@ -7,18 +8,16 @@ import { MerkleMap, Poseidon, Field } from "o1js";
 //
 // Selecting the domain differs by build context:
 //   - Node (offline-cli binary, `vk-hash compile`, CI, tests): set
-//     MINA_NETWORK_DOMAIN=mainnet. These have a real process.env at runtime.
+//     MINA_NETWORK_DOMAIN=<mainnet|testnet|devnet>. These have a real process.env.
 //   - Browser bundles (the Next UI / desktop app worker): set
-//     NEXT_PUBLIC_MINA_NETWORK_DOMAIN=mainnet. Next only inlines NEXT_PUBLIC_*
-//     vars into client code; a bare env var is dropped (process.env is {} in
-//     the browser) and would silently resolve to testnet. The NEXT_PUBLIC_ form
-//     wins when both are set, which only happens during a Next build.
-// Anything else (or unset) is treated as testnet.
-export const NETWORK_DOMAIN = Field(
-  (process.env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN ?? process.env.MINA_NETWORK_DOMAIN) === 'mainnet'
-    ? 1n
-    : 2n,
-);
+//     NEXT_PUBLIC_MINA_NETWORK_DOMAIN=<mainnet|testnet|devnet>. Next only inlines
+//     NEXT_PUBLIC_* vars into browser code. Missing, invalid, or conflicting
+//     values abort instead of silently compiling for another network.
+export const NETWORK_DOMAIN = Field(NETWORK_DOMAIN_IDS[resolveNetworkDomain(
+  process.env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN,
+  process.env.MINA_NETWORK_DOMAIN,
+  process.env.NEXT_PUBLIC_MINA_NETWORK,
+)]);
 
 export const MAX_OWNERS = 20;
 

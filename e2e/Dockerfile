@@ -49,7 +49,7 @@ COPY dev-helpers/ dev-helpers/
 RUN cd contracts && bun run build
 
 # Compile contract circuit and extract verification key hash
-RUN bun run dev-helpers/cli.ts vk-hash compile 2>&1 | awk '/^vkHash:/{print $2}' > /app/.vk-hash
+RUN MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile 2>&1 | awk '/^vkHash\[testnet\]:/{print $2}' > /app/.vk-hash
 
 # Production build of the frontend. `next start` serves the pre-built bundle,
 # which starts ~30× faster than `next dev` and matches how real users hit the
@@ -58,6 +58,9 @@ RUN bun run dev-helpers/cli.ts vk-hash compile 2>&1 | awk '/^vkHash:/{print $2}'
 ENV NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
 ENV NEXT_PUBLIC_MINA_ENDPOINT=http://lightnet:8080/graphql
 ENV NEXT_PUBLIC_ARCHIVE_ENDPOINT=http://lightnet:8282
+ENV NEXT_PUBLIC_MINA_NETWORK=testnet
+ENV NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet
+ENV MINA_NETWORK_DOMAIN=testnet
 ENV NEXT_PUBLIC_E2E_TEST=true
 ENV NEXT_PUBLIC_POLL_INTERVAL_MS=1000
 RUN cd ui && bun run build

@@ -3,16 +3,19 @@
 # <network> from contracts/.vk-hash.
 #
 # Single source of truth for parsing .vk-hash. The file is the keyed
-# per-network format (testnet=… / mainnet=…); this selects one network's line
+# per-network format (testnet=… / mainnet=… / devnet=…); this selects one network's line
 # and validates it is a bare decimal. Hand-rolling this parse in each caller is
 # how a format change once collapsed both lines into a "testnet=…mainnet=…"
 # garbage hash and baked it into an image — route every reader through here.
 #
-# Usage: read-vk-hash.sh <testnet|mainnet>
+# Usage: read-vk-hash.sh <testnet|mainnet|devnet>
 set -euo pipefail
 
 net="${1:-}"
-[ -n "$net" ] || { echo "usage: read-vk-hash.sh <testnet|mainnet>" >&2; exit 2; }
+case "$net" in
+  testnet|mainnet|devnet) ;;
+  *) echo "usage: read-vk-hash.sh <testnet|mainnet|devnet>" >&2; exit 2 ;;
+esac
 
 # .vk-hash lives one directory up from this script (contracts/.vk-hash); resolve
 # relative to the script so callers can invoke it from any working directory.

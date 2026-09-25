@@ -210,8 +210,8 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   10 s. The network id is taken from the node's `networkID` field; only if the
   node doesn't expose one does a URL heuristic guess, defaulting to `mainnet`
   (`detectNetwork`, `119-130`). A node whose proof domain doesn't match this
-  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet vs testnet, devnet
-  sharing testnet) is rejected at save time — the bundled circuit can only
+  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet, testnet, or devnet;
+  each distinct) is rejected at save time — the bundled circuit can only
   prove against one domain.
 - **Changing endpoints wipes the local DB and relaunches**
   (`changeEndpointsAndRelaunch`, `src/main.ts:349-363`): the local index is
@@ -238,10 +238,10 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   on-chain verification key does not match this MinaGuard release (a
   *mismatched* VK is rejected on both the manual and auto-subscribe paths; a
   *missing* one is tolerated only while a just-deployed vault races indexing).
-  The file carries one hash per network (`testnet=…` / `mainnet=…` lines —
+  The file carries one hash per network (`testnet=…` / `mainnet=…` / `devnet=…` lines —
   the circuit's compile-time `NETWORK_DOMAIN` makes each network's VK
   structurally distinct); the embed picks the line matching the configured
-  network (`backend-embed.ts:112-128`, devnet sharing the testnet circuit) and
+  network (`backend-embed.ts:112-128`) and
   still accepts the pre-#93 single-bare-number format. When the file is
   missing, or a keyed file has no line for the configured network, the backend
   may start but vault authentication fails closed: no account can become
@@ -307,7 +307,7 @@ allowlist, and the id rides a URL handed to the OS browser
 **3. Endpoint lifecycle & network-id detection (`src/config-store.ts`).**
 Probing requires both endpoints to answer a GraphQL query. The detected network id
 (node-reported, URL-heuristic fallback, `mainnet` default) must clear the
-build's proof domain (`BUILD_NETWORK_DOMAIN`) to be persisted, and from there
+  build's exact proof domain (`BUILD_NETWORK_DOMAIN`) to be persisted, and from there
 feeds `requestNetwork`, the worker's `Mina.Network` id, the offline bundles'
 `minaNetwork`, and `.vk-hash` line selection. Cross-network proposal replay
 itself is blocked in-circuit (compile-time `NETWORK_DOMAIN` + per-network VK,
@@ -413,6 +413,7 @@ All steps run from `desktop/` (`bun run build` chains them; details in
 3. `build:ui` — builds `../ui` in Next standalone mode with
    `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
    `NEXT_PUBLIC_INDEXER_MODE=lite` and
+   `NEXT_PUBLIC_MINA_NETWORK=testnet` and
    `NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet` baked in (plus anything from the
    git-ignored `desktop/.env`). The network domain must match
    `BUILD_NETWORK_DOMAIN` in `config-store.ts` — the two flip together to cut

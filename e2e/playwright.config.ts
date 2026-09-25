@@ -3,6 +3,11 @@ import { defineConfig } from '@playwright/test';
 import { getNetworkConfig } from './network-config';
 
 const config = getNetworkConfig();
+const circuitDomain = config.mode === 'devnet' ? 'devnet' : 'testnet';
+if (process.env.MINA_NETWORK_DOMAIN && process.env.MINA_NETWORK_DOMAIN !== circuitDomain) {
+  throw new Error(`MINA_NETWORK_DOMAIN must be ${circuitDomain} for ${config.mode} E2E`);
+}
+process.env.MINA_NETWORK_DOMAIN = circuitDomain;
 
 // Give Chromium's V8 up to 75% of system RAM (capped at 32 GB, floor at 8 GB).
 // On a beefy self-hosted runner this eliminates the need for page recycling;

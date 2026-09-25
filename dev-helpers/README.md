@@ -26,15 +26,14 @@ Compile MinaGuard locally and print the verification key hash:
 
 ```bash
 bun run --filter contracts build
-bun run dev-helpers/cli.ts vk-hash compile
+MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile
+MINA_NETWORK_DOMAIN=mainnet bun run dev-helpers/cli.ts vk-hash compile
+MINA_NETWORK_DOMAIN=devnet bun run dev-helpers/cli.ts vk-hash compile
 ```
 
-`vk-hash compile` can take a while on first run because circuit compilation is expensive.
+`vk-hash compile` requires an exact network domain and can take a while on first run because circuit compilation is expensive.
 
-Output includes:
-
-- `MINAGUARD_VK_HASH=<hash>`
-- `vkHash=<hash>`
+Output includes `vkHash[<network>]: <hash>` for the selected network.
 
 Read verification key hash from a deployed zkApp address:
 
@@ -94,7 +93,7 @@ This is useful for local preview or e2e setups where you already have fixed test
 Deploy a set of real on-chain fixture contracts to the local preview lightnet:
 
 ```bash
-bun run dev-helpers/cli.ts lightnet-fixture --main-address B62...
+MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts lightnet-fixture --main-address B62...
 ```
 
 The default scenario is `minimal`, which is optimized for quick manual UI testing.
@@ -102,7 +101,7 @@ The default scenario is `minimal`, which is optimized for quick manual UI testin
 Optional scenario and custom preview base URL:
 
 ```bash
-bun run dev-helpers/cli.ts lightnet-fixture \
+MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts lightnet-fixture \
   --main-address B62... \
   --scenario minimal \
   --preview-base-url https://localhost:10001/preview/1

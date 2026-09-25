@@ -97,14 +97,13 @@ export async function startEmbeddedBackend(
   process.env.DATABASE_URL = `file:${opts.dbPath}`;
   process.env.INDEXER_MODE = 'lite';
   process.env.MINA_ENDPOINT = opts.minaEndpoint;
+  process.env.MINA_NETWORK_DOMAIN = opts.networkId;
   process.env.ARCHIVE_ENDPOINT = opts.archiveEndpoint;
   process.env.INDEX_START_HEIGHT = String(opts.indexStartHeight ?? 0);
   // MinaGuard VK hash → MINAGUARD_VK_HASH, so the subscribe route can reject
   // contracts from a different release. contracts/.vk-hash carries one hash
-  // per network (`testnet=…` / `mainnet=…` lines): the compile-time
-  // NETWORK_DOMAIN gives each network a structurally distinct VK, so the
-  // configured network selects which line applies — devnet shares the testnet
-  // circuit (anything except mainnet does, mirroring contracts/src/constants.ts).
+  // per network (`testnet=…` / `mainnet=…` / `devnet=…` lines): the compile-time
+  // NETWORK_DOMAIN gives each network a structurally distinct VK.
   // Files predating the per-network format (a comment header + one bare
   // decimal) parse via the legacy fallback. If the file is missing or has no
   // usable value, the backend starts but vault authentication fails closed:
@@ -120,7 +119,7 @@ export async function startEmbeddedBackend(
       if (eq > 0) keyed.set(line.slice(0, eq).trim(), line.slice(eq + 1).replace(/\s/g, ''));
     }
     const vkHash = keyed.size > 0
-      ? keyed.get(opts.networkId === 'mainnet' ? 'mainnet' : 'testnet') ?? ''
+      ? keyed.get(opts.networkId) ?? ''
       : lines.join('').replace(/\s/g, ''); // legacy single-number format
     if (vkHash) {
       process.env.MINAGUARD_VK_HASH = vkHash;

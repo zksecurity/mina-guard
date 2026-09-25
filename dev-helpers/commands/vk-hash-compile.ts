@@ -1,17 +1,21 @@
 import { Cache } from "o1js";
 import { execSync } from "node:child_process";
+import { resolveNetworkDomain } from '../../contracts/src/network-domain.ts';
 
-/** Compiles MinaGuard and prints its VK hash for the current network.
- *  Set MINA_NETWORK_DOMAIN=mainnet to compile the mainnet VK; otherwise testnet. */
+/** Compiles MinaGuard and prints its VK hash for an explicitly selected network. */
 export async function runVkHashCompile(): Promise<void> {
-  const network = process.env.MINA_NETWORK_DOMAIN === 'mainnet' ? 'mainnet' : 'testnet';
+  const network = resolveNetworkDomain(
+    process.env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN,
+    process.env.MINA_NETWORK_DOMAIN,
+    process.env.NEXT_PUBLIC_MINA_NETWORK,
+  );
 
   // Rebuild from source first — contracts/build is gitignored and can be stale.
   console.log(`Rebuilding contracts (network: ${network})...`);
   execSync('bun run --filter contracts build', { stdio: 'inherit' });
 
   // Dynamic import AFTER the rebuild so we load the freshly-built output.
-  // NETWORK_DOMAIN is evaluated at module load time from MINA_NETWORK_DOMAIN,
+  // NETWORK_DOMAIN is evaluated at module load time from the selected env var,
   // so the imported module picks up the correct network constant.
   const { MinaGuard } = await import("contracts");
   if (!MinaGuard || typeof MinaGuard.compile !== 'function') {

@@ -8,16 +8,8 @@ export type NetworkId = 'mainnet' | 'devnet' | 'testnet';
  *  NEXT_PUBLIC_MINA_NETWORK_DOMAIN passed to `build:ui` in package.json — the
  *  circuit's NETWORK_DOMAIN is baked in at that build, so a proposal proved here
  *  only verifies against contracts on this network. Flip both together to cut a
- *  mainnet build. Mina uses one non-mainnet signature/VK domain, so devnet and
- *  testnet share the 'testnet' domain (mirrors NETWORK_DOMAIN in
- *  contracts/src/constants.ts and minaNetwork() in ui/lib/offline-signing.ts). */
+ *  mainnet or devnet build. Each network has its own proposal and VK domain. */
 const BUILD_NETWORK_DOMAIN: 'mainnet' | 'testnet' = 'testnet';
-
-/** Collapses a detected network to its proof domain: only mainnet is distinct;
- *  devnet/testnet/lightnet all resolve to the shared non-mainnet domain. */
-function proofDomainOf(networkId: NetworkId): 'mainnet' | 'testnet' {
-  return networkId === 'mainnet' ? 'mainnet' : 'testnet';
-}
 
 export interface UserConfig {
   minaEndpoint: string;
@@ -104,11 +96,11 @@ export async function verifyEndpoints(
   // Reject a mismatched node loudly at setup instead of letting proofs fail
   // cryptically downstream. Endpoints must not be persisted on rejection — the
   // callers treat a throw here as "do not save / do not wipe the DB".
-  if (proofDomainOf(detected) !== BUILD_NETWORK_DOMAIN) {
+  if (detected !== BUILD_NETWORK_DOMAIN) {
     throw new Error(
       `Network mismatch: this is a ${BUILD_NETWORK_DOMAIN} build, but the node at ` +
       `${minaEndpoint} reports ${detected}. Point it at a ${BUILD_NETWORK_DOMAIN} node, ` +
-      `or install the ${proofDomainOf(detected)} build of MinaGuard.`,
+      `or install the ${detected} build of MinaGuard.`,
     );
   }
   return detected;

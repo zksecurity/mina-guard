@@ -166,7 +166,7 @@ otherwise noted.
 how the proposal's memo is bound in (the plaintext itself travels off-chain as the transaction
 memo; see the [backend memo lifecycle](./backend-audit-guide.md#data-model)) — plus the
 compile-time `NETWORK_DOMAIN` constant appended as the final hash element (`Field(1)` on
-mainnet / `Field(2)` on testnet; see [Constants](#constants)), which is not a struct field but a
+mainnet / `Field(2)` on testnet / `Field(3)` on devnet; see [Constants](#constants)), which is not a struct field but a
 per-network domain separator baked into the circuit. This hash is the
 universal key for approval counts, vote nullifiers, and signatures. Because `guardAddress`,
 `destination`, and `childAccount`
@@ -233,7 +233,13 @@ Defined in `constants.ts`:
 | `PROPOSED_MARKER` | `Field(1)` | Base value written to approval map on propose |
 | `EXECUTED_MARKER` | `Field(0).sub(1)` | Max field value; marks executed LOCAL proposals |
 | `EMPTY_MERKLE_MAP_ROOT` | `new MerkleMap().getRoot()` | Initializes `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` |
-| `NETWORK_DOMAIN` | `Field(1)` mainnet / `Field(2)` testnet | Per-network domain separator appended to every proposal `hash()`; selected at build time via env (`NEXT_PUBLIC_MINA_NETWORK_DOMAIN` / `MINA_NETWORK_DOMAIN`), defaulting to testnet |
+| `NETWORK_DOMAIN` | `Field(1)` mainnet / `Field(2)` testnet / `Field(3)` devnet | Per-network domain separator appended to every proposal `hash()`; selected at build time via env (`NEXT_PUBLIC_MINA_NETWORK_DOMAIN` / `MINA_NETWORK_DOMAIN`); missing, invalid, or conflicting values abort compilation |
+
+The mainnet and testnet IDs are unchanged. Older devnet vaults that were deployed
+with the former testnet domain retain their original VK; the new devnet circuit
+cannot prove for them. Keep a compatible legacy client available while moving
+their funds to newly deployed devnet vaults. Do not substitute the new devnet VK
+on an existing account as an automatic migration.
 
 ### On-chain multi-step flow
 
@@ -585,7 +591,7 @@ movement outside a proof. Also confirm that the deployed VK matches the pinned
 | One secret, one owner slot | Owner identity is the x-coordinate: `assertCoherentSetupOwners` and `addOwnerToCommitment` compare `x` only, so the negation of an owner (same secret, flipped parity, distinct base58) cannot be committed alongside it |
 | Every committed key is a real key | `toGroup()` (via `assertOnCurveIf`) proves setup owners, the reserved parent and every non-empty receiver are curve points; a key no private key exists for can never be an owner, parent or transfer target |
 | Executed child config matches the displayed config | `reserveForParent` stores `reservedConfigHash` (write-once); `executeSetupChild` asserts the recomputed config hash equals both `proposal.data` and `reservedConfigHash` |
-| Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet) baked into every proposal hash produces distinct VKs per network (pinned by the `check-vk-hash` CI job) |
+| Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet / Field(3) devnet) baked into every proposal hash produces distinct VKs per network (pinned by the `check-vk-hash` CI job); production artifacts must use the matching VK |
 | Cross-contract replay prevented | `guardAddress` in proposal must match `this.address` |
 | Cross-child replay prevented | `childAccount` is inside `proposalHash`; children assert `proposal.childAccount == this.address` |
 | Parent state drift invalidates REMOTE approvals | Child reads `configNonce`/`ownersCommitment`/`approvalRoot`/`threshold` as AccountUpdate preconditions; any parent change aborts the child tx |
@@ -669,7 +675,7 @@ contracts/
 │       ├── delegate.test.ts    memo.test.ts        list-commitment.test.ts
 │       ├── storage.test.ts     test-helpers.ts
 │
-└── .vk-hash                    # Canonical VK hashes (testnet= / mainnet=); check-vk-hash CI
+└── .vk-hash                    # Canonical VK hashes (testnet= / mainnet= / devnet=); check-vk-hash CI
                                 #   recompiles both and fails on drift
 ```
 

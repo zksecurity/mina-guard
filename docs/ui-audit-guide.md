@@ -117,8 +117,12 @@ reclaimable.
   proposal hash *and* into the per-network verification key (`contracts/src/constants.ts`, which reads
   `NEXT_PUBLIC_MINA_NETWORK_DOMAIN ?? MINA_NETWORK_DOMAIN`; only the `NEXT_PUBLIC_` form is inlined into
   browser code — a bare `MINA_NETWORK_DOMAIN` is dropped and `process.env` is `{}` in the browser).
-  **Unset ⇒ `testnet`, silently**, so a build with the wrong-or-defaulted domain produces proofs and
-  hashes for the wrong network (this domain separation is what blocks cross-network proposal replay).
+  The domain must be explicitly set to `mainnet`, `testnet`, or `devnet`; missing, invalid, or
+  conflicting values abort compilation. Browser builds must also set matching
+  `NEXT_PUBLIC_MINA_NETWORK`. The chosen domain must match the build's node network
+  and expected VK hash. Devnet now has its own proposal domain and VK.
+  Previously deployed devnet vaults with the old testnet-domain VK need their
+  original client until their funds are moved to new devnet-domain vaults.
   The other build-time `NEXT_PUBLIC_*` Next inlines into the bundle: `NEXT_PUBLIC_MINA_NETWORK` (o1js
   network id / fee-payer signature domain), `NEXT_PUBLIC_MINA_ENDPOINT` / `NEXT_PUBLIC_ARCHIVE_ENDPOINT`
   (node / archive), `NEXT_PUBLIC_API_BASE_URL` (backend read API), `NEXT_PUBLIC_BLOCK_EXPLORER_URL`,

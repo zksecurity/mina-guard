@@ -88,12 +88,12 @@ fees) and downloads the bundle as `<action>-<id>-<timestamp>.json`.
 ### 2. Sign (`offline-cli/src/`)
 
 ```
-MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
+MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, additionally set `MINA_NETWORK_DOMAIN=mainnet` — it
-selects the circuit's compile-time network domain (unset ⇒ testnet), and the
-CLI rejects a bundle whose `minaNetwork` doesn't match it (step 4 below).
+For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. The domain is required
+for either network and must exactly match the bundle; unset and invalid values
+fail closed. Version 1 offline bundles do not support devnet.
 Progress goes to stderr; stdout stays pure JSON. The flow
 (`index.ts` → `summary.ts` → `build-tx.ts`):
 
@@ -118,10 +118,10 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    `signFields` — deliberately with the fixed 'devnet' domain that o1js's
    in-circuit `Signature.verify` always uses. Cross-network replay is
    prevented instead by the compile-time `NETWORK_DOMAIN` baked into the
-   proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:92`) and into
+   proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:98`) and into
    the per-network VK (see focus point 3).
 4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
-   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:731-739`),
+   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:758-776`),
    `MinaGuard.compile` runs against the local `offline-cli/cache/`
    (gitignored, generated on first run; circuit-keyed, so per-domain; a cold
    cache regenerates in minutes).
@@ -296,7 +296,7 @@ uses the devnet prefix); the fee payer is signed with the **network-aware**
 `signZkappCommand`. Each half carries an invariant: cross-network replay of
 proposals is blocked by the compile-time `NETWORK_DOMAIN` baked into the
 proposal hash *and* the VK (plus `guardAddress`/`configNonce`/nonce) — the
-`compileContract` bundle↔domain gate (`build-tx.ts:731-739`) is the UX-level
+`compileContract` bundle↔domain gate (`build-tx.ts:758-776`) is the UX-level
 check, the per-network VK is the on-chain enforcement — and the fee-payer
 domain (`minaNetwork`) has to match the chain the tx is broadcast to. Note
 the two are set by *different* inputs (an env var vs. a bundle field); the
@@ -314,9 +314,10 @@ strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
 come from the bundle and feed o1js's account cache; the proved tx is checked
 against real chain state at broadcast.
 
-**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:722`, dummy-proof path
-`749-758`).** Unlike the web UI's compile-time-gated test hooks, this ships in
-every binary and is enabled by an env var.
+**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:756`, dummy-proof path
+`786-793`).** Unlike the web UI's compile-time-gated test hooks, this ships in
+every binary and is enabled by an env var. The bundle network check still runs
+before this hatch.
 
 **7. Confirmation policy (`confirmOrExit`).** The summary and prompt go to
 `/dev/tty` rather than stderr, so `> signed.json 2>log` still prompts — an
@@ -390,8 +391,8 @@ Bun runtime. Supported targets: `darwin`/`linux`/`windows` × `x64`/`arm64`
 (as exposed by the download UI; Windows binaries carry `.exe`). macOS
 binaries must additionally be **codesigned with JIT entitlements**
 (`allow-jit` + `allow-unsigned-executable-memory`; ad-hoc identity is enough)
-or the embedded WASM fails to load at runtime. One binary serves both
-networks: the circuit's `NETWORK_DOMAIN` is selected per run by the
+or the embedded WASM fails to load at runtime. One binary serves mainnet and
+testnet: the circuit's `NETWORK_DOMAIN` is selected per run by the required
 `MINA_NETWORK_DOMAIN` env var, not at binary-build time.
 
 **Distribution — GitHub releases** (`.github/workflows/offline-cli-release.yml`):

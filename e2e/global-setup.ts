@@ -137,6 +137,7 @@ async function clearPorts(ports: number[]): Promise<void> {
 
 export default async function globalSetup() {
   const config = getNetworkConfig();
+  const circuitDomain = config.mode === 'devnet' ? 'devnet' : 'testnet';
   log(`=== E2E Global Setup (${IS_CI ? 'CI' : 'local'}, network=${config.mode}) ===`);
 
   // -----------------------------------------------------------------------
@@ -278,8 +279,9 @@ export default async function globalSetup() {
           cwd: ROOT,
           stdio: 'pipe',
           timeout: 600_000, // 10 min — first compile is slow
+          env: { ...process.env, MINA_NETWORK_DOMAIN: circuitDomain },
         }).toString();
-        const match = output.match(/vkHash:\s*(\S+)/);
+        const match = output.match(new RegExp(`vkHash\\[${circuitDomain}\\]:\\s*(\\S+)`));
         if (match) {
           vkHash = match[1];
           log(`  Extracted vk hash: ${vkHash.slice(0, 20)}...`);
@@ -296,6 +298,7 @@ export default async function globalSetup() {
     const backendEnv: Record<string, string> = {
       INDEX_POLL_INTERVAL_MS: String(config.indexerPollIntervalMs),
       MINA_ENDPOINT: config.minaEndpoint,
+      MINA_NETWORK_DOMAIN: circuitDomain,
       ARCHIVE_ENDPOINT: config.archiveEndpoint,
       DATABASE_URL: requireDatabaseUrl(useLightnetPg),
       PORT: '4000',
@@ -318,6 +321,9 @@ export default async function globalSetup() {
       NEXT_PUBLIC_API_BASE_URL: config.backendUrl,
       NEXT_PUBLIC_MINA_ENDPOINT: config.minaEndpoint,
       NEXT_PUBLIC_ARCHIVE_ENDPOINT: config.archiveEndpoint,
+      NEXT_PUBLIC_MINA_NETWORK: circuitDomain,
+      NEXT_PUBLIC_MINA_NETWORK_DOMAIN: circuitDomain,
+      MINA_NETWORK_DOMAIN: circuitDomain,
       NEXT_PUBLIC_E2E_TEST: 'true',
       NEXT_PUBLIC_POLL_INTERVAL_MS: '3000',
     };
