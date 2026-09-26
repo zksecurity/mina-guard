@@ -15,7 +15,7 @@ export const V8_HEAP_MB = Math.max(
 export default defineConfig({
   testDir: '.',
   testMatch: '*.test.ts',
-  testIgnore: 'ui/**', // the chainless UI suite runs via playwright.ui.config.ts
+  testIgnore: ['ui/**', 'unit/**'], // separate chainless UI and Bun unit suites
   timeout: config.testStepTimeoutMs,
   retries: 0,
   workers: 1,

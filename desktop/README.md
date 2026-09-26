@@ -180,3 +180,13 @@ Run `bun run prepare:backend`.
 **Auro signing doesn't open a browser** — set `BROWSER` in `.env` to your
 browser command (e.g. `BROWSER=google-chrome` or `BROWSER=firefox`) or leave
 unset to use the OS default.
+
+### Signing state checkpoints
+
+The packaged UI uses the same IndexedDB store checkpoints as the web app, scoped
+to configured endpoints, network, expected verification key and vault address.
+Changing endpoint configuration selects a different cache namespace. This public
+cache is separate from the SQLite indexer database and contains no signing keys.
+Offline export now creates version 2 requests: distribute the updated offline CLI
+alongside this desktop build. The CLI retains v1 request support; signed responses
+remain v1. See `docs/offline-audit-guide.md` for the migration details.

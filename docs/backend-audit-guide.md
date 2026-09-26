@@ -336,7 +336,7 @@ This branch is test-only and must never be enabled in a deployment that accepts 
 | `GET /api/contracts/:address/proposals/:proposalHash` | Single proposal. `404` if not found. |
 | `POST /api/contracts/:address/proposals/:proposalHash/submissions` | Records a fresh approve/execute tx hash for polling, clearing any prior error. Body: `{ action: "approve"\|"execute", txHash }`. |
 | `GET /api/contracts/:address/proposals/:proposalHash/approvals` | Approvals for one proposal. Ordered `blockHeight asc, createdAt asc`. `404` if not found. |
-| `GET /api/contracts/:address/events` | Raw `EventRaw` rows. Query: `fromBlock`, `toBlock`, `limit` (1–500, default 100), `offset` (0–50000). Ordered `blockHeight desc, createdAt desc`. `404` if not found. |
+| `GET /api/contracts/:address/events` | Raw `EventRaw` rows. Query: `fromBlock`, `toBlock`, `limit` (1–500, default 100), `offset` (0–50000). Offset pages order by `blockHeight desc, createdAt desc, id desc`. With `cursor=true`, optional exclusive `beforeId` selects `id desc` pages and offsets are ignored. The checkpoint client uses this mode to avoid the offset cap. `404` if not found. |
 | `GET /api/account/:address/balance` | MINA balance via daemon GraphQL. `{ balance: null }` when the account doesn't exist on-chain (distinct from a real `"0"`). |
 | `POST /api/fund` | Lightnet only (requires `LIGHTNET_ACCOUNT_MANAGER`). Acquires a pre-funded lightnet keypair and transfers MINA. Body: `{ address }`. |
 | `POST /api/subscribe` | Lite mode only (`404` otherwise). Subscribes an address; idempotent. Body: `{ address, fromBlock? }` — supplied `fromBlock` = explicit lower bound (address must resolve to a deployed zkApp); omitted = `latestHeight - 5`, no existence check (subscribe-before-deploy). |

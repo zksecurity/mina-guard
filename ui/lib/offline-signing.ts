@@ -1,7 +1,9 @@
-import { parseChildConfigFromEvents } from './api';
+import { parseChildConfigFromEvents, fetchAllEvents } from './api';
+import { exportStoreCheckpoint } from './multisigClient';
+import type { StoreCheckpoint } from 'contracts';
 import { getMinaGuardConfig } from './endpoints';
 
-export const OFFLINE_BUNDLE_VERSION = 1;
+export const OFFLINE_BUNDLE_VERSION = 2;
 
 interface BundleReceiver {
   address: string;
@@ -33,7 +35,8 @@ export interface BundleAccount {
 }
 
 interface BundleBase {
-  version: 1;
+  version: 2;
+  storeCheckpoint: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
   feePayerAddress: string;
@@ -119,10 +122,8 @@ export function assertValidMinaAddress(address: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Bundle builders — run on main thread, no o1js needed
+// Bundle builders — heavy checkpoint work is delegated to the shared worker
 // ---------------------------------------------------------------------------
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
 
 /** Resolved lazily (not at module scope) so the desktop shell's runtime
  *  window.__minaGuardConfig override applies, matching the worker path. */
@@ -166,31 +167,6 @@ async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
   return json.data?.account ?? null;
 }
 
-async function fetchAllEvents(
-  contractAddress: string,
-): Promise<Array<{ eventType: string; payload: unknown; blockHeight: number | null }>> {
-  const events: Array<{ eventType: string; payload: unknown; blockHeight: number | null }> = [];
-  let offset = 0;
-  const limit = 500;
-  while (true) {
-    const res = await fetch(
-      `${API_BASE}/api/contracts/${contractAddress}/events?limit=${limit}&offset=${offset}`,
-      { cache: 'no-store' },
-    );
-    if (!res.ok) break;
-    const batch = await res.json();
-    events.push(...batch.map((e: any) => ({
-      eventType: e.eventType,
-      payload: typeof e.payload === 'string' ? JSON.parse(e.payload) : e.payload,
-      // optional in the bundle format; older CLIs ignore it
-      blockHeight: typeof e.blockHeight === 'number' ? e.blockHeight : null,
-    })));
-    if (batch.length < limit) break;
-    offset += limit;
-  }
-  return events.reverse();
-}
-
 async function checkAccountExists(address: string): Promise<boolean> {
   const account = await fetchGraphQLAccount(address);
   return !!account;
@@ -202,6 +178,7 @@ export async function buildOfflineProposeBundle(params: {
   input: OfflineProposeBundle['input'];
   configNonce: number;
 }): Promise<OfflineProposeBundle> {
+  const storeCheckpoint = await exportStoreCheckpoint(params.contractAddress);
   const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
@@ -210,7 +187,6 @@ export async function buildOfflineProposeBundle(params: {
     fetches.push(fetchGraphQLAccount(params.input.childAccount));
   }
   const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
-  const events = await fetchAllEvents(params.contractAddress);
 
   const accounts: Record<string, BundleAccount> = {
     [params.contractAddress]: contractAccount,
@@ -221,13 +197,14 @@ export async function buildOfflineProposeBundle(params: {
   }
 
   return {
-    version: 1,
+    version: 2,
     action: 'propose',
     minaNetwork: minaNetwork(),
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
-    events,
+    events: [],
+    storeCheckpoint,
     input: params.input,
     configNonce: params.configNonce,
   };
@@ -238,6 +215,7 @@ export async function buildOfflineApproveBundle(params: {
   feePayerAddress: string;
   proposal: OfflineApproveBundle['proposal'];
 }): Promise<OfflineApproveBundle> {
+  const storeCheckpoint = await exportStoreCheckpoint(params.contractAddress);
   const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
@@ -245,7 +223,6 @@ export async function buildOfflineApproveBundle(params: {
   const childAddr = params.proposal.childAccount;
   if (childAddr) fetches.push(fetchGraphQLAccount(childAddr));
   const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
-  const events = await fetchAllEvents(params.contractAddress);
 
   const accounts: Record<string, BundleAccount> = {
     [params.contractAddress]: contractAccount,
@@ -254,13 +231,14 @@ export async function buildOfflineApproveBundle(params: {
   if (childAddr && childAccount) accounts[childAddr] = childAccount;
 
   return {
-    version: 1,
+    version: 2,
     action: 'approve',
     minaNetwork: minaNetwork(),
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
-    events,
+    events: [],
+    storeCheckpoint,
     proposal: params.proposal,
   };
 }
@@ -272,6 +250,7 @@ export async function buildOfflineExecuteBundle(params: {
   childAddress?: string;
   childEvents?: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
 }): Promise<OfflineExecuteBundle> {
+  const storeCheckpoint = await exportStoreCheckpoint(params.contractAddress);
   const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
@@ -279,7 +258,6 @@ export async function buildOfflineExecuteBundle(params: {
   const childAddr = params.proposal.childAccount;
   if (childAddr) fetches.push(fetchGraphQLAccount(childAddr));
   const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
-  const events = await fetchAllEvents(params.contractAddress);
 
   const accounts: Record<string, BundleAccount> = {
     [params.contractAddress]: contractAccount,
@@ -327,13 +305,14 @@ export async function buildOfflineExecuteBundle(params: {
   }
 
   return {
-    version: 1,
+    version: 2,
     action: 'execute',
     minaNetwork: minaNetwork(),
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
-    events,
+    events: [],
+    storeCheckpoint,
     proposal: params.proposal,
     receiverAccountExists,
     childAddress,

@@ -10,7 +10,7 @@
 //   - Network: worker connects to a real Mina node; CLI uses a dummy
 //     endpoint with a patched getNetworkState.
 //   - Merkle stores: worker maintains them in memory across operations;
-//     CLI rebuilds from events in the JSON bundle file each time.
+//     CLI restores a v2 leaf snapshot, or replays legacy v1 events.
 //
 // The contract calls and proof generation are identical. A future
 // refactor could move the proof to the browser (2-trip flow), which
@@ -47,9 +47,9 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
-  rebuildStores,
+  storesFromOfflineRequest,
+  type StoreCheckpoint,
   rebuildChildExecutionMap,
-  assertStoresMatchChain,
   assertChildExecutionMapMatchesChain,
 } from 'contracts';
 
@@ -98,7 +98,8 @@ interface BundleAccount {
 
 /** Fields common to all bundle actions. */
 interface BundleBase {
-  version: 1;
+  version: 1 | 2;
+  storeCheckpoint?: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
   feePayerAddress: string;
@@ -556,9 +557,7 @@ function snapshotState(address: string) {
 
 /** Rebuilds the vault's stores from the bundle events and checks them against its snapshot. */
 function rebuildVerifiedStores(bundle: BundleBase) {
-  const stores = rebuildStores(bundle.events);
-  assertStoresMatchChain(stores, snapshotState(bundle.contractAddress));
-  return stores;
+  return storesFromOfflineRequest(bundle, snapshotState(bundle.contractAddress));
 }
 
 // ---------------------------------------------------------------------------

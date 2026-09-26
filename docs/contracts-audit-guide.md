@@ -113,6 +113,23 @@ self-contained; two of the three (`OwnerStore`, `ApprovalStore`) also implement
 
 **`event-rebuild.ts`** — rebuilds the three stores (and a child's `childExecutionRoot` map) from indexed events for both the web worker and the offline CLI. The fold is order-independent: approval leaves keep the largest value seen (proposed < counts < `EXECUTED_MARKER`), nullifier writes are idempotent, owners come from the `setupOwner` slot `index`, and owner changes replay in `configNonce` order, each add placed at the position whose chain equals the emitted `newOwnersCommitment`. `assertStoresMatchChain` compares the result with on-chain state before any proof; the per-event roots (see Events) only locate the first divergent block.
 
+**`store-checkpoint.ts`** — off-chain verified snapshots and incremental replay.
+`VoteNullifierStore` now serializes its key set, with all values fixed to one.
+Owners and approval leaves use their existing serialization. Persisted snapshots
+are restored from leaves and checked against their declared roots; the worker
+then fetches strictly later blocks and checks all roots against the Mina node.
+Root mismatch or corrupt data triggers one full replay, followed by refusal if
+state still disagrees. In-memory trees are copied without rehashing historical
+leaves, isolating callers while updating only new events. No circuit, signed
+message, on-chain state layout, or event format changes are introduced.
+Executed-proposal nullifiers are not pruned off-chain: the on-chain nullifier root
+still commits to those leaves, so deleting them would invalidate witnesses.
+Bounding total map growth requires a separate coordinated on-chain pruning or
+epoch design. Checkpointing removes repeated event replay, not lifetime state growth.
+Warm requests still copy and serialize current stores; only event fetching and
+Merkle updates are proportional to new activity. Cold restore rehashes all saved leaves.
+
+
 **`OwnerStore`** — an ordered `PublicKey[]` array. Methods: `addSorted()`, `sortedPredecessor()`
 (derives the `insertAfter` key for the add-owner flow), `insertAfter()`, `remove()`, `isOwner()`,
 `getCommitment()` (computes chain hash), `getWitness()` (returns `OwnerWitness` padded to

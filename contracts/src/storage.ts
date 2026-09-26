@@ -223,6 +223,8 @@ export class VoteNullifierStore {
     this.map = new MerkleMap();
   }
 
+  private keys = new Set<string>();
+
   private nullifierKey(proposalHash: Field, approver: PublicKey): Field {
     return Poseidon.hash([proposalHash, ...approver.toFields()]);
   }
@@ -232,7 +234,10 @@ export class VoteNullifierStore {
   }
 
   nullify(proposalHash: Field, approver: PublicKey): void {
-    this.map.set(this.nullifierKey(proposalHash, approver), Field(1));
+    const key = this.nullifierKey(proposalHash, approver);
+    if (this.keys.has(key.toString())) return;
+    this.map.set(key, Field(1));
+    this.keys.add(key.toString());
   }
 
   getWitness(proposalHash: Field, approver: PublicKey) {
@@ -242,4 +247,31 @@ export class VoteNullifierStore {
   getRoot(): Field {
     return this.map.getRoot();
   }
+
+  serialize(): string {
+    return JSON.stringify({ keys: [...this.keys] });
+  }
+
+  static deserialize(json: string): VoteNullifierStore {
+    const data = JSON.parse(json);
+    if (!Array.isArray(data.keys)) throw new Error('Invalid nullifier checkpoint');
+    const store = new VoteNullifierStore();
+    for (const key of data.keys) {
+      if (typeof key !== 'string' || !/^(0|[1-9][0-9]*)$/.test(key) || Field(key).toString() !== key) {
+        throw new Error('Invalid nullifier key');
+      }
+      if (store.keys.has(key)) throw new Error('Duplicate nullifier key');
+      store.map.set(Field(key), Field(1));
+      store.keys.add(key);
+    }
+    return store;
+  }
+
+  clone(): VoteNullifierStore {
+    const store = new VoteNullifierStore();
+    store.map.tree = this.map.tree.clone();
+    store.keys = new Set(this.keys);
+    return store;
+  }
+
 }

@@ -80,8 +80,8 @@ function readBundle(path: string): OfflineBundle {
 
 const bundle = readBundle(bundlePath);
 
-if (bundle.version !== 1) {
-  fatal(`Unsupported bundle version: ${bundle.version} (expected 1)`);
+if (bundle.version !== 1 && bundle.version !== 2) {
+  fatal(`Unsupported bundle version: ${bundle.version} (expected 1 or 2)`);
 }
 
 // -- Dispatch ---------------------------------------------------------------

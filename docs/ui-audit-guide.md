@@ -203,9 +203,19 @@ calls `setup()` first.
 **3. Indexer-supplied data feeding into signed transactions.**
 The backend is untrusted (see threat model), yet its data rebuilds the Merkle
 stores and proposal structs that get hashed and signed
-(`rebuildStoresFromBackend`, a thin wrapper over the shared `rebuildStores` in
-`contracts/src/event-rebuild.ts` that the offline CLI also uses; `buildProposalStruct`
-— memoHash included). The rebuild does not depend on delivery order: approval
+(`rebuildStoresFromBackend` uses `IncrementalStoreCache` and the shared
+`rebuildStores`; `buildProposalStruct` includes memoHash). The worker persists
+public store checkpoints in IndexedDB, scoped to node/archive endpoints, network,
+expected VK and vault address, and fetches only blocks after the last saved event
+block. ID-based cursor pagination avoids offset shifts and the legacy 50,000-row cap; failed or non-progressing pages are rejected. Deploy the updated backend with this client. Corrupt caches,
+reorgs or mismatched roots trigger one full replay; another mismatch refuses the
+operation. Storage failures fall back to verified in-memory operation. Unknown
+legacy event heights disable incremental reuse. A bounded four-vault memory cache
+avoids rehashing old leaves during warm operations; cold restore still rebuilds
+trees from saved leaves. Offline export uses this same worker path to produce
+version 2 public snapshots; the offline CLI independently reconstructs and checks
+them against bundled account snapshots (see the offline audit guide). Child
+execution maps and child reservation configuration still replay child events. The rebuild does not depend on delivery order: approval
 leaves keep the largest value seen, owners come from the emitted setup slot index,
 and owner changes replay in `configNonce` order with each insert placed where the
 emitted post-change commitment says. Before any proof the worker compares the

@@ -515,6 +515,33 @@ describe('GET /api/contracts/:address/children', () => {
 });
 
 describe('GET /api/contracts/:address/events', () => {
+  test('paginates tied block/timestamp events in stable ID order', async () => {
+    const contract = await prisma.contract.findUniqueOrThrow({ where: { address: contractAddress } });
+    const createdAt = new Date('2026-01-01T00:00:00Z');
+    const first = await prisma.eventRaw.create({ data: {
+      contractId: contract.id, blockHeight: 100, createdAt,
+      eventType: 'approval', payload: '{}', fingerprint: 'checkpoint-pagination-a',
+    } });
+    const second = await prisma.eventRaw.create({ data: {
+      contractId: contract.id, blockHeight: 100, createdAt,
+      eventType: 'approval', payload: '{}', fingerprint: 'checkpoint-pagination-b',
+    } });
+    try {
+      const page0 = await (await get(`/api/contracts/${contractAddress}/events?fromBlock=100&toBlock=100&limit=1&offset=0`)).json();
+      const page1 = await (await get(`/api/contracts/${contractAddress}/events?fromBlock=100&toBlock=100&limit=1&offset=1`)).json();
+      expect(page0.map((e: { id: number }) => e.id)).toEqual([second.id]);
+      expect(page1.map((e: { id: number }) => e.id)).toEqual([first.id]);
+      const cursor0 = await (await get(`/api/contracts/${contractAddress}/events?cursor=true&fromBlock=100&limit=1&offset=50000`)).json();
+      expect(cursor0.map((e: { id: number }) => e.id)).toEqual([second.id]);
+      const cursor1 = await (await get(`/api/contracts/${contractAddress}/events?cursor=true&fromBlock=100&beforeId=${second.id}&limit=1`)).json();
+      expect(cursor1.map((e: { id: number }) => e.id)).toEqual([first.id]);
+      const exhausted = await (await get(`/api/contracts/${contractAddress}/events?cursor=true&fromBlock=100&beforeId=${first.id}&limit=1`)).json();
+      expect(exhausted).toEqual([]);
+    } finally {
+      await prisma.eventRaw.deleteMany({ where: { id: { in: [first.id, second.id] } } });
+    }
+  });
+
   test('defaults invalid filters and clamps pagination', async () => {
     const res = await get(
       `/api/contracts/${contractAddress}/events?fromBlock=bad&toBlock=10.9&limit=999&offset=-5`
