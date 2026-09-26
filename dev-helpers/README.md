@@ -32,6 +32,7 @@ MINA_NETWORK_DOMAIN=devnet bun run dev-helpers/cli.ts vk-hash compile
 ```
 
 `vk-hash compile` requires an exact network domain and can take a while on first run because circuit compilation is expensive.
+The `testnet` and `devnet` selections share `Field(2)` and must print the same VK hash.
 
 Output includes `vkHash[<network>]: <hash>` for the selected network.
 
