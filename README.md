@@ -252,3 +252,18 @@ zk lightnet stop --clean-up
 zk lightnet start --pull=false
 
 ```
+
+### Incremental signing state and offline compatibility
+
+The signing worker saves public owner/approval/nullifier checkpoints locally and
+fetches only newer event blocks on later operations using the updated backend
+cursor API (deploy both together). It checks the resulting roots
+against the Mina node and falls back to one full replay on mismatch. Initial sync
+still needs complete history; cold restoration rehashes saved leaves. Clearing
+browser storage loses only this optimization, not signing keys.
+
+Offline requests exported by this UI use **version 2** with a complete public
+store snapshot. Use the matching updated offline CLI; older CLIs reject v2. The
+updated CLI still accepts full-history v1 requests. Signed responses remain v1.
+See [the offline audit guide](docs/offline-audit-guide.md) for migration and trust
+boundaries. Desktop packages the same worker and exporter.

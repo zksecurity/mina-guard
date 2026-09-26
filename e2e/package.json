@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node node_modules/@playwright/test/cli.js test",
+    "test:unit": "bun test unit/",
     "test:ui": "node node_modules/@playwright/test/cli.js test --config playwright.ui.config.ts"
   },
   "dependencies": {

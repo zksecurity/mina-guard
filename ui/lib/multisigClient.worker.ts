@@ -23,6 +23,7 @@ import {
 } from 'o1js';
 
 import Client from 'mina-signer';
+import { readStoreCheckpoint, writeStoreCheckpoint } from './idb-store-checkpoint';
 
 import {
   MinaGuard,
@@ -37,7 +38,8 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
-  rebuildStores,
+  IncrementalStoreCache,
+  checkpointStores,
   rebuildChildExecutionMap,
   assertStoresMatchChain,
   assertChildExecutionMapMatchesChain,
@@ -320,9 +322,21 @@ async function signAndSend(
   return `Transaction submitted: ${hash}`;
 }
 
-/** Rebuilds a guard's stores from its indexed events (shared with the offline CLI). */
+const storeCache = new IncrementalStoreCache();
+
+/** Update persisted public stores, then verify against the Mina node. */
 async function rebuildStoresFromBackend(contractAddress: string) {
-  return rebuildStores(await fetchAllEvents(contractAddress));
+  const cfg = runtimeConfig ?? (await configReady);
+  const network = cfg.networkId === 'mainnet' ? 'mainnet' : 'testnet';
+  const key = JSON.stringify([cfg.minaEndpoint, cfg.archiveEndpoint, cfg.networkId,
+    process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH, contractAddress]);
+  return storeCache.get({
+    key, scope: { network, address: contractAddress },
+    read: () => readStoreCheckpoint(key),
+    write: (checkpoint) => writeStoreCheckpoint(key, checkpoint),
+    events: (fromBlock) => fetchAllEvents(contractAddress, fromBlock),
+    chain: () => requireContractState(contractAddress),
+  });
 }
 
 /** On-chain state, or a clear error: rebuilt stores are never used unchecked. */
@@ -693,6 +707,14 @@ async function submitTx(
 // ---------------------------------------------------------------------------
 
 const workerApi = {
+  /** Complete, verified public snapshot for a version 2 offline request. */
+  async exportStoreCheckpoint(contractAddress: string) {
+    const cfg = runtimeConfig ?? (await configReady);
+    const stores = await rebuildStoresFromBackend(contractAddress);
+    return checkpointStores(stores, {
+      network: cfg.networkId === 'mainnet' ? 'mainnet' : 'testnet', address: contractAddress,
+    }, null);
+  },
   /** Provides the network endpoints the worker should use. Must be called
    *  before any method that touches o1js networking (compile, fetch, send). */
   setConfig(cfg: RuntimeConfig) {

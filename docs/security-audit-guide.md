@@ -156,12 +156,14 @@ sign from the fields they display and verify it equals the selected proposal's i
 `TransactionProposal` struct and call `.hash()` locally, then `assertRecomputedProposalHash` aborts
 the approve or execute before any signature if the recomputed hash does not match the proposal the
 owner selected. (Propose mints a fresh proposal with no prior identity, so it has nothing to match
-against and skips the check.) Both clients also rebuild the owner list, approval map and nullifier
-map from indexed events with the shared, order-independent `contracts/src/event-rebuild.ts`, and
+against and skips the check.) The worker updates cached owner, approval and nullifier
+stores with later indexed events using `contracts/src/store-checkpoint.ts` and the
+shared, order-independent `contracts/src/event-rebuild.ts`. The CLI reconstructs
+version 2 public checkpoint leaves or replays legacy version 1 events. Both clients
 refuse to prove unless the result reproduces on-chain state (the worker reads the Mina node, the
 CLI the bundle's account snapshot); events are unauthenticated, so the per-event roots the
 contract emits only locate a divergence and are never trusted on their own. Covered by
-`event-rebuild.test.ts` and the offline CLI end-to-end tamper test.
+`event-rebuild.test.ts`, `store-checkpoint.test.ts` and the offline CLI end-to-end tests. Persisted roots are not trust anchors: restored leaves are rehashed, then compared against the node (online) or bundled snapshot (offline).
 
 The deployed verification key is pinned in CI: `contracts/.vk-hash` holds canonical hashes for
 testnet and mainnet (`testnet=` and `mainnet=` labeled entries — each network produces a structurally

@@ -56,6 +56,8 @@ jobs:
         run: bun run --filter contracts build
       - name: Build UI
         run: bun run --filter ui build
+      - name: Test incremental event transport
+        run: bun run --filter e2e test:unit
       - name: Generate Prisma client
         run: cd backend && bunx prisma generate
       - name: Build backend
