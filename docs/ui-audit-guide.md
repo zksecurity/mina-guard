@@ -121,12 +121,11 @@ reclaimable.
   conflicting values abort compilation. Browser builds must also set matching
   `NEXT_PUBLIC_MINA_NETWORK`; `next build` rejects a missing or mismatched pair
   before packaging. The chosen domain must match the build's node network
-  and expected VK hash. The worker also rejects a desktop runtime networkId
-  that differs from its baked-in domain. Auro's live signing-network check
-  requires an exact match, including devnet versus testnet. Devnet now has its
-  own proposal domain and VK.
-  Previously deployed devnet vaults with the old testnet-domain VK need their
-  original client until their funds are moved to new devnet-domain vaults.
+  and expected VK hash. The worker rejects a desktop runtime networkId outside
+  its baked-in proof domain. Mainnet uses `Field(1)`; testnet and devnet retain
+  the existing `Field(2)` domain and VK. Auro's live check accepts both
+  `mina:testnet` (legacy) and `mina:devnet` for test builds, but checks the
+  full chain ID and rejects `zeko:testnet` and unknown networks.
   The other build-time `NEXT_PUBLIC_*` Next inlines into the bundle: `NEXT_PUBLIC_MINA_NETWORK` (o1js
   network id / fee-payer signature domain), `NEXT_PUBLIC_MINA_ENDPOINT` / `NEXT_PUBLIC_ARCHIVE_ENDPOINT`
   (node / archive), `NEXT_PUBLIC_API_BASE_URL` (backend read API), `NEXT_PUBLIC_BLOCK_EXPLORER_URL`,

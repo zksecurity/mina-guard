@@ -25,5 +25,5 @@ export function resolveNetworkDomain(
 export const NETWORK_DOMAIN_IDS: Record<NetworkDomainName, bigint> = {
   mainnet: 1n,
   testnet: 2n,
-  devnet: 3n,
+  devnet: 2n,
 };

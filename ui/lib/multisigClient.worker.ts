@@ -162,7 +162,10 @@ async function configureNetwork() {
   // Electron can override endpoints and networkId at runtime, but not the
   // circuit domain baked into this worker. Reject any mismatch before proving
   // or building a transaction, including in proofless E2E mode.
-  if (cfg.networkId !== NETWORK_DOMAIN_NAME) {
+  const sharedTestDomain =
+    (cfg.networkId === 'testnet' || cfg.networkId === 'devnet') &&
+    (NETWORK_DOMAIN_NAME === 'testnet' || NETWORK_DOMAIN_NAME === 'devnet');
+  if (cfg.networkId !== NETWORK_DOMAIN_NAME && !sharedTestDomain) {
     throw new Error(`Network mismatch: this build is for ${NETWORK_DOMAIN_NAME}, but the runtime config is ${cfg.networkId}`);
   }
   const network = Mina.Network({

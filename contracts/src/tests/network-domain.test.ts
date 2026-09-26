@@ -3,10 +3,10 @@ import { spawnSync } from 'node:child_process';
 import { NETWORK_DOMAIN_IDS, resolveNetworkDomain } from '../network-domain.js';
 
 describe('compile-time network domain selection', () => {
-  it('keeps existing mainnet/testnet IDs and gives devnet its own ID', () => {
+  it('keeps mainnet separate and the existing testnet/devnet proposal domain', () => {
     expect(NETWORK_DOMAIN_IDS.mainnet).toBe(1n);
     expect(NETWORK_DOMAIN_IDS.testnet).toBe(2n);
-    expect(NETWORK_DOMAIN_IDS.devnet).toBe(3n);
+    expect(NETWORK_DOMAIN_IDS.devnet).toBe(2n);
   });
 
   it('requires an explicit, exact network name', () => {
@@ -30,7 +30,7 @@ describe('compile-time network domain selection', () => {
     }
   });
 
-  it('changes the proposal hash input across all three networks', () => {
+  it('separates mainnet from the shared testnet/devnet proposal hash', () => {
     const constantsUrl = new URL('../constants.ts', import.meta.url).href;
     const script = `
       import { Field, Poseidon } from 'o1js';
@@ -49,7 +49,8 @@ describe('compile-time network domain selection', () => {
       if (result.status !== 0) throw new Error(result.stderr);
       return result.stdout.trim();
     });
-    expect(new Set(hashes).size).toBe(3);
+    expect(hashes[0]).not.toBe(hashes[1]);
+    expect(hashes[1]).toBe(hashes[2]);
   });
 
   it('keeps the selected domain fixed after module initialization', () => {

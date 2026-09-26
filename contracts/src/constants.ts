@@ -2,8 +2,8 @@ import { MerkleMap, Poseidon, Field } from "o1js";
 import { NETWORK_DOMAIN_IDS, resolveNetworkDomain } from './network-domain.js';
 
 // Compile-time network domain separator baked into every proposal hash.
-// Produces distinct VKs per network so a proposal signed on testnet cannot be
-// replayed on mainnet (and vice versa) even if the guard address, owner set,
+// Produces distinct mainnet and test-network VKs so a proposal signed on a
+// test network cannot be replayed on mainnet (and vice versa) even if the guard address, owner set,
 // and app-level networkId are identical.
 //
 // Selecting the domain differs by build context:

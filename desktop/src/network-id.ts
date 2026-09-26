@@ -1,5 +1,10 @@
 export type NetworkId = 'mainnet' | 'devnet' | 'testnet';
 
+/** Mina's testnet/devnet labels share MinaGuard's existing proof domain. */
+export function matchesBuildProofDomain(nodeNetwork: NetworkId, buildNetwork: NetworkId): boolean {
+  return nodeNetwork === buildNetwork || (nodeNetwork !== 'mainnet' && buildNetwork !== 'mainnet');
+}
+
 /** Accept only a network explicitly reported by the Mina node. */
 export function parseNodeNetworkId(value: unknown): NetworkId {
   const id = typeof value === 'string' ? value.trim().toLowerCase() : '';

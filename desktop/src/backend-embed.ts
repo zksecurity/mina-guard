@@ -103,7 +103,7 @@ export async function startEmbeddedBackend(
   // MinaGuard VK hash → MINAGUARD_VK_HASH, so the subscribe route can reject
   // contracts from a different release. contracts/.vk-hash carries one hash
   // per network (`testnet=…` / `mainnet=…` / `devnet=…` lines): the compile-time
-  // NETWORK_DOMAIN gives each network a structurally distinct VK.
+  // NETWORK_DOMAIN separates mainnet from the shared testnet/devnet VK.
   // Files predating the per-network format (a comment header + one bare
   // decimal) parse via the legacy fallback. If the file is missing or has no
   // usable value, the backend starts but vault authentication fails closed:

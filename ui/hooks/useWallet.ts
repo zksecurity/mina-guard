@@ -80,7 +80,7 @@ export function useWallet() {
     });
 
     const unsubNetwork = onNetworkChange((network) => {
-      setWallet((prev) => ({ ...prev, network: network.networkID.split(':')[1] ?? null }));
+      setWallet((prev) => ({ ...prev, network: network.networkID ?? null }));
     });
 
     return () => {
@@ -178,8 +178,8 @@ export function useWallet() {
 
   // Proactive WARNING banner: derived from the cached Auro network. A connected
   // Auro wallet on a different network than this deployment can send a
-  // transaction to the wrong chain. Each network has its own proposal domain;
-  // devnet and testnet must not be treated as interchangeable. Ledger's id is
+  // transaction to the wrong chain. Mina testnet/devnet are wallet ID aliases;
+  // preserve the full namespace so zeko:testnet cannot match. Ledger's id is
   // pinned to the deployment, so this applies only to Auro. Null cache means
   // no banner; the fail-closed check below does not trust the cache.
   const networkMismatch = useMemo(() => {

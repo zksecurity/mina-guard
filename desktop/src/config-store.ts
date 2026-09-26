@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
-import { parseNodeNetworkId } from './network-id.js';
+import { matchesBuildProofDomain, parseNodeNetworkId } from './network-id.js';
 import type { NetworkId } from './network-id.js';
 
 export type { NetworkId } from './network-id.js';
@@ -9,8 +9,8 @@ export type { NetworkId } from './network-id.js';
 /** Proof-domain network this build's UI bundle was compiled for. Must match the
  *  NEXT_PUBLIC_MINA_NETWORK_DOMAIN passed to `build:ui` in package.json — the
  *  circuit's NETWORK_DOMAIN is baked in at that build, so a proposal proved here
- *  only verifies against contracts on this network. Flip both together to cut a
- *  mainnet or devnet build. Each network has its own proposal and VK domain. */
+ *  only verifies against contracts in this proof domain. Testnet and devnet
+ *  share Field(2); mainnet uses Field(1). */
 const BUILD_NETWORK_DOMAIN: 'mainnet' | 'testnet' = 'testnet';
 
 export interface UserConfig {
@@ -95,7 +95,7 @@ export async function verifyEndpoints(
   // Reject a mismatched node loudly at setup instead of letting proofs fail
   // cryptically downstream. Endpoints must not be persisted on rejection — the
   // callers treat a throw here as "do not save / do not wipe the DB".
-  if (detected !== BUILD_NETWORK_DOMAIN) {
+  if (!matchesBuildProofDomain(detected, BUILD_NETWORK_DOMAIN)) {
     throw new Error(
       `Network mismatch: this is a ${BUILD_NETWORK_DOMAIN} build, but the node at ` +
       `${minaEndpoint} reports ${detected}. Point it at a ${BUILD_NETWORK_DOMAIN} node, ` +

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseNodeNetworkId } from '../src/network-id.js';
+import { matchesBuildProofDomain, parseNodeNetworkId } from '../src/network-id.js';
 
 describe('Mina node network identity', () => {
   it('accepts exact supported network IDs', () => {
@@ -13,5 +13,11 @@ describe('Mina node network identity', () => {
     for (const value of [undefined, null, '', 'mina:', 'mina:mainnet-testnet', 'other:testnet', 'lightnet']) {
       expect(() => parseNodeNetworkId(value)).toThrow('networkID');
     }
+  });
+
+  it('shares the test proof domain without crossing into mainnet', () => {
+    expect(matchesBuildProofDomain('devnet', 'testnet')).toBe(true);
+    expect(matchesBuildProofDomain('testnet', 'devnet')).toBe(true);
+    expect(matchesBuildProofDomain('mainnet', 'testnet')).toBe(false);
   });
 });

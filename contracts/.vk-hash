@@ -1,8 +1,8 @@
 # Canonical MinaGuard verification-key hashes, one per network.
 #
 # NETWORK_DOMAIN is baked into the circuit as a compile-time constant
-# (Field(1) for mainnet, Field(2) for testnet, Field(3) for devnet), so each network
-# produces a structurally distinct VK. Verify that the deployed account has
+# (Field(1) for mainnet, Field(2) for testnet and devnet), so mainnet and the
+# test-network aliases have distinct VKs. Verify that the deployed account has
 # the VK for its actual network; the circuit cannot detect a misdeployment.
 #
 # Backend deployments: set MINAGUARD_VK_HASH to the hash for your target
@@ -15,4 +15,4 @@
 # Then update all three lines below with the printed hashes.
 testnet=17378279678034021124220008233306177946864257033494126195271400438273176628528
 mainnet=4414387421979603694503794870561243291501572622843633740961901709756431338605
-devnet=18675361962866013312581646343497170847297160500624038821762987993418719486572
+devnet=17378279678034021124220008233306177946864257033494126195271400438273176628528

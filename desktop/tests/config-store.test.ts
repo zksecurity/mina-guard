@@ -36,4 +36,10 @@ describe('desktop endpoint network check', () => {
     await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
       .resolves.toBe('testnet');
   });
+
+  it('accepts an explicitly reported devnet node in the shared test proof domain', async () => {
+    nodeReports('mina:devnet');
+    await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
+      .resolves.toBe('devnet');
+  });
 });

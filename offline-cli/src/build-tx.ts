@@ -761,7 +761,8 @@ export function assertBundleNetwork(bundleNetwork: string, binaryNetwork: string
   if (bundleNetwork !== 'mainnet' && bundleNetwork !== 'testnet') {
     throw new Error(`Unsupported bundle network: ${bundleNetwork}`);
   }
-  if (binaryNetwork !== bundleNetwork) {
+  const sharedTestDomain = bundleNetwork === 'testnet' && binaryNetwork === 'devnet';
+  if (binaryNetwork !== bundleNetwork && !sharedTestDomain) {
     throw new Error(
       `Network mismatch: CLI configured for ${binaryNetwork ?? 'unset'} ` +
       `but bundle targets ${bundleNetwork}. ` +
@@ -772,7 +773,7 @@ export function assertBundleNetwork(bundleNetwork: string, binaryNetwork: string
 
 async function compileContract(bundle: BundleBase, log: LogFn) {
   // NETWORK_DOMAIN is selected when contracts are imported. The offline
-  // protocol supports mainnet/testnet only and requires an exact match.
+  // v1 bundles use mainnet/testnet; a devnet binary shares the testnet proof domain.
   assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   if (compiled || skipProofs) return;
 

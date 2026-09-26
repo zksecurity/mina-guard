@@ -66,7 +66,7 @@ format and the CLI fully support them (relevant for hand-built bundles);
 One builder per action. Every bundle carries the target network
 (`minaNetwork`, resolved at call time from the runtime config, devnet mapping
 to `testnet`; it selects the fee-payer signature domain and must match the
-domain the CLI runs with), the contract and typed fee-payer addresses, live
+CLI's mainnet/test-network proof domain), the contract and typed fee-payer addresses, live
 **account snapshots** from the Mina node, and the contract's **full event
 history** from the indexer — everything the CLI needs to stay fully offline.
 Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
@@ -91,9 +91,10 @@ fees) and downloads the bundle as `<action>-<id>-<timestamp>.json`.
 MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. The domain is required
-for either network and must exactly match the bundle; unset and invalid values
-fail closed. Version 1 offline bundles do not support devnet.
+For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a v1 testnet bundle,
+use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
+unset, invalid, and mainnet/test-network mismatches fail closed. Version 1
+offline bundles encode devnet as `testnet`.
 Progress goes to stderr; stdout stays pure JSON. The flow
 (`index.ts` → `summary.ts` → `build-tx.ts`):
 
@@ -174,7 +175,7 @@ takes over.
 |-------|------|---------|
 | `version` | `1` | Format version (checked by both CLI and upload path) |
 | `action` | `"propose" \| "approve" \| "execute"` | Dispatch |
-| `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; must match the CLI's `MINA_NETWORK_DOMAIN` |
+| `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; `testnet` accepts CLI `MINA_NETWORK_DOMAIN=testnet` or `devnet` |
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |

@@ -210,9 +210,9 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   `src/config-store.ts`): both must answer a real GraphQL POST within
   10 s. The network id must be explicitly reported in the node's `networkID`
   field; URL names are never used to guess it. A node whose proof domain doesn't match this
-  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet, testnet, or devnet;
-  each distinct) is rejected at save time — the bundled circuit can only
-  prove against one domain.
+  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet versus the shared
+  testnet/devnet proof domain) is rejected at save time — the bundled circuit
+  can only prove against one domain.
 - **Changing endpoints wipes the local DB and relaunches**
   (`changeEndpointsAndRelaunch`, `src/main.ts:349-363`): the local index is
   only meaningful for the chain it was built against. The same policy applies
@@ -239,8 +239,7 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   *mismatched* VK is rejected on both the manual and auto-subscribe paths; a
   *missing* one is tolerated only while a just-deployed vault races indexing).
   The file carries one hash per network (`testnet=…` / `mainnet=…` / `devnet=…` lines —
-  the circuit's compile-time `NETWORK_DOMAIN` makes each network's VK
-  structurally distinct); the embed picks the line matching the configured
+  testnet and devnet carry the same VK); the embed picks the line matching the configured
   network (`backend-embed.ts:112-128`) and
   still accepts the pre-#93 single-bare-number format. When the file is
   missing, or a keyed file has no line for the configured network, the backend

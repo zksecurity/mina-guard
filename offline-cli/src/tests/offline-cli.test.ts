@@ -73,6 +73,7 @@ describe('offline-cli', () => {
 
   it('requires an exact supported bundle network before proving', () => {
     expect(() => assertBundleNetwork('testnet', 'testnet')).not.toThrow();
+    expect(() => assertBundleNetwork('testnet', 'devnet')).not.toThrow();
     expect(() => assertBundleNetwork('mainnet', 'mainnet')).not.toThrow();
     expect(() => assertBundleNetwork('testnet', undefined)).toThrow('Network mismatch');
     expect(() => assertBundleNetwork('mainnet', 'testnet')).toThrow('Network mismatch');
