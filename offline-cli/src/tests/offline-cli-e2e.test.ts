@@ -28,6 +28,8 @@ import {
   MAX_OWNERS,
   MAX_RECEIVERS,
   TxType,
+  checkpointStores,
+  rebuildStores,
 } from 'contracts';
 import { decodeTxMemo } from '../build-tx.ts';
 
@@ -212,7 +214,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -221,7 +223,10 @@ describe('offline-cli e2e', () => {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [proposer.pub.toBase58()]: snapshotAccount(proposer.pub),
       },
-      events: bundleEvents,
+      events: [],
+      storeCheckpoint: checkpointStores(rebuildStores(bundleEvents), {
+        network: 'testnet', address: zkAppAddress.toBase58(),
+      }, null),
       input: proposalInput,
       configNonce: 0,
       networkId: '1',
@@ -299,7 +304,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -308,7 +313,10 @@ describe('offline-cli e2e', () => {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [approver.pub.toBase58()]: snapshotAccount(approver.pub),
       },
-      events: bundleEvents,
+      events: [],
+      storeCheckpoint: checkpointStores(rebuildStores(bundleEvents), {
+        network: 'testnet', address: zkAppAddress.toBase58(),
+      }, null),
       proposal: {
         proposalHash,
         proposer: owners[0].pub.toBase58(),
@@ -445,7 +453,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'execute',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -454,7 +462,10 @@ describe('offline-cli e2e', () => {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [executor.pub.toBase58()]: snapshotAccount(executor.pub),
       },
-      events: bundleEvents,
+      events: [],
+      storeCheckpoint: checkpointStores(rebuildStores(bundleEvents), {
+        network: 'testnet', address: zkAppAddress.toBase58(),
+      }, null),
       proposal: {
         proposalHash,
         proposer: owners[0].pub.toBase58(),
@@ -522,7 +533,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -531,7 +542,10 @@ describe('offline-cli e2e', () => {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [proposer.pub.toBase58()]: snapshotAccount(proposer.pub),
       },
-      events: bundleEvents,
+      events: [],
+      storeCheckpoint: checkpointStores(rebuildStores(bundleEvents), {
+        network: 'testnet', address: zkAppAddress.toBase58(),
+      }, null),
       input: { txType: 'transfer', nonce: 99, receivers: proposalReceivers },
       configNonce: 0,
       networkId: '1',

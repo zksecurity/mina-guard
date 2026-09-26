@@ -498,23 +498,35 @@ function asReceivers(value: unknown): ProposalReceiver[] {
 /** Fetches all raw indexed events for a contract using paginated backend API reads. */
 export async function fetchAllEvents(
   contractAddress: string,
+  fromBlock?: number,
 ): Promise<Array<{ eventType: string; payload: unknown; blockHeight: number | null }>> {
   const events: Array<{ eventType: string; payload: unknown; blockHeight: number | null }> = [];
-  let offset = 0;
+  let beforeId: number | undefined;
   const limit = 500;
 
   while (true) {
+    const query = new URLSearchParams({ limit: String(limit), cursor: 'true' });
+    if (fromBlock !== undefined) query.set('fromBlock', String(fromBlock));
+    if (beforeId !== undefined) query.set('beforeId', String(beforeId));
     const response = await fetch(
-      `${API_BASE}/api/contracts/${contractAddress}/events?limit=${limit}&offset=${offset}`,
+      `${API_BASE}/api/contracts/${contractAddress}/events?${query}`,
       { cache: 'no-store' }
     );
 
     if (!response.ok) {
-      console.error(`[api] fetchAllEvents page at offset=${offset} returned ${response.status}`);
-      break;
+      throw new Error(`Could not fetch vault events (${response.status}); retry shortly.`);
     }
 
-    const batch = (await response.json()) as Array<{ eventType: string; payload: unknown; blockHeight?: unknown }>;
+    const batch = (await response.json()) as Array<{ id: number; eventType: string; payload: unknown; blockHeight?: unknown }>;
+    if (!Array.isArray(batch)) throw new Error('Invalid vault events response');
+    // A strict descending ID cursor makes every page finite and avoids the
+    // legacy offset cap. Inserts with newer IDs cannot shift later pages.
+    for (const event of batch) {
+      if (!Number.isSafeInteger(event.id) || event.id <= 0 || (beforeId !== undefined && event.id >= beforeId)) {
+        throw new Error('Invalid event cursor; use a backend supporting cursor pagination');
+      }
+      beforeId = event.id;
+    }
     events.push(
       ...batch.map((event) => ({
         eventType: event.eventType,
@@ -528,7 +540,6 @@ export async function fetchAllEvents(
     );
 
     if (batch.length < limit) break;
-    offset += limit;
   }
 
   return events.reverse();

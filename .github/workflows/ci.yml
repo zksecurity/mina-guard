@@ -64,6 +64,10 @@ jobs:
         run: bun run --filter ui build
         env:
           NEXT_PUBLIC_MINA_NETWORK: testnet
+      - name: Test incremental event transport
+        run: bun run --filter e2e test:unit
+        env:
+          NEXT_PUBLIC_MINA_NETWORK: testnet
       - name: Generate Prisma client
         run: cd backend && bunx prisma generate
       - name: Build backend

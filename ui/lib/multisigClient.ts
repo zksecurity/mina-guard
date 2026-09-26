@@ -318,3 +318,8 @@ export async function executeChildLifecycleOnchain(params: {
     proxiedSignFeePayer(signer),
   );
 }
+
+/** Fetch and verify public reconstruction state without signing or proving. */
+export async function exportStoreCheckpoint(contractAddress: string) {
+  return getWorkerApi().exportStoreCheckpoint(contractAddress);
+}
