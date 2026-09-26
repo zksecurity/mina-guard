@@ -26,7 +26,7 @@ import {
   MAX_OWNERS,
   MAX_RECEIVERS,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58 } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork } from '../build-tx.ts';
 import { renderBundleSummary } from '../summary.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
@@ -69,6 +69,15 @@ describe('offline-cli', () => {
 
   beforeAll(() => {
     mkdirSync(tmpDir, { recursive: true });
+  });
+
+  it('requires an exact supported bundle network before proving', () => {
+    expect(() => assertBundleNetwork('testnet', 'testnet')).not.toThrow();
+    expect(() => assertBundleNetwork('testnet', 'devnet')).not.toThrow();
+    expect(() => assertBundleNetwork('mainnet', 'mainnet')).not.toThrow();
+    expect(() => assertBundleNetwork('testnet', undefined)).toThrow('Network mismatch');
+    expect(() => assertBundleNetwork('mainnet', 'testnet')).toThrow('Network mismatch');
+    expect(() => assertBundleNetwork('devnet', 'devnet')).toThrow('Unsupported bundle network');
   });
 
   // -- CLI argument validation (subprocess, fast) --

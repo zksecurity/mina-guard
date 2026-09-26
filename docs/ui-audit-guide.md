@@ -113,20 +113,28 @@ reclaimable.
     code (`lib/endpoints.ts`: `NEXT_PUBLIC_MINA_ENDPOINT`/`NEXT_PUBLIC_ARCHIVE_ENDPOINT` baked in at build
     time; the desktop shell overrides them at runtime via an injected `window.__minaGuardConfig`).
 - **The circuit's network domain is a build-time constant — the most security-relevant UI build var.**
-  `NEXT_PUBLIC_MINA_NETWORK_DOMAIN` selects the compile-time `NETWORK_DOMAIN` that is baked into every
+  `NEXT_PUBLIC_MINA_NETWORK` selects the compile-time `NETWORK_DOMAIN` baked into every
   proposal hash *and* into the per-network verification key (`contracts/src/constants.ts`, which reads
-  `NEXT_PUBLIC_MINA_NETWORK_DOMAIN ?? MINA_NETWORK_DOMAIN`; only the `NEXT_PUBLIC_` form is inlined into
-  browser code — a bare `MINA_NETWORK_DOMAIN` is dropped and `process.env` is `{}` in the browser).
-  **Unset ⇒ `testnet`, silently**, so a build with the wrong-or-defaulted domain produces proofs and
-  hashes for the wrong network (this domain separation is what blocks cross-network proposal replay).
+  `NEXT_PUBLIC_MINA_NETWORK ?? MINA_NETWORK_DOMAIN`; only the `NEXT_PUBLIC_` form is inlined into
+  browser code — a bare `MINA_NETWORK_DOMAIN` is not available there).
+  The network must be explicitly set to `mainnet`, `testnet`, or `devnet`; missing, invalid, or
+  conflicting values abort compilation. `next build` rejects a missing or invalid
+  value, or a mismatch with `MINA_NETWORK_DOMAIN` when it is also set.
+  The chosen domain must match the build's node network
+  and expected VK hash. The worker rejects a desktop runtime networkId outside
+  its baked-in proof domain. Mainnet uses `Field(1)`; testnet and devnet retain
+  the existing `Field(2)` domain and VK. Auro's live check accepts both
+  `mina:testnet` (legacy) and `mina:devnet` for test builds, but checks the
+  full chain ID and rejects `zeko:testnet` and unknown networks.
   The other build-time `NEXT_PUBLIC_*` Next inlines into the bundle: `NEXT_PUBLIC_MINA_NETWORK` (o1js
   network id / fee-payer signature domain), `NEXT_PUBLIC_MINA_ENDPOINT` / `NEXT_PUBLIC_ARCHIVE_ENDPOINT`
   (node / archive), `NEXT_PUBLIC_API_BASE_URL` (backend read API), `NEXT_PUBLIC_BLOCK_EXPLORER_URL`,
   `NEXT_PUBLIC_POLL_INTERVAL_MS`, `NEXT_PUBLIC_INDEXER_MODE` (`full` vs `lite`),
   `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`, `NEXT_PUBLIC_MINAGUARD_VK_HASH` (expected compile output — see
   above; stale ⇒ every compile fails), and the test-only `NEXT_PUBLIC_E2E_TEST`. Only the Mina/archive
-  endpoints are overridable at runtime by the desktop shell (`window.__minaGuardConfig`); everything else
-  — `NEXT_PUBLIC_MINA_NETWORK_DOMAIN` especially, being compiled into the circuit — is fixed at build time.
+  endpoints and networkId can be supplied at runtime by the desktop shell
+  (`window.__minaGuardConfig`), but the worker rejects a networkId different
+  from its compiled domain. The circuit domain itself is fixed at build time.
 
 ---
 

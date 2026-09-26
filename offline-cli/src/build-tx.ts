@@ -52,6 +52,7 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
+  NETWORK_DOMAIN_NAME,
 } from 'contracts';
 
 // ---------------------------------------------------------------------------
@@ -546,7 +547,7 @@ function rebuildChildExecutionMap(childEvents: Array<{ eventType: string; payloa
 
 function configureNetwork(bundle: BundleBase) {
   const network = Mina.Network({
-    networkId: bundle.minaNetwork === 'mainnet' ? 'mainnet' : 'testnet',
+    networkId: bundle.minaNetwork,
     mina: 'http://localhost:0',
     archive: 'http://localhost:0',
   });
@@ -755,22 +756,26 @@ export function decodeTxMemo(base58Memo: string): string {
 let compiled = false;
 const skipProofs = process.env.SKIP_PROOFS === '1';
 
-async function compileContract(bundle: BundleBase, log: LogFn) {
-  if (compiled || skipProofs) return;
-
-  // NETWORK_DOMAIN is a compile-time constant baked into the circuit.
-  // A testnet-compiled binary (MINA_NETWORK_DOMAIN unset or != 'mainnet') produces
-  // a different VK than a mainnet-compiled one. Reject mismatched bundles so a
-  // testnet binary can't build proofs for mainnet proposals (and vice versa).
-  const isMainnetBinary = process.env.MINA_NETWORK_DOMAIN === 'mainnet';
-  const isBundleMainnet = bundle.minaNetwork === 'mainnet';
-  if (isMainnetBinary !== isBundleMainnet) {
+/** Check the v1 bundle domain even when proofs are skipped or already compiled. */
+export function assertBundleNetwork(bundleNetwork: string, binaryNetwork: string | undefined): void {
+  if (bundleNetwork !== 'mainnet' && bundleNetwork !== 'testnet') {
+    throw new Error(`Unsupported bundle network: ${bundleNetwork}`);
+  }
+  const sharedTestDomain = bundleNetwork === 'testnet' && binaryNetwork === 'devnet';
+  if (binaryNetwork !== bundleNetwork && !sharedTestDomain) {
     throw new Error(
-      `Network mismatch: binary compiled for ${isMainnetBinary ? 'mainnet' : 'testnet'} ` +
-      `but bundle targets ${bundle.minaNetwork}. ` +
-      `Set MINA_NETWORK_DOMAIN=${bundle.minaNetwork === 'mainnet' ? 'mainnet' : 'testnet'} when running.`
+      `Network mismatch: CLI configured for ${binaryNetwork ?? 'unset'} ` +
+      `but bundle targets ${bundleNetwork}. ` +
+      `Set MINA_NETWORK_DOMAIN=${bundleNetwork} when running.`
     );
   }
+}
+
+async function compileContract(bundle: BundleBase, log: LogFn) {
+  // NETWORK_DOMAIN is selected when contracts are imported. The offline
+  // v1 bundles use mainnet/testnet; a devnet binary shares the testnet proof domain.
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
+  if (compiled || skipProofs) return;
 
   log('Compiling MinaGuard contract (this may take a few minutes on first run)...');
   const t0 = performance.now();
@@ -802,6 +807,7 @@ export async function handlePropose(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   const input = bundle.input as NewProposalInput;
   const isCreateChild = input.txType === 'createChild';
 
@@ -949,6 +955,7 @@ export async function handleApprove(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
   injectAccounts(bundle);
@@ -1038,6 +1045,7 @@ export async function handleExecute(
   privateKey: string,
   log: LogFn,
 ): Promise<SignedTxOutput> {
+  assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
   const txType = normalizeTxType(bundle.proposal.txType);
   const isCreateChild = txType === 'createChild';
   const isChildLifecycle = txType != null && CHILD_LIFECYCLE_TYPES.has(txType);

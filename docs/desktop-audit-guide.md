@@ -42,7 +42,8 @@ On launch (`src/main.ts`):
    archive endpoint (pre-filled with minascan mainnet defaults — never used
    silently). Save probes both endpoints with a real GraphQL query, detects the
    network id from the node, and persists `config.json`. Unreachable endpoints
-   are rejected before anything is persisted.
+   or nodes without an explicit, supported `networkID` are rejected before
+   anything is persisted. Saved endpoints are rechecked on every startup.
 2. The **backend is booted in-process** (`src/backend-embed.ts`): the same
    `backend/` package (Express API router + indexer), esbuild-bundled at
    packaging time, running against **SQLite** (`minaguard.db` in the user-data
@@ -206,13 +207,12 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   `config:set-endpoints` also rejects any non-main-window sender
   (`assertMainWindow`, focus point 1).
 - **Endpoints are probed before persisting** (`verifyEndpoints`,
-  `src/config-store.ts:93-115`): both must answer a real GraphQL POST within
-  10 s. The network id is taken from the node's `networkID` field; only if the
-  node doesn't expose one does a URL heuristic guess, defaulting to `mainnet`
-  (`detectNetwork`, `119-130`). A node whose proof domain doesn't match this
-  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet vs testnet, devnet
-  sharing testnet) is rejected at save time — the bundled circuit can only
-  prove against one domain.
+  `src/config-store.ts`): both must answer a real GraphQL POST within
+  10 s. The network id must be explicitly reported in the node's `networkID`
+  field; URL names are never used to guess it. A node whose proof domain doesn't match this
+  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet versus the shared
+  testnet/devnet proof domain) is rejected at save time — the bundled circuit
+  can only prove against one domain.
 - **Changing endpoints wipes the local DB and relaunches**
   (`changeEndpointsAndRelaunch`, `src/main.ts:349-363`): the local index is
   only meaningful for the chain it was built against. The same policy applies
@@ -238,10 +238,9 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   on-chain verification key does not match this MinaGuard release (a
   *mismatched* VK is rejected on both the manual and auto-subscribe paths; a
   *missing* one is tolerated only while a just-deployed vault races indexing).
-  The file carries one hash per network (`testnet=…` / `mainnet=…` lines —
-  the circuit's compile-time `NETWORK_DOMAIN` makes each network's VK
-  structurally distinct); the embed picks the line matching the configured
-  network (`backend-embed.ts:112-128`, devnet sharing the testnet circuit) and
+  The file carries one hash per network (`testnet=…` / `mainnet=…` / `devnet=…` lines —
+  testnet and devnet carry the same VK); the embed picks the line matching the configured
+  network (`backend-embed.ts:112-128`) and
   still accepts the pre-#93 single-bare-number format. When the file is
   missing, or a keyed file has no line for the configured network, the backend
   may start but vault authentication fails closed: no account can become
@@ -305,13 +304,14 @@ allowlist, and the id rides a URL handed to the OS browser
 (`GET /auro/payload?id=`).
 
 **3. Endpoint lifecycle & network-id detection (`src/config-store.ts`).**
-Probing requires both endpoints to answer a GraphQL query. The detected network id
-(node-reported, URL-heuristic fallback, `mainnet` default) must clear the
-build's proof domain (`BUILD_NETWORK_DOMAIN`) to be persisted, and from there
+Probing requires both endpoints to answer a GraphQL query. The node-reported
+network ID must match the build's exact proof domain (`BUILD_NETWORK_DOMAIN`)
+to be persisted; saved endpoints are revalidated on startup. The ID then
 feeds `requestNetwork`, the worker's `Mina.Network` id, the offline bundles'
 `minaNetwork`, and `.vk-hash` line selection. Cross-network proposal replay
-itself is blocked in-circuit (compile-time `NETWORK_DOMAIN` + per-network VK,
-PR #93). Endpoint changes (with their DB wipe) are reachable only through the
+is blocked by the compile-time `NETWORK_DOMAIN` when the correct per-network
+VK is deployed; endpoint checks cannot repair a misdeployed vault. Endpoint changes
+(with their DB wipe) are reachable only through the
 settings-modal and setup-window IPC.
 
 **4. Electron hardening posture (`src/main.ts`).**
@@ -413,7 +413,7 @@ All steps run from `desktop/` (`bun run build` chains them; details in
 3. `build:ui` — builds `../ui` in Next standalone mode with
    `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
    `NEXT_PUBLIC_INDEXER_MODE=lite` and
-   `NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet` baked in (plus anything from the
+   `NEXT_PUBLIC_MINA_NETWORK=testnet` baked in (plus anything from the
    git-ignored `desktop/.env`). The network domain must match
    `BUILD_NETWORK_DOMAIN` in `config-store.ts` — the two flip together to cut
    a mainnet build.

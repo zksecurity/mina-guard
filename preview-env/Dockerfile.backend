@@ -37,7 +37,7 @@ RUN if [ -n "$MINAGUARD_VK_HASH" ]; then \
       echo "$MINAGUARD_VK_HASH" > /app/.vk-hash; \
     else \
       echo "MINAGUARD_VK_HASH build arg not set — compiling circuit (memory-heavy)..."; \
-      vk_output="$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)" || { echo "$vk_output" >&2; echo "ERROR: VK hash compile failed — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1; }; \
+      vk_output="$(MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile 2>&1)" || { echo "$vk_output" >&2; echo "ERROR: VK hash compile failed — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1; }; \
       echo "$vk_output"; \
       vk_hash="$(printf '%s\n' "$vk_output" | awk '/^vkHash/{print $NF; exit}')"; \
       case "$vk_hash" in ''|*[!0-9]*) echo "ERROR: no decimal VK hash found in compile output — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1;; esac; \

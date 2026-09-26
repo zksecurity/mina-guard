@@ -84,15 +84,15 @@ cd ui && bun run dev
 # Run backend API/indexer (from backend/ directory)
 cd backend && bun run dev
 
-# Run contract tests
-bun run --filter contracts test
+# Run contract tests (choose the circuit domain explicitly)
+MINA_NETWORK_DOMAIN=testnet bun run --filter contracts test
 ```
 
 To run the Electron app:
 
 ```bash
-# Build UI (from ui/ directory)
-cd ui && bun run build
+# Build UI (from ui/ directory; use the target network's domain)
+cd ui && NEXT_PUBLIC_MINA_NETWORK=testnet bun run build
 
 # Run backend API/indexer (from backend/ directory)
 cd backend && bun run dev
@@ -118,7 +118,7 @@ NETWORK=devnet bun run test:e2e
 ```bash
 bun run --filter contracts build
 bun run --filter backend build
-bun run --filter ui build
+NEXT_PUBLIC_MINA_NETWORK=testnet bun run --filter ui build
 ```
 
 ## PR Preview Environments
@@ -173,7 +173,7 @@ PR_NUMBER=1 PREVIEW_PORT=10001 docker compose \
 To seed coherent test data, prefer the real on-chain fixture helper over direct DB inserts:
 
 ```bash
-bun run dev-helpers/cli.ts lightnet-fixture --main-address <YOUR_WALLET_ADDRESS>
+MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts lightnet-fixture --main-address <YOUR_WALLET_ADDRESS>
 ```
 
 By default this uses the quick-test `minimal` scenario: 2 vaults, 2 executed proposals per vault, and both vaults ending with your wallet as the sole owner at threshold 1. For broader coverage, you can also use `--scenario full`.

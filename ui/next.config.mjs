@@ -2,6 +2,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
+import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,4 +83,18 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default function configForPhase(phase) {
+  if (phase === PHASE_PRODUCTION_BUILD) {
+    const network = process.env.NEXT_PUBLIC_MINA_NETWORK;
+    const nodeDomain = process.env.MINA_NETWORK_DOMAIN;
+    if (!['mainnet', 'testnet', 'devnet'].includes(network)
+      || (nodeDomain !== undefined && nodeDomain !== network)) {
+      throw new Error(
+        'Production UI build requires NEXT_PUBLIC_MINA_NETWORK '
+        + '(mainnet, testnet, or devnet); '
+        + 'MINA_NETWORK_DOMAIN, if set, must match too.',
+      );
+    }
+  }
+  return nextConfig;
+}

@@ -138,7 +138,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Execution is permissionless (liveness) | no owner gate on any `execute*` — once threshold is met, anyone can execute; a non-cooperating proposer cannot strand an approved proposal | `execute.test.ts` ("allow anyone to trigger execution") |
 | Stale proposals invalidated | `configNonce` match + execution-nonce ordering (`nonce` / `parentNonce`) | `governance.test.ts`, `execute.test.ts` |
 | Time-bounded proposals | optional `expirySlot` vs `globalSlotSinceGenesis` | `execute.test.ts` |
-| Cross-network replay prevented | compile-time `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet/devnet) folded into every proposal hash (`constants.ts`, `TransactionProposal.hash()`), producing a structurally distinct VK per network — there is no `networkId` field or state | no unit test; the per-network VK is pinned by the `check-vk-hash` CI job against `contracts/.vk-hash` |
+| Mainnet/test-network proposal replay prevented | compile-time `NETWORK_DOMAIN` (`Field(1)` mainnet / `Field(2)` testnet and devnet) folded into every proposal hash (`constants.ts`, `TransactionProposal.hash()`), producing distinct mainnet and test-network VKs — there is no `networkId` field or state | `network-domain.test.ts` rejects missing/invalid/conflicting selections; `check-vk-hash` CI pins all three labeled VK entries against `contracts/.vk-hash` |
 | Cross-contract / cross-child replay prevented | `guardAddress` and `childAccount` inside the proposal hash; children assert `childAccount == this.address` | `child.test.ts` |
 | Setup owner list coherent with commitment | commitment computed in-circuit; duplicate owners and non-empty padding rejected | `setup.test.ts`, `list-commitment.test.ts` |
 | Executed child config = displayed config | `reservedConfigHash` written once at `reserveForParent`; `executeSetupChild` binds `proposal.data` and `reservedConfigHash` to the recomputed hash | `child.test.ts` |
@@ -158,18 +158,16 @@ the approve or execute before any signature if the recomputed hash does not matc
 owner selected. (Propose mints a fresh proposal with no prior identity, so it has nothing to match
 against and skips the check.)
 
-The deployed verification key is pinned in CI: `contracts/.vk-hash` holds canonical hashes for
-testnet and mainnet (`testnet=` and `mainnet=` labeled entries — each network produces a structurally
-distinct VK because `NETWORK_DOMAIN` is baked into the circuit at compile time), and the
-`check-vk-hash` job recompiles both and fails on drift whenever a change touches VK-affecting paths
-or `contracts/.vk-hash` (it skips the compile otherwise, so it does not run on every push), so the
-reviewed source and the on-chain VK cannot silently diverge.
+`contracts/.vk-hash` holds canonical hashes for testnet, mainnet, and devnet. The
+`check-vk-hash` job recompiles all three when a change touches VK-affecting paths or
+`contracts/.vk-hash`. Operators must also compare the actual deployed VK with the
+network's pinned hash; CI cannot attest an independently built deployment artifact.
 
 ## Accepted risks and known limitations
 
 | # | Risk | Status |
 |---|---|---|
-| 1 | **`networkId` is deployer-supplied.** Cross-network replay protection formerly relied on the deployer choosing distinct `networkId` values per network; the same keypair deployed on two networks with the same `networkId` would accept each other's proposals. | Fixed (PR #93): `NETWORK_DOMAIN` (Field(1) mainnet / Field(2) testnet) is now a compile-time circuit constant baked into every proposal hash, producing structurally distinct VKs per network — cross-network replay is impossible regardless of `networkId` choice. |
+| 1 | **`networkId` is deployer-supplied.** Cross-network replay protection formerly relied on the deployer choosing distinct `networkId` values per network; the same keypair deployed on two networks with the same `networkId` would accept each other's proposals. | Fixed for mainnet versus Mina test networks (PR #93, hardened here): the explicit compile-time `NETWORK_DOMAIN` separates `mainnet` from the shared `testnet`/`devnet` domain. A build with an unset or invalid domain fails. Distinct test chains using `Field(2)` are not separated by this protocol; verify the installed VK and actual chain identity when deploying. |
 | 2 | **Wallets sign field arrays, not human-readable payloads.** An owner's wallet displays the signature payload (a hash), so payload comprehension depends on the client. Mitigations: client-side hash recomputation (see Trust model), the threshold, and the offline CLI's decoded summary. | Accepted, structural mitigations in place |
 | 3 | **Archive discovery trusts pending blocks.** `DISCOVERY_BACKEND=archive` includes `chain_status = 'pending'` blocks so fresh deploys are discoverable without waiting for finalization. `rollbackAboveFork` (`backend/src/indexer.ts`) already deletes `Contract` rows by `discoveredAtBlock` on every reorg tick, so orphaned pending deploys are cleaned up automatically. Residual risk: a reorg deeper than `REORG_DETECTION_WINDOW` (~290 blocks) requires operator intervention regardless — covered by row 4. | Accepted |
 | 4 | **Reorgs deeper than 290 blocks are not auto-handled** ([`backend-audit-guide.md` § Failure semantics](./backend-audit-guide.md#failure-semantics)). Matches Mina's ~290-block finality horizon; deeper forks require operator intervention. Display-layer only. | Accepted |

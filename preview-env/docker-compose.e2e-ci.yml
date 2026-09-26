@@ -60,6 +60,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/minaguard
       - MINA_ENDPOINT=http://lightnet:8080/graphql
+      - MINA_NETWORK_DOMAIN=testnet
       - ARCHIVE_ENDPOINT=http://lightnet:8282
       - LIGHTNET_ACCOUNT_MANAGER=http://lightnet:8181
       - PORT=4000

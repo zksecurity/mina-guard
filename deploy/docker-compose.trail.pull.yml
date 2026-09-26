@@ -30,6 +30,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://minaguard:minaguard@db:5432/minaguard
       - MINA_ENDPOINT=http://${MESA_NODE_HOST:?}:3085/graphql
+      - MINA_NETWORK_DOMAIN=testnet
       - ARCHIVE_ENDPOINT=http://${MESA_NODE_HOST:?}:8282
       - ARCHIVE_DB_HOST=${MESA_NODE_HOST}
       - ARCHIVE_DB_PORT=5433

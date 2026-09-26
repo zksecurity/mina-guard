@@ -111,7 +111,7 @@ jobs:
       # `release` has `needs: build`, a mismatch here blocks release creation.
       #
       # Handles both .vk-hash formats: the legacy single bare decimal (verify
-      # the testnet/default circuit) and the per-network `net=hash` lines added
+      # the legacy testnet circuit) and the per-network `net=hash` lines added
       # in #93 (compile each network with MINA_NETWORK_DOMAIN set and compare).
       - name: Verify committed VK hash matches the circuit
         if: runner.os == 'Linux'
@@ -121,7 +121,7 @@ jobs:
           extract() { # $1 = raw output; prints the trailing decimal on the vkHash line
             grep -oE 'vkHash(\[[a-z]+\])?: [0-9]+' <<<"$1" | tail -1 | grep -oE '[0-9]+$'
           }
-          verify_one() { # $1 = network label ('' | testnet | mainnet), $2 = expected hash
+          verify_one() { # $1 = network label ('' | testnet | mainnet | devnet), $2 = expected hash
             local net="$1" expected="$2" out computed
             echo "::group::verify VK (${net:-default})"
             if [ -n "$net" ]; then
@@ -157,7 +157,7 @@ jobs:
               echo "::error::contracts/.vk-hash has no hash value to verify."
               exit 1
             fi
-            verify_one "" "$single"
+            MINA_NETWORK_DOMAIN=testnet verify_one "" "$single"
           fi
 
       # Same compile invocation as docs/offline-audit-guide.md; macos-* release
@@ -210,6 +210,9 @@ jobs:
       - name: Smoke test native binary
         working-directory: offline-cli
         shell: bash
+        env:
+          # Keep the binary network-neutral; set a domain only when executing it.
+          MINA_NETWORK_DOMAIN: testnet
         run: |
           out="$(./dist/${{ matrix.smoke }} 2>&1 || true)"
           echo "$out"

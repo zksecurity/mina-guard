@@ -39,6 +39,7 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
+  NETWORK_DOMAIN_NAME,
 } from 'contracts';
 
 import {
@@ -158,6 +159,15 @@ interface ContractState {
 
 async function configureNetwork() {
   const cfg = runtimeConfig ?? (await configReady);
+  // Electron can override endpoints and networkId at runtime, but not the
+  // circuit domain baked into this worker. Reject any mismatch before proving
+  // or building a transaction, including in proofless E2E mode.
+  const sharedTestDomain =
+    (cfg.networkId === 'testnet' || cfg.networkId === 'devnet') &&
+    (NETWORK_DOMAIN_NAME === 'testnet' || NETWORK_DOMAIN_NAME === 'devnet');
+  if (cfg.networkId !== NETWORK_DOMAIN_NAME && !sharedTestDomain) {
+    throw new Error(`Network mismatch: this build is for ${NETWORK_DOMAIN_NAME}, but the runtime config is ${cfg.networkId}`);
+  }
   const network = Mina.Network({
     networkId: cfg.networkId,
     mina: cfg.minaEndpoint,
@@ -172,7 +182,7 @@ let idbCache: Awaited<ReturnType<typeof import('./idb-compile-cache').createInde
 
 /** The verification key this build's circuit must compile to — the same
  *  `contracts/.vk-hash` value the backend receives as `MINAGUARD_VK_HASH`, for
- *  the network domain in `NEXT_PUBLIC_MINA_NETWORK_DOMAIN`. */
+ *  the network domain selected by `NEXT_PUBLIC_MINA_NETWORK`. */
 const EXPECTED_VK_HASH = process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH;
 
 /**

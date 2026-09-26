@@ -41,12 +41,17 @@ Run from `desktop/`.
 | `bun run prepare:backend` | Regenerates the SQLite Prisma client in `../backend/src/generated/prisma/` from `schema.sqlite.prisma`. Runs the schema-sync check against `schema.prisma` first. |
 | `bun run prepare:schema-sql` | Regenerates `desktop/assets/schema.sql` via `prisma migrate diff`. This is what `backend-embed.ts` executes against a fresh SQLite DB on first launch. |
 | `bun run prepare:assets` | Runs `prepare:schema-sql`, then copies `assets/schema.sql` into `dist/assets/` and copies `../contracts/.vk-hash` into both `assets/.vk-hash` and `dist/assets/.vk-hash`. |
-| `bun run build:ui` | Builds `../ui` in standalone mode with `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`, `NEXT_PUBLIC_INDEXER_MODE=lite`, and `NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet`. |
+| `bun run build:ui` | Builds `../ui` in standalone mode with `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`, `NEXT_PUBLIC_INDEXER_MODE=lite`, and `NEXT_PUBLIC_MINA_NETWORK=testnet`. |
 | `bun run stage` | Rebuilds `packaging-stage/backend-bundle.js` (esbuild) and copies `ui/.next/standalone` into `ui-standalone/`. |
 | `bun run build:electron` | Compiles `src/*.ts` → `dist/*.js` and copies static files (preload, setup.html, auro/page.html). |
 | `bun run build` | All of the above in order. |
 | `bun run dev` | `build` + `electron --no-sandbox .` with `.env` applied. |
 | `bun run package` | `build` + `electron-builder --dir` (outputs under `release/`). |
+
+The packaged desktop circuit uses the shared testnet/devnet `Field(2)` domain.
+The endpoint check accepts nodes explicitly reporting either test-network ID,
+but rejects mainnet and nodes without a supported `networkID`. Saved endpoints
+are rechecked at startup; mainnet requires its own circuit build and VK.
 
 ## Quick start (dev)
 
