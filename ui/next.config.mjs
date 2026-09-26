@@ -85,15 +85,13 @@ const nextConfig = {
 
 export default function configForPhase(phase) {
   if (phase === PHASE_PRODUCTION_BUILD) {
-    const domain = process.env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN;
     const network = process.env.NEXT_PUBLIC_MINA_NETWORK;
     const nodeDomain = process.env.MINA_NETWORK_DOMAIN;
-    if (!['mainnet', 'testnet', 'devnet'].includes(domain)
-      || network !== domain
-      || (nodeDomain !== undefined && nodeDomain !== domain)) {
+    if (!['mainnet', 'testnet', 'devnet'].includes(network)
+      || (nodeDomain !== undefined && nodeDomain !== network)) {
       throw new Error(
-        'Production UI build requires matching NEXT_PUBLIC_MINA_NETWORK_DOMAIN '
-        + 'and NEXT_PUBLIC_MINA_NETWORK (mainnet, testnet, or devnet); '
+        'Production UI build requires NEXT_PUBLIC_MINA_NETWORK '
+        + '(mainnet, testnet, or devnet); '
         + 'MINA_NETWORK_DOMAIN, if set, must match too.',
       );
     }

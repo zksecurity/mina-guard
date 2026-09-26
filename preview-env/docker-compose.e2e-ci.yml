@@ -84,7 +84,6 @@ services:
         - NEXT_PUBLIC_E2E_TEST=true
         - NEXT_PUBLIC_POLL_INTERVAL_MS=3000
         - NEXT_PUBLIC_MINA_NETWORK=testnet
-        - NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet
         - NEXT_PUBLIC_MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:?MINAGUARD_VK_HASH must be set}
     restart: "no"
     ports:

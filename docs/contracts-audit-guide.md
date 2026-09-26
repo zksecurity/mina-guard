@@ -233,7 +233,7 @@ Defined in `constants.ts`:
 | `PROPOSED_MARKER` | `Field(1)` | Base value written to approval map on propose |
 | `EXECUTED_MARKER` | `Field(0).sub(1)` | Max field value; marks executed LOCAL proposals |
 | `EMPTY_MERKLE_MAP_ROOT` | `new MerkleMap().getRoot()` | Initializes `approvalRoot`, `voteNullifierRoot`, `childExecutionRoot` |
-| `NETWORK_DOMAIN` | `Field(1)` mainnet / `Field(2)` testnet and devnet | Mainnet-versus-test-network domain separator appended to every proposal `hash()`; selected at build time via env (`NEXT_PUBLIC_MINA_NETWORK_DOMAIN` / `MINA_NETWORK_DOMAIN`); missing, invalid, or conflicting values abort compilation |
+| `NETWORK_DOMAIN` | `Field(1)` mainnet / `Field(2)` testnet and devnet | Mainnet-versus-test-network domain separator appended to every proposal `hash()`; selected at build time via env (`NEXT_PUBLIC_MINA_NETWORK` / `MINA_NETWORK_DOMAIN`); missing, invalid, or conflicting values abort compilation |
 
 The mainnet and testnet IDs are unchanged, and devnet retains the former
 testnet-domain VK. This does not separate two genuinely distinct test chains

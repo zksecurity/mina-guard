@@ -18,16 +18,41 @@ describe('compile-time network domain selection', () => {
 
   it('rejects conflicting browser and Node selections', () => {
     expect(() => resolveNetworkDomain('testnet', 'mainnet')).toThrow('disagree');
-    expect(() => resolveNetworkDomain('testnet', undefined, 'mainnet')).toThrow('disagree');
-    expect(() => resolveNetworkDomain('testnet', undefined)).toThrow('NEXT_PUBLIC_MINA_NETWORK');
   });
 
   it('accepts each valid domain from either build context', () => {
     for (const network of ['mainnet', 'testnet', 'devnet'] as const) {
-      expect(resolveNetworkDomain(network, undefined, network)).toBe(network);
+      expect(resolveNetworkDomain(network, undefined)).toBe(network);
       expect(resolveNetworkDomain(undefined, network)).toBe(network);
-      expect(resolveNetworkDomain(network, network, network)).toBe(network);
+      expect(resolveNetworkDomain(network, network)).toBe(network);
     }
+  });
+
+  it('selects the browser network when importing the contract constants', () => {
+    const constantsUrl = new URL('../constants.ts', import.meta.url).href;
+    const env = { ...process.env, NEXT_PUBLIC_MINA_NETWORK: 'mainnet' };
+    delete env.MINA_NETWORK_DOMAIN;
+    const result = spawnSync(process.execPath, ['-e', `
+      import { NETWORK_DOMAIN_NAME, NETWORK_DOMAIN } from '${constantsUrl}';
+      console.log(NETWORK_DOMAIN_NAME, NETWORK_DOMAIN.toString());
+    `], {
+      cwd: new URL('../../..', import.meta.url).pathname,
+      env,
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('mainnet 1');
+  });
+
+  it('rejects conflicting browser and Node environments at contract import', () => {
+    const constantsUrl = new URL('../constants.ts', import.meta.url).href;
+    const result = spawnSync(process.execPath, ['-e', `import '${constantsUrl}';`], {
+      cwd: new URL('../../..', import.meta.url).pathname,
+      env: { ...process.env, NEXT_PUBLIC_MINA_NETWORK: 'mainnet', MINA_NETWORK_DOMAIN: 'testnet' },
+      encoding: 'utf8',
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('NEXT_PUBLIC_MINA_NETWORK and MINA_NETWORK_DOMAIN disagree');
   });
 
   it('separates mainnet from the shared testnet/devnet proposal hash', () => {
@@ -39,7 +64,6 @@ describe('compile-time network domain selection', () => {
     `;
     const hashes = ['mainnet', 'testnet', 'devnet'].map((network) => {
       const env = { ...process.env, MINA_NETWORK_DOMAIN: network };
-      delete env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN;
       delete env.NEXT_PUBLIC_MINA_NETWORK;
       const result = spawnSync(process.execPath, ['-e', script], {
         cwd: new URL('../../..', import.meta.url).pathname,
@@ -61,7 +85,6 @@ describe('compile-time network domain selection', () => {
       console.log(NETWORK_DOMAIN_NAME);
     `;
     const env = { ...process.env, MINA_NETWORK_DOMAIN: 'testnet' };
-    delete env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN;
     delete env.NEXT_PUBLIC_MINA_NETWORK;
     const result = spawnSync(process.execPath, ['-e', script], {
       cwd: new URL('../../..', import.meta.url).pathname,

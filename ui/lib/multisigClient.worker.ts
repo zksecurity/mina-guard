@@ -182,7 +182,7 @@ let idbCache: Awaited<ReturnType<typeof import('./idb-compile-cache').createInde
 
 /** The verification key this build's circuit must compile to — the same
  *  `contracts/.vk-hash` value the backend receives as `MINAGUARD_VK_HASH`, for
- *  the network domain in `NEXT_PUBLIC_MINA_NETWORK_DOMAIN`. */
+ *  the network domain selected by `NEXT_PUBLIC_MINA_NETWORK`. */
 const EXPECTED_VK_HASH = process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH;
 
 /**

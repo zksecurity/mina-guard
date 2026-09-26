@@ -57,7 +57,6 @@ export default defineConfig({
       env: {
         NEXT_PUBLIC_API_BASE_URL: BACKEND_URL,
         NEXT_PUBLIC_MINA_NETWORK: 'testnet',
-        NEXT_PUBLIC_MINA_NETWORK_DOMAIN: 'testnet',
         NEXT_PUBLIC_E2E_TEST: 'true',
         NEXT_PUBLIC_POLL_INTERVAL_MS: '2000',
       },

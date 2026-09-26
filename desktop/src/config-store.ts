@@ -7,7 +7,7 @@ import type { NetworkId } from './network-id.js';
 export type { NetworkId } from './network-id.js';
 
 /** Proof-domain network this build's UI bundle was compiled for. Must match the
- *  NEXT_PUBLIC_MINA_NETWORK_DOMAIN passed to `build:ui` in package.json — the
+ *  NEXT_PUBLIC_MINA_NETWORK passed to `build:ui` in package.json — the
  *  circuit's NETWORK_DOMAIN is baked in at that build, so a proposal proved here
  *  only verifies against contracts in this proof domain. Testnet and devnet
  *  share Field(2); mainnet uses Field(1). */

@@ -5,9 +5,8 @@ import { resolveNetworkDomain } from '../../contracts/src/network-domain.ts';
 /** Compiles MinaGuard and prints its VK hash for an explicitly selected network. */
 export async function runVkHashCompile(): Promise<void> {
   const network = resolveNetworkDomain(
-    process.env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN,
-    process.env.MINA_NETWORK_DOMAIN,
     process.env.NEXT_PUBLIC_MINA_NETWORK,
+    process.env.MINA_NETWORK_DOMAIN,
   );
 
   // Rebuild from source first — contracts/build is gitignored and can be stale.

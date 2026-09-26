@@ -60,7 +60,6 @@ jobs:
         run: bun run --filter ui build
         env:
           NEXT_PUBLIC_MINA_NETWORK: testnet
-          NEXT_PUBLIC_MINA_NETWORK_DOMAIN: testnet
       - name: Generate Prisma client
         run: cd backend && bunx prisma generate
       - name: Build backend

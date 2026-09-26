@@ -10,13 +10,12 @@ import { NETWORK_DOMAIN_IDS, resolveNetworkDomain } from './network-domain.js';
 //   - Node (offline-cli binary, `vk-hash compile`, CI, tests): set
 //     MINA_NETWORK_DOMAIN=<mainnet|testnet|devnet>. These have a real process.env.
 //   - Browser bundles (the Next UI / desktop app worker): set
-//     NEXT_PUBLIC_MINA_NETWORK_DOMAIN=<mainnet|testnet|devnet>. Next only inlines
+//     NEXT_PUBLIC_MINA_NETWORK=<mainnet|testnet|devnet>. Next only inlines
 //     NEXT_PUBLIC_* vars into browser code. Missing, invalid, or conflicting
 //     values abort instead of silently compiling for another network.
 export const NETWORK_DOMAIN_NAME = resolveNetworkDomain(
-  process.env.NEXT_PUBLIC_MINA_NETWORK_DOMAIN,
-  process.env.MINA_NETWORK_DOMAIN,
   process.env.NEXT_PUBLIC_MINA_NETWORK,
+  process.env.MINA_NETWORK_DOMAIN,
 );
 export const NETWORK_DOMAIN = Field(NETWORK_DOMAIN_IDS[NETWORK_DOMAIN_NAME]);
 

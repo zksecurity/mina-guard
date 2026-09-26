@@ -413,8 +413,7 @@ All steps run from `desktop/` (`bun run build` chains them; details in
 3. `build:ui` — builds `../ui` in Next standalone mode with
    `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
    `NEXT_PUBLIC_INDEXER_MODE=lite` and
-   `NEXT_PUBLIC_MINA_NETWORK=testnet` and
-   `NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet` baked in (plus anything from the
+   `NEXT_PUBLIC_MINA_NETWORK=testnet` baked in (plus anything from the
    git-ignored `desktop/.env`). The network domain must match
    `BUILD_NETWORK_DOMAIN` in `config-store.ts` — the two flip together to cut
    a mainnet build.

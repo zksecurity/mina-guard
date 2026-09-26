@@ -85,7 +85,6 @@ services:
         - NEXT_PUBLIC_MINA_ENDPOINT=https://mina-trail.duckdns.org/trail/graphql
         - NEXT_PUBLIC_ARCHIVE_ENDPOINT=https://mina-trail.duckdns.org/trail/archive
         - NEXT_PUBLIC_MINA_NETWORK=testnet
-        - NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet
         # Mesa Trail has no built-in faucet; point users at the public Mina
         # faucet (the o1js Mina.faucet() helper also targets this host with
         # `?network=mesa`).

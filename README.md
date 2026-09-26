@@ -92,7 +92,7 @@ To run the Electron app:
 
 ```bash
 # Build UI (from ui/ directory; use the target network's domain)
-cd ui && NEXT_PUBLIC_MINA_NETWORK=testnet NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet bun run build
+cd ui && NEXT_PUBLIC_MINA_NETWORK=testnet bun run build
 
 # Run backend API/indexer (from backend/ directory)
 cd backend && bun run dev
@@ -118,7 +118,7 @@ NETWORK=devnet bun run test:e2e
 ```bash
 bun run --filter contracts build
 bun run --filter backend build
-NEXT_PUBLIC_MINA_NETWORK=testnet NEXT_PUBLIC_MINA_NETWORK_DOMAIN=testnet bun run --filter ui build
+NEXT_PUBLIC_MINA_NETWORK=testnet bun run --filter ui build
 ```
 
 ## PR Preview Environments
