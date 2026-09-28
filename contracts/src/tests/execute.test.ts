@@ -51,6 +51,46 @@ describe('MinaGuard - Execute', () => {
     expect(balanceAfter.sub(balanceBefore)).toEqual(transferAmount);
   });
 
+  it('propose, approve and execute emit the roots they wrote', async () => {
+    const recipient = PrivateKey.random().toPublicKey();
+    await fundAccount(ctx, recipient);
+    const proposal = createTransferProposal(
+      [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })], Field(1), Field(0), ctx.zkAppAddress
+    );
+    const hash = proposal.hash().toString();
+
+    type Approval = { proposalHash: Field; approvalCount: Field; approvalRoot: Field; voteNullifierRoot: Field };
+    type Execution = { proposalHash: Field; root: Field };
+    async function latestApproval(): Promise<Approval> {
+      const approvals = (await ctx.zkApp.fetchEvents())
+        .filter((e) => e.type === 'approval')
+        .map((e) => e.event.data as unknown as Approval)
+        .filter((a) => a.proposalHash.toString() === hash);
+      return approvals.reduce((a, b) => (a.approvalCount.toBigInt() >= b.approvalCount.toBigInt() ? a : b));
+    }
+    function expectRootsMatchChain(a: Approval) {
+      expect(a.approvalRoot).toEqual(ctx.zkApp.approvalRoot.get());
+      expect(a.voteNullifierRoot).toEqual(ctx.zkApp.voteNullifierRoot.get());
+    }
+
+    await proposeTransaction(ctx, proposal, 0);
+    expectRootsMatchChain(await latestApproval());
+
+    await approveTransaction(ctx, proposal, 1);
+    expectRootsMatchChain(await latestApproval());
+
+    const txn = await Mina.transaction(ctx.deployerAccount, async () => {
+      await ctx.zkApp.executeTransfer(proposal, ctx.approvalStore.getWitness(proposal.hash()), Field(3));
+    });
+    await txn.prove();
+    await txn.sign([ctx.deployerKey]).send();
+    const execution = (await ctx.zkApp.fetchEvents())
+      .filter((e) => e.type === 'execution')
+      .map((e) => e.event.data as unknown as Execution)
+      .find((x) => x.proposalHash.toString() === hash);
+    expect(execution?.root).toEqual(ctx.zkApp.approvalRoot.get());
+  });
+
   it('should reject execution with insufficient approvals', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const proposal = createTransferProposal(

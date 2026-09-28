@@ -17,6 +17,43 @@ describe('OwnerStore', () => {
     expect(store.hasOwnerWithSameX(PrivateKey.random().toPublicKey())).toBe(false);
   });
 
+  it('insertPositionFor finds the approved slot in an unsorted list, where sortedPredecessor cannot', () => {
+    // pick keys until the list is out of base58 order and the sorted-insert slot
+    // differs from "after the largest smaller key"
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const keys = Array.from({ length: 4 }, () => PrivateKey.random().toPublicKey());
+      const store = new OwnerStore();
+      store.owners = [...keys].sort((a, b) => (a.toBase58() < b.toBase58() ? 1 : -1)); // descending
+      const target = PrivateKey.random().toPublicKey();
+      const approved = store.commitmentWithSortedAdd(target);
+      const position = store.insertPositionFor(target, approved);
+      expect(position).toBeGreaterThanOrEqual(0);
+      const placed = [...store.owners.slice(0, position), target, ...store.owners.slice(position)];
+      expect(computeOwnerChain(placed)).toEqual(approved);
+
+      const pred = store.sortedPredecessor(target);
+      const predIndex = pred ? store.owners.findIndex((o) => o.equals(pred).toBoolean()) + 1 : 0;
+      if (predIndex !== position) return; // demonstrated: the old executor choice misses the approved slot
+    }
+    throw new Error('no divergent case found');
+  });
+
+  it('insertPositionFor returns the sorted position for an app-made add', () => {
+    const keys = Array.from({ length: 5 }, () => PrivateKey.random().toPublicKey());
+    const store = new OwnerStore();
+    for (const k of keys.slice(0, 4)) store.addSorted(k);
+    const target = keys[4];
+    const expected = store.owners.findIndex((o) => o.toBase58() > target.toBase58());
+    const sortedIndex = expected === -1 ? store.owners.length : expected;
+    expect(store.insertPositionFor(target, store.commitmentWithSortedAdd(target))).toBe(sortedIndex);
+  });
+
+  it('insertPositionFor returns -1 when no slot yields the commitment', () => {
+    const store = new OwnerStore();
+    store.owners = [PrivateKey.random().toPublicKey(), PrivateKey.random().toPublicKey()];
+    expect(store.insertPositionFor(PrivateKey.random().toPublicKey(), Field(123))).toBe(-1);
+  });
+
   it('should add and check owners', () => {
     const store = new OwnerStore();
     const owner1 = PrivateKey.random().toPublicKey();
