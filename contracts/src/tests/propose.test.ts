@@ -400,6 +400,25 @@ describe('MinaGuard - Propose shape rules', () => {
     }).toThrow(/Constraint unsatisfied|no square root/);
   });
 
+  // -- Rule 7: empty receiver slots carry zero amount --------------------------
+
+  it('should reject an empty receiver address with a non-zero amount in slot 0', async () => {
+    const receivers = emptyReceivers();
+    receivers[0] = new Receiver({ address: PublicKey.empty(), amount: UInt64.from(1) });
+    await expect(async () => {
+      await tryPropose(buildProposal({ receivers }));
+    }).toThrow('Empty receiver must have zero amount');
+  });
+
+  it('should reject an empty receiver address with a non-zero amount in a later slot', async () => {
+    const receivers = emptyReceivers();
+    receivers[0] = new Receiver({ address: ctx.owners[1].pub, amount: UInt64.from(1) });
+    receivers[4] = new Receiver({ address: PublicKey.empty(), amount: UInt64.from(1) });
+    await expect(async () => {
+      await tryPropose(buildProposal({ receivers }));
+    }).toThrow('Empty receiver must have zero amount');
+  });
+
   it('should accept a zero-value transfer to the empty pubkey (delete flow)', async () => {
     const proposal = createDeleteProposal(Field(1), Field(0), ctx.zkAppAddress);
     const proposalHash = await proposeTransaction(ctx, proposal, 0);

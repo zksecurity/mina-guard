@@ -38,7 +38,7 @@ interface BundleBase {
   contractAddress: string;
   feePayerAddress: string;
   accounts: Record<string, BundleAccount>;
-  events: Array<{ eventType: string; payload: unknown }>;
+  events: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
 }
 
 export interface OfflineProposeBundle extends BundleBase {
@@ -91,7 +91,7 @@ export interface OfflineExecuteBundle extends BundleBase {
   proposal: OfflineApproveBundle['proposal'];
   receiverAccountExists: Record<string, boolean>;
   childAddress?: string;
-  childEvents?: Array<{ eventType: string; payload: unknown }>;
+  childEvents?: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
   childOwners?: string[];
   childThreshold?: number;
 }
@@ -169,8 +169,10 @@ async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
   return json.data?.account ?? null;
 }
 
-async function fetchAllEvents(contractAddress: string): Promise<Array<{ eventType: string; payload: unknown }>> {
-  const events: Array<{ eventType: string; payload: unknown }> = [];
+async function fetchAllEvents(
+  contractAddress: string,
+): Promise<Array<{ eventType: string; payload: unknown; blockHeight: number | null }>> {
+  const events: Array<{ eventType: string; payload: unknown; blockHeight: number | null }> = [];
   let offset = 0;
   const limit = 500;
   while (true) {
@@ -183,6 +185,8 @@ async function fetchAllEvents(contractAddress: string): Promise<Array<{ eventTyp
     events.push(...batch.map((e: any) => ({
       eventType: e.eventType,
       payload: typeof e.payload === 'string' ? JSON.parse(e.payload) : e.payload,
+      // optional in the bundle format; older CLIs ignore it
+      blockHeight: typeof e.blockHeight === 'number' ? e.blockHeight : null,
     })));
     if (batch.length < limit) break;
     offset += limit;
@@ -271,7 +275,7 @@ export async function buildOfflineExecuteBundle(params: {
   feePayerAddress: string;
   proposal: OfflineApproveBundle['proposal'];
   childAddress?: string;
-  childEvents?: Array<{ eventType: string; payload: unknown }>;
+  childEvents?: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
 }): Promise<OfflineExecuteBundle> {
   const network = minaNetwork();
   const fetches: Promise<BundleAccount>[] = [

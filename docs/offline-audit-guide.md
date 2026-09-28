@@ -101,6 +101,8 @@ For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a v1 testnet bundle,
 use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
 unset, invalid, and mainnet/test-network mismatches fail closed. Version 1
 offline bundles encode devnet as `testnet`.
+The CLI checks the bundle against the domain captured when contracts were
+imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
 (`index.ts` → `summary.ts` → `build-tx.ts`):
 
@@ -115,9 +117,10 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
    never dials out), the bundled account snapshots injected into o1js's
    account cache, and the Merkle stores rebuilt by replaying the bundled
-   event history (`rebuildStores`) — the same event-sourcing the web worker
-   does from indexer data, with child executions feeding a separate
-   `childExecutionRoot` map.
+   event history with the shared `rebuildStores` / `rebuildChildExecutionMap`
+   (`contracts/src/event-rebuild.ts`, the same code the web worker runs), then
+   checked against the bundled account snapshots before any proof
+   (`rebuildVerifiedStores`, `snapshotState`); a mismatch aborts.
 3. **Proposal hash + in-circuit signature** — the proposal struct is built
    from `bundle.input` (propose) or rebuilt from `bundle.proposal`
    (approve/execute), mirroring the worker 1:1; the CLI recomputes
@@ -125,14 +128,16 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    `signFields` — deliberately with the fixed 'devnet' domain that o1js's
    in-circuit `Signature.verify` always uses. Cross-network replay is
    prevented instead by the compile-time `NETWORK_DOMAIN` baked into the
-   proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:98`) and into
+   proposal hash (`TransactionProposal.hash()`) and into
    the per-network VK (see focus point 3).
 4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
    disagrees with the domain captured when contracts were imported from the
-   process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:758-779`),
+   process's `MINA_NETWORK_DOMAIN` (`assertBundleNetwork`),
    `MinaGuard.compile` runs against the local `offline-cli/cache/`
    (gitignored, generated on first run; circuit-keyed, so per-domain; a cold
-   cache regenerates in minutes).
+   cache regenerates in minutes). Compilation runs only after every refusal
+   check, just before the transaction is built; a doomed bundle fails without
+   waiting for compilation.
    Proving takes minutes on typical hardware; `SKIP_PROOFS=1` swaps in dummy
    proofs (see focus point 6).
 5. **Fee-payer signing + output** — the proved tx is signed with mina-signer's
@@ -157,6 +162,8 @@ counted **from the hash-bound `proposalStruct.receivers`**, never the raw
 bundle array; CREATE_CHILD executes re-derive the child config hash against
 `proposal.data` and refuse an already-initialized child. The broadcast memo
 on executes is the bundle's advisory `proposal.memo` (see the UI guide).
+
+Before compiling, the CLI also refuses proposals the contract is certain to reject, with the contract's own reasoning, so no operator spends a proof on them: an `ADD_OWNER` whose target an owner already holds, the same key or its negation (propose and approve, `hasOwnerWithSameX`), an `ADD_OWNER` whose `data` matches inserting the target at no position of the current owner list (approve, `assertExecutableAddOwnerData`; any position is accepted, not only the sorted one the app proposes), and a transfer row that sends a non-zero amount to the empty address (`buildTransferReceivers`). The web worker carries the same checks.
 
 ### 3. Broadcast (`UploadSignedResponse`, `ui/components/OfflineSigningFlow.tsx`)
 
@@ -185,7 +192,7 @@ takes over.
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |
-| `events` | `Array<{eventType, payload}>` | Full contract event history for Merkle-store reconstruction |
+| `events` | `Array<{eventType, payload, blockHeight?}>` | Full contract event history for Merkle-store reconstruction; the optional `blockHeight` only locates a divergence in the error message (older bundles without it still work) |
 
 Event types replayed: `setupOwner`, `ownerChange`, `ownerChangeBatch`,
 `proposal`, `approval`, `execution`, `executionBatch`.
@@ -292,8 +299,8 @@ what the operator sees.
 **2. What the confirmation screen shows.** The summary prints the bundle's
 *claimed* `p.proposalHash`; on approve/execute the hash the CLI recomputes from
 the fields is **verified against that claimed hash (hard failure on mismatch)**
-before any signing (`assertRecomputedProposalHash`, `build-tx.ts:381`, called at
-`929`/`1023`) — propose mints a new proposal, so there is no prior hash to check.
+before any signing (`assertRecomputedProposalHash`, `build-tx.ts:438`, called at
+`924`/`1019`) — propose mints a new proposal, so there is no prior hash to check.
 The Memo line is the bundle's advisory plaintext, not the hash-covered
 `memoHash`.
 
@@ -304,7 +311,7 @@ uses the devnet prefix); the fee payer is signed with the **network-aware**
 `signZkappCommand`. Each half carries an invariant: cross-network replay of
 proposals is blocked by the compile-time `NETWORK_DOMAIN` baked into the
 proposal hash *and* the VK (plus `guardAddress`/`configNonce`/nonce) — the
-`compileContract` bundle↔domain gate (`build-tx.ts:758-776`) is the UX-level
+`assertBundleNetwork` bundle↔domain gate is the UX-level
 check, the per-network VK is the on-chain enforcement — and the fee-payer
 domain (`minaNetwork`) has to match the chain the tx is broadcast to. Note
 the two are set by *different* inputs (an env var vs. a bundle field); the
@@ -314,7 +321,11 @@ gate is what keeps them from silently diverging.
 as the worker's indexer-fed reconstruction (UI guide, focus point 3), but the
 inputs come from the *bundle file*: the replayed events determine owner
 ordering, approval counts, and nullifier roots, which become the witnesses
-the contract checks on-chain.
+the contract checks on-chain. The rebuild is order-independent and shared
+with the worker, and its result must reproduce the bundle's own account
+snapshot before the CLI proves; the snapshot and the events come from the
+same bundle producer, so the check catches an incomplete or reordered event
+history, not a forged bundle.
 
 **5. Fee counting & account snapshots.** `countNewReceiverAccounts` derives
 strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
@@ -322,8 +333,7 @@ strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
 come from the bundle and feed o1js's account cache; the proved tx is checked
 against real chain state at broadcast.
 
-**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:756`, dummy-proof path
-`786-793`).** Unlike the web UI's compile-time-gated test hooks, this ships in
+**6. `SKIP_PROOFS=1` runtime hatch (`skipProofs`, `maybeProve`).** Unlike the web UI's compile-time-gated test hooks, this ships in
 every binary and is enabled by an env var. The bundle network check still runs
 before this hatch.
 

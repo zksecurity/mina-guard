@@ -158,12 +158,18 @@ export class ApprovalEvent extends Struct({
   proposalHash: Field,
   approver: PublicKey,
   approvalCount: Field,
+  /** Roots written by this propose/approve, a checkpoint for event consumers. */
+  approvalRoot: Field,
+  voteNullifierRoot: Field,
 }) { }
 
 /** Emitted for all execution paths to provide a unified lifecycle signal. */
 export class ExecutionEvent extends Struct({
   proposalHash: Field,
   txType: Field,
+  /** Root this execution wrote: approvalRoot for LOCAL types,
+   *  childExecutionRoot for REMOTE ones (empty after executeSetupChild). */
+  root: Field,
 }) { }
 
 /** `newOwnersCommitment` is the post-change owner chain, so indexers can track
@@ -585,9 +591,10 @@ export class MinaGuard extends SmartContract {
   }
 
   /** Marks a proposal as executed in approval root using sentinel value. */
-  private markExecuted(approvalWitness: MerkleMapWitness): void {
+  private markExecuted(approvalWitness: MerkleMapWitness): Field {
     const [newApprovalRoot] = approvalWitness.computeRootAndKey(EXECUTED_MARKER);
     this.approvalRoot.set(newApprovalRoot);
+    return newApprovalRoot;
   }
 
   /** Verifies the child's execution witness proves a proposal hasn't been
@@ -609,9 +616,10 @@ export class MinaGuard extends SmartContract {
   }
 
   /** Writes EXECUTED_MARKER to the childExecutionRoot at proposalHash. */
-  private markChildExecuted(childExecutionWitness: MerkleMapWitness): void {
+  private markChildExecuted(childExecutionWitness: MerkleMapWitness): Field {
     const [newRoot] = childExecutionWitness.computeRootAndKey(EXECUTED_MARKER);
     this.childExecutionRoot.set(newRoot);
+    return newRoot;
   }
 
   private assertParentApprovalState(
@@ -904,6 +912,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: EMPTY_MERKLE_MAP_ROOT,
     });
 
     this.emitEvent('createChild', {
@@ -981,6 +990,13 @@ export class MinaGuard extends SmartContract {
     isChangeThreshold.and(slot0Empty.not())
       .assertFalse('changeThreshold must have empty receivers[0]');
 
+    // Rule 2b: the child-lifecycle types never read receivers, so slot 0 must
+    // be empty; a filled slot would only decorate the events with a payment
+    // that never happens.
+    const isChildLifecycle = isCreateChild.or(isReclaimChild).or(isDestroyChild).or(isEnableChildMultiSig);
+    isChildLifecycle.and(slot0Empty.not())
+      .assertFalse('Child lifecycle proposal must have empty receivers[0]');
+
     // Rule 3: Only transfer-like txTypes (TRANSFER, ALLOCATE_CHILD) may use
     // multiple receiver slots. Everything else is limited to at most one.
     const isTransferLike = isTransfer.or(isAllocateChild);
@@ -1015,10 +1031,15 @@ export class MinaGuard extends SmartContract {
     // constrain `x` to the curve; a non-point receiver would be an
     // unspendable transfer target, an owner that can never sign, or an
     // unusable delegate.
+    // Rule 7: an empty receiver slot carries a zero amount. Events and
+    // execution zero the amount of an empty slot, but the hash commits the raw
+    // value, so a non-zero amount here would be a proposal nobody can rebuild.
     for (let i = 0; i < MAX_RECEIVERS; i++) {
       const r = proposal.receivers[i];
-      const nonEmpty = r.address.equals(PublicKey.empty()).not();
-      assertOnCurveIf(nonEmpty, r.address);
+      const isEmpty = r.address.equals(PublicKey.empty());
+      assertOnCurveIf(isEmpty.not(), r.address);
+      isEmpty.and(r.amount.equals(UInt64.zero).not())
+        .assertFalse('Empty receiver must have zero amount');
     }
 
     const proposalHash = proposal.hash();
@@ -1068,6 +1089,8 @@ export class MinaGuard extends SmartContract {
       proposalHash,
       approver: proposer,
       approvalCount: PROPOSED_MARKER.add(1),
+      approvalRoot: newApprovalRoot,
+      voteNullifierRoot: newVoteRoot,
     });
   }
 
@@ -1130,6 +1153,8 @@ export class MinaGuard extends SmartContract {
       proposalHash,
       approver,
       approvalCount: newApprovalCount,
+      approvalRoot: newApprovalRoot,
+      voteNullifierRoot: newVoteRoot,
     });
   }
 
@@ -1163,11 +1188,12 @@ export class MinaGuard extends SmartContract {
 
     this.executeTransfers(proposal);
 
-    this.markExecuted(approvalWitness);
+    const writtenRoot = this.markExecuted(approvalWitness);
 
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
   }
 
@@ -1201,11 +1227,12 @@ export class MinaGuard extends SmartContract {
 
     this.executeTransfers(proposal);
 
-    this.markExecuted(approvalWitness);
+    const writtenRoot = this.markExecuted(approvalWitness);
 
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
   }
 
@@ -1271,13 +1298,14 @@ export class MinaGuard extends SmartContract {
     this.ownersCommitment.set(newOwnersCommitment);
     this.setGovernanceState(threshold, newNumOwners);
 
-    this.markExecuted(approvalWitness);
+    const writtenRoot = this.markExecuted(approvalWitness);
 
     const newConfigNonce = this.bumpConfigNonce();
 
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
 
     this.emitEvent('ownerChange', {
@@ -1335,13 +1363,14 @@ export class MinaGuard extends SmartContract {
 
     this.setGovernanceState(newThreshold, numOwners);
 
-    this.markExecuted(approvalWitness);
+    const writtenRoot = this.markExecuted(approvalWitness);
 
     const newConfigNonce = this.bumpConfigNonce();
 
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
 
     this.emitEvent('thresholdChange', {
@@ -1388,11 +1417,12 @@ export class MinaGuard extends SmartContract {
     const targetDelegate = Provable.if(isUndelegate, PublicKey, this.address, proposal.receivers[0].address);
     this.account.delegate.set(targetDelegate);
 
-    this.markExecuted(approvalWitness);
+    const writtenRoot = this.markExecuted(approvalWitness);
 
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
 
     this.emitEvent('delegate', {
@@ -1440,11 +1470,12 @@ export class MinaGuard extends SmartContract {
     const parentAddress = this.parent.getAndRequireEquals();
     this.send({ to: parentAddress, amount });
 
-    this.markChildExecuted(childExecutionWitness);
+    const writtenRoot = this.markChildExecuted(childExecutionWitness);
 
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
 
     this.emitEvent('reclaimChild', {
@@ -1494,7 +1525,7 @@ export class MinaGuard extends SmartContract {
     const parentAddress = this.parent.getAndRequireEquals();
     this.send({ to: parentAddress, amount: balance });
 
-    this.markChildExecuted(childExecutionWitness);
+    const writtenRoot = this.markChildExecuted(childExecutionWitness);
 
     this.childMultiSigEnabled.set(Field(0));
     // pending LOCAL proposals must not outlive the recovery
@@ -1503,6 +1534,7 @@ export class MinaGuard extends SmartContract {
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
 
     this.emitEvent('reclaimChild', {
@@ -1563,13 +1595,14 @@ export class MinaGuard extends SmartContract {
       .add(enabled.equals(Field(0)).toField());
     this.configNonce.set(configNonce);
 
-    this.markChildExecuted(childExecutionWitness);
+    const writtenRoot = this.markChildExecuted(childExecutionWitness);
 
     const parentAddress = this.parent.getAndRequireEquals();
 
     this.emitEvent('execution', {
       proposalHash,
       txType: proposal.txType,
+      root: writtenRoot,
     });
 
     this.emitEvent('enableChildMultiSig', {

@@ -48,5 +48,14 @@ export {
 export { ownerKey } from './utils.js';
 
 export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';
+export {
+  rebuildStores,
+  rebuildChildExecutionMap,
+  assertStoresMatchChain,
+  assertChildExecutionMapMatchesChain,
+  type IndexedEvent,
+  type RebuiltStores,
+  type ChainState,
+} from './event-rebuild.js';
 
 export { memoToField, decodeTxMemo } from './memo.js';

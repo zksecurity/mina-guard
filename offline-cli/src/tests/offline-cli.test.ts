@@ -25,8 +25,10 @@ import {
   PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
+
+  TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData } from '../build-tx.ts';
 import { renderBundleSummary } from '../summary.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
@@ -287,6 +289,16 @@ describe('offline-cli', () => {
     // MAX_RECEIVERS, so >MAX_RECEIVERS source rows collapse to the canonical set
     // and the count can never exceed MAX_RECEIVERS — regardless of how many extra
     // rows an untrusted bundle/backend appended.
+    it('rejects the empty address with a non-zero amount, accepts it with zero', () => {
+      const real = PrivateKey.random().toPublicKey().toBase58();
+      expect(() =>
+        buildTransferReceivers([{ address: real, amount: '1' }, { address: EMPTY_PUBKEY_B58, amount: '5' }]),
+      ).toThrow('Empty receiver must have zero amount');
+      // the delete flow's zero-value row stays valid
+      const rows = buildTransferReceivers([{ address: EMPTY_PUBKEY_B58, amount: '0' }]);
+      expect(rows[0].amount.toBigInt()).toBe(0n);
+    });
+
     it('cannot exceed MAX_RECEIVERS even with extra untrusted rows', () => {
       const extraRows = Array.from({ length: MAX_RECEIVERS + 25 }, (_, i) => ({
         address: PrivateKey.random().toPublicKey().toBase58(),
@@ -512,5 +524,38 @@ describe('offline-cli', () => {
       expect(out).toContain('Change Threshold');
       expect(out).toContain('2');
     });
+  });
+});
+
+describe('assertExecutableAddOwnerData', () => {
+  const owners = Array.from({ length: 3 }, () => PrivateKey.random().toPublicKey());
+  const store = new OwnerStore();
+  store.owners = [...owners];
+
+  function addOwnerProposal(target: PublicKey, data: InstanceType<typeof Field>) {
+    const receivers = [new Receiver({ address: target, amount: UInt64.from(0) })];
+    while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
+    return new TransactionProposal({
+      receivers, tokenId: Field(0), txType: TxType.ADD_OWNER, data, memoHash: Field(0),
+      nonce: Field(1), configNonce: Field(0), expirySlot: Field(0),
+      guardAddress: PrivateKey.random().toPublicKey(), destination: Destination.LOCAL, childAccount: PublicKey.empty(),
+    });
+  }
+
+  it('accepts an addition at any position, not only the sorted one', () => {
+    const target = PrivateKey.random().toPublicKey();
+    for (let i = 0; i <= owners.length; i++) {
+      const placed = [...owners.slice(0, i), target, ...owners.slice(i)];
+      expect(() => assertExecutableAddOwnerData(addOwnerProposal(target, computeOwnerChain(placed)), store)).not.toThrow();
+    }
+  });
+
+  it('refuses data that matches no position', () => {
+    const target = PrivateKey.random().toPublicKey();
+    expect(() => assertExecutableAddOwnerData(addOwnerProposal(target, Field(123)), store)).toThrow('can never execute');
+  });
+
+  it('refuses a target that already holds an owner key', () => {
+    expect(() => assertExecutableAddOwnerData(addOwnerProposal(owners[1], Field(123)), store)).toThrow('already an owner');
   });
 });

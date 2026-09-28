@@ -692,6 +692,13 @@ describe('MinaGuard - Child Lifecycle', () => {
 
       const parentBalanceAfter = getBalance(parentCtx.zkAppAddress);
       expect(parentBalanceAfter.sub(parentBalanceBefore)).toEqual(reclaimAmount);
+
+      // a REMOTE execution emits the child execution root it wrote
+      const execution = (await childZkApp.fetchEvents())
+        .filter((e) => e.type === 'execution')
+        .map((e) => e.event.data as unknown as { proposalHash: Field; root: Field })
+        .find((x) => x.proposalHash.toString() === proposalHash.toString());
+      expect(execution?.root).toEqual(childZkApp.childExecutionRoot.get());
     });
 
     it('rejects replay of an already-executed reclaim', async () => {
@@ -1232,6 +1239,48 @@ describe('MinaGuard - Child Lifecycle', () => {
   });
 
   // -- Cross-child hash isolation ---------------------------------------------
+
+  // -- receiver slot 0 on child-lifecycle proposals ---------------------------
+
+  describe('receiver slot 0 on child-lifecycle proposals', () => {
+    const decoy = () => new Receiver({ address: PrivateKey.random().toPublicKey(), amount: UInt64.from(5) });
+    const REJECT = 'Child lifecycle proposal must have empty receivers[0]';
+
+    it('rejects CREATE_CHILD with a filled slot 0', async () => {
+      const childOwners = parentCtx.owners.map((o) => o.pub);
+      const proposal = createCreateChildProposal(
+        PrivateKey.random().toPublicKey(), computeOwnerChain(childOwners), Field(2), Field(3),
+        Field(0), Field(0), parentCtx.zkAppAddress,
+      );
+      proposal.receivers[0] = decoy();
+      await expect(proposeTransaction(parentCtx, proposal, 0)).rejects.toThrow(REJECT);
+    });
+
+    it('rejects RECLAIM_CHILD with a filled slot 0', async () => {
+      await setupChildWithParentOwners();
+      const proposal = createReclaimChildProposal(
+        UInt64.from(1_000_000_000), Field(1), Field(0), parentCtx.zkAppAddress, Field(0), childAddress,
+      );
+      proposal.receivers[0] = decoy();
+      await expect(proposeTransaction(parentCtx, proposal, 0)).rejects.toThrow(REJECT);
+    });
+
+    it('rejects DESTROY_CHILD with a filled slot 0', async () => {
+      await setupChildWithParentOwners();
+      const proposal = createDestroyChildProposal(Field(1), Field(0), parentCtx.zkAppAddress, Field(0), childAddress);
+      proposal.receivers[0] = decoy();
+      await expect(proposeTransaction(parentCtx, proposal, 0)).rejects.toThrow(REJECT);
+    });
+
+    it('rejects ENABLE_CHILD_MULTI_SIG with a filled slot 0', async () => {
+      await setupChildWithParentOwners();
+      const proposal = createEnableChildMultiSigProposal(
+        Field(0), Field(1), Field(0), parentCtx.zkAppAddress, Field(0), childAddress,
+      );
+      proposal.receivers[0] = decoy();
+      await expect(proposeTransaction(parentCtx, proposal, 0)).rejects.toThrow(REJECT);
+    });
+  });
 
   // -- recovery invalidates pending child proposals ---------------------------
 

@@ -111,6 +111,8 @@ Three independent store classes in `storage.ts` mirror on-chain roots. Each is
 self-contained; two of the three (`OwnerStore`, `ApprovalStore`) also implement
 `serialize`/`deserialize` — `VoteNullifierStore` does not.
 
+**`event-rebuild.ts`** — rebuilds the three stores (and a child's `childExecutionRoot` map) from indexed events for both the web worker and the offline CLI. The fold is order-independent: approval leaves keep the largest value seen (proposed < counts < `EXECUTED_MARKER`), nullifier writes are idempotent, owners come from the `setupOwner` slot `index`, and owner changes replay in `configNonce` order, each add placed at the position whose chain equals the emitted `newOwnersCommitment`. `assertStoresMatchChain` compares the result with on-chain state before any proof; the per-event roots (see Events) only locate the first divergent block.
+
 **`OwnerStore`** — an ordered `PublicKey[]` array. Methods: `addSorted()`, `sortedPredecessor()`
 (derives the `insertAfter` key for the add-owner flow), `insertAfter()`, `remove()`, `isOwner()`,
 `getCommitment()` (computes chain hash), `getWitness()` (returns `OwnerWitness` padded to
@@ -198,7 +200,7 @@ runs an execute method for them. Replay protection lives on the child in `childE
 | TxType | Value | `destination` | `data` contains | `receivers[0]` contains |
 | ------ | ----- | ------------- | --------------- | ----------------------- |
 | `TRANSFER` | 0 | `LOCAL` | `Field(0)` | Any recipient (multi-slot allowed) |
-| `ADD_OWNER` | 1 | `LOCAL` | Expected post-add `ownersCommitment` (canonical sorted insert, never 0) | The owner pubkey to add |
+| `ADD_OWNER` | 1 | `LOCAL` | Expected post-add `ownersCommitment` (never 0; the app computes it for the sorted insert position, but any position is valid and clients rebuild whichever was committed) | The owner pubkey to add |
 | `REMOVE_OWNER` | 2 | `LOCAL` | `Field(0)` | The owner pubkey to remove |
 | `CHANGE_THRESHOLD` | 3 | `LOCAL` | New threshold value | Empty |
 | `SET_DELEGATE` | 4 | `LOCAL` | `Field(0)` | Delegate pubkey (empty = undelegate to self) |
@@ -211,10 +213,12 @@ runs an execute method for them. Replay protection lives on the child in `childE
 Propose-time rules enforced in `propose()`:
 - `receivers[0]` must be non-empty for `ADD_OWNER`/`REMOVE_OWNER`.
 - `receivers[0]` must be empty for `CHANGE_THRESHOLD`.
+- `receivers[0]` must be empty for `CREATE_CHILD`, `RECLAIM_CHILD`, `DESTROY_CHILD` and `ENABLE_CHILD_MULTI_SIG`: their execute paths never read receivers, so a filled slot could only advertise a payment that never happens.
 - Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, `ENABLE_CHILD_MULTI_SIG`, or `ADD_OWNER`. For `ADD_OWNER`, `data` must be non-zero (the expected post-add owners commitment).
 - `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
 - Every non-empty receiver slot must be a curve point (`assertOnCurveIf`), so no proposal can be signed that pays, adds as owner, or delegates to an address no private key exists for.
+- Every empty receiver slot must carry a zero amount. Receiver events and `executeTransfers` zero the amount of an empty slot while the proposal hash commits the raw value, so a non-zero amount there would produce a proposal that event-sourced clients cannot rebuild or approve.
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
 - `nonce` must be fresh for the relevant execution domain:
   - LOCAL propose/approve requires `proposal.nonce > this.nonce`
@@ -310,7 +314,7 @@ After execution the contract increments `nonce` and overwrites the approval coun
 
 - **`executeTransfer`** — Loops through all receiver slots, sending to each non-empty one. Empty slots are converted into zero-value self-sends so they have no effect on balances. Emits `ExecutionEvent`.
 - **`executeAllocateToChildren`** — Same structure as `executeTransfer` but asserts `txType == ALLOCATE_CHILD`. Typically sends MINA from a parent to its children. Emits `ExecutionEvent { txType: ALLOCATE_CHILD }`. The indexer distinguishes allocations from generic transfers by txType.
-- **`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. The owner pubkey is read from `receivers[0]`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits and selects the correct result based on `txType`. For `ADD_OWNER`, asserts the post-add commitment equals `proposal.data`, so the executor-supplied `insertAfter` cannot pick a valid-but-non-canonical order the event-sourced clients can't reconstruct (removal is order-preserving, nothing to bind). Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
+- **`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. The owner pubkey is read from `receivers[0]`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits and selects the correct result based on `txType`. For `ADD_OWNER`, asserts the post-add commitment equals `proposal.data`, so the executor-supplied `insertAfter` cannot place the new owner anywhere other than the position the approvers signed (removal is order-preserving, nothing to bind). Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
 - **`executeThresholdChange`** — Validates `proposal.data == newThreshold`, `newThreshold > 0`, `numOwners >= newThreshold`. Updates `threshold`. Increments `configNonce`. Emits `ExecutionEvent` + `ThresholdChangeEvent`.
 - **`executeDelegate`** — Reads the target delegate from `receivers[0]` (empty slot = undelegate to self). Sets `account.delegate`. Does **not** increment `configNonce`. Emits `ExecutionEvent` + `DelegateEvent`.
 
@@ -458,8 +462,8 @@ slimmed: per-execution events carry only what is **not** already derivable from 
 | `SetupOwnerEvent` | `owner, index` | `setup`, `executeSetupChild` (one per `MAX_OWNERS` slot) |
 | `ProposalEvent` | `proposalHash, proposer, tokenId, txType, data, memoHash, nonce, configNonce, expirySlot, guardAddress, destination, childAccount` | `propose` |
 | `ReceiverEvent` | `proposalHash, receiver, amount` | `propose` (one per `MAX_RECEIVERS` slot) |
-| `ApprovalEvent` | `proposalHash, approver, approvalCount` | `propose`, `approveProposal` |
-| `ExecutionEvent` | `proposalHash, txType` | all LOCAL and REMOTE execute methods |
+| `ApprovalEvent` | `proposalHash, approver, approvalCount, approvalRoot, voteNullifierRoot` | `propose`, `approveProposal` (the two roots are the values just written) |
+| `ExecutionEvent` | `proposalHash, txType, root` | all LOCAL and REMOTE execute methods (`root` is the root just written: `approvalRoot` for LOCAL types, `childExecutionRoot` for REMOTE ones, the empty-map root after `executeSetupChild`) |
 | `OwnerChangeEvent` | `proposalHash, owner, added, newNumOwners, newOwnersCommitment, configNonce` | `executeOwnerChange` (`owner` = the added/removed key; `added` = `1` for ADD_OWNER, `0` for REMOVE_OWNER; `newOwnersCommitment` = the post-change owner chain, emitted for both add and remove so event-sourced clients track it without re-deriving) |
 | `ThresholdChangeEvent` | `proposalHash, oldThreshold, newThreshold, configNonce` | `executeThresholdChange` |
 | `DelegateEvent` | `proposalHash, delegate` | `executeDelegate` (`delegate` == the guard's own address means undelegated) |
@@ -474,6 +478,7 @@ on-chain state reads required. The mechanics of that reconstruction (the append-
 parent-walk for REMOTE executions) live in
 [`backend-audit-guide.md`](./backend-audit-guide.md#data-model). In brief:
 
+- **Checkpoints:** every write to `approvalRoot`, `voteNullifierRoot` or `childExecutionRoot` emits the resulting root, so a consumer rebuilding the Merkle maps can verify its state after each event and locate a dropped or misapplied one. The roots are checkpoints only: anyone can append events to a vault, so the authority for a rebuilt map is the on-chain root, not an emitted one.
 - **LOCAL proposal lifecycle:** `ProposalEvent` → `ApprovalEvent`(s) → `ExecutionEvent` (with the corresponding governance sibling event) on the same guard.
 - **REMOTE proposal lifecycle:** `ProposalEvent` on the parent → `ApprovalEvent`(s) on the parent → `ExecutionEvent` on the **child**. `applyExecutionEvent` marks the parent's `Proposal` row executed by trying `(emittingContractId, proposalHash)` first and, on a miss, walking the child's `Contract.parent` field to retry against the parent's contractId.
 - **`Contract.parent`** populated from `SetupEvent.parent` (empty for root, real parent for child).

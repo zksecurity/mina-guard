@@ -496,8 +496,10 @@ function asReceivers(value: unknown): ProposalReceiver[] {
 }
 
 /** Fetches all raw indexed events for a contract using paginated backend API reads. */
-export async function fetchAllEvents(contractAddress: string): Promise<Array<{ eventType: string; payload: unknown }>> {
-  const events: Array<{ eventType: string; payload: unknown }> = [];
+export async function fetchAllEvents(
+  contractAddress: string,
+): Promise<Array<{ eventType: string; payload: unknown; blockHeight: number | null }>> {
+  const events: Array<{ eventType: string; payload: unknown; blockHeight: number | null }> = [];
   let offset = 0;
   const limit = 500;
 
@@ -512,7 +514,7 @@ export async function fetchAllEvents(contractAddress: string): Promise<Array<{ e
       break;
     }
 
-    const batch = (await response.json()) as Array<{ eventType: string; payload: unknown }>;
+    const batch = (await response.json()) as Array<{ eventType: string; payload: unknown; blockHeight?: unknown }>;
     events.push(
       ...batch.map((event) => ({
         eventType: event.eventType,
@@ -520,6 +522,8 @@ export async function fetchAllEvents(contractAddress: string): Promise<Array<{ e
           typeof event.payload === 'string'
             ? safeParseJson(event.payload)
             : event.payload,
+        // lets the shared rebuild locate a divergence by block
+        blockHeight: typeof event.blockHeight === 'number' ? event.blockHeight : null,
       }))
     );
 
