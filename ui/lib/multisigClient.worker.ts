@@ -614,16 +614,23 @@ function buildReceiversForProposal(input: NewProposalInput): InstanceType<typeof
 function buildTransferReceivers(
   receivers: Array<{ address: string; amount: string }>
 ): InstanceType<typeof Receiver>[] {
-  const normalized = receivers.map((receiver) => new Receiver({
-    // PublicKey.empty() produces a sentinel at (x=0, isOdd=false) — a point
-    // that ISN'T on the curve, so PublicKey.fromBase58 rejects its own
-    // toBase58() output with "not a valid group element". Use the sentinel
-    // directly for the delete-flow empty receiver.
-    address: receiver.address === EMPTY_PUBKEY_B58
-      ? PublicKey.empty()
-      : PublicKey.fromBase58(receiver.address),
-    amount: UInt64.from(receiver.amount),
-  }));
+  const normalized = receivers.map((receiver) => {
+    // the contract rejects a non-zero amount on the empty address (rule 7);
+    // fail here with the same message (mirrors offline-cli build-tx.ts)
+    if (receiver.address === EMPTY_PUBKEY_B58 && BigInt(receiver.amount) !== 0n) {
+      throw new Error('Empty receiver must have zero amount');
+    }
+    return new Receiver({
+      // PublicKey.empty() produces a sentinel at (x=0, isOdd=false) — a point
+      // that ISN'T on the curve, so PublicKey.fromBase58 rejects its own
+      // toBase58() output with "not a valid group element". Use the sentinel
+      // directly for the delete-flow empty receiver.
+      address: receiver.address === EMPTY_PUBKEY_B58
+        ? PublicKey.empty()
+        : PublicKey.fromBase58(receiver.address),
+      amount: UInt64.from(receiver.amount),
+    });
+  });
 
   while (normalized.length < MAX_RECEIVERS) {
     normalized.push(Receiver.empty());

@@ -118,10 +118,10 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    `signFields` — deliberately with the fixed 'devnet' domain that o1js's
    in-circuit `Signature.verify` always uses. Cross-network replay is
    prevented instead by the compile-time `NETWORK_DOMAIN` baked into the
-   proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:92`) and into
+   proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:81`) and into
    the per-network VK (see focus point 3).
 4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
-   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:731-739`),
+   disagrees with the process's `MINA_NETWORK_DOMAIN` (`build-tx.ts:772-780`),
    `MinaGuard.compile` runs against the local `offline-cli/cache/`
    (gitignored, generated on first run; circuit-keyed, so per-domain; a cold
    cache regenerates in minutes).
@@ -149,6 +149,8 @@ counted **from the hash-bound `proposalStruct.receivers`**, never the raw
 bundle array; CREATE_CHILD executes re-derive the child config hash against
 `proposal.data` and refuse an already-initialized child. The broadcast memo
 on executes is the bundle's advisory `proposal.memo` (see the UI guide).
+
+Before compiling, the CLI also refuses proposals the contract is certain to reject, with the contract's own reasoning, so no operator spends a proof on them: an `ADD_OWNER` whose target an owner already holds, the same key or its negation (propose and approve, `hasOwnerWithSameX`), and a transfer row that sends a non-zero amount to the empty address (`buildTransferReceivers`). The web worker carries the same checks.
 
 ### 3. Broadcast (`UploadSignedResponse`, `ui/components/OfflineSigningFlow.tsx`)
 
@@ -284,8 +286,8 @@ what the operator sees.
 **2. What the confirmation screen shows.** The summary prints the bundle's
 *claimed* `p.proposalHash`; on approve/execute the hash the CLI recomputes from
 the fields is **verified against that claimed hash (hard failure on mismatch)**
-before any signing (`assertRecomputedProposalHash`, `build-tx.ts:381`, called at
-`929`/`1023`) — propose mints a new proposal, so there is no prior hash to check.
+before any signing (`assertRecomputedProposalHash`, `build-tx.ts:422`, called at
+`982`/`1076`) — propose mints a new proposal, so there is no prior hash to check.
 The Memo line is the bundle's advisory plaintext, not the hash-covered
 `memoHash`.
 
@@ -296,7 +298,7 @@ uses the devnet prefix); the fee payer is signed with the **network-aware**
 `signZkappCommand`. Each half carries an invariant: cross-network replay of
 proposals is blocked by the compile-time `NETWORK_DOMAIN` baked into the
 proposal hash *and* the VK (plus `guardAddress`/`configNonce`/nonce) — the
-`compileContract` bundle↔domain gate (`build-tx.ts:731-739`) is the UX-level
+`compileContract` bundle↔domain gate (`build-tx.ts:772-780`) is the UX-level
 check, the per-network VK is the on-chain enforcement — and the fee-payer
 domain (`minaNetwork`) has to match the chain the tx is broadcast to. Note
 the two are set by *different* inputs (an env var vs. a bundle field); the
@@ -314,8 +316,8 @@ strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
 come from the bundle and feed o1js's account cache; the proved tx is checked
 against real chain state at broadcast.
 
-**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:722`, dummy-proof path
-`749-758`).** Unlike the web UI's compile-time-gated test hooks, this ships in
+**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:763`, dummy-proof path
+`790-798`).** Unlike the web UI's compile-time-gated test hooks, this ships in
 every binary and is enabled by an env var.
 
 **7. Confirmation policy (`confirmOrExit`).** The summary and prompt go to
