@@ -1,10 +1,23 @@
-import { afterEach, describe, expect, it } from 'bun:test';
-import {
-  buildOfflineApproveBundle,
-  buildOfflineExecuteBundle,
-  buildOfflineProposeBundle,
-  type OfflineApproveBundle,
-} from '../lib/offline-signing';
+import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test';
+import type { StoreCheckpoint } from 'contracts';
+
+let configuredNetwork: string | undefined;
+let checkpointCalls: string[] = [];
+mock.module('../lib/multisigClient', () => ({
+  exportStoreCheckpoint: async (address: string): Promise<StoreCheckpoint> => {
+    checkpointCalls.push(address);
+    return {
+      version: 1, network: configuredNetwork === 'mainnet' ? 'mainnet' : 'testnet',
+      address, throughBlock: null, owners: '{"owners":[]}',
+      approvals: '{"entries":{"entries":{}}}', nullifiers: '{"keys":[]}',
+      roots: { ownersCommitment: '1', approvalRoot: '2', voteNullifierRoot: '3' },
+    };
+  },
+}));
+afterAll(() => mock.restore());
+import type { OfflineApproveBundle } from '../lib/offline-signing';
+const { buildOfflineApproveBundle, buildOfflineExecuteBundle, buildOfflineProposeBundle } =
+  await import('../lib/offline-signing');
 
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
@@ -20,6 +33,8 @@ afterEach(() => {
 });
 
 function configure(networkId: string | undefined) {
+  configuredNetwork = networkId;
+  checkpointCalls = [];
   // Runtime desktop configuration must be checked even if a testnet UI was built.
   process.env.NEXT_PUBLIC_MINA_NETWORK = 'testnet';
   globalThis.window = {
@@ -55,12 +70,15 @@ const builders = [
   { action: 'execute', build: () => buildOfflineExecuteBundle({ ...common, proposal }) },
 ];
 
-describe('v1 offline bundle network selection', () => {
+describe('v2 offline bundle network selection', () => {
   for (const { action, build } of builders) {
     it(`${action}: maps devnet to testnet without changing the snapshot endpoint`, async () => {
       configure('devnet');
       const bundle = await build();
-      expect(bundle.version).toBe(1);
+      expect(bundle.version).toBe(2);
+      expect(bundle.events).toEqual([]);
+      expect(bundle.storeCheckpoint.network).toBe('testnet');
+      expect(checkpointCalls).toEqual(['vault']);
       expect(bundle.minaNetwork).toBe('testnet');
       expect(fetchedUrls.filter((url) => url === endpoint)).toHaveLength(2);
     });
@@ -68,15 +86,19 @@ describe('v1 offline bundle network selection', () => {
     it(`${action}: preserves mainnet and testnet`, async () => {
       for (const network of ['mainnet', 'testnet'] as const) {
         configure(network);
-        expect((await build()).minaNetwork).toBe(network);
+        const bundle = await build();
+        expect(bundle.minaNetwork).toBe(network);
+        expect(bundle.storeCheckpoint.network).toBe(network);
+        expect(checkpointCalls).toEqual(['vault']);
       }
     });
 
-    it(`${action}: rejects unknown runtime networks before fetching`, async () => {
+    it(`${action}: rejects unknown runtime networks before worker access or fetching`, async () => {
       for (const network of [undefined, '', 'mainet', 'Mainnet', 'zeko:testnet']) {
         configure(network);
         await expect(build()).rejects.toThrow('Unsupported offline signing network');
         expect(fetchedUrls).toHaveLength(0);
+        expect(checkpointCalls).toHaveLength(0);
       }
     });
   }

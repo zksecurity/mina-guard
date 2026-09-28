@@ -46,8 +46,6 @@ const proposalsQuerySchema = z.object({
 });
 
 const eventsQuerySchema = z.object({
-  cursor: optionalBooleanQuerySchema,
-  beforeId: nullableBlockQuerySchema,
   fromBlock: nullableBlockQuerySchema,
   toBlock: nullableBlockQuerySchema,
   limit: clampedIntQuerySchema(100, 1, 500),
@@ -431,7 +429,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     validateQuery(eventsQuerySchema),
     safe(async (req, res) => {
       const { address } = addressParamsSchema.parse(req.params) as AddressParams;
-      const { fromBlock, toBlock, limit, offset, cursor, beforeId } = eventsQuerySchema.parse(req.query) as EventsQuery;
+      const { fromBlock, toBlock, limit, offset } = eventsQuerySchema.parse(req.query) as EventsQuery;
 
       const contract = await prisma.contract.findUnique({
         where: { address },
@@ -452,11 +450,10 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         where: {
           contractId: contract.id,
           ...(Object.keys(blockHeightFilter).length === 0 ? {} : { blockHeight: blockHeightFilter }),
-          ...(cursor && beforeId !== null ? { id: { lt: beforeId } } : {}),
         },
-        orderBy: cursor ? [{ id: 'desc' }] : [{ blockHeight: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ blockHeight: 'desc' }, { createdAt: 'desc' }],
         take: limit,
-        skip: cursor ? 0 : offset,
+        skip: offset,
       });
 
       res.json(events);

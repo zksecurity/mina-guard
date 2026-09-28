@@ -1,18 +1,30 @@
 # Incremental store checkpoints: local validation
 
 Date: 2026-09-26. Implementation branch: `fix/incremental-event-rebuild`.
-Base: PR #139 at `16fdd59f5d35016c0ecfdd57e08d9294ba59c80b` (itself stacked on #138).
+Original implementation base: PR #139 at
+`16fdd59f5d35016c0ecfdd57e08d9294ba59c80b` (then stacked on #138).
+After #138 and #139 merged, the two checkpoint commits were rebased onto `main`
+at `2324013`. The new base has the same tree as the original base; the rebase
+changed no implementation or test content.
+On 2026-09-29, the branch was rebased onto `main` at `2c06349` after PR #141
+added fail-closed network-domain selection. The conflict resolution preserves
+those worker and CLI checks and validates the network before checkpoint export.
+The producer tests now exercise the v2 checkpoint format with those checks.
 This records local checks, not deployment or auditor retest status.
 
 ## Behavior and compatibility
 
-- The worker persists public owner, approval and nullifier stores, resumes from later blocks, and verifies all roots against the Mina node. Corruption, stale cursors and reorgs cause one full replay; a second mismatch stops the operation.
-- Cursor pagination advances by descending event ID, so initial sync cannot loop at the legacy 50,000-row offset cap. Offset clients remain supported.
+- The worker persists public owner, approval and nullifier stores, resumes from later blocks, and verifies all roots against the Mina node. Corruption, stale checkpoints and reorgs cause one full replay; a second mismatch stops the operation.
+- Cursor pagination was split into [issue #143](https://github.com/zksecurity/mina-guard/issues/143). The client uses the existing `fromBlock` filter and offset pages, rejects failed reads, and fails closed before requesting an offset above 50,000. Oversized initial or recovery ranges remain unsupported pending that issue.
 - Offline request v2 replaces the target vault's full event history with a complete leaf snapshot. The CLI independently reconstructs its roots and compares them with the supplied account snapshot. It still accepts v1 full-event requests. Signed responses remain v1.
-- Deploy the cursor-compatible backend first, distribute updated CLI binaries, then release the v2-exporting UI/desktop. No on-chain circuit, signed message, event layout or database schema changed.
+- Distribute updated CLI binaries, then release the v2-exporting UI/desktop. The backend API is unchanged. No on-chain circuit, signed message, event layout or database schema changed.
 - Initial sync still reads full history. Cold restore rehashes saved leaves; warm requests still copy/save existing stores. Child execution maps and child reservation configuration still use child history. Lifetime map growth is not bounded by this change. Off-chain pruning alone would contradict the on-chain roots.
 
-## Completed checks
+## Original checkpoint validation (2026-09-26)
+
+The table below records the original commit, including cursor pagination that was
+subsequently removed. It is historical evidence, not a claim that those cursor
+checks cover the current offset client. Updated checks are recorded below.
 
 | Check | Result |
 |---|---|
@@ -37,6 +49,44 @@ This records local checks, not deployment or auditor retest status.
 The first default-timeout contract run timed out in setup and then cascaded into
 transaction-context errors. The longer run above completed with one timeout,
 which passed alone. These are not represented as an uninterrupted green suite.
+
+## Cursor removal validation (2026-09-28)
+
+- `bun run --filter e2e test:unit`: 5 passed, covering offset advancement with
+  `fromBlock`, fail-closed handling at the offset cap, failed/malformed pages, and
+  all three v2 offline bundle exports.
+- Backend route code and route tests were restored to the PR #139 base; no
+  cursor API or backend ordering change remains in this PR.
+- `bun run --filter ui build` and `bun run --filter desktop build`: passed;
+  desktop includes SQLite schema sync, the production UI and backend, and Electron.
+- The original PR commit passed all six hosted CI checks, including browser E2E,
+  VK hashes and macOS/Windows offline CLI checks. New CI is required for the
+  cursor-removal commit.
+
+## Network-domain merge resolution (2026-09-29)
+
+- Contract build and typecheck passed with `MINA_NETWORK_DOMAIN=testnet`.
+- Focused contract network-domain, checkpoint and event-rebuild tests: 27 passed.
+- `bun run --filter ui test`: 14 passed, including all three v2 producers and
+  rejection of unknown runtime networks before worker access or fetching.
+- `bun run --filter e2e test:unit`: 5 passed; `bun run --filter desktop test`:
+  7 passed.
+- From `offline-cli/`: `MINA_NETWORK_DOMAIN=testnet SKIP_PROOFS=1 bun test
+  src/tests/ --timeout 300000`: 36 passed, including the v2 transaction lifecycle,
+  checkpoint tampering and legacy v1 requests. Proofs were disabled in this run.
+- UI, backend and desktop builds passed. Backend and desktop SQLite schema-sync
+  checks passed. The lockfile, o1js submodule and pinned VK file match `main`.
+- Rebuilt the Linux offline CLI from the resolved source; its isolated-directory
+  compiled-binary test passed with a v2 checkpoint request (1 passed).
+- The UI and offline audit guides describe the combined network-validation and
+  v2 snapshot behavior. The contracts guide now consistently describes nullifier
+  serialization; the desktop guide calls the saved replay position a block height.
+  The root, backend and desktop READMEs and backend/security guides were reviewed;
+  their checkpoint and compatibility descriptions remain accurate without edits.
+
+The original real-proof results above are historical; no new real-proof test was
+run locally for this conflict resolution. Full browser/database suites,
+macOS/Windows binaries and a physical two-machine handoff were not repeated.
 
 ## Verification keys
 

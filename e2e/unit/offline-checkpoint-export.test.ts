@@ -12,7 +12,13 @@ mock.module('../../ui/lib/multisigClient', () => ({
 }));
 const { buildOfflineProposeBundle, buildOfflineApproveBundle, buildOfflineExecuteBundle } = await import('../../ui/lib/offline-signing');
 const originalFetch = globalThis.fetch;
-afterAll(() => { globalThis.fetch = originalFetch; mock.restore(); });
+const originalNetwork = process.env.NEXT_PUBLIC_MINA_NETWORK;
+afterAll(() => {
+  globalThis.fetch = originalFetch;
+  if (originalNetwork === undefined) delete process.env.NEXT_PUBLIC_MINA_NETWORK;
+  else process.env.NEXT_PUBLIC_MINA_NETWORK = originalNetwork;
+  mock.restore();
+});
 
 const proposal = {
   proposalHash: '100', proposer: 'owner', toAddress: null, tokenId: '0', txType: 'transfer', data: '0',
@@ -22,6 +28,7 @@ const proposal = {
 
 describe('offline checkpoint export', () => {
   it('exports v2 snapshots for propose, approve and execute without a second vault history fetch', async () => {
+    process.env.NEXT_PUBLIC_MINA_NETWORK = 'testnet';
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       if (String(input).includes('/events')) throw new Error('Unexpected full history request');
       const address = JSON.parse(String(init?.body)).variables.publicKey;

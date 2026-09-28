@@ -5,7 +5,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 describe('incremental event transport', () => {
-  it('keeps fromBlock and advances the ID cursor across pages', async () => {
+  it('keeps fromBlock and advances the offset across pages', async () => {
     const urls: URL[] = [];
     globalThis.fetch = (async (input: string | URL | Request) => {
       urls.push(new URL(String(input)));
@@ -18,28 +18,24 @@ describe('incremental event transport', () => {
     expect(events).toHaveLength(501);
     expect(urls[0].searchParams.get('fromBlock')).toBe('21');
     expect(urls[1].searchParams.get('fromBlock')).toBe('21');
-    expect(urls[0].searchParams.get('cursor')).toBe('true');
-    expect(urls[1].searchParams.get('beforeId')).toBe('501');
-    expect(urls[1].searchParams.has('offset')).toBe(false);
+    expect(urls[0].searchParams.get('offset')).toBe('0');
+    expect(urls[1].searchParams.get('offset')).toBe('500');
+    expect(urls[1].searchParams.has('cursor')).toBe(false);
     expect(events[0].blockHeight).toBe(21);
   });
 
-  it('finishes an initial sync beyond the legacy 50,000-row offset cap', async () => {
+  it('fails closed at the offset cap without requesting a clamped page', async () => {
     let calls = 0;
     globalThis.fetch = (async (input: string | URL | Request) => {
       calls++;
-      const query = new URL(String(input)).searchParams;
-      expect(query.has('offset')).toBe(false);
-      const high = Number(query.get('beforeId') ?? 50502) - 1;
-      const count = Math.min(500, high);
-      return Response.json(Array.from({ length: count }, (_, i) => ({
-        id: high - i, eventType: 'approval', payload: { sequence: high - i }, blockHeight: 1,
+      const offset = Number(new URL(String(input)).searchParams.get('offset'));
+      expect(offset).toBeLessThanOrEqual(50_000);
+      return Response.json(Array.from({ length: 500 }, () => ({
+        eventType: 'approval', payload: {}, blockHeight: 1,
       })));
     }) as typeof fetch;
-    const events = await fetchAllEvents('vault');
-    expect(events).toHaveLength(50501);
-    expect(calls).toBe(102);
-    expect(new Set(events.map(e => (e.payload as { sequence: number }).sequence)).size).toBe(50501);
+    await expect(fetchAllEvents('vault')).rejects.toThrow('pagination limit');
+    expect(calls).toBe(101);
   });
 
   it('rejects a failed later page instead of returning a partial history', async () => {
@@ -48,13 +44,6 @@ describe('incremental event transport', () => {
       ? Response.json(Array.from({ length: 500 }, (_, i) => ({ id: 1000 - i, eventType: 'approval', payload: {}, blockHeight: 10 })))
       : new Response('unavailable', { status: 503 })) as typeof fetch;
     await expect(fetchAllEvents('vault')).rejects.toThrow('503');
-  });
-
-  it('rejects a repeated page instead of looping on an old backend', async () => {
-    globalThis.fetch = (async () => Response.json(Array.from({ length: 500 }, (_, i) => ({
-      id: 1000 - i, eventType: 'approval', payload: {}, blockHeight: 10,
-    })))) as typeof fetch;
-    await expect(fetchAllEvents('vault')).rejects.toThrow('Invalid event cursor');
   });
 
   it('rejects malformed page data', async () => {

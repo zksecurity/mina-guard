@@ -21,13 +21,12 @@ troubleshooting.
 
 ### Incremental event consumers
 
-The events route supports inclusive `fromBlock` / `toBlock` filters and
-`cursor=true` with an optional exclusive `beforeId`. Cursor pages order by
-`id desc` and ignore offsets, so initial sync can pass the legacy 50,000-row
-offset cap without repeating a page. Offset pagination remains compatible and
-orders by descending block height, creation time, then event ID.
+The checkpoint client uses the existing inclusive `fromBlock` / `toBlock` filters
+and bounded offset pages. It rejects failed reads and ranges that exceed the
+50,000-offset cap, rather than accepting partial history or requesting a repeated
+page. Stable cursor pagination is tracked separately in
+[issue #143](https://github.com/zksecurity/mina-guard/issues/143).
 
-The checkpoint client requires the updated cursor API and rejects repeated or
-non-decreasing IDs instead of looping against an older backend. Reconstructed
-roots are checked against the Mina node; an event page is not authenticated
-state. No database schema migration is required.
+Reconstructed roots are checked against the Mina node; an event page is not
+authenticated state. No backend API or database schema change is required for
+incremental checkpoints.

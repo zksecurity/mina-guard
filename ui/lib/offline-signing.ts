@@ -132,7 +132,7 @@ function minaEndpoint(): string {
 }
 
 /** Bundle network id — selects the CLI's fee-payer signature domain.
- *  V1 bundles use mainnet/testnet; devnet shares the testnet signature and
+ *  V1 and v2 bundles use mainnet/testnet; devnet shares the testnet signature and
  *  proposal domains. Map only known labels, never unknown networks. */
 function minaNetwork(): 'testnet' | 'mainnet' {
   const network = getMinaGuardConfig().networkId;

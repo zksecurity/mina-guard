@@ -696,7 +696,7 @@ export function decodeTxMemo(base58Memo: string): string {
 let compiled = false;
 const skipProofs = process.env.SKIP_PROOFS === '1';
 
-/** Check the v1 bundle domain even when proofs are skipped or already compiled. */
+/** Check the request domain even when proofs are skipped or already compiled. */
 export function assertBundleNetwork(bundleNetwork: string, binaryNetwork: string | undefined): void {
   if (bundleNetwork !== 'mainnet' && bundleNetwork !== 'testnet') {
     throw new Error(`Unsupported bundle network: ${bundleNetwork}`);

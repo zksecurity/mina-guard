@@ -260,11 +260,13 @@ zk lightnet start --pull=false
 ### Incremental signing state and offline compatibility
 
 The signing worker saves public owner/approval/nullifier checkpoints locally and
-fetches only newer event blocks on later operations using the updated backend
-cursor API (deploy both together). It checks the resulting roots
+fetches only newer event blocks on later operations using the existing backend
+block filters and offset pagination. It checks the resulting roots
 against the Mina node and falls back to one full replay on mismatch. Initial sync
 still needs complete history; cold restoration rehashes saved leaves. Clearing
-browser storage loses only this optimization, not signing keys.
+browser storage loses only this optimization, not signing keys. Ranges exceeding
+the existing pagination cap fail closed; cursor pagination is tracked in
+[issue #143](https://github.com/zksecurity/mina-guard/issues/143).
 
 Offline requests exported by this UI use **version 2** with a complete public
 store snapshot. Use the matching updated offline CLI; older CLIs reject v2. The

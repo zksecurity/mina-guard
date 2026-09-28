@@ -192,8 +192,7 @@ legacy version 1 requests with full events, and rejects checkpoints in a version
 request. Signed responses remain version 1; the response import/broadcast binding
 checks and signature messages are unchanged.
 
-Rollout order: deploy the cursor-compatible backend (legacy offset clients still
-work), distribute the updated offline CLI binaries, then release the v2-exporting
+Rollout order: distribute the updated offline CLI binaries, then release the v2-exporting
 UI and desktop builds. Do not publish the new exporter while only v1 CLI binaries
 are available.
 

@@ -464,7 +464,7 @@ via [`ui-audit-guide.md`](./ui-audit-guide.md).
 
 The packaged signing worker uses the web IndexedDB checkpoint implementation
 (`ui/lib/idb-store-checkpoint.ts`). Its cache key includes runtime node/archive
-endpoints, network, expected VK and vault address. Stored leaves and cursor are
+endpoints, network, expected VK and vault address. Stored leaves and replay block height are
 untrusted; reconstructed roots must match the configured Mina node before use.
 Corruption or a reorg triggers one full replay, and storage failure does not bypass
 verification. These snapshots are separate from the SQLite indexer schema and
