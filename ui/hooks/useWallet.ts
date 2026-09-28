@@ -17,7 +17,6 @@ import {
 import { WalletState } from '@/lib/types';
 import { setLedgerSigning } from '@/lib/multisigClient';
 import { getMinaGuardConfig } from '@/lib/endpoints';
-import { matchesDeploymentNetwork } from '@/lib/network-match';
 
 /** Capitalizes a network name for display (e.g. "mainnet" -> "Mainnet"). */
 const capNet = (n: string) => n.charAt(0).toUpperCase() + n.slice(1);
@@ -80,7 +79,7 @@ export function useWallet() {
     });
 
     const unsubNetwork = onNetworkChange((network) => {
-      setWallet((prev) => ({ ...prev, network: network.networkID ?? null }));
+      setWallet((prev) => ({ ...prev, network: network.networkID.split(':')[1] ?? null }));
     });
 
     return () => {
@@ -177,15 +176,15 @@ export function useWallet() {
   walletRef.current = wallet;
 
   // Proactive WARNING banner: derived from the cached Auro network. A connected
-  // Auro wallet on a different network than this deployment can send a
-  // transaction to the wrong chain. Mina testnet/devnet are wallet ID aliases;
-  // preserve the full namespace so zeko:testnet cannot match. Ledger's id is
-  // pinned to the deployment, so this applies only to Auro. Null cache means
-  // no banner; the fail-closed check below does not trust the cache.
+  // Auro wallet on a different mainnet/test-network domain can send a
+  // transaction to the wrong chain. This existing check compares mainnet vs
+  // non-mainnet only; it does not validate the wallet's chain namespace.
+  // Ledger's id is pinned to the deployment, so this applies only to Auro.
+  // Null cache means no banner; the fail-closed check below does not trust it.
   const networkMismatch = useMemo(() => {
     if (!wallet.connected || wallet.type !== 'auro' || !wallet.network) return null;
     const deploymentNetwork = getMinaGuardConfig().networkId;
-    if (matchesDeploymentNetwork(wallet.network, deploymentNetwork)) return null;
+    if ((wallet.network === 'mainnet') === (deploymentNetwork === 'mainnet')) return null;
     return { walletNetwork: wallet.network, deploymentNetwork };
   }, [wallet.connected, wallet.type, wallet.network]);
 
@@ -202,7 +201,7 @@ export function useWallet() {
     if (!auroNetwork) {
       return `Can't confirm your Auro wallet's network. Unlock Auro and set it to ${capNet(deploymentNetwork)}, then retry.`;
     }
-    if (!matchesDeploymentNetwork(auroNetwork, deploymentNetwork)) {
+    if ((auroNetwork === 'mainnet') !== (deploymentNetwork === 'mainnet')) {
       return `Your Auro wallet is on ${capNet(auroNetwork)}, but this app runs on ${capNet(deploymentNetwork)}. Switch networks in Auro, then retry.`;
     }
     return null;

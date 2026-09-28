@@ -53,12 +53,13 @@ export async function getAuroAccounts(): Promise<string[]> {
   }
 }
 
-/** Reads Auro's full chain ID (including the mina:/zeko: namespace). */
+/** Reads active wallet network name (devnet/mainnet/etc.) from Auro provider. */
 export async function getAuroNetwork(): Promise<string | null> {
   if (!isAuroInstalled()) return null;
   try {
     const network = await window.mina!.requestNetwork();
-    return typeof network.networkID === 'string' ? network.networkID : null;
+    // networkID format: "mina:testnet", "mina:mainnet", "mina:devnet"
+    return network.networkID.split(':')[1] ?? null;
   } catch {
     return null;
   }

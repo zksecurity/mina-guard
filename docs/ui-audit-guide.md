@@ -123,9 +123,10 @@ reclaimable.
   The chosen domain must match the build's node network
   and expected VK hash. The worker rejects a desktop runtime networkId outside
   its baked-in proof domain. Mainnet uses `Field(1)`; testnet and devnet retain
-  the existing `Field(2)` domain and VK. Auro's live check accepts both
-  `mina:testnet` (legacy) and `mina:devnet` for test builds, but checks the
-  full chain ID and rejects `zeko:testnet` and unknown networks.
+  the existing `Field(2)` domain and VK. Auro's existing live wallet check
+  compares mainnet versus non-mainnet after extracting the short network name;
+  it does not validate the wallet's chain namespace. Build-time domain validation
+  does not change that wallet check or establish the wallet's actual chain identity.
   The other build-time `NEXT_PUBLIC_*` Next inlines into the bundle: `NEXT_PUBLIC_MINA_NETWORK` (o1js
   network id / fee-payer signature domain), `NEXT_PUBLIC_MINA_ENDPOINT` / `NEXT_PUBLIC_ARCHIVE_ENDPOINT`
   (node / archive), `NEXT_PUBLIC_API_BASE_URL` (backend read API), `NEXT_PUBLIC_BLOCK_EXPLORER_URL`,
