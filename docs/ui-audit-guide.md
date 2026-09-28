@@ -127,6 +127,10 @@ reclaimable.
   compares mainnet versus non-mainnet after extracting the short network name;
   it does not validate the wallet's chain namespace. Build-time domain validation
   does not change that wallet check or establish the wallet's actual chain identity.
+  V1 offline exporters explicitly map devnet to the shared `testnet` bundle domain
+  without changing the snapshot endpoint, and reject unknown runtime networks.
+  `bun run --filter ui test` covers this behavior for propose, approve, and execute;
+  the CI test job runs that script.
   The other build-time `NEXT_PUBLIC_*` Next inlines into the bundle: `NEXT_PUBLIC_MINA_NETWORK` (o1js
   network id / fee-payer signature domain), `NEXT_PUBLIC_MINA_ENDPOINT` / `NEXT_PUBLIC_ARCHIVE_ENDPOINT`
   (node / archive), `NEXT_PUBLIC_API_BASE_URL` (backend read API), `NEXT_PUBLIC_BLOCK_EXPLORER_URL`,

@@ -66,7 +66,9 @@ format and the CLI fully support them (relevant for hand-built bundles);
 One builder per action. Every bundle carries the target network
 (`minaNetwork`, resolved at call time from the runtime config, devnet mapping
 to `testnet`; it selects the fee-payer signature domain and must match the
-CLI's mainnet/test-network proof domain), the contract and typed fee-payer addresses, live
+CLI's mainnet/test-network proof domain). Unknown runtime network labels are
+rejected before fetching snapshots; this mapping does not change the configured
+node endpoint. The bundle also contains the contract and typed fee-payer addresses, live
 **account snapshots** from the Mina node, and the contract's **full event
 history** from the indexer — everything the CLI needs to stay fully offline.
 Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
@@ -84,6 +86,10 @@ fees) and downloads the bundle as `<action>-<id>-<timestamp>.json`.
 > desktop shell's runtime `window.__minaGuardConfig` override applies, same
 > as the worker path. Only the backend `API_BASE` is fixed at build time
 > (`NEXT_PUBLIC_API_BASE_URL`).
+
+`bun run --filter ui test` exercises all three exporters with mainnet, testnet,
+devnet, and invalid runtime configurations. CI runs these tests alongside the
+offline CLI's bundle-domain checks.
 
 ### 2. Sign (`offline-cli/src/`)
 

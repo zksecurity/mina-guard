@@ -111,6 +111,10 @@ bun run test:e2e
 
 # Against Mina devnet (requires funded accounts in e2e/.env.devnet)
 NETWORK=devnet bun run test:e2e
+
+# Fast UI bundle-export and desktop network checks (also run in CI)
+bun run --filter ui test
+bun run --filter desktop test
 ```
 
 ## Build

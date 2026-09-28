@@ -8,6 +8,7 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
+    "test": "bun test ./tests",
     "prepare:backend": "cd ../backend && bun run prisma:generate:sqlite",
     "prepare:schema-sql": "mkdir -p assets && cd ../backend && node scripts/check-schema-sync.mjs && DATABASE_URL=file:/tmp/mg-schema-dummy.db bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.sqlite.prisma --script > ../desktop/assets/schema.sql",
     "prepare:assets": "bun run prepare:schema-sql && mkdir -p dist/assets && cp assets/schema.sql dist/assets/schema.sql && cp ../contracts/.vk-hash assets/.vk-hash && cp ../contracts/.vk-hash dist/assets/.vk-hash",

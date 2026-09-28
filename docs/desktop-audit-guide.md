@@ -402,6 +402,9 @@ desktop/
 
 ## Build & packaging pipeline
 
+`bun run --filter desktop test` checks endpoint identity and proof-domain matching
+without launching Electron or changing local state. CI runs the same unit tests.
+
 All steps run from `desktop/` (`bun run build` chains them; details in
 `desktop/README.md`):
 

@@ -131,14 +131,13 @@ function minaEndpoint(): string {
 }
 
 /** Bundle network id — selects the CLI's fee-payer signature domain.
- *  Devnet uses a distinct circuit domain; the v1 offline bundle/CLI does not
- *  support it, so never relabel a devnet request as testnet. */
+ *  V1 bundles use mainnet/testnet; devnet shares the testnet signature and
+ *  proposal domains. Map only known labels, never unknown networks. */
 function minaNetwork(): 'testnet' | 'mainnet' {
   const network = getMinaGuardConfig().networkId;
-  if (network !== 'mainnet' && network !== 'testnet') {
-    throw new Error('Offline signing is not available on devnet');
-  }
-  return network;
+  if (network === 'mainnet') return 'mainnet';
+  if (network === 'testnet' || network === 'devnet') return 'testnet';
+  throw new Error(`Unsupported offline signing network: ${network}`);
 }
 
 async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {

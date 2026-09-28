@@ -38,6 +38,7 @@ Run from `desktop/`.
 
 | Script | Effect |
 |--------|--------|
+| `bun run test` | Runs endpoint identity and shared test-network proof-domain unit tests; CI runs the same script. |
 | `bun run prepare:backend` | Regenerates the SQLite Prisma client in `../backend/src/generated/prisma/` from `schema.sqlite.prisma`. Runs the schema-sync check against `schema.prisma` first. |
 | `bun run prepare:schema-sql` | Regenerates `desktop/assets/schema.sql` via `prisma migrate diff`. This is what `backend-embed.ts` executes against a fresh SQLite DB on first launch. |
 | `bun run prepare:assets` | Runs `prepare:schema-sql`, then copies `assets/schema.sql` into `dist/assets/` and copies `../contracts/.vk-hash` into both `assets/.vk-hash` and `dist/assets/.vk-hash`. |
