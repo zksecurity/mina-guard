@@ -392,6 +392,10 @@ app.whenReady().then(async () => {
   if (savedConfig) {
     currentConfig = savedConfig;
     try {
+      const nodeNetwork = await verifyEndpoints(savedConfig.minaEndpoint, savedConfig.archiveEndpoint);
+      if (nodeNetwork !== savedConfig.networkId) {
+        throw new Error(`Saved network ${savedConfig.networkId} no longer matches the node's ${nodeNetwork} network`);
+      }
       await startServices(savedConfig);
     } catch (err) {
       // The saved config no longer works (endpoint down, moved, or persisted

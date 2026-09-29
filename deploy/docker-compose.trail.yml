@@ -55,6 +55,7 @@ services:
       # Firewall restricts ports 3085 + 8282 to inbound from this server's IP
       # only (host ufw is bypassed by Docker-published ports).
       - MINA_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:3085/graphql
+      - MINA_NETWORK_DOMAIN=testnet
       - ARCHIVE_ENDPOINT=http://${MESA_NODE_HOST:?MESA_NODE_HOST must be set (see deploy/.env.example)}:8282
       # Read-only archive postgres on the node-stack box. Lets the indexer
       # scan beyond the daemon's 290-block bestChain cap. Passed as discrete

@@ -29,6 +29,7 @@ export {
   INITIAL_OWNER_CHAIN,
   MAX_OWNERS,
   MAX_RECEIVERS,
+  NETWORK_DOMAIN_NAME,
 } from './constants.js';
 
 export { OwnerWitness, PublicKeyOption, computeOwnerChain, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment } from './list-commitment.js';

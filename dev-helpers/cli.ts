@@ -8,7 +8,6 @@ import {
 } from './commands/vk-hash-address.ts';
 import { runVkHashCompile } from './commands/vk-hash-compile.ts';
 import { runFundAccounts } from './commands/fund-accounts.ts';
-import { runLightnetFixture } from './commands/lightnet-fixture.ts';
 
 /** Dispatches `vk-hash <mode>` CLI invocations to the right handler. */
 async function handleVkHashCommand(
@@ -115,6 +114,7 @@ async function main(): Promise<void> {
       'https://localhost:10001/preview/1'
     )
     .action(async (options: { mainAddress: string; previewBaseUrl: string; scenario: 'minimal' | 'full' }) => {
+      const { runLightnetFixture } = await import('./commands/lightnet-fixture.ts');
       await runLightnetFixture({
         mainAddress: options.mainAddress,
         previewBaseUrl: options.previewBaseUrl,

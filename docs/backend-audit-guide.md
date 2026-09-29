@@ -303,7 +303,8 @@ From `backend/`:
 | `INDEXER_DISABLED` | `false` | Test-harness knob: when `true`, boot the API without starting the polling indexer (UI tests run against a pre-seeded DB with no chain behind it) |
 | `INDEXER_FIXED_LATEST_SLOT` | empty | Test-harness knob: with the indexer disabled there is no genesis to derive slots from, so `status.latestSlot` (used for read-time expiry) is primed with this fixed value |
 | `DISCOVERY_BACKEND` | `daemon` | Candidate source for full-mode discovery: `daemon` (bestChain scan, ~290-block reach) or `archive` (direct archive-postgres SQL, unbounded history) |
-| `MINAGUARD_VK_HASH` | empty | Verification-key trust anchor. If unset, live vault authentication fails closed and no candidate can become ready. It is also required at startup for `archive` discovery because the SQL uses it as a bounded filter. The canonical value is committed at `contracts/.vk-hash` (two labeled entries: `testnet=` and `mainnet=`; use the one matching the target network) |
+| `MINA_NETWORK_DOMAIN` | required | Exact `mainnet`, `testnet`, or `devnet` domain used when importing the shared contract package; set it to the connected network even though the backend does not prove transactions |
+| `MINAGUARD_VK_HASH` | empty | Verification-key trust anchor. If unset, live vault authentication fails closed and no candidate can become ready. It is also required at startup for `archive` discovery because the SQL uses it as a bounded filter. The canonical value is committed at `contracts/.vk-hash` (`testnet=`, `mainnet=`, and `devnet=`; use the one matching the target network) |
 | `ARCHIVE_DB_HOST` | — | Archive postgres host (required when `DISCOVERY_BACKEND=archive`) |
 | `ARCHIVE_DB_PORT` | `5432` | Archive postgres port |
 | `ARCHIVE_DB_USER` | — | Archive postgres user (read-only role; required for `archive`) |
@@ -371,7 +372,7 @@ command) and lightnet running locally (`zk lightnet start`).
 
 - **Reset the database** — `bun prisma migrate reset` (wipes all data, re-applies migrations from the baseline).
 - **`P2021` table missing** — schema not applied to the current DB: `bun run --filter backend db:migrate`, or restart with `dev`/`start` so `prisma migrate deploy` runs automatically.
-- **No contracts discovered** — check `INDEXER_MODE` (`lite` auto-discovers nothing — use `POST /api/subscribe`), endpoint connectivity (`MINA_ENDPOINT`/`ARCHIVE_ENDPOINT`; `ARCHIVE_DB_*` for archive), `MINAGUARD_VK_HASH` (must match the deployed VK for the target network — pick `testnet=`/`mainnet=` from `contracts/.vk-hash`; stale after any circuit change), discovery reach (`daemon` sees only ~290 blocks — use `DISCOVERY_BACKEND=archive` for older deploys), and `INDEX_START_HEIGHT` vs the current activity window.
+- **No contracts discovered** — check `INDEXER_MODE` (`lite` auto-discovers nothing — use `POST /api/subscribe`), endpoint connectivity (`MINA_ENDPOINT`/`ARCHIVE_ENDPOINT`; `ARCHIVE_DB_*` for archive), `MINAGUARD_VK_HASH` (must match the deployed VK for the target network — pick `testnet=`/`mainnet=`/`devnet=` from `contracts/.vk-hash`; stale after any circuit change), discovery reach (`daemon` sees only ~290 blocks — use `DISCOVERY_BACKEND=archive` for older deploys), and `INDEX_START_HEIGHT` vs the current activity window.
 - **Indexer appears stuck** — check `GET /api/indexer/status`: `lastError` for the failure reason, `latestChainHeight` vs `indexedHeight` for lag, and server logs for GraphQL/network errors.
 
 ---

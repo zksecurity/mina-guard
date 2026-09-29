@@ -88,8 +88,11 @@ MINAGUARD_VK_HASH=12345...
 You can obtain the hash manually with:
 
 ```bash
-bun run dev-helpers/cli.ts vk-hash compile
+MINA_NETWORK_DOMAIN=devnet bun run dev-helpers/cli.ts vk-hash compile
 ```
+
+The devnet and testnet build labels share MinaGuard's `Field(2)` proposal domain
+and verification key; mainnet uses a separate domain.
 
 ## Configuration
 

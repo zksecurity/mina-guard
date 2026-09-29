@@ -90,7 +90,7 @@ function runBinary(
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     const proc = spawn(binaryPath, [bundlePath], {
-      env: { MINA_PRIVATE_KEY: privateKey, SKIP_PROOFS: '1', MINA_GUARD_ASSUME_YES: '1' },
+      env: { MINA_PRIVATE_KEY: privateKey, MINA_NETWORK_DOMAIN: 'testnet', SKIP_PROOFS: '1', MINA_GUARD_ASSUME_YES: '1' },
       cwd,
     });
     let stdout = '';

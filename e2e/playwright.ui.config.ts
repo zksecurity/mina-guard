@@ -41,6 +41,7 @@ export default defineConfig({
         PORT: String(BACKEND_PORT),
         // Required by loadConfig but never contacted with the indexer disabled.
         MINA_ENDPOINT: 'http://127.0.0.1:1/graphql',
+        MINA_NETWORK_DOMAIN: 'testnet',
         ARCHIVE_ENDPOINT: 'http://127.0.0.1:1',
         INDEXER_DISABLED: 'true',
         INDEXER_FIXED_LATEST_SLOT: '1000', // see fixtures.FIXED_LATEST_SLOT
@@ -55,6 +56,7 @@ export default defineConfig({
       url: `http://localhost:${UI_PORT}`,
       env: {
         NEXT_PUBLIC_API_BASE_URL: BACKEND_URL,
+        NEXT_PUBLIC_MINA_NETWORK: 'testnet',
         NEXT_PUBLIC_E2E_TEST: 'true',
         NEXT_PUBLIC_POLL_INTERVAL_MS: '2000',
       },

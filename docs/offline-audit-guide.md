@@ -66,7 +66,9 @@ format and the CLI fully support them (relevant for hand-built bundles);
 One builder per action. Every bundle carries the target network
 (`minaNetwork`, resolved at call time from the runtime config, devnet mapping
 to `testnet`; it selects the fee-payer signature domain and must match the
-domain the CLI runs with), the contract and typed fee-payer addresses, live
+CLI's mainnet/test-network proof domain). Unknown runtime network labels are
+rejected before fetching snapshots; this mapping does not change the configured
+node endpoint. The bundle also contains the contract and typed fee-payer addresses, live
 **account snapshots** from the Mina node, and the contract's **full event
 history** from the indexer — everything the CLI needs to stay fully offline.
 Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
@@ -85,15 +87,22 @@ fees) and downloads the bundle as `<action>-<id>-<timestamp>.json`.
 > as the worker path. Only the backend `API_BASE` is fixed at build time
 > (`NEXT_PUBLIC_API_BASE_URL`).
 
+`bun run --filter ui test` exercises all three exporters with mainnet, testnet,
+devnet, and invalid runtime configurations. CI runs these tests alongside the
+offline CLI's bundle-domain checks.
+
 ### 2. Sign (`offline-cli/src/`)
 
 ```
-MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
+MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, additionally set `MINA_NETWORK_DOMAIN=mainnet` — it
-selects the circuit's compile-time network domain (unset ⇒ testnet), and the
-CLI rejects a bundle whose `minaNetwork` doesn't match it before reading the bundle's state (`assertBundleNetworkMatchesBinary`, `build-tx.ts:699-713`).
+For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a v1 testnet bundle,
+use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
+unset, invalid, and mainnet/test-network mismatches fail closed. Version 1
+offline bundles encode devnet as `testnet`.
+The CLI checks the bundle against the domain captured when contracts were
+imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
 (`index.ts` → `summary.ts` → `build-tx.ts`):
 
@@ -119,11 +128,16 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    `signFields` — deliberately with the fixed 'devnet' domain that o1js's
    in-circuit `Signature.verify` always uses. Cross-network replay is
    prevented instead by the compile-time `NETWORK_DOMAIN` baked into the
-   proposal hash (`TransactionProposal.hash()`, `MinaGuard.ts:81`) and into
+   proposal hash (`TransactionProposal.hash()`) and into
    the per-network VK (see focus point 3).
-4. **Compile + prove** — `MinaGuard.compile` runs against the local
-   `offline-cli/cache/` (gitignored, generated on first run; circuit-keyed,
-   so per-domain; a cold cache regenerates in minutes). It runs only after every refusal check, just before the transaction is built: only the build (deploy reads the VK) and proving need the circuit, so a doomed bundle fails without the wait.
+4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
+   disagrees with the domain captured when contracts were imported from the
+   process's `MINA_NETWORK_DOMAIN` (`assertBundleNetwork`),
+   `MinaGuard.compile` runs against the local `offline-cli/cache/`
+   (gitignored, generated on first run; circuit-keyed, so per-domain; a cold
+   cache regenerates in minutes). Compilation runs only after every refusal
+   check, just before the transaction is built; a doomed bundle fails without
+   waiting for compilation.
    Proving takes minutes on typical hardware; `SKIP_PROOFS=1` swaps in dummy
    proofs (see focus point 6).
 5. **Fee-payer signing + output** — the proved tx is signed with mina-signer's
@@ -174,7 +188,7 @@ takes over.
 |-------|------|---------|
 | `version` | `1` | Format version (checked by both CLI and upload path) |
 | `action` | `"propose" \| "approve" \| "execute"` | Dispatch |
-| `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; must match the CLI's `MINA_NETWORK_DOMAIN` |
+| `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; `testnet` accepts CLI `MINA_NETWORK_DOMAIN=testnet` or `devnet` |
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |
@@ -297,7 +311,7 @@ uses the devnet prefix); the fee payer is signed with the **network-aware**
 `signZkappCommand`. Each half carries an invariant: cross-network replay of
 proposals is blocked by the compile-time `NETWORK_DOMAIN` baked into the
 proposal hash *and* the VK (plus `guardAddress`/`configNonce`/nonce) — the
-`assertBundleNetworkMatchesBinary` bundle↔domain gate (`build-tx.ts:699-713`) is the UX-level
+`assertBundleNetwork` bundle↔domain gate is the UX-level
 check, the per-network VK is the on-chain enforcement — and the fee-payer
 domain (`minaNetwork`) has to match the chain the tx is broadcast to. Note
 the two are set by *different* inputs (an env var vs. a bundle field); the
@@ -319,9 +333,9 @@ strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
 come from the bundle and feed o1js's account cache; the proved tx is checked
 against real chain state at broadcast.
 
-**6. `SKIP_PROOFS=1` runtime hatch (`build-tx.ts:697`, dummy-proof path
-`732-740`).** Unlike the web UI's compile-time-gated test hooks, this ships in
-every binary and is enabled by an env var.
+**6. `SKIP_PROOFS=1` runtime hatch (`skipProofs`, `maybeProve`).** Unlike the web UI's compile-time-gated test hooks, this ships in
+every binary and is enabled by an env var. The bundle network check still runs
+before this hatch.
 
 **7. Confirmation policy (`confirmOrExit`).** The summary and prompt go to
 `/dev/tty` rather than stderr, so `> signed.json 2>log` still prompts — an
@@ -395,8 +409,8 @@ Bun runtime. Supported targets: `darwin`/`linux`/`windows` × `x64`/`arm64`
 (as exposed by the download UI; Windows binaries carry `.exe`). macOS
 binaries must additionally be **codesigned with JIT entitlements**
 (`allow-jit` + `allow-unsigned-executable-memory`; ad-hoc identity is enough)
-or the embedded WASM fails to load at runtime. One binary serves both
-networks: the circuit's `NETWORK_DOMAIN` is selected per run by the
+or the embedded WASM fails to load at runtime. One binary serves mainnet and
+testnet: the circuit's `NETWORK_DOMAIN` is selected per run by the required
 `MINA_NETWORK_DOMAIN` env var, not at binary-build time.
 
 **Distribution — GitHub releases** (`.github/workflows/offline-cli-release.yml`):

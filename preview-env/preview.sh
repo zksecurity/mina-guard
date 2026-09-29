@@ -203,7 +203,7 @@ ensure_vk_hash() {
     echo "Computing MinaGuard verification key hash on host (this can take several minutes)..."
     local output rc hash
     set +e
-    output=$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)
+    output=$(MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile 2>&1)
     rc=$?
     set -e
     if [ "$rc" -ne 0 ]; then
@@ -224,7 +224,7 @@ ensure_vk_hash() {
         fi
         exit 1
     fi
-    hash=$(echo "$output" | awk '/^vkHash/{print $2; exit}')
+    hash=$(echo "$output" | awk '/^vkHash\[testnet\]:/{print $2; exit}')
     if [ -z "$hash" ]; then
         echo "ERROR: vk-hash compile printed no 'vkHash' line. Full output:" >&2
         echo "$output" >&2

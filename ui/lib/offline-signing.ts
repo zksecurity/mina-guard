@@ -130,11 +130,14 @@ function minaEndpoint(): string {
   return getMinaGuardConfig().minaEndpoint;
 }
 
-/** Bundle network id — selects the CLI's fee-payer signature domain. Mina uses
- *  the same non-mainnet domain for devnet and testnet, so devnet maps to
- *  'testnet' (mirroring how the CLI configures Mina.Network). */
+/** Bundle network id — selects the CLI's fee-payer signature domain.
+ *  V1 bundles use mainnet/testnet; devnet shares the testnet signature and
+ *  proposal domains. Map only known labels, never unknown networks. */
 function minaNetwork(): 'testnet' | 'mainnet' {
-  return getMinaGuardConfig().networkId === 'mainnet' ? 'mainnet' : 'testnet';
+  const network = getMinaGuardConfig().networkId;
+  if (network === 'mainnet') return 'mainnet';
+  if (network === 'testnet' || network === 'devnet') return 'testnet';
+  throw new Error(`Unsupported offline signing network: ${network}`);
 }
 
 async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
@@ -202,6 +205,7 @@ export async function buildOfflineProposeBundle(params: {
   input: OfflineProposeBundle['input'];
   configNonce: number;
 }): Promise<OfflineProposeBundle> {
+  const network = minaNetwork();
   const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
@@ -223,7 +227,7 @@ export async function buildOfflineProposeBundle(params: {
   return {
     version: 1,
     action: 'propose',
-    minaNetwork: minaNetwork(),
+    minaNetwork: network,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
@@ -238,6 +242,7 @@ export async function buildOfflineApproveBundle(params: {
   feePayerAddress: string;
   proposal: OfflineApproveBundle['proposal'];
 }): Promise<OfflineApproveBundle> {
+  const network = minaNetwork();
   const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
@@ -256,7 +261,7 @@ export async function buildOfflineApproveBundle(params: {
   return {
     version: 1,
     action: 'approve',
-    minaNetwork: minaNetwork(),
+    minaNetwork: network,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
@@ -272,6 +277,7 @@ export async function buildOfflineExecuteBundle(params: {
   childAddress?: string;
   childEvents?: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
 }): Promise<OfflineExecuteBundle> {
+  const network = minaNetwork();
   const fetches: Promise<BundleAccount>[] = [
     fetchGraphQLAccount(params.contractAddress),
     fetchGraphQLAccount(params.feePayerAddress),
@@ -329,7 +335,7 @@ export async function buildOfflineExecuteBundle(params: {
   return {
     version: 1,
     action: 'execute',
-    minaNetwork: minaNetwork(),
+    minaNetwork: network,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
     accounts,
