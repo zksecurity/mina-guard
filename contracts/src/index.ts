@@ -59,3 +59,12 @@ export {
 } from './event-rebuild.js';
 
 export { memoToField, decodeTxMemo } from './memo.js';
+
+export {
+  IncrementalStoreCache,
+  checkpointStores,
+  restoreStoreCheckpoint,
+  storesFromOfflineRequest,
+  type StoreCheckpoint,
+  type StoreScope,
+} from './store-checkpoint.js';

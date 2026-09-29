@@ -73,13 +73,14 @@ function isExecution(e: IndexedEvent): boolean {
 
 // -- owners ------------------------------------------------------------------
 
-function rebuildOwners(events: readonly IndexedEvent[]): OwnerStore {
+function rebuildOwners(events: readonly IndexedEvent[], initial?: OwnerStore): OwnerStore {
   const store = new OwnerStore();
+  if (initial) store.owners = [...initial.owners];
 
   const slots = new Map<number, PublicKey>();
   const unindexed: PublicKey[] = [];
   for (const e of events) {
-    if (e.eventType !== 'setupOwner') continue;
+    if (initial || e.eventType !== 'setupOwner') continue;
     const owner = publicKey(e.payload, 'owner');
     if (!owner) continue;
     const index = field(e.payload, 'index');
@@ -163,11 +164,13 @@ function emittedRoots(block: readonly IndexedEvent[]): { approval: Set<string>; 
   return { approval, nullifier };
 }
 
-/** Rebuilds the owner list, approval map and nullifier map from `events`. */
-export function rebuildStores(events: readonly IndexedEvent[]): RebuiltStores {
-  const ownerStore = rebuildOwners(events);
-  const approvalStore = new ApprovalStore();
-  const nullifierStore = new VoteNullifierStore();
+/** Rebuilds stores, or applies a strictly later event range to caller-owned initial stores.
+ * Callers supplying initial stores must exclude the already-applied block range.
+ */
+export function rebuildStores(events: readonly IndexedEvent[], initial?: RebuiltStores): RebuiltStores {
+  const ownerStore = rebuildOwners(events, initial?.ownerStore);
+  const approvalStore = initial?.approvalStore ?? new ApprovalStore();
+  const nullifierStore = initial?.nullifierStore ?? new VoteNullifierStore();
   const firstDivergentBlock: RebuiltStores['firstDivergentBlock'] = { approval: null, nullifier: null };
 
   const unplaced: IndexedEvent[] = [];

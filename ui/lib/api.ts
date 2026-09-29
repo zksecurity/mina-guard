@@ -498,23 +498,29 @@ function asReceivers(value: unknown): ProposalReceiver[] {
 /** Fetches all raw indexed events for a contract using paginated backend API reads. */
 export async function fetchAllEvents(
   contractAddress: string,
+  fromBlock?: number,
 ): Promise<Array<{ eventType: string; payload: unknown; blockHeight: number | null }>> {
   const events: Array<{ eventType: string; payload: unknown; blockHeight: number | null }> = [];
   let offset = 0;
   const limit = 500;
 
   while (true) {
+    // Fail closed before the backend would clamp and repeat offset 50,000.
+    // Stable cursor pagination is tracked separately in issue #143.
+    if (offset > 50_000) throw new Error('Event history exceeds the backend pagination limit');
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (fromBlock !== undefined) query.set('fromBlock', String(fromBlock));
     const response = await fetch(
-      `${API_BASE}/api/contracts/${contractAddress}/events?limit=${limit}&offset=${offset}`,
+      `${API_BASE}/api/contracts/${contractAddress}/events?${query}`,
       { cache: 'no-store' }
     );
 
     if (!response.ok) {
-      console.error(`[api] fetchAllEvents page at offset=${offset} returned ${response.status}`);
-      break;
+      throw new Error(`Could not fetch vault events (${response.status}); retry shortly.`);
     }
 
     const batch = (await response.json()) as Array<{ eventType: string; payload: unknown; blockHeight?: unknown }>;
+    if (!Array.isArray(batch)) throw new Error('Invalid vault events response');
     events.push(
       ...batch.map((event) => ({
         eventType: event.eventType,
