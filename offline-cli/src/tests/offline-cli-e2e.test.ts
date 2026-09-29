@@ -945,6 +945,19 @@ describe('offline-cli e2e', () => {
       expect(output.transaction.feePayer.authorization).toBeTruthy();
       createChildProposalHash = output.proposalHash;
 
+      // The offline builder must retain the reservation's root-parent reads.
+      const reservationParent = output.transaction.accountUpdates.find((au: any) =>
+        au.body.publicKey === zkAppAddress.toBase58() &&
+        au.body.callDepth === 1 &&
+        au.body.preconditions.account.state[7] !== null &&
+        au.body.preconditions.account.state[8] !== null);
+      expect(reservationParent).toBeDefined();
+      expect(reservationParent.body.preconditions.account.state[0]).toBe(
+        zkApp.ownersCommitment.get().toString(),
+      );
+      expect(reservationParent.body.preconditions.account.state[7]).toBe('0');
+      expect(reservationParent.body.preconditions.account.state[8]).toBe('0');
+
       // Verify child account update exists in the transaction
       const childPk = childAddr.toBase58();
       const childUpdate = output.transaction.accountUpdates?.find(
@@ -1161,6 +1174,10 @@ describe('offline-cli e2e', () => {
       expect(output.action).toBe('execute');
       expect(output.proposalHash).toBe(createChildProposalHash);
       expect(output.transaction.feePayer.authorization).toBeTruthy();
+
+      const setupUpdate = output.transaction.accountUpdates.find((au: any) =>
+        au.body.publicKey === childAddr.toBase58());
+      expect(setupUpdate.body.update.appState[12]).toBe('0');
 
       console.log('[e2e] createChild execute OK');
     }, 120_000);

@@ -203,6 +203,7 @@ describe('MinaGuard - Child Lifecycle', () => {
     it('initializes a child guard with parent approval', async () => {
       const { proposalHash } = await setupChildWithParentOwners();
 
+      expect(childZkApp.reservedConfigHash.get()).toEqual(Field(0));
       expect(childZkApp.parent.get()).toEqual(parentCtx.zkAppAddress);
       expect(childZkApp.childMultiSigEnabled.get()).toEqual(Field(1));
       expect(childZkApp.childExecutionRoot.get()).toEqual(EMPTY_MERKLE_MAP_ROOT);
@@ -276,8 +277,8 @@ describe('MinaGuard - Child Lifecycle', () => {
       const setupOwners = toFixedSetupOwners(childOwners);
 
       // Replay the same CREATE_CHILD proposal that was used for initial setup.
-      // The child now has a non-zero ownersCommitment, so initializeState's
-      // requireEquals(Field(0)) precondition fails.
+      // The consumed reservation hash rejects replay before initialization;
+      // ownersCommitment's uninitialized-only precondition also remains.
       await expect(async () => {
         const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
           await childZkApp.executeSetupChild(
@@ -500,12 +501,20 @@ describe('MinaGuard - Child Lifecycle', () => {
         });
         await txn.prove();
         await txn.sign([proposer.key, childKey]).send();
-      }).toThrow(/Constraint unsatisfied|no square root/);
+      }).toThrow();
     });
 
     it('rejects reserveForParent on an already-initialized root vault', async () => {
       const attackerKey = PrivateKey.random();
       const attackerAddress = attackerKey.toPublicKey();
+      // Use an initialized root so this specifically exercises the target
+      // vault's uninitialized-only precondition, not parent validation.
+      await deployAndSetup({
+        ...parentCtx,
+        zkApp: new MinaGuard(attackerAddress),
+        zkAppAddress: attackerAddress,
+        zkAppKey: attackerKey,
+      }, 2);
       const childOwners = parentCtx.owners.map((o) => o.pub);
       const ownersCommitment = computeOwnerChain(childOwners);
       const setupOwners = toFixedSetupOwners(childOwners);

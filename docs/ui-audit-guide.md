@@ -196,6 +196,17 @@ the signer decides what the user authorizes. The moving parts:
     (`worker.ts:617-657`; reuse loop `637-645`).
 
 **2. Atomicity of deploy + setup, and of CREATE_CHILD.**
+
+Child reservation enforces the same governance bounds as initialization and rejects
+self-parenting or a parent without initialized root state. The parent's owners
+commitment and empty parent field are ledger preconditions, not only client
+checks. Successful child setup clears the consumed `reservedConfigHash`; consumers
+must use initialized state and events for the active configuration. Method arguments,
+proposal hashes, events, and offline bundle formats are unchanged. The circuit and
+verification keys change, so UI, offline CLI, and desktop builds must use the matching
+per-network `contracts/.vk-hash`; older deployed verification keys are not upgraded
+by this source change.
+
 A guard that is deployed but not yet configured could be controlled by whoever
 calls `setup()` first.
   - Top-level vaults use the atomic `deployAndSetupContract` — one tx doing
