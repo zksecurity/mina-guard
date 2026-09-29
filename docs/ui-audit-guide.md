@@ -50,6 +50,13 @@ re-checks threshold and moves funds / applies the governance change. In all thre
 owner actually **signs is the proposal hash — a single `Field`** (blind signing; see the
 threat model), not the human-readable transaction.
 
+**Add Owner preflight warnings apply only to pending proposals.** The detail page
+checks the proposed owner and commitment against the current owner list. Once a
+proposal executes, that list already includes its new owner, so rerunning this
+preflight would falsely report a conflict. Leaving pending skips further page checks,
+ignores in-flight results, and immediately hides any existing preflight warnings.
+The worker still independently validates proposals before signing.
+
 **The memo has three roles, and only one is enforced on-chain.** The short note a user attaches
 to a proposal shows up as (1) a **hashed** `memoHash` bound into the proposal (the only value
 owners' signatures cover), (2) an unconstrained **broadcast** fee-payer memo on the outer

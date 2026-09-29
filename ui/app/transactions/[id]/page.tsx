@@ -215,7 +215,9 @@ export default function TransactionDetailPage() {
     };
   }, [proposal?.txType, proposal?.childAccount, proposal?._localPending]);
 
-  // For ADD_OWNER: check the signed proposal.data matches inserting the target
+  // For pending ADD_OWNER only: executed proposals already changed the owner
+  // list, so checking them against current owners would report a false conflict.
+  // Check the signed proposal.data matches inserting the target
   // at some position of the indexed owner list (any position, not only the
   // sorted one). 'unexecutable' = no position does, so the contract would reject
   // it and approvers are blocked. 'unavailable' = the owner list could not be
@@ -224,7 +226,7 @@ export default function TransactionDetailPage() {
   const [addOwnerDataCheck, setAddOwnerDataCheck] =
     useState<'checking' | 'match' | 'unexecutable' | 'sameKeyHolder' | 'unavailable' | null>(null);
   useEffect(() => {
-    if (!proposal || proposal.txType !== 'addOwner') {
+    if (!proposal || proposal.txType !== 'addOwner' || proposal.status !== 'pending') {
       setAddOwnerDataCheck(null);
       return;
     }
@@ -262,7 +264,10 @@ export default function TransactionDetailPage() {
     const target = proposal.receivers?.[0]?.address;
     return !!target && conflictsWithOwner(target, owners.map((owner) => owner.address));
   }, [proposal, owners]);
-  const addOwnerBlocked = addOwnerConflict || addOwnerDataCheck === 'sameKeyHolder';
+  // Hide stale async results on the very render that a proposal leaves pending.
+  const pendingAddOwner = proposal?.txType === 'addOwner' && proposal.status === 'pending';
+  const addOwnerBlocked = pendingAddOwner &&
+    (addOwnerConflict || addOwnerDataCheck === 'sameKeyHolder');
 
   const hasApproved = useMemo(() => {
     if (!wallet.address) return false;
@@ -753,7 +758,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {addOwnerDataCheck === 'unexecutable' && (
+        {pendingAddOwner && addOwnerDataCheck === 'unexecutable' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
             <p className="font-semibold mb-1">Don&apos;t approve: this proposal can never execute</p>
             <p className="opacity-90">
@@ -764,7 +769,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {addOwnerDataCheck === 'unavailable' && (
+        {pendingAddOwner && addOwnerDataCheck === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">Owner list not checked yet</p>
             <p className="opacity-90">
