@@ -144,18 +144,19 @@ export default function TransactionDetailPage() {
     return () => { cancelled = true; };
   }, [multisig, proposal, proposalHash, proposalsAddress]);
 
-  // For CREATE_CHILD: recompute the config hash from the owners/threshold the
+  // For pending CREATE_CHILD: recompute the config hash from the owners/threshold the
   // events display and compare it to the signed proposal.data. A mismatch means
   // the config shown here is NOT the config being approved — on-chain the
   // execute would revert, but we warn approvers before they sign. 'unavailable'
   // = events not indexed yet, so we can't check (not a mismatch).
+  const pendingCreateChild = proposal?.txType === 'createChild' && proposal.status === 'pending';
   const [childConfigCheck, setChildConfigCheck] =
     useState<'checking' | 'match' | 'mismatch' | 'unavailable' | null>(null);
   const [childPermissionCheck, setChildPermissionCheck] = useState<
     'checking' | 'match' | 'mismatch' | null
   >(null);
   useEffect(() => {
-    if (!proposal || proposal.txType !== 'createChild') {
+    if (!proposal || proposal.txType !== 'createChild' || proposal.status !== 'pending') {
       setChildConfigCheck(null);
       return;
     }
@@ -276,9 +277,11 @@ export default function TransactionDetailPage() {
 
   // Source Vault/SubVault that funds the proposal's outgoing MINA. For
   // transfer/allocateChild it's the Vault we're viewing; for reclaimChild it's
-  // the SubVault being drained.
+  // the SubVault being drained. Current balances only constrain pending
+  // execution; they cannot tell us whether a historical payment was funded.
   const spendingTarget = useMemo(
-    () => (proposal && multisig ? getSpendingTarget(proposal, multisig.address) : null),
+    () => (proposal?.status === 'pending' && multisig
+      ? getSpendingTarget(proposal, multisig.address) : null),
     [proposal, multisig?.address],
   );
   const [sourceBalance, setSourceBalance] = useState<string | null>(null);
@@ -712,7 +715,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {childConfigCheck === 'mismatch' && (
+        {pendingCreateChild && childConfigCheck === 'mismatch' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
             <p className="font-semibold mb-1">SubVault config does not match the signed proposal</p>
             <p className="opacity-90">
@@ -738,7 +741,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {childConfigCheck === 'unavailable' && (
+        {pendingCreateChild && childConfigCheck === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">SubVault config could not be verified</p>
             <p className="opacity-90">
