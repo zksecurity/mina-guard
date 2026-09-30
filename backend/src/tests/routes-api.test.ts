@@ -282,6 +282,7 @@ async function seedDatabase() {
         eventType: 'setup',
         payload: '{}',
         fingerprint: 'routes-event-a',
+        applyError: 'TypeError: failed to apply',
       },
       {
         contractId: contract.id,
@@ -524,6 +525,16 @@ describe('GET /api/contracts/:address/events', () => {
     const body = await res.json();
     expect(body).toHaveLength(2);
     expect(body.map((event: { blockHeight: number }) => event.blockHeight)).toEqual([10, 5]);
+  });
+
+  test('serves events recorded with an applyError, without exposing the error', async () => {
+    const res = await get(`/api/contracts/${contractAddress}/events?fromBlock=5&toBlock=5`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveLength(1);
+    expect(body[0].eventType).toBe('setup');
+    expect(body[0]).not.toHaveProperty('applyError');
   });
 
   test('floors numeric block filters', async () => {
