@@ -60,24 +60,17 @@ export function restoreStoreCheckpoint(checkpoint: StoreCheckpoint, scope: Store
   return stores;
 }
 
-/** v1 requests retain full event replay; v2 requests carry a complete snapshot. */
+/** Current v1 requests require a complete public snapshot after the pre-release reset. */
 export function storesFromOfflineRequest(request: {
   version: number; minaNetwork: 'mainnet' | 'testnet'; contractAddress: string;
   events: readonly IndexedEvent[]; storeCheckpoint?: StoreCheckpoint;
 }, chain: ChainState): RebuiltStores {
+  if (request.version !== 1) throw new Error(`Unsupported bundle version: ${request.version} (expected 1)`);
   requireRoots(chain);
-  let stores: RebuiltStores;
-  if (request.version === 1) {
-    if (request.storeCheckpoint !== undefined) throw new Error('Checkpoints require offline request version 2');
-    stores = rebuildStores(request.events);
-  } else if (request.version === 2) {
-    if (!request.storeCheckpoint || !Array.isArray(request.events) || request.events.length !== 0) {
-      throw new Error('Offline request version 2 requires a complete store checkpoint and empty events');
-    }
-    stores = restoreStoreCheckpoint(request.storeCheckpoint, { network: request.minaNetwork, address: request.contractAddress });
-  } else {
-    throw new Error(`Unsupported bundle version: ${request.version}`);
+  if (!request.storeCheckpoint || !Array.isArray(request.events) || request.events.length !== 0) {
+    throw new Error('Offline request version 1 requires a complete store checkpoint and empty events');
   }
+  const stores = restoreStoreCheckpoint(request.storeCheckpoint, { network: request.minaNetwork, address: request.contractAddress });
   // Offline account snapshots are supplied by the online machine. As before,
   // the actual ledger must satisfy the transaction's state preconditions.
   assertStoresMatchChain(stores, chain);

@@ -1,3 +1,4 @@
+import { proposalSigningMessage } from '../proposal-signing.js';
 import { Field, Mina, PrivateKey, Signature, UInt64 } from 'o1js';
 import { Receiver } from '../MinaGuard.js';
 import { EXECUTED_MARKER, MAX_RECEIVERS } from '../constants.js';
@@ -187,7 +188,7 @@ describe('MinaGuard - Execute', () => {
     // Can't even propose this since configNonce mismatch happens at propose time
     await expect(async () => {
       const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const sig = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const sig = Signature.create(ctx.owners[0].key, [proposalSigningMessage(proposal.hash(), 'propose')]);
       const nullifierWitness = ctx.nullifierStore.getWitness(
         proposal.hash(),
         ctx.owners[0].pub

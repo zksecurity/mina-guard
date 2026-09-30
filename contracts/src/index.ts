@@ -58,6 +58,8 @@ export {
   type ChainState,
 } from './event-rebuild.js';
 
+export { proposalSigningMessage } from './proposal-signing.js';
+
 export { memoToField, decodeTxMemo } from './memo.js';
 
 export {

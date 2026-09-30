@@ -1,16 +1,26 @@
-import { Field } from 'o1js';
+import { Field, Poseidon } from 'o1js';
 import { memoToField, decodeTxMemo } from '../memo.js';
 import { describe, expect, it } from 'bun:test';
 
 describe('memoToField', () => {
-  it('returns Field(0) for the empty string', () => {
-    expect(memoToField('').toString()).toEqual(Field(0).toString());
+  it('uniformly commits the empty string under the memo domain', () => {
+    expect(memoToField('').toString()).not.toEqual(Field(0).toString());
+    expect(memoToField('').toString()).toEqual(Poseidon.hashWithPrefix('mina-guard-memo', [Field(0)]).toString());
   });
 
   it('produces distinct commitments for distinct memos', () => {
     expect(memoToField('hello').toString()).not.toEqual(
       memoToField('world').toString()
     );
+  });
+
+  it('commits the UTF-8 byte length and distinguishes trailing zero bytes', () => {
+    const memo = 'é🔐';
+    const bytes = new TextEncoder().encode(memo);
+    expect(memoToField(memo).toString()).toBe(Poseidon.hashWithPrefix('mina-guard-memo', [Field(bytes.length), ...Array.from(bytes, b => Field(b))]).toString());
+    for (const text of ['', 'a', 'ab']) {
+      expect(memoToField(text).toString()).not.toBe(memoToField(text + '\0').toString());
+    }
   });
 
   it('is deterministic', () => {

@@ -1,3 +1,4 @@
+import { proposalSigningMessage } from '../proposal-signing.js';
 import { Field, Mina, PrivateKey, Signature, UInt64, AccountUpdate } from 'o1js';
 import { Receiver } from '../MinaGuard.js';
 import { EXECUTED_MARKER } from '../constants.js';
@@ -18,6 +19,20 @@ describe('MinaGuard - Approve', () => {
   beforeEach(async () => {
     ctx = await setupLocalBlockchain();
     await deployAndSetup(ctx, 2);
+  });
+
+  it.each(['bare', 'propose'] as const)('rejects %s signatures for approve', async (kind) => {
+    const proposal = createTransferProposal([new Receiver({ address: ctx.deployerAccount, amount: UInt64.from(1) })], Field(1), Field(0), ctx.zkAppAddress);
+    const hash = await proposeTransaction(ctx, proposal, 0);
+    const owner = ctx.owners[1];
+    const message = kind === 'bare' ? hash : proposalSigningMessage(hash, 'propose');
+    const signature = Signature.create(owner.key, [message]);
+    const witness = makeOwnerWitness(ctx.owners.map(o => o.pub));
+    const nullifier = ctx.nullifierStore.getWitness(hash, owner.pub);
+    const approval = ctx.approvalStore.getWitness(hash);
+    await expect(Mina.transaction(owner.pub, async () => {
+      await ctx.zkApp.approveProposal(proposal, signature, owner.pub, witness, approval, Field(2), nullifier);
+    })).rejects.toThrow('Invalid signature');
   });
 
   it('should allow owner to approve with valid signature', async () => {
@@ -71,7 +86,7 @@ describe('MinaGuard - Approve', () => {
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     // Sign with wrong key (owner3's key but claiming to be owner2)
-    const wrongSig = Signature.create(ctx.owners[2].key, [proposalHash]);
+    const wrongSig = Signature.create(ctx.owners[2].key, [proposalSigningMessage(proposalHash, 'approve')]);
     const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, ctx.owners[1].pub);
@@ -101,7 +116,7 @@ describe('MinaGuard - Approve', () => {
     const proposalHash = await proposeTransaction(ctx, proposal, 0);
 
     const nonOwner = PrivateKey.random();
-    const sig = Signature.create(nonOwner, [proposalHash]);
+    const sig = Signature.create(nonOwner, [proposalSigningMessage(proposalHash, 'approve')]);
     const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
     const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
     const nullifierWitness = ctx.nullifierStore.getWitness(proposalHash, nonOwner.toPublicKey());

@@ -1,3 +1,5 @@
+import { memoToField } from '../memo.js';
+import { proposalSigningMessage } from '../proposal-signing.js';
 import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64 } from 'o1js';
 import { EXECUTED_MARKER, MAX_RECEIVERS, TxType, Destination } from '../constants.js';
 import { TransactionProposal, Receiver } from '../MinaGuard.js';
@@ -434,7 +436,7 @@ describe('MinaGuard - Governance', () => {
         tokenId: Field(0),
         txType: TxType.TRANSFER,
         data: Field(0),
-        memoHash: Field(0),
+        memoHash: memoToField(''),
         nonce: Field(1),
         configNonce: Field(0), // old configNonce
         expirySlot: Field(0),
@@ -446,7 +448,7 @@ describe('MinaGuard - Governance', () => {
 
       await expect(async () => {
         const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-        const sig = Signature.create(ctx.owners[0].key, [oldProposal.hash()]);
+        const sig = Signature.create(ctx.owners[0].key, [proposalSigningMessage(oldProposal.hash(), 'propose')]);
         const nullifierWitness = ctx.nullifierStore.getWitness(
           oldProposal.hash(),
           ctx.owners[0].pub

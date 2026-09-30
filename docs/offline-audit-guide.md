@@ -31,7 +31,7 @@ networked device:
 2. **Sign** — the bundle is carried (USB stick, QR, …) to the air-gapped
    machine, where the self-contained CLI binary reads it, **shows a
    human-readable summary and asks for confirmation**, compiles the MinaGuard
-   circuit, generates the zero-knowledge proof, signs the proposal hash and
+   circuit, generates the zero-knowledge proof, signs the action-specific owner message (propose/approve only) and
    the fee payer with `MINA_PRIVATE_KEY`, and writes a **signed response**
    JSON to stdout.
 3. **Broadcast** — back on the online machine, the signed response is uploaded
@@ -126,21 +126,23 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    CLI aborts (see focus point 7).
 2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
    never dials out), the bundled account snapshots injected into o1js's
-   account cache, and the Merkle stores reconstructed from version 2 checkpoint
+   account cache, and the Merkle stores reconstructed from version 1 request checkpoint
    leaves using `storesFromOfflineRequest` (`contracts/src/store-checkpoint.ts`).
-   Version 1 requests still replay their full event history. Child execution
+   Requests without a checkpoint or with a version other than 1 are rejected. Child execution
    maps still use `rebuildChildExecutionMap` and bundled child events. All roots are
    checked against the bundled account snapshots before any proof
    (`rebuildVerifiedStores`, `snapshotState`); a mismatch aborts.
 3. **Proposal hash + in-circuit signature** — the proposal struct is built
    from `bundle.input` (propose) or rebuilt from `bundle.proposal`
    (approve/execute), mirroring the worker 1:1; the CLI recomputes
-   `proposalHash = proposal.hash()` and signs it with mina-signer's
+   `proposalHash = proposal.hash()`. For propose/approve it signs
+   `proposalSigningMessage(proposalHash, action)` with mina-signer's
    `signFields` — deliberately with the fixed 'devnet' domain that o1js's
    in-circuit `Signature.verify` always uses. Cross-network replay is
    prevented instead by the compile-time `NETWORK_DOMAIN` baked into the
    proposal hash (`TransactionProposal.hash()`) and into
    the per-network VK (see focus point 3).
+   Execute consumes the existing approvals and needs only the fee-payer signature.
 4. **Compile + prove** — after rejecting a bundle whose `minaNetwork`
    disagrees with the domain captured when contracts were imported from the
    process's `MINA_NETWORK_DOMAIN` (`assertBundleNetwork`),
@@ -159,7 +161,7 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "offline-signed-tx",
   "action": "propose | approve | execute",
   "contractAddress": "B62q...",
@@ -201,19 +203,24 @@ takes over.
 
 ---
 
-## Bundle format reference (requests version 2; legacy version 1 accepted)
+## Bundle format reference (requests version 1; signed responses version 1)
 
-The UI now exports version 2 requests. Update the offline CLI with the UI/desktop
-release: older CLIs reject version 2 at their version gate. The updated CLI accepts
-legacy version 1 requests with full events, and rejects checkpoints in a version 1
-request. Signed responses remain version 1; the response import/broadcast binding
-checks and signature messages are unchanged.
+The new signing domains are a breaking change: new proposal hashes, purpose-bound
+owner signatures, memo commitments, and verification keys. There is no legacy
+signature fallback. Request and response formats both use v1 as a pre-release
+reset; this version number does not distinguish older v1 files from current files.
+Discard all earlier requests and signed responses and regenerate them with matching
+UI and CLI builds. Requests must include a checkpoint and empty events; legacy
+full-event requests are rejected. Existing test vaults require fresh deployment;
+pending proposals must be recreated and approved again. Do not attempt to reuse
+old Merkle approval state or signing files.
 
-Rollout order: distribute the updated offline CLI binaries, then release the v2-exporting
-UI and desktop builds. Do not publish the new exporter while only v1 CLI binaries
-are available.
+Distribute a matching CLI, UI/desktop build, backend and network VK together. Older
+clients cannot sign for the new contracts. This change does not perform deployment,
+reset any database, or migrate funds from existing test vaults.
 
-Version 2 requires `storeCheckpoint` and an empty `events` array. The checkpoint
+Version 1 requires `storeCheckpoint` and an empty `events` array. The checkpoint's
+own serialization format remains version 1 (its leaf encoding did not change). It
 contains version, network, vault address, optional replay height, ordered owners,
 approval leaves, nullifier keys, and their roots. The CLI reconstructs the trees
 from leaves rather than accepting cached internal nodes, checks the declared roots,
@@ -228,17 +235,18 @@ to the checkpoint's leaves; it no longer processes the full event history.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `2` (or legacy `1`) | Request format version; signed responses independently remain version 1 |
+| `version` | `1` | Request and signed-response format version after the pre-release reset |
 | `action` | `"propose" \| "approve" \| "execute"` | Dispatch |
 | `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; `testnet` accepts CLI `MINA_NETWORK_DOMAIN=testnet` or `devnet` |
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |
-| `events` | `Array<{eventType, payload, blockHeight?}>` | Empty in v2; full vault event history in legacy v1 |
-| `storeCheckpoint` | `StoreCheckpoint` | Required public store snapshot in v2; absent in v1 |
+| `events` | `Array<{eventType, payload, blockHeight?}>` | Must be empty in v1 |
+| `storeCheckpoint` | `StoreCheckpoint` | Required public store snapshot in v1 |
 
-Event types replayed: `setupOwner`, `ownerChange`, `ownerChangeBatch`,
-`proposal`, `approval`, `execution`, `executionBatch`.
+The online checkpoint producer replays `setupOwner`, `ownerChange`,
+`ownerChangeBatch`, `proposal`, `approval`, `execution`, and `executionBatch`;
+the offline CLI restores the resulting leaves without replaying events.
 
 ### `propose` extras
 
@@ -360,13 +368,13 @@ domain (`minaNetwork`) has to match the chain the tx is broadcast to. Note
 the two are set by *different* inputs (an env var vs. a bundle field); the
 gate is what keeps them from silently diverging.
 
-**4. Store reconstruction from bundled checkpoints or legacy events.** Same seam
+**4. Store reconstruction from bundled checkpoints.** Same seam
 as the worker's indexer-fed reconstruction (UI guide, focus point 3), but the
-inputs come from the *bundle file*: checkpoint leaves or replayed events determine owner
+inputs come from the *bundle file*: checkpoint leaves determine owner
 ordering, approval counts, and nullifier roots, which become the witnesses
 the contract checks on-chain. The rebuild is order-independent and shared
 with the worker, and its result must reproduce the bundle's own account
-snapshot before the CLI proves; account state and checkpoint leaves/events come
+snapshot before the CLI proves; account state and checkpoint leaves come
 from the same bundle producer, so this catches inconsistent reconstruction, not
 an internally consistent forged bundle. Ledger state preconditions remain the
 authoritative check at broadcast.
@@ -503,10 +511,11 @@ recipient is initialized and bound to the sending parent. These state reads are
 ledger-enforced. Allocation never charges for creating recipient accounts, even
 if `receiverAccountExists` is missing an entry or marks it false.
 
-The request format remains v2 and signed responses are unchanged; older allocation
-bundles without recipient snapshots fail closed. Proposal hashes and owner approval
-signatures are unchanged. Rebuild the CLI, UI, and desktop with the changed circuit
-and canonical verification-key hashes.
+The request format remains v1 and signed responses are unchanged; older allocation
+bundles without recipient snapshots fail closed. Allocation adds no fields to
+proposals or signed responses. This branch also changes proposal hashing and
+owner-signing messages as described above. Rebuild the CLI, UI, and desktop
+with the changed circuit and CI-generated verification-key hashes.
 
 Only fund children after setup. Ordinary transfers and external deposits to a
 reserved child remain unrecoverable through parent reclaim/destroy until setup

@@ -1,9 +1,9 @@
 import { Field, Poseidon } from 'o1js';
+import { MEMO_HASH_PREFIX } from './proposal-signing.js';
 
 export function memoToField(memo: string): Field {
-  if (memo.length === 0) return Field(0);
   const bytes = new TextEncoder().encode(memo);
-  return Poseidon.hash(Array.from(bytes, (b) => Field(b)));
+  return Poseidon.hashWithPrefix(MEMO_HASH_PREFIX, [Field(bytes.length), ...Array.from(bytes, (b) => Field(b))]);
 }
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';

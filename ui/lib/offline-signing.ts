@@ -1,9 +1,10 @@
 import { parseChildConfigFromEvents, fetchAllEvents } from './api';
 import { exportStoreCheckpoint } from './multisigClient';
 import type { StoreCheckpoint } from 'contracts';
+import { OFFLINE_RESPONSE_VERSION } from './offline-format';
 import { getMinaGuardConfig } from './endpoints';
 
-export const OFFLINE_BUNDLE_VERSION = 2;
+export const OFFLINE_BUNDLE_VERSION = 1;
 
 interface BundleReceiver {
   address: string;
@@ -35,7 +36,7 @@ export interface BundleAccount {
 }
 
 interface BundleBase {
-  version: 2;
+  version: typeof OFFLINE_BUNDLE_VERSION;
   storeCheckpoint: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
@@ -105,7 +106,7 @@ export type OfflineRequestBundle =
   | OfflineExecuteBundle;
 
 export interface OfflineSignedTxResponse {
-  version: 1;
+  version: typeof OFFLINE_RESPONSE_VERSION;
   type: 'offline-signed-tx';
   action: 'propose' | 'approve' | 'execute';
   contractAddress: string;
@@ -132,7 +133,7 @@ function minaEndpoint(): string {
 }
 
 /** Bundle network id — selects the CLI's fee-payer signature domain.
- *  V1 and v2 bundles use mainnet/testnet; devnet shares the testnet signature and
+ *  Bundles use mainnet/testnet; devnet shares the testnet signature and
  *  proposal domains. Map only known labels, never unknown networks. */
 function minaNetwork(): 'testnet' | 'mainnet' {
   const network = getMinaGuardConfig().networkId;
@@ -201,7 +202,7 @@ export async function buildOfflineProposeBundle(params: {
   }
 
   return {
-    version: 2,
+    version: OFFLINE_BUNDLE_VERSION,
     action: 'propose',
     minaNetwork: network,
     contractAddress: params.contractAddress,
@@ -236,7 +237,7 @@ export async function buildOfflineApproveBundle(params: {
   if (childAddr && childAccount) accounts[childAddr] = childAccount;
 
   return {
-    version: 2,
+    version: OFFLINE_BUNDLE_VERSION,
     action: 'approve',
     minaNetwork: network,
     contractAddress: params.contractAddress,
@@ -318,7 +319,7 @@ export async function buildOfflineExecuteBundle(params: {
   }
 
   return {
-    version: 2,
+    version: OFFLINE_BUNDLE_VERSION,
     action: 'execute',
     minaNetwork: network,
     contractAddress: params.contractAddress,

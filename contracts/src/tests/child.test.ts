@@ -1,3 +1,5 @@
+import { memoToField } from '../memo.js';
+import { proposalSigningMessage } from '../proposal-signing.js';
 import {
   AccountUpdate,
   Cache,
@@ -315,7 +317,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
         data: Field(99999), // wrong — should be Poseidon([ownersCommitment, threshold, numOwners])
-        memoHash: Field(0),
+        memoHash: memoToField(''),
         nonce: Field(0),
         configNonce: Field(0),
         expirySlot: Field(0),
@@ -390,7 +392,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // Tx 1: deploy child + reserve the BENIGN config + propose the malicious one.
       const proposer = parentCtx.owners[0];
       const ownerWitness = makeOwnerWitness(parentCtx.owners.map((o) => o.pub));
-      const sig = Signature.create(proposer.key, [proposalHash]);
+      const sig = Signature.create(proposer.key, [proposalSigningMessage(proposalHash, 'propose')]);
       const nullifierWitness = parentCtx.nullifierStore.getWitness(proposalHash, proposer.pub);
       const approvalWitness = parentCtx.approvalStore.getWitness(proposalHash);
       const parentContract = parentCtx.zkApp;
@@ -1918,7 +1920,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           proposal,
           makeOwnerWitness(parentCtx.owners.map((owner) => owner.pub)),
           proposer.pub,
-          Signature.create(proposer.key, [proposalHash]),
+          Signature.create(proposer.key, [proposalSigningMessage(proposalHash, 'propose')]),
           parentCtx.nullifierStore.getWitness(proposalHash, proposer.pub),
           parentCtx.approvalStore.getWitness(proposalHash),
         ),
@@ -1937,7 +1939,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expectForgedChildStateRejected(() =>
         parentCtx.zkApp.approveProposal(
           proposal,
-          Signature.create(approver.key, [proposalHash]),
+          Signature.create(approver.key, [proposalSigningMessage(proposalHash, 'approve')]),
           approver.pub,
           makeOwnerWitness(parentCtx.owners.map((owner) => owner.pub)),
           parentCtx.approvalStore.getWitness(proposalHash),
@@ -1961,7 +1963,7 @@ describe('MinaGuard - Child Lifecycle', () => {
           proposal,
           makeOwnerWitness(parentCtx.owners.map((owner) => owner.pub)),
           proposer.pub,
-          Signature.create(proposer.key, [proposalHash]),
+          Signature.create(proposer.key, [proposalSigningMessage(proposalHash, 'propose')]),
           parentCtx.nullifierStore.getWitness(proposalHash, proposer.pub),
           parentCtx.approvalStore.getWitness(proposalHash),
         ),

@@ -67,7 +67,7 @@ section for what a compromise there can and cannot do).
 
 **Backend (indexer + API).** It holds no keys and its data is a re-indexable materialized
 view of public chain events. It cannot forge approvals: every approval requires an owner
-signature over the proposal hash, verified in-circuit against `ownersCommitment`. It also
+signature over the application-tagged, action-specific proposal message, verified in-circuit against `ownersCommitment`. It also
 cannot trick an owner into approving something other than what it displays: on the approve and
 execute paths the UI worker and the offline CLI **recompute the proposal hash from the proposal
 fields themselves and verify it equals the selected proposal's identity**
@@ -126,7 +126,8 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Invariant | Enforced in | Primary tests |
 |---|---|---|
 | Only owners can propose / approve | `propose()`, `approveProposal()` via `assertOwnerMembership` against `ownersCommitment` | `propose.test.ts`, `approve.test.ts`, `list-commitment.test.ts` |
-| Approvals cannot be forged | `propose()` / `approveProposal()` verify an owner signature over the proposal hash in-circuit (`signature.verify(owner, [proposalHash])`) — membership alone is not enough | `propose.test.ts`, `approve.test.ts` ("reject invalid signature") |
+| Approvals cannot be forged | `propose()` / `approveProposal()` verify an owner signature over the application-tagged, action-specific proposal message in-circuit (`signature.verify(owner, [proposalSigningMessage(proposalHash, action)])`) — membership alone is not enough | `propose.test.ts`, `approve.test.ts` ("reject invalid signature") |
+| Signature purpose is explicit | Distinct propose/approve digests over the application-tagged proposal hash; empty and non-empty memos share a length-prefixed domain | `proposal-signing.test.ts`, `memo.test.ts`, cross-action rejection in `propose.test.ts` / `approve.test.ts` |
 | No double-voting | vote nullifier map keyed `hash(proposalHash, approver)` | `approve.test.ts` |
 | Approvals bind to exact content | approvals keyed by `TransactionProposal.hash()` (includes `guardAddress`, `destination`, `childAccount`) | `propose.test.ts`, `approve.test.ts` |
 | Only native MINA is transferable | `propose()` asserts `proposal.tokenId == 0` — `executeTransfers` always sends on the default token, so a non-zero tokenId is rejected at proposal time and can never be approved as a MINA send | `propose.test.ts` ("reject a proposal with a non-zero tokenId") |
@@ -161,7 +162,7 @@ owner selected. (Propose mints a fresh proposal with no prior identity, so it ha
 against and skips the check.) The worker updates cached owner, approval and nullifier
 stores with later indexed events using `contracts/src/store-checkpoint.ts` and the
 shared, order-independent `contracts/src/event-rebuild.ts`. The CLI reconstructs
-version 2 public checkpoint leaves or replays legacy version 1 events. Both clients
+version 1 request checkpoint leaves; requests without checkpoints are rejected. Both clients
 refuse to prove unless the result reproduces on-chain state (the worker reads the Mina node, the
 CLI the bundle's account snapshot); events are unauthenticated, so the per-event roots the
 contract emits only locate a divergence and are never trusted on their own. Covered by

@@ -27,7 +27,7 @@ const proposal = {
 };
 
 describe('offline checkpoint export', () => {
-  it('exports v2 snapshots for propose, approve and execute without a second vault history fetch', async () => {
+  it('exports v1 snapshots for propose, approve and execute without a second vault history fetch', async () => {
     process.env.NEXT_PUBLIC_MINA_NETWORK = 'testnet';
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       if (String(input).includes('/events')) throw new Error('Unexpected full history request');
@@ -44,7 +44,7 @@ describe('offline checkpoint export', () => {
     for (const build of builders) {
       calls.length = 0;
       const bundle = await build();
-      expect(bundle.version).toBe(2);
+      expect(bundle.version).toBe(1);
       expect(bundle.events).toEqual([]);
       expect(bundle.storeCheckpoint).toEqual(checkpoint);
       expect(bundle.contractAddress).toBe('vault');

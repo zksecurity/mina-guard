@@ -32,3 +32,11 @@ page. Stable cursor pagination is tracked separately in
 Reconstructed roots are checked against the Mina node; an event page is not
 authenticated state. No backend API or database schema change is required for
 incremental checkpoints.
+
+### Proposal signing domains
+
+Build this backend with the matching contracts package and network VK. Empty memos
+now have a application-tagged, length-prefixed commitment and are verified like non-empty
+memos; zero is no longer an absence sentinel. Database and event shapes are unchanged.
+See the [memo lifecycle](../docs/backend-audit-guide.md#data-model) and
+[breaking migration](../docs/offline-audit-guide.md#bundle-format-reference-requests-version-1-signed-responses-version-1).

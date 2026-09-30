@@ -113,7 +113,7 @@ interface ProposalSpec {
 }
 
 async function seedProposal(contractId: number, spec: ProposalSpec): Promise<void> {
-  const memoHash = spec.memo ? memoToField(spec.memo).toString() : null;
+  const memoHash = memoToField(spec.memo ?? '').toString();
   const executionMemoHash =
     spec.executedWithMemoHash === undefined
       ? null
@@ -134,7 +134,7 @@ async function seedProposal(contractId: number, spec: ProposalSpec): Promise<voi
       expirySlot: String(spec.expirySlot ?? 0),
       networkId: '0',
       guardAddress: TREASURY,
-      memo: spec.memo ?? null,
+      memo: spec.memo ?? '',
       memoHash,
       executionMemoHash,
       destination: 'local',

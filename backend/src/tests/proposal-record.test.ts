@@ -304,9 +304,11 @@ describe('memo match derivation', () => {
     expect(computeProposalMemoMatch(null, hash)).toBeNull();
   });
 
-  test('proposalMemoMatch null when memoHash missing or zero (no memo committed)', () => {
+  test('proposalMemoMatch null when memoHash missing; zero is not an empty memo', () => {
     expect(computeProposalMemoMatch(memo, null)).toBeNull();
-    expect(computeProposalMemoMatch(memo, '0')).toBeNull();
+    expect(computeProposalMemoMatch(memo, '0')).toBe(false);
+    expect(computeProposalMemoMatch('', memoToField('').toString())).toBe(true);
+    expect(computeProposalMemoMatch('changed', memoToField('').toString())).toBe(false);
   });
 
   test('memoExecutionMatch true when executed tx carried the committed memo', () => {

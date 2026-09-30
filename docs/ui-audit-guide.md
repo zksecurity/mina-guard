@@ -56,7 +56,7 @@ re-hash it, and sign that hash — the contract re-hashes on-chain and rejects a
 a lying indexer cannot get an owner to approve something other than what was proposed. Once
 approvals reach the threshold, *execute* is permissionless: anyone can submit it, the contract
 re-checks threshold and moves funds / applies the governance change. In all three, what an
-owner actually **signs is the proposal hash — a single `Field`** (blind signing; see the
+owner actually **signs is an application-tagged, action-specific digest of the proposal hash — a single `Field`** (blind signing; see the
 threat model), not the human-readable transaction.
 
 **Execution preflight warnings apply only to pending proposals.** The detail page
@@ -214,7 +214,7 @@ zkApp approvals are blind (a single `Field`), whatever decides what reaches
 the signer decides what the user authorizes. The moving parts:
   - `ledgerWallet.signFields` signs only `fields[0]` (`ledgerWallet.ts:186-198`)
     while echoing the full input array back; call sites pass a single-element
-    array (the proposal hash).
+    array (the action-specific proposal signing message).
   - Signature reconstruction differs per wallet: Ledger `{field, scalar}`
     decimals are reassembled into an o1js `Signature` (`worker.ts:240-243`,
     `627-630`); Auro returns base58.
@@ -269,7 +269,7 @@ operation. Storage failures fall back to verified in-memory operation. Unknown
 legacy event heights disable incremental reuse. A bounded four-vault memory cache
 avoids rehashing old leaves during warm operations; cold restore still rebuilds
 trees from saved leaves. Offline export uses this same worker path to produce
-version 2 public snapshots. Export rejects unknown runtime networks before worker
+version 1 request snapshots. Export rejects unknown runtime networks before worker
 access or account reads; devnet uses the shared testnet proof domain. The offline
 CLI independently reconstructs and checks
 them against bundled account snapshots (see the offline audit guide). Child
@@ -519,10 +519,10 @@ cannot receive an allocation; account-creation fees apply only to ordinary
 transfers. Empty padding is exempt, but non-empty zero-value recipients are checked.
 
 Offline allocation export includes each recipient's full snapshot in `accounts`,
-so the air-gapped CLI can prove the same checks. This uses the existing v2 format;
+so the air-gapped CLI can prove the same checks. This uses the existing v1 format;
 old allocation bundles lacking snapshots must be exported again. Desktop uses
 these same worker/exporter paths. Rebuild UI, offline CLI, and desktop together
-with the changed circuit and canonical verification-key hashes.
+with the changed circuit and CI-generated verification-key hashes.
 
 Complete child setup before funding by any route. Ordinary transfers and external
 deposits remain possible before initialization, with no parent reclaim/destroy

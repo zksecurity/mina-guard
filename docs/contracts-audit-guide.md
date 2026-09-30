@@ -13,6 +13,28 @@ the structs this contract verifies are documented in
 
 ---
 
+## Proposal signing domains
+
+Proposal identity uses `mina-guard-proposal`. Owners sign a single digest
+under `mina-guard-propose` or `mina-guard-approve`, computed by the shared
+`proposalSigningMessage` helper. These messages are not interchangeable. Execute
+methods remain permissionless and consume approvals keyed by the same proposal hash.
+Memos use `mina-guard-memo` over `[UTF8 byte length, ...byte fields]`, including
+empty memos; zero is no longer the empty-memo sentinel. Transaction type, field
+ordering, network domain, vault and child bindings remain committed by proposal identity.
+
+These application and action tags have no numeric suffix. The contract is not
+upgradeable; offline file versions separately track UI/CLI compatibility.
+
+This breaking release requires fresh vaults and fresh proposals; there is no legacy
+hash/signature acceptance path. See the [offline migration](offline-audit-guide.md#bundle-format-reference-requests-version-1-signed-responses-version-1).
+
+The regression `proposal-signing.test.ts` rejects legacy/application and
+action substitutions. Its opt-in real-proof test calls `proposal-signing-proof.ts`,
+checks the compiled VK against `.vk-hash`, and proves propose, approve, and execution
+by a non-owner. Run from `contracts/` with `RUN_REAL_PROOF_TESTS=1` and the selected
+`MINA_NETWORK_DOMAIN`; follow the memory limits in `AGENTS.md`.
+
 ## General overview
 
 MinaGuard is a hierarchical multisig vault zkApp for Mina. It manages shared funds
@@ -26,7 +48,7 @@ proposal is either **LOCAL** (executes on the same guard that stored it) or **RE
 authorization is done by having the child read the parent's on-chain state as
 AccountUpdate preconditions and verify an approval Merkle witness.
 
-**What an owner actually signs is a single `Field` — the proposal hash.** Approvals
+**What an owner actually signs is a single `Field` — the application-tagged, action-specific digest of the proposal hash.** Approvals
 are keyed by `TransactionProposal.hash()`, and the contract re-hashes the caller-supplied
 struct on-chain at approve and execute time. This is the mechanism that makes an untrusted
 indexer safe: a client rebuilds the proposal from indexer data, hashes it locally, and
@@ -45,7 +67,8 @@ the wallet shows only a hash — is the online path's central risk and is analyz
 | `constants.ts` | `MAX_OWNERS`, `MAX_RECEIVERS`, `NETWORK_DOMAIN`, markers, `TxType` + `Destination` enums |
 | `storage.ts` | Off-chain stores: `OwnerStore`, `ApprovalStore`, `VoteNullifierStore` |
 | `list-commitment.ts` | Owner chain hash circuits: membership proof, add, remove, setup-list commitment + coherence |
-| `memo.ts` | `memoToField()` (Poseidon hash of UTF-8 memo bytes), `decodeTxMemo()` (base58 tx memo → plaintext) |
+| `proposal-signing.ts` | Application-specific proposal/memo domains and action-specific owner signature messages |
+| `memo.ts` | `memoToField()` (application-tagged, length-prefixed Poseidon commitment of UTF-8 memo bytes), `decodeTxMemo()` (base58 tx memo → plaintext) |
 | `utils.ts` | `ownerKey()` helper (`Poseidon.hash(owner.toFields())`) |
 | `index.ts` | Public exports |
 
@@ -181,13 +204,13 @@ Unused receiver slots use `Receiver.empty()` (`PublicKey.empty()` + `UInt64(0)`)
 Non-transfer proposals (governance, child-lifecycle) use all-empty receiver slots unless
 otherwise noted.
 
-`hash()` returns `Poseidon` over **every** field of the struct — including `memoHash`, which is
+`hash()` returns `Poseidon.hashWithPrefix('mina-guard-proposal', ...)` over **every** field of the struct — including `memoHash`, which is
 how the proposal's memo is bound in (the plaintext itself travels off-chain as the transaction
 memo; see the [backend memo lifecycle](./backend-audit-guide.md#data-model)) — plus the
 compile-time `NETWORK_DOMAIN` constant appended as the final hash element (`Field(1)` on
 mainnet / `Field(2)` on testnet and devnet; see [Constants](#constants)), which is not a struct field but a
 per-network domain separator baked into the circuit. This hash is the
-universal key for approval counts, vote nullifiers, and signatures. Because `guardAddress`,
+universal identity for approval counts and vote nullifiers, and the input to action-specific signature messages. Because `guardAddress`,
 `destination`, and `childAccount`
 are all inside the hash, a proposal is cryptographically bound to a specific (parent, child)
 pair — cross-child reuse produces a different hash.
@@ -296,7 +319,7 @@ initialization.
 5. Assert proposal nonce freshness for the relevant domain (`nonce` or `parentNonce`; `CREATE_CHILD` requires `0`)
 6. Enforce per-txType propose rules (see TxType table)
 7. Assert `tokenId == Field(0)` (only native MINA is supported)
-8. Verify proposer's signature over `[proposalHash]`
+8. Verify proposer's signature over `[proposalSigningMessage(proposalHash, 'propose')]`
 9. Check and set vote nullifier (prevents re-proposal)
 10. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`
 11. Emit `ProposalEvent`, `MAX_RECEIVERS` `ReceiverEvent`s, and `ApprovalEvent`
@@ -308,7 +331,7 @@ initialization.
 2. Verify approver is an owner
 3. Assert `configNonce`, `guardAddress` match
 4. Assert proposal nonce freshness for the relevant domain
-5. Verify signature over `[proposalHash]`
+5. Verify signature over `[proposalSigningMessage(proposalHash, 'approve')]`
 6. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed
 7. Check and set vote nullifier
 8. Increment approval count in the approval map
@@ -567,7 +590,7 @@ assumptions it *does* rest on:
 
 **1. Proposal-hash binding is the whole game.** Every approval and execution keys into
 `TransactionProposal.hash()`, recomputed on-chain from the caller-supplied struct, and the
-approver's signature must cover that exact hash (`signature.verify(owner, [proposalHash])`).
+approver's signature must cover that exact hash (`signature.verify(owner, [proposalSigningMessage(proposalHash, action)])`).
 Audit whether any field that affects fund movement — `receivers`, `data`, `guardAddress`,
 `destination`, `childAccount` — is left out of the hash or of the propose-time
 consistency checks. Anything omitted becomes malleable after approval.
@@ -602,7 +625,8 @@ match, and compiles both distinct domains on a cache miss).
 | Property | Mechanism |
 | -------- | --------- |
 | Only owners can propose | Chain hash witness verified against `ownersCommitment` |
-| Only owners can approve | Chain hash witness + signature over `proposalHash` |
+| Only owners can approve | Chain hash witness + signature over `proposalSigningMessage(proposalHash, 'approve')` |
+| Proposal and signature domains are explicit | Application prefixes separate proposal identity, propose authorization, approve authorization, and memo commitments |
 | No double-voting | Vote nullifier map keyed by `hash(proposalHash, approver)` |
 | Proposal existence verified | `PROPOSED_MARKER` in approval map |
 | No LOCAL re-execution | `EXECUTED_MARKER` replaces count after execution |
@@ -738,9 +762,10 @@ parent recovery.
 The online worker fetches recipient accounts before allocation. Offline execute
 bundles include those full accounts in the existing `accounts` map; the CLI
 requires the snapshots and proves the same contract checks. The JSON format stays
-at v2: older allocation bundles without recipient snapshots fail closed with an
-instruction to export again. Proposal hashes, approval signatures, events, and
-signed-response format are unchanged. Allocation does not fund new accounts.
+at v1: older allocation bundles without recipient snapshots fail closed with an
+instruction to export again. Allocation adds no fields to proposals, events, or
+signed responses. This branch also changes proposal hashes and approval-signing
+messages as described above. Allocation does not fund new accounts.
 Desktop uses the same UI exporter and contract execution path.
 
 This prevents premature funding through allocation (F-2026-19028) and enforces

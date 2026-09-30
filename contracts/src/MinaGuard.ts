@@ -34,6 +34,8 @@ import {
 
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners, assertOnCurveIf } from './list-commitment.js';
 
+import { PROPOSAL_HASH_PREFIX, proposalSigningMessage } from './proposal-signing.js';
+
 // -- Types -------------------------------------------------------------------
 
 /** A single receiver slot: address + amount. Empty slots use PublicKey.empty() and UInt64(0). */
@@ -77,13 +79,13 @@ export class TransactionProposal extends Struct({
   destination: Field,
   childAccount: PublicKey,
 }) {
-  /** Returns the unique proposal hash used as map key and signature message. */
+  /** Returns the unique proposal hash used as map key and input to action-specific signature messages. */
   hash(): Field {
     const fields: Field[] = [];
     for (let i = 0; i < MAX_RECEIVERS; i++) {
       fields.push(...Receiver.toFields(this.receivers[i]));
     }
-    return Poseidon.hash([
+    return Poseidon.hashWithPrefix(PROPOSAL_HASH_PREFIX, [
       ...fields,
       this.tokenId,
       this.txType,
@@ -1065,7 +1067,7 @@ export class MinaGuard extends SmartContract {
     const proposalHash = proposal.hash();
 
     // --- approval logic ---
-    signature.verify(proposer, [proposalHash]).assertTrue('Invalid signature');
+    signature.verify(proposer, [proposalSigningMessage(proposalHash, 'propose')]).assertTrue('Invalid signature');
 
     const voteNullifierKey = Poseidon.hash([proposalHash, ...proposer.toFields()]);
     const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
@@ -1137,7 +1139,7 @@ export class MinaGuard extends SmartContract {
     this.assertFreshProposalNonce(proposal);
 
     const proposalHash = proposal.hash();
-    signature.verify(approver, [proposalHash]).assertTrue('Invalid signature');
+    signature.verify(approver, [proposalSigningMessage(proposalHash, 'approve')]).assertTrue('Invalid signature');
 
     this.assertNotExecuted(currentApprovalCount);
     this.assertProposalExists(currentApprovalCount);

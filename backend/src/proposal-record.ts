@@ -126,7 +126,6 @@ export function computeProposalMemoMatch(
   memoHash: string | null,
 ): MemoMatch {
   if (memo == null || memoHash == null) return null;
-  if (memoHash === '0') return null;
   return memoToField(memo).toString() === memoHash;
 }
 

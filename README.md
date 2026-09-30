@@ -291,8 +291,12 @@ browser storage loses only this optimization, not signing keys. Ranges exceeding
 the existing pagination cap fail closed; cursor pagination is tracked in
 [issue #143](https://github.com/zksecurity/mina-guard/issues/143).
 
-Offline requests exported by this UI use **version 2** with a complete public
-store snapshot. Use the matching updated offline CLI; older CLIs reject v2. The
-updated CLI still accepts full-history v1 requests. Signed responses remain v1.
+Offline requests exported by this UI use **version 1** with a complete public
+store snapshot. Proposals use application-tagged hashes, distinct
+propose/approve signing messages, and length-prefixed memo commitments (including
+empty memos). Use matching CLI/UI/backend/desktop builds and new network VKs.
+Requests and signed responses both use v1 after the pre-release reset. Discard
+older files: the version number alone does not distinguish them from current files.
+This breaking change requires fresh vaults and recreated proposals.
 See [the offline audit guide](docs/offline-audit-guide.md) for migration and trust
 boundaries. Desktop packages the same worker and exporter.
