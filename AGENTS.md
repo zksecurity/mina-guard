@@ -65,6 +65,13 @@ These instructions apply to the entire MinaGuard monorepo.
 
 ## Documentation
 
+- Write documentation and code comments in plain language. Start with what
+  happens, when it happens, and why it matters. Name the concrete action or state
+  that changes; add implementation details only when they help the reader
+  understand the behavior or maintain the code. Avoid jargon and abstract
+  comparisons when a direct explanation is enough. For example: "Add Owner and
+  Create SubVault safety checks remain valid across polling refreshes unless
+  the proposal or relevant Vault state changes."
 - For every code change, review and update the relevant README files and
   `docs/*-audit-guide.md` files in the same change. Keep cross-referenced guides,
   especially `docs/ui-audit-guide.md` and `docs/offline-audit-guide.md`,

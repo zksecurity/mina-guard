@@ -61,12 +61,12 @@ their existing warnings. Pending-proposal validation and independent worker/CLI
 checks before signing remain unchanged. Memo integrity and live Vault permission
 warnings are separate checks and remain visible on historical proposals.
 
-Add Owner and Create SubVault preflight results are keyed by validation inputs
-(proposal identity and payload, lifecycle state, network, Vault address and owner
-configuration), not the objects replaced by polling. Unchanged refreshes retain
+Add Owner and Create SubVault safety checks remain valid across polling refreshes
+unless the proposal or relevant Vault state changes. Unchanged refreshes retain
 known failures and their approval/export blocks. Unavailable checks retry after
 ten seconds without clearing their warning or overlapping requests. Changing
-inputs or leaving pending discards late results and cancels scheduled retries;
+the proposal, its status, the network, Vault address, or owner configuration
+discards late results and cancels scheduled retries;
 the signing worker/CLI still performs its own validation.
 
 **The memo has three roles, and only one is enforced on-chain.** The short note a user attaches
