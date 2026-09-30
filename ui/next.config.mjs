@@ -28,11 +28,9 @@ const nextConfig = {
     NEXT_PUBLIC_COMMIT_SHA: commitSha,
   },
   productionBrowserSourceMaps: process.env.ENABLE_SOURCE_MAPS !== 'false',
-  experimental: {
-    // Workspace root — ensures standalone tracing follows workspace-linked
-    // contracts one level above ui/.
-    outputFileTracingRoot: path.resolve(__dirname, '..'),
-  },
+  // Workspace root — ensures standalone tracing follows workspace-linked
+  // contracts one level above ui/.
+  outputFileTracingRoot: path.resolve(__dirname, '..'),
   webpack(config, { isServer }) {
     // Disable minification: SWC/terser minifiers are known to mangle BigInt
     // operations (see terser/terser#546, terser/terser#525). o1js relies on
