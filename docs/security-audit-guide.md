@@ -138,7 +138,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Execution is permissionless (liveness) | no owner gate on any `execute*` — once threshold is met, anyone can execute; a non-cooperating proposer cannot strand an approved proposal | `execute.test.ts` ("allow anyone to trigger execution") |
 | Stale proposals invalidated | `configNonce` match + execution-nonce ordering (`nonce` / `parentNonce`) | `governance.test.ts`, `execute.test.ts` |
 | Time-bounded proposals | optional `expirySlot` vs `globalSlotSinceGenesis` | `execute.test.ts` |
-| Mainnet/test-network proposal replay prevented | compile-time `NETWORK_DOMAIN` (`Field(1)` mainnet / `Field(2)` testnet and devnet) folded into every proposal hash (`constants.ts`, `TransactionProposal.hash()`), producing distinct mainnet and test-network VKs — there is no `networkId` field or state | `network-domain.test.ts` rejects missing/invalid/conflicting selections; `check-vk-hash` CI pins all three labeled VK entries against `contracts/.vk-hash` |
+| Mainnet/test-network proposal replay prevented | compile-time `NETWORK_DOMAIN` (`Field(1)` mainnet / `Field(2)` testnet and devnet) folded into every proposal hash (`constants.ts`, `TransactionProposal.hash()`), producing distinct mainnet and test-network VKs — there is no `networkId` field or state | `network-domain.test.ts` rejects missing/invalid/conflicting selections; `check-vk-hash` CI compiles the two distinct domains and generates all three labeled VK entries |
 | Cross-contract / cross-child replay prevented | `guardAddress` and `childAccount` inside the proposal hash; children assert `childAccount == this.address` | `child.test.ts` |
 | Setup owner list coherent with commitment | commitment computed in-circuit; duplicate owners and non-empty padding rejected | `setup.test.ts`, `list-commitment.test.ts` |
 | Executed child config = displayed config | `reservedConfigHash` committed at `reserveForParent`; `executeSetupChild` binds `proposal.data` and `reservedConfigHash` to the recomputed hash, then clears the consumed reservation | `child.test.ts`, `reservation.test.ts` |
@@ -167,10 +167,11 @@ CLI the bundle's account snapshot); events are unauthenticated, so the per-event
 contract emits only locate a divergence and are never trusted on their own. Covered by
 `event-rebuild.test.ts`, `store-checkpoint.test.ts` and the offline CLI end-to-end tests. Persisted roots are not trust anchors: restored leaves are rehashed, then compared against the node (online) or bundled snapshot (offline).
 
-`contracts/.vk-hash` holds canonical hashes for testnet, mainnet, and devnet. The
-`check-vk-hash` job recompiles all three when a change touches VK-affecting paths or
-`contracts/.vk-hash`. Operators must also compare the actual deployed VK with the
-network's pinned hash; CI cannot attest an independently built deployment artifact.
+CI generates `contracts/.vk-hash` for each source commit by compiling testnet
+and mainnet in parallel; devnet reuses the testnet hash. Release and deploy
+jobs verify the artifact's source commit before using it. Operators must also
+compare the actual deployed VK with that network's generated hash; CI cannot
+attest an independently built deployment artifact.
 
 ## Accepted risks and known limitations
 

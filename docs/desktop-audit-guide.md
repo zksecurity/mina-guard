@@ -240,7 +240,7 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   `INDEXER_MODE=lite`, `MINA_ENDPOINT`, `ARCHIVE_ENDPOINT`,
   `INDEX_START_HEIGHT=0`), because the backend's Prisma client reads
   `DATABASE_URL` at import time.
-- `MINAGUARD_VK_HASH` is read from the bundled `contracts/.vk-hash`
+- `MINAGUARD_VK_HASH` is read from the bundled CI-generated `contracts/.vk-hash`
   (`assets/.vk-hash`) so the `/api/subscribe` route can reject contracts whose
   on-chain verification key does not match this MinaGuard release (a
   *mismatched* VK is rejected on both the manual and auto-subscribe paths; a
@@ -419,7 +419,7 @@ All steps run from `desktop/` (`bun run build` chains them; details in
    `schema.sqlite.prisma` (a schema-sync check fails loudly if it drifts from
    the Postgres `schema.prisma`).
 2. `prepare:assets` — regenerates `assets/schema.sql` and copies it plus
-   `contracts/.vk-hash` into `dist/assets/`.
+   the downloaded `contracts/.vk-hash` into `dist/assets/`.
 3. `build:ui` — builds `../ui` in Next standalone mode with
    `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
    `NEXT_PUBLIC_INDEXER_MODE=lite` and

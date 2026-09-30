@@ -22,7 +22,8 @@ bun run dev-helpers/cli.ts help
 
 ### Verification Key Hash
 
-Compile MinaGuard locally and print the verification key hash:
+CI compiles testnet and mainnet in parallel and publishes the source-bound
+`minaguard-vk-manifest` artifact. Local compilation is optional for debugging:
 
 ```bash
 bun run --filter contracts build

@@ -196,7 +196,7 @@ let compileSucceeded = false;
 let idbCache: Awaited<ReturnType<typeof import('./idb-compile-cache').createIndexedDBCache>> | null = null;
 
 /** The verification key this build's circuit must compile to — the same
- *  `contracts/.vk-hash` value the backend receives as `MINAGUARD_VK_HASH`, for
+ *  generated `contracts/.vk-hash` value the backend receives as `MINAGUARD_VK_HASH`, for
  *  the network domain selected by `NEXT_PUBLIC_MINA_NETWORK`. */
 const EXPECTED_VK_HASH = process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH;
 

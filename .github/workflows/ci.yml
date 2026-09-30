@@ -151,130 +151,13 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
 
-  # Verifies contracts/.vk-hash semantically: when VK-affecting paths change,
-  # compile MinaGuard and compare the real VK hash against the committed file.
-  # Cosmetic contract edits (imports, comments, formatting) that don't alter
-  # the circuit pass without requiring a .vk-hash bump; genuine drift fails
-  # even if .vk-hash was updated (to the wrong value). The diff detection only
-  # decides whether to spend the compile minutes.
+  # Generate the two distinct circuit hashes on separate runners. Devnet shares
+  # the testnet circuit. Genuine proof tests reuse the testnet compilation.
   check-vk-hash:
-    timeout-minutes: 45
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          submodules: true
-
-      - name: Detect VK-affecting changes
-        id: detect
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-          else
-            BASE="${{ github.event.before }}"
-          fi
-
-          # Skip on initial push (before SHA is all-zeros)
-          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-            echo "Initial push — skipping VK hash check."
-            echo "verify=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Force-pushes can make BASE unresolvable; verify unconditionally then.
-          if ! git cat-file -e "$BASE" 2>/dev/null; then
-            echo "Base commit $BASE not available locally — verifying VK hash to be safe."
-            echo "verify=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          SRC_CHANGED=$(git diff --name-only "$BASE"...HEAD -- contracts/src/ || true)
-          O1JS_CHANGED=$(git diff "$BASE"...HEAD -- bun.lock | grep '^[+-].*"o1js@' | grep -v '^---\|^+++' || true)
-          HASH_CHANGED=$(git diff --name-only "$BASE"...HEAD -- contracts/.vk-hash || true)
-
-          TRIGGER=""
-          [ -n "$SRC_CHANGED" ] && TRIGGER="contracts/src changed"
-          [ -n "$O1JS_CHANGED" ] && TRIGGER="${TRIGGER:+$TRIGGER; }o1js version changed in bun.lock"
-          [ -n "$HASH_CHANGED" ] && TRIGGER="${TRIGGER:+$TRIGGER; }contracts/.vk-hash changed"
-
-          if [ -n "$TRIGGER" ]; then
-            echo "$TRIGGER — will compile and compare against contracts/.vk-hash."
-            echo "verify=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No VK-affecting changes — skipping compile."
-            echo "verify=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install Bun
-        if: steps.detect.outputs.verify == 'true'
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        if: steps.detect.outputs.verify == 'true'
-        run: bun install --ignore-scripts
-
-      - name: Compile contracts and compare VK hashes (testnet + mainnet + devnet)
-        if: steps.detect.outputs.verify == 'true'
-        run: |
-          # Pre-build once so the dev-helpers CLI's static imports resolve.
-          # The tsc output is network-independent; MINA_NETWORK_DOMAIN is
-          # evaluated at JS runtime when constants.js is imported.
-          bun run --filter contracts build
-
-          check_hash() {
-            local network="$1"
-            local log="vk-${network}.log"
-
-            MINA_NETWORK_DOMAIN="$network" bun run dev-helpers/cli.ts vk-hash compile 2>&1 | tee "$log"
-            local computed
-            computed=$(grep "^vkHash\[${network}\]: " "$log" | tail -1 | awk '{print $2}' || true)
-            local committed
-            committed=$(grep "^${network}=" contracts/.vk-hash | cut -d= -f2 | tr -d '[:space:]')
-
-            echo "${network} computed:  ${computed:-<none>}"
-            echo "${network} committed: ${committed:-<none>}"
-
-            if [ -z "$computed" ]; then
-              echo "::error::Could not extract ${network} VK hash from 'vk-hash compile' output."
-              return 1
-            fi
-            if [ -z "$committed" ]; then
-              echo "::error::contracts/.vk-hash is missing a '${network}=' line."
-              echo "Add: ${network}=${computed}"
-              return 1
-            fi
-            if [ "$computed" != "$committed" ]; then
-              echo "::error::contracts/.vk-hash ${network} hash is stale: computed ${computed} but committed ${committed}."
-              echo "Regenerate: MINA_NETWORK_DOMAIN=${network} bun run dev-helpers/cli.ts vk-hash compile — then update ${network}= in contracts/.vk-hash."
-              return 1
-            fi
-            echo "${network} VK hash matches."
-          }
-
-          FAIL=0
-          check_hash testnet || FAIL=1
-          check_hash mainnet || FAIL=1
-          check_hash devnet || FAIL=1
-          exit $FAIL
-
-      - name: Run genuine-proof parent/child state and allocation regressions
-        if: steps.detect.outputs.verify == 'true'
-        working-directory: contracts
-        run: >-
-          RUN_REAL_PROOF_TESTS=1 bun test src/tests/child.test.ts
-          --test-name-pattern "genuine MinaGuard proof"
-          --timeout 900000
-        timeout-minutes: 20
-
-      - name: Run genuine-proof child reservation lifecycle
-        if: steps.detect.outputs.verify == 'true'
-        working-directory: contracts
-        run: >-
-          RUN_REAL_PROOF_TESTS=1 bun test src/tests/reservation.test.ts
-          --test-name-pattern "genuine proofs"
-          --timeout 900000
-        timeout-minutes: 20
+  check-vk-hash:
+    uses: ./.github/workflows/vk-hashes.yml
+    with:
+      run-proof-tests: true
 
   test-offline-cli-windows:
     timeout-minutes: 45

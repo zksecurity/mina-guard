@@ -234,7 +234,7 @@ checks. Successful child setup clears the consumed `reservedConfigHash`; consume
 must use initialized state and events for the active configuration. Method arguments,
 proposal hashes, events, and offline bundle formats are unchanged. The circuit and
 verification keys change, so UI, offline CLI, and desktop builds must use the matching
-per-network `contracts/.vk-hash`; older deployed verification keys are not upgraded
+per-network CI-generated `contracts/.vk-hash`; older deployed verification keys are not upgraded
 by this source change.
 
 A guard that is deployed but not yet configured could be controlled by whoever

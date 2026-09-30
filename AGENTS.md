@@ -53,7 +53,10 @@ These instructions apply to the entire MinaGuard monorepo.
 ## Cross-package consistency
 
 - Changes under `contracts/src/` or to o1js must verify both testnet and mainnet
-  verification-key hashes. Update `contracts/.vk-hash` when the circuit changes.
+  verification-key hashes. CI compiles both domains and publishes the generated
+  `contracts/.vk-hash` manifest; devnet uses the testnet hash. Do not commit a
+  locally generated manifest. Release and deploy jobs must download the manifest
+  for their exact source commit and verify it before use.
 - Contract and protocol changes must be reflected in the UI worker, offline CLI,
   backend event decoding and types, desktop packaging, and applicable tests.
 - Backend data-model changes must keep `backend/prisma/schema.prisma` and
@@ -84,6 +87,11 @@ These instructions apply to the entire MinaGuard monorepo.
 
 ## Validation
 
+- Before an o1js compile or real-proof run, check available memory with
+  `free -h` and running heavy jobs. Run heavy local validations serially;
+  keep several GiB free for the OS and other worktrees. Limit the process
+  memory or CPU when needed, and inspect the result before starting another.
+  CI uses separate runners for mainnet and testnet compiles.
 - Run focused tests for every changed surface and add cross-surface or E2E tests
   when a shared protocol or user flow changes. Report exactly what ran and what
   was skipped.

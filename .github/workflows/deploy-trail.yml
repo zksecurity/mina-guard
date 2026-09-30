@@ -14,8 +14,8 @@
 #                          on the node-stack box's archive postgres. REQUIRED —
 #                          docker-compose.trail.yml asserts it.
 #
-# The MinaGuard VK hash is NOT a secret — it's committed at
-# contracts/.vk-hash and read automatically by deploy-trail.sh.
+# The MinaGuard VK hash is NOT a secret — CI generates contracts/.vk-hash
+# from this commit and deploy-trail.sh reads the downloaded manifest.
 #
 # To bootstrap: add the secrets above, then merge a PR to main (or trigger
 # via `gh workflow run deploy-trail.yml`).
@@ -39,12 +39,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  vk-hashes:
+    uses: ./.github/workflows/vk-hashes.yml
+
   deploy:
+    needs: vk-hashes
     runs-on: [self-hosted, deploy]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Download VK manifest for this commit
+        uses: actions/download-artifact@v4
+        with:
+          name: minaguard-vk-manifest
+          path: contracts
+      - name: Verify VK manifest source
+        run: bash contracts/scripts/verify-vk-manifest.sh
 
       - name: Deploy
         # `down` wipes the app DB volume before `up` rebuilds. Mirrors the

@@ -31,7 +31,11 @@ permissions:
   contents: write # required to create/update the GitHub Release
 
 jobs:
+  vk-hashes:
+    uses: ./.github/workflows/vk-hashes.yml
+
   build:
+    needs: vk-hashes
     name: Build (${{ matrix.os }})
     timeout-minutes: 60
     strategy:
@@ -48,6 +52,15 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: true # ui/deps/o1js is a submodule the UI build needs
+
+      - name: Download VK manifest for this commit
+        uses: actions/download-artifact@v4
+        with:
+          name: minaguard-vk-manifest
+          path: contracts
+      - name: Verify VK manifest source
+        shell: bash
+        run: bash contracts/scripts/verify-vk-manifest.sh
 
       # Install with --ignore-scripts: the `ui` package has a postinstall that
       # builds the mina-signer bundle via `npx esbuild`, which fails under bun's
