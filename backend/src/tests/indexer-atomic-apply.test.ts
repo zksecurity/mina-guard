@@ -71,15 +71,23 @@ async function seedContract(events: ChainEvent[]) {
 
 type SnapshotWriter = (...args: unknown[]) => Promise<void>;
 
-/** Makes the first config snapshot write succeed, then throw `error`. */
-function failAfterFirstSnapshotWrite(indexer: MinaGuardIndexer, error: () => unknown) {
+/**
+ * Makes config snapshot writes for events at `blockHeight` succeed, then throw
+ * `error` (up to `times` times), so the failure lands after a derived write.
+ */
+function failSnapshotWritesAt(
+  indexer: MinaGuardIndexer,
+  blockHeight: number,
+  error: () => unknown,
+  times = Infinity,
+) {
   const target = indexer as unknown as { appendContractConfigSnapshot: SnapshotWriter };
   const real = target.appendContractConfigSnapshot.bind(indexer);
-  let armed = true;
+  let remaining = times;
   target.appendContractConfigSnapshot = async (...args) => {
     await real(...args);
-    if (armed) {
-      armed = false;
+    if (args[2] === blockHeight && remaining > 0) {
+      remaining--;
       throw error();
     }
   };
@@ -95,7 +103,7 @@ describe('atomic event application', () => {
   test('a transient failure after a derived write leaves nothing behind, and the next sync applies the event', async () => {
     const { contractId, address } = await seedContract([setupEvent]);
     const indexer = new MinaGuardIndexer(stubConfig);
-    failAfterFirstSnapshotWrite(indexer, transient);
+    failSnapshotWritesAt(indexer, 5, transient, 1);
 
     await expect(indexer.syncSingleContract(contractId, address, 0, 20)).rejects.toThrow('closed the connection');
     expect(await prisma.eventRaw.count()).toBe(0);
@@ -112,7 +120,7 @@ describe('atomic event application', () => {
   test('a deterministic failure records the event with applyError and no state changes, and later events still apply', async () => {
     const { contractId, address } = await seedContract([setupEvent, thresholdEvent]);
     const indexer = new MinaGuardIndexer(stubConfig);
-    failAfterFirstSnapshotWrite(indexer, () => new TypeError('bad event data'));
+    failSnapshotWritesAt(indexer, 5, () => new TypeError('bad event data'));
 
     await indexer.syncSingleContract(contractId, address, 0, 20);
 
@@ -129,6 +137,19 @@ describe('atomic event application', () => {
     // A quarantined event is not retried.
     await indexer.syncSingleContract(contractId, address, 0, 20);
     expect(await prisma.eventRaw.count()).toBe(2);
+    expect(await prisma.contractConfig.count()).toBe(1);
+  });
+
+  test('a non-transient error that does not repeat is retried and applies', async () => {
+    const { contractId, address } = await seedContract([setupEvent]);
+    const indexer = new MinaGuardIndexer(stubConfig);
+    failSnapshotWritesAt(indexer, 5, () => new TypeError('one-off'), 1);
+
+    await indexer.syncSingleContract(contractId, address, 0, 20);
+
+    const raw = await prisma.eventRaw.findMany();
+    expect(raw).toHaveLength(1);
+    expect(raw[0].applyError).toBeNull();
     expect(await prisma.contractConfig.count()).toBe(1);
   });
 
@@ -161,6 +182,32 @@ describe('atomic event application', () => {
     await expect(apiWrite).resolves.toMatchObject({ ready: true });
     await sync;
     expect(await prisma.contractConfig.count()).toBe(1);
+  });
+
+  test('concurrent syncs of two vaults with events at the same height both apply', async () => {
+    // Both write BlockHeader(5); Prisma's upsert is read-then-insert, so the
+    // later writer can fail on the row the earlier one just committed.
+    const vaults = await Promise.all([0, 1].map(async () => {
+      const address = PrivateKey.random().toPublicKey().toBase58();
+      const contract = await prisma.contract.create({
+        data: { address, discoveredAtBlock: 1, permissionsVerified: true },
+      });
+      return { contractId: contract.id, address };
+    }));
+    stubMinaClient(() => ({
+      fetchDecodedContractEvents: async (address: string) =>
+        [{ ...setupEvent, txHash: `tx-setup-${address}` }],
+      fetchOnChainState: async () => null,
+    }));
+
+    await Promise.all(vaults.map(({ contractId, address }) =>
+      new MinaGuardIndexer(stubConfig).syncSingleContract(contractId, address, 0, 20)));
+
+    const raw = await prisma.eventRaw.findMany();
+    expect(raw).toHaveLength(2);
+    expect(raw.map((r) => r.applyError)).toEqual([null, null]);
+    expect(await prisma.contractConfig.count()).toBe(2);
+    expect(await prisma.blockHeader.count()).toBe(1);
   });
 
   test('overlapping syncs of the same events apply each event exactly once', async () => {

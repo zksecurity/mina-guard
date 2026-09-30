@@ -542,8 +542,11 @@ export class MinaGuardIndexer {
    *
    * - A transient database error rolls back and propagates; the next tick
    *   retries the event.
-   * - Any other error rolls back and records the event with `applyError` and
-   *   no state changes. Retrying cannot fix it, and one bad event must not halt
+   * - Any other error rolls back and is retried once at once: Prisma emulates
+   *   upserts as read-then-insert, so a concurrent sync can make the first
+   *   attempt fail on a row it just committed (e.g. a shared BlockHeader).
+   * - An error that repeats records the event with `applyError` and no state
+   *   changes. Retrying cannot fix it, and one bad event must not halt
    *   indexing for every vault.
    * - Losing a race with an overlapping sync of the same event is a no-op.
    */
@@ -554,29 +557,33 @@ export class MinaGuardIndexer {
     fingerprint: string,
     setupFallback: OnChainState | null,
   ): Promise<'applied' | 'quarantined' | 'duplicate'> {
-    try {
-      await prisma.$transaction(async (db) => {
-        const eventRaw = await this.recordEvent(db, contractId, chainEvent, fingerprint, null);
-        await this.applyEvent(db, contractId, chainEvent, eventOrder, eventRaw.id, setupFallback);
-      });
-      return 'applied';
-    } catch (error) {
-      if (await this.isRecorded(fingerprint)) return 'duplicate';
-      if (isTransientDbError(error)) throw error;
-
-      const reason = describeThrown(error);
-      console.error(
-        `[indexer] quarantined ${chainEvent.type} event at block ${chainEvent.blockHeight} (tx ${chainEvent.txHash ?? '?'}):`,
-        error,
-      );
+    let error: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await prisma.$transaction((db) => this.recordEvent(db, contractId, chainEvent, fingerprint, reason));
-      } catch (recordError) {
+        await prisma.$transaction(async (db) => {
+          const eventRaw = await this.recordEvent(db, contractId, chainEvent, fingerprint, null);
+          await this.applyEvent(db, contractId, chainEvent, eventOrder, eventRaw.id, setupFallback);
+        });
+        return 'applied';
+      } catch (attemptError) {
         if (await this.isRecorded(fingerprint)) return 'duplicate';
-        throw recordError;
+        if (isTransientDbError(attemptError)) throw attemptError;
+        error = attemptError;
       }
-      return 'quarantined';
     }
+
+    console.error(
+      `[indexer] quarantined ${chainEvent.type} event at block ${chainEvent.blockHeight} (tx ${chainEvent.txHash ?? '?'}):`,
+      error,
+    );
+    try {
+      const reason = error instanceof Error ? `${error.name}: ${error.message}` : describeThrown(error);
+      await prisma.$transaction((db) => this.recordEvent(db, contractId, chainEvent, fingerprint, reason));
+    } catch (recordError) {
+      if (await this.isRecorded(fingerprint)) return 'duplicate';
+      throw recordError;
+    }
+    return 'quarantined';
   }
 
   /** Writes the event's block header and EventRaw marker. */
