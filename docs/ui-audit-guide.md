@@ -50,6 +50,25 @@ re-checks threshold and moves funds / applies the governance change. In all thre
 owner actually **signs is the proposal hash — a single `Field`** (blind signing; see the
 threat model), not the human-readable transaction.
 
+**Execution preflight warnings apply only to pending proposals.** The detail page
+checks Add Owner targets and commitments against the current owner list, Create
+SubVault configuration against its signed data, and transfer/allocate/reclaim
+amounts against the source's current balance. An executed Add Owner already added
+its owner, and an executed payment may have spent its balance; those current-state
+checks cannot establish whether a historical proposal was executable. Leaving
+pending skips these page checks, ignores in-flight results, and immediately hides
+their existing warnings. Pending-proposal validation and independent worker/CLI
+checks before signing remain unchanged. Memo integrity and live Vault permission
+warnings are separate checks and remain visible on historical proposals.
+
+Add Owner and Create SubVault safety checks remain valid across polling refreshes
+unless the proposal or relevant Vault state changes. Unchanged refreshes retain
+known failures and their approval/export blocks. Unavailable checks retry after
+ten seconds without clearing their warning or overlapping requests. Changing
+the proposal, its status, the network, Vault address, or owner configuration
+discards late results and cancels scheduled retries;
+the signing worker/CLI still performs its own validation.
+
 **The memo has three roles, and only one is enforced on-chain.** The short note a user attaches
 to a proposal shows up as (1) a **hashed** `memoHash` bound into the proposal (the only value
 owners' signatures cover), (2) an unconstrained **broadcast** fee-payer memo on the outer

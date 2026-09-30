@@ -38,6 +38,7 @@ import {
   savePendingTx,
 } from '@/lib/storage';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
+import { usePreflightCheck } from '@/hooks/usePreflightCheck';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
 import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
@@ -144,53 +145,40 @@ export default function TransactionDetailPage() {
     return () => { cancelled = true; };
   }, [multisig, proposal, proposalHash, proposalsAddress]);
 
-  // For CREATE_CHILD: recompute the config hash from the owners/threshold the
+  // For pending CREATE_CHILD: recompute the config hash from the owners/threshold the
   // events display and compare it to the signed proposal.data. A mismatch means
   // the config shown here is NOT the config being approved — on-chain the
   // execute would revert, but we warn approvers before they sign. 'unavailable'
   // = events not indexed yet, so we can't check (not a mismatch).
-  const [childConfigCheck, setChildConfigCheck] =
-    useState<'checking' | 'match' | 'mismatch' | 'unavailable' | null>(null);
+  const pendingCreateChild = proposal?.txType === 'createChild' && proposal.status === 'pending';
+  // Keep polling objects out of the key. These are the inputs that can change
+  // the result; proposal payload fields are included even if its hash is unchanged.
+  const preflightContext = [
+    multisig?.address, multisig?.configNonce, multisig?.ownersCommitment,
+    proposalsAddress, wallet.network, proposalHash, proposal?.status,
+    proposal?._localPending, proposal?.configNonce,
+  ];
+  const canCheckProposal = !!multisig && proposalsAddress === multisig.address &&
+    !proposal?._localPending;
+  const childConfigCheck = usePreflightCheck<'match' | 'mismatch'>(
+    pendingCreateChild && canCheckProposal
+      ? JSON.stringify([...preflightContext, proposal?.childAccount, proposal?.data]) : null,
+    async () => {
+      if (!proposal?.childAccount || !proposal.data) return 'unavailable';
+      const config = await fetchChildConfigFromEvents(proposal.childAccount, proposalHash);
+      if (!config) return 'unavailable';
+      const { configHash } = await computeCreateChildConfigHash({
+        childOwners: config.owners,
+        childThreshold: config.threshold,
+        // The reserved slot order is what the signed data binds.
+        preserveOrder: true,
+      });
+      return configHash === proposal.data ? 'match' : 'mismatch';
+    },
+  );
   const [childPermissionCheck, setChildPermissionCheck] = useState<
     'checking' | 'match' | 'mismatch' | null
   >(null);
-  useEffect(() => {
-    if (!proposal || proposal.txType !== 'createChild') {
-      setChildConfigCheck(null);
-      return;
-    }
-    if (proposal._localPending) return;
-    if (!multisig || proposalsAddress !== multisig.address) return;
-    const childAddr = proposal.childAccount;
-    const signedData = proposal.data;
-    if (!childAddr || !signedData) {
-      setChildConfigCheck('unavailable');
-      return;
-    }
-    let cancelled = false;
-    setChildConfigCheck('checking');
-    (async () => {
-      try {
-        const config = await fetchChildConfigFromEvents(childAddr, proposalHash);
-        if (cancelled) return;
-        if (!config) {
-          setChildConfigCheck('unavailable');
-          return;
-        }
-        const { configHash } = await computeCreateChildConfigHash({
-          childOwners: config.owners,
-          childThreshold: config.threshold,
-          // the reserved order (slot index) is what the signed data binds
-          preserveOrder: true,
-        });
-        if (cancelled) return;
-        setChildConfigCheck(configHash === signedData ? 'match' : 'mismatch');
-      } catch {
-        if (!cancelled) setChildConfigCheck('unavailable');
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [proposal, proposalHash, multisig, proposalsAddress]);
 
   // Child-targeting approvals must authenticate the deployed child account
   // itself. Its VK can be canonical while its signature-authorized deployment
@@ -215,41 +203,28 @@ export default function TransactionDetailPage() {
     };
   }, [proposal?.txType, proposal?.childAccount, proposal?._localPending]);
 
-  // For ADD_OWNER: check the signed proposal.data matches inserting the target
+  // For pending ADD_OWNER only: executed proposals already changed the owner
+  // list, so checking them against current owners would report a false conflict.
+  // Check the signed proposal.data matches inserting the target
   // at some position of the indexed owner list (any position, not only the
   // sorted one). 'unexecutable' = no position does, so the contract would reject
   // it and approvers are blocked. 'unavailable' = the owner list could not be
   // rebuilt (backend down / not indexed), which doesn't block; the worker
   // re-checks before signing anyway.
-  const [addOwnerDataCheck, setAddOwnerDataCheck] =
-    useState<'checking' | 'match' | 'unexecutable' | 'sameKeyHolder' | 'unavailable' | null>(null);
-  useEffect(() => {
-    if (!proposal || proposal.txType !== 'addOwner') {
-      setAddOwnerDataCheck(null);
-      return;
-    }
-    if (proposal._localPending) return;
-    if (!multisig || proposalsAddress !== multisig.address) return;
-    let cancelled = false;
-    setAddOwnerDataCheck('checking');
-    (async () => {
-      try {
-        const result = await validateAddOwnerProposalData({
-          contractAddress: multisig.address,
-          proposal,
-        });
-        if (cancelled) return;
-        setAddOwnerDataCheck(
-          result == null || result.valid
-            ? 'match'
-            : result.reason === 'sameKeyHolder' ? 'sameKeyHolder' : 'unexecutable',
-        );
-      } catch {
-        if (!cancelled) setAddOwnerDataCheck('unavailable');
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [proposal, multisig, proposalsAddress]);
+  const pendingAddOwner = proposal?.txType === 'addOwner' && proposal.status === 'pending';
+  const addOwnerDataCheck = usePreflightCheck<'match' | 'unexecutable' | 'sameKeyHolder'>(
+    pendingAddOwner && canCheckProposal
+      ? JSON.stringify([...preflightContext, proposal?.data, proposal?.receivers?.[0]?.address]) : null,
+    async () => {
+      const result = await validateAddOwnerProposalData({
+        contractAddress: multisig!.address,
+        proposal: proposal!,
+      });
+      return result == null || result.valid
+        ? 'match'
+        : result.reason === 'sameKeyHolder' ? 'sameKeyHolder' : 'unexecutable';
+    },
+  );
 
   const isOwner = useMemo(() => {
     return owners.some((owner) => owner.address === wallet.address);
@@ -262,7 +237,9 @@ export default function TransactionDetailPage() {
     const target = proposal.receivers?.[0]?.address;
     return !!target && conflictsWithOwner(target, owners.map((owner) => owner.address));
   }, [proposal, owners]);
-  const addOwnerBlocked = addOwnerConflict || addOwnerDataCheck === 'sameKeyHolder';
+  // Hide stale async results on the very render that a proposal leaves pending.
+  const addOwnerBlocked = pendingAddOwner &&
+    (addOwnerConflict || addOwnerDataCheck === 'sameKeyHolder');
 
   const hasApproved = useMemo(() => {
     if (!wallet.address) return false;
@@ -271,9 +248,11 @@ export default function TransactionDetailPage() {
 
   // Source Vault/SubVault that funds the proposal's outgoing MINA. For
   // transfer/allocateChild it's the Vault we're viewing; for reclaimChild it's
-  // the SubVault being drained.
+  // the SubVault being drained. Current balances only constrain pending
+  // execution; they cannot tell us whether a historical payment was funded.
   const spendingTarget = useMemo(
-    () => (proposal && multisig ? getSpendingTarget(proposal, multisig.address) : null),
+    () => (proposal?.status === 'pending' && multisig
+      ? getSpendingTarget(proposal, multisig.address) : null),
     [proposal, multisig?.address],
   );
   const [sourceBalance, setSourceBalance] = useState<string | null>(null);
@@ -707,7 +686,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {childConfigCheck === 'mismatch' && (
+        {pendingCreateChild && childConfigCheck === 'mismatch' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
             <p className="font-semibold mb-1">SubVault config does not match the signed proposal</p>
             <p className="opacity-90">
@@ -733,7 +712,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {childConfigCheck === 'unavailable' && (
+        {pendingCreateChild && childConfigCheck === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">SubVault config could not be verified</p>
             <p className="opacity-90">
@@ -753,7 +732,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {addOwnerDataCheck === 'unexecutable' && (
+        {pendingAddOwner && addOwnerDataCheck === 'unexecutable' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
             <p className="font-semibold mb-1">Don&apos;t approve: this proposal can never execute</p>
             <p className="opacity-90">
@@ -764,7 +743,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {addOwnerDataCheck === 'unavailable' && (
+        {pendingAddOwner && addOwnerDataCheck === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">Owner list not checked yet</p>
             <p className="opacity-90">

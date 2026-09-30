@@ -213,3 +213,12 @@ The frontend caches o1js prover/verifier keys in IndexedDB so that page reloads 
 - Playwright HTML report is generated at `e2e/playwright-report/` (run `bunx playwright show-report` to view)
 - Traces and screenshots are captured on failure (in `e2e/test-results/`)
 - Logs are prefixed with `[e2e-setup]`, `[e2e-teardown]`, and `[e2e]` for easy filtering
+
+## Preflight polling regression tests
+
+Run `bun test e2e/browser/preflight-check.test.ts` from the repository root after
+installing dependencies and Playwright Chromium. These tests render the React
+preflight hook in Chromium and cover stable polling results, unavailable-data
+retries, changed inputs, and cleanup of late results and timers. They need no
+database or Mina network and run in the UI CI job after Chromium is installed.
+They live outside `unit/` so `bun run --filter e2e test:unit` remains browser-free.
