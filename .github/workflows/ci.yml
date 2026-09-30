@@ -337,7 +337,7 @@ jobs:
       - name: Install Playwright browsers
         run: cd e2e && bunx playwright install --with-deps chromium
       - name: Run preflight polling regression tests
-        run: bun test e2e/unit/preflight-check.test.ts
+        run: bun test e2e/browser/preflight-check.test.ts
       - name: Run UI test suite
         run: cd e2e && bun run test:ui
         env:

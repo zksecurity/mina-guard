@@ -216,8 +216,9 @@ The frontend caches o1js prover/verifier keys in IndexedDB so that page reloads 
 
 ## Preflight polling regression tests
 
-Run `bun test e2e/unit/preflight-check.test.ts` from the repository root after
+Run `bun test e2e/browser/preflight-check.test.ts` from the repository root after
 installing dependencies and Playwright Chromium. These tests render the React
 preflight hook in Chromium and cover stable polling results, unavailable-data
 retries, changed inputs, and cleanup of late results and timers. They need no
-database or Mina network and run in the UI CI job.
+database or Mina network and run in the UI CI job after Chromium is installed.
+They live outside `unit/` so `bun run --filter e2e test:unit` remains browser-free.
