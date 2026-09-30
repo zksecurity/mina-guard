@@ -30,6 +30,7 @@
     "ui": "workspace:*"
   },
   "overrides": {
-    "electron-builder-squirrel-windows": "26.15.3"
+    "electron-builder-squirrel-windows": "26.15.3",
+    "qs": "^6.16.0"
   }
 }
