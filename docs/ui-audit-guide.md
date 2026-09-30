@@ -59,6 +59,17 @@ re-checks threshold and moves funds / applies the governance change. In all thre
 owner actually **signs is an application-tagged, action-specific digest of the proposal hash — a single `Field`** (blind signing; see the
 threat model), not the human-readable transaction.
 
+**Proposal deadlines apply to all three stages.** The shared contract rejects
+expiry values outside `0..4294967295`. Zero means no expiry; a non-zero deadline
+requires proposing, approving, and executing transactions to be included at or
+before that slot. The ledger checks the slot at inclusion, so an approval built
+before expiry can still be rejected when submitted later. Online workers and
+the offline CLI use the same contract methods; see
+[`offline-audit-guide.md`](./offline-audit-guide.md). Proposal hashes, events,
+and bundle formats are unchanged. This circuit change requires regenerated
+per-network verification-key hashes and matching UI, offline CLI, and desktop
+builds before release; existing deployed vaults retain their old behavior.
+
 **Execution preflight warnings apply only to pending proposals.** The detail page
 checks Add Owner targets and commitments against the current owner list, Create
 SubVault configuration against its signed data, and transfer/allocate/reclaim

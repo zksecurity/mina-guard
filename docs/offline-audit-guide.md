@@ -42,6 +42,17 @@ networked device:
 The transport medium in both directions is assumed **untrusted** — see the
 threat model below for exactly what protects each leg.
 
+**Proposal deadlines apply to propose, approve, and execute.** The shared
+contract checks that `expirySlot` fits in `0..4294967295`; zero means no expiry.
+For a non-zero deadline, the Mina ledger checks that the transaction is included
+at or before that slot. An offline transaction can be built and signed before
+expiry and still be rejected if broadcast too late. This matches the online
+path described in [`ui-audit-guide.md`](./ui-audit-guide.md). Proposal hashes,
+events, and request/response formats are unchanged. This circuit change requires
+regenerated per-network verification-key hashes and matching UI, offline CLI,
+and desktop builds before release; existing deployed vaults retain their old
+behavior.
+
 Where it lives in the UI: proposal creation (`app/transactions/new`) has an
 **Online / Offline** toggle for *propose*; the proposal detail page
 (`app/transactions/[id]`) has the same toggle for *approve* and *execute*.
@@ -266,7 +277,7 @@ the offline CLI restores the resulting leaves without replaying events.
 | `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners) |
 | `input.childPrivateKey` | `string` | createChild only — signs the child's deploy update (see threat model) |
 | `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config |
-| `input.expirySlot` | `number` | Optional expiry |
+| `input.expirySlot` | `number` | UInt32 inclusion deadline for propose, approve, and execute; 0 = no expiry |
 | `input.memo` | `string` | Plaintext memo — hashed into the proposal **and** attached as the broadcast memo |
 
 ### `approve` extras
