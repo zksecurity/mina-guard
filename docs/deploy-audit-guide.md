@@ -89,12 +89,14 @@ unless these are set:
 - `MESA_NODE_HOST` — address of the node-stack box
 - `ARCHIVE_DB_PASSWORD` — password for `minaguard_ro` on the archive postgres
 
-`MINAGUARD_VK_HASH` is a property of the contract source. CI compiles the
-testnet and mainnet circuits in parallel, writes `contracts/.vk-hash` as a
-downloadable artifact, and derives the `devnet=` entry from testnet because
-both use `Field(2)`. Release and deploy jobs download that manifest for the
-exact source commit and verify it before selecting a hash. The backend uses
-the selected hash to filter contract discovery. A local checkout can compile
+`MINAGUARD_VK_HASH` is a property of the contract source. CI reuses compiled
+testnet and mainnet hashes when their circuit-input fingerprint matches a
+cached result. On a cache miss, it compiles both circuits in parallel. It
+writes `contracts/.vk-hash` as a downloadable artifact and derives the
+`devnet=` entry from testnet because both use `Field(2)`. Release and deploy
+jobs download that manifest for the exact source commit and verify it before
+selecting a hash. The backend uses the selected hash to filter contract
+discovery. A local checkout can compile
 either network with `MINA_NETWORK_DOMAIN=<network> bun run dev-helpers/cli.ts vk-hash compile`
 for debugging; local results do not need to be committed.
 

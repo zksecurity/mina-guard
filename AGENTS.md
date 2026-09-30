@@ -53,10 +53,11 @@ These instructions apply to the entire MinaGuard monorepo.
 ## Cross-package consistency
 
 - Changes under `contracts/src/` or to o1js must verify both testnet and mainnet
-  verification-key hashes. CI compiles both domains and publishes the generated
-  `contracts/.vk-hash` manifest; devnet uses the testnet hash. Do not commit a
-  locally generated manifest. Release and deploy jobs must download the manifest
-  for their exact source commit and verify it before use.
+  verification-key hashes. CI caches each domain's compiled hash by the circuit
+  input fingerprint and recompiles on a cache miss. It publishes a fresh
+  `contracts/.vk-hash` manifest for each commit; devnet uses the testnet hash.
+  Do not commit a locally generated manifest. Release and deploy jobs must
+  download the manifest for their exact source commit and verify it before use.
 - Contract and protocol changes must be reflected in the UI worker, offline CLI,
   backend event decoding and types, desktop packaging, and applicable tests.
 - Backend data-model changes must keep `backend/prisma/schema.prisma` and

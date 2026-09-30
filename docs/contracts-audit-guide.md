@@ -594,7 +594,8 @@ proof-authorized `setup()` or `reserveForParent()` overwrites the full vector an
 `deploy()` alone, no other method writes permissions, and no method path re-authorizes state/fund
 movement outside a proof. Also confirm that the deployed VK matches the
 CI-generated `contracts/.vk-hash` for that source commit (the
-`check-vk-hash` job compiles both distinct domains).
+`check-vk-hash` job uses a cached compilation only when the circuit inputs
+match, and compiles both distinct domains on a cache miss).
 
 ## Security properties
 

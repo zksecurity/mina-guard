@@ -22,8 +22,10 @@ bun run dev-helpers/cli.ts help
 
 ### Verification Key Hash
 
-CI compiles testnet and mainnet in parallel and publishes the source-bound
-`minaguard-vk-manifest` artifact. Local compilation is optional for debugging:
+CI reuses testnet and mainnet VK hashes when the tracked circuit inputs match
+a cached result. On a cache miss it compiles both in parallel. Every run
+publishes a `minaguard-vk-manifest` artifact bound to that source commit.
+Local compilation is optional for debugging:
 
 ```bash
 bun run --filter contracts build

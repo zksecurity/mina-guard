@@ -167,8 +167,9 @@ CLI the bundle's account snapshot); events are unauthenticated, so the per-event
 contract emits only locate a divergence and are never trusted on their own. Covered by
 `event-rebuild.test.ts`, `store-checkpoint.test.ts` and the offline CLI end-to-end tests. Persisted roots are not trust anchors: restored leaves are rehashed, then compared against the node (online) or bundled snapshot (offline).
 
-CI generates `contracts/.vk-hash` for each source commit by compiling testnet
-and mainnet in parallel; devnet reuses the testnet hash. Release and deploy
+CI generates `contracts/.vk-hash` for each source commit. It reuses cached
+testnet and mainnet hashes when the circuit inputs match, or compiles both in
+parallel on a cache miss; devnet reuses the testnet hash. Release and deploy
 jobs verify the artifact's source commit before using it. Operators must also
 compare the actual deployed VK with that network's generated hash; CI cannot
 attest an independently built deployment artifact.

@@ -48,6 +48,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: true
+      - name: Check VK input fingerprint
+        run: bash contracts/scripts/vk-input-fingerprint.test.sh
       - name: Install dependencies
         run: bun install
       # schema.sqlite.prisma (desktop) must mirror schema.prisma (backend).
