@@ -173,7 +173,9 @@ test('unsafe CREATE_CHILD target blocks online and offline approval', async ({ p
   );
 
   await openProposal(page, PROPOSALS.pendingTransfer);
-  await expect(page.getByText('Unsafe permission vector')).toBeVisible({
+  await expect(page.getByRole('alert').filter({
+    hasText: 'The proposed SubVault has a missing or non-canonical on-chain permission field.',
+  })).toBeVisible({
     timeout: 10_000,
   });
   await expect(

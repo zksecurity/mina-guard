@@ -109,6 +109,8 @@ reclaimable.
   against a proposed child before CREATE_CHILD approval or execution. Security-critical operations, such as
   proposal creation, approval, and execution, are performed on-chain. Transactions are also submitted
   directly to the node.
+  The chainless UI regression checks the child-specific permission alert and verifies that both online
+  approval and offline bundle creation/broadcast remain unavailable for an unsafe CREATE_CHILD target.
 - **Interactions with the chain.** Interactions with the chain, like transactions submitted, reach the node
   directly. Note, however, that:
   - Transactions submitted through Auro wallet reach the node endpoint defined by Auro.

@@ -192,7 +192,10 @@ Everything the chain suite used to cover per tx type lives in faster tiers:
 
 ### UI suite (`ui/*.test.ts`)
 
-32 tests against the seeded backend (see "UI test suite" above): derived-status
+The unsafe CREATE_CHILD regression asserts the child-specific permission alert and checks that online
+approval, offline approval export, and signed-response upload are all blocked.
+
+36 tests against the seeded backend (see "UI test suite" above): derived-status
 API sanity, vault list/dashboard/settings rendering, per-status detail pages
 (action buttons, badges, memo match/mismatch indicators), transactions
 filtering and tab counts, per-tx-type form payload capture, and all
