@@ -226,3 +226,11 @@ run `bunx --no-install electron-builder --dir --publish never` there, then run
 throwaway profile and loopback node fixture, checks startup/native SQLite/runtime
 endpoint/CSP, and closes only its own app. Ports 5050, 5051 and 5099 must be free.
 This is a packaging smoke, not a Ledger or live-chain transaction test.
+## Preflight polling regression tests
+
+Run `bun test e2e/browser/preflight-check.test.ts` from the repository root after
+installing dependencies and Playwright Chromium. These tests render the React
+preflight hook in Chromium and cover stable polling results, unavailable-data
+retries, changed inputs, and cleanup of late results and timers. They need no
+database or Mina network and run in the UI CI job after Chromium is installed.
+They live outside `unit/` so `bun run --filter e2e test:unit` remains browser-free.

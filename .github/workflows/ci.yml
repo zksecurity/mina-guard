@@ -347,6 +347,8 @@ jobs:
         run: cd e2e && bunx playwright install --with-deps chromium
       - name: Run transaction preflight browser checks
         run: bun e2e/preflight/browser.ts
+      - name: Run preflight polling regression tests
+        run: bun test e2e/browser/preflight-check.test.ts
       - name: Run UI test suite
         run: cd e2e && bun run test:ui
         env:

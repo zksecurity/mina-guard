@@ -20,7 +20,7 @@ export const V8_HEAP_MB = Math.max(
 export default defineConfig({
   testDir: '.',
   testMatch: '*.test.ts',
-  testIgnore: ['ui/**', 'unit/**'], // separate chainless UI and Bun unit suites
+  testIgnore: ['ui/**', 'unit/**', 'browser/**'], // separate UI and Bun suites
   timeout: config.testStepTimeoutMs,
   retries: 0,
   workers: 1,
