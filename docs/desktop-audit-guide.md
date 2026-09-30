@@ -1,5 +1,7 @@
 # Desktop App (Electron) — Architecture & Security Notes
 
+The shared online UI also checks for an already-created proposal and offers View proposal. Propose/approve recheck state after the owner signature before building; this uses the same runtime node access as the existing checks.
+
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 

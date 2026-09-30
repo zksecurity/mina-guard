@@ -1,5 +1,7 @@
 # E2E Tests
 
+Transaction preparation worker regression: build contracts, then run `MINA_NETWORK_DOMAIN=testnet bun e2e/preflight/worker-preparation.ts`. This runs the actual worker against an owned LocalBlockchain with stubbed network/indexer I/O and proving/compilation disabled. It checks a proposal included while another owner waits to sign, duplicate creation on retry, existing-proposal guidance, and a different nonce remaining available. It does not validate production proofs or physical wallets.
+
 Transaction preflight browser checks: `bun e2e/preflight/browser.ts` from the repo root. Requires Playwright Chromium; runs without a database or development stack. Covers initial store-mismatch retry/cancel for online preparation and offline export, as well as post-proof recovery. Wallet/prover/node I/O is simulated; this does not validate physical wallets or live inclusion. CI runs this before the full UI suite.
 
 End-to-end tests for MinaGuard using [Playwright](https://playwright.dev/). The test suite exercises the full lifecycle — deploy, propose, approve, execute — against a real Mina network through the UI with a mock wallet.

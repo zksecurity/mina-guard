@@ -1,10 +1,11 @@
 'use client';
 import { checkTransactionState, nodeAccountReader } from './transaction-preflight';
 import { getMinaGuardConfig } from './endpoints';
+import { existingProposalHash } from './proposal-preparation';
 
-export type RetryEligibility = { status: 'eligible' | 'executed' | 'invalid' | 'review' | 'unknown'; message?: string; executionHash?: string };
+export type RetryEligibility = { status: 'eligible' | 'existing' | 'executed' | 'invalid' | 'review' | 'unknown'; message?: string; executionHash?: string; proposalHash?: string };
 export type PreflightContext = { action: 'propose' | 'approve' | 'execute' | 'deploy'; address: string; actor?: string; proposal?: import('./types').Proposal; configNonce?: number; input?: import('./types').NewProposalInput };
-export type PreflightView = { kind: 'checking' | 'stores' | 'stale' | 'unavailable' | 'executed' | 'invalid' | 'review'; message?: string; offline: boolean; canRebuild: boolean; executionHash?: string };
+export type PreflightView = { kind: 'checking' | 'stores' | 'stale' | 'existing' | 'unavailable' | 'executed' | 'invalid' | 'review'; message?: string; offline: boolean; canRebuild: boolean; executionHash?: string; proposalHash?: string };
 const listeners = new Set<() => void>();
 let view: PreflightView | null = null;
 let choice: ((value: 'retry' | 'rebuild' | 'cancel') => void) | null = null;
@@ -51,7 +52,7 @@ async function runPreflightCheck(
         kind: result.status === 'unavailable' || eligibility.status === 'unknown' ? 'unavailable'
           : eligibility.status === 'eligible' ? 'stale' : eligibility.status,
         offline, canRebuild: canRebuild && eligibility.status === 'eligible',
-        message: eligibility.message, executionHash: eligibility.executionHash,
+        message: eligibility.message, executionHash: eligibility.executionHash, proposalHash: eligibility.proposalHash,
       });
     });
     choice = null;
@@ -70,7 +71,7 @@ export function isStoreStateMismatch(error: unknown): boolean {
     message.endsWith('The indexed events do not reproduce this state yet; wait for the indexer to catch up and retry.');
 }
 
-/** Restart preparation only after an explicit retry, reloading both chain state and indexed stores. */
+/** Offer retry for mismatched stores, or open a proposal that already exists. */
 export async function withStoreRecovery<T>(prepare: () => Promise<T>, offline = false): Promise<T> {
   const started = generation;
   const config = JSON.stringify(getMinaGuardConfig());
@@ -86,16 +87,17 @@ export async function withStoreRecovery<T>(prepare: () => Promise<T>, offline = 
       return result;
     }
     catch (error) {
-      if (!isStoreStateMismatch(error)) throw error;
+      const proposalHash = existingProposalHash(error);
+      if (!proposalHash && !isStoreStateMismatch(error)) throw error;
       if (!hosts || generation !== started) throw new Error(PREFLIGHT_CANCELLED);
       if (gateBusy) throw error;
       gateBusy = true;
       try {
         const decision = await new Promise<'retry' | 'rebuild' | 'cancel'>(resolve => {
           choice = resolve;
-          publish({ kind: 'stores', offline, canRebuild: false });
+          publish({ kind: proposalHash ? 'existing' : 'stores', proposalHash: proposalHash ?? undefined, offline, canRebuild: false });
         });
-        if (decision !== 'retry') throw new Error(PREFLIGHT_CANCELLED);
+        if (proposalHash || decision !== 'retry') throw new Error(PREFLIGHT_CANCELLED);
       } finally { gateBusy = false; choice = null; publish(null); }
     }
   }

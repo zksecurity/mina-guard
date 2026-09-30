@@ -3,6 +3,7 @@
 
 import './disable-wasm-finalizers';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
+import { requireUnregisteredProposal } from './proposal-preparation';
 import * as Comlink from 'comlink';
 
 import {
@@ -482,6 +483,38 @@ function buildProposalDataField(
   return Field(0);
 }
 
+/** Build the same intent for initial creation and retry eligibility. */
+function buildNewProposal(input: NewProposalInput, configNonce: number, contractAddress: string, ownerStore: InstanceType<typeof OwnerStore>) {
+  const isCreateChild = input.txType === 'createChild';
+  const receivers = buildReceiversForProposal(input);
+  const txType = uiTxTypeToField(input.txType);
+  const data = buildProposalDataField(input, ownerStore);
+
+  const isRemote =
+    isCreateChild ||
+    input.txType === 'reclaimChild' ||
+    input.txType === 'destroyChild' ||
+    input.txType === 'enableChildMultiSig';
+
+  const memoHash = memoToField(input.memo ?? '');
+
+  return new TransactionProposal({
+    receivers,
+    tokenId: Field(0),
+    txType,
+    data,
+    memoHash,
+    nonce: Field(input.nonce),
+    configNonce: Field(configNonce),
+    expirySlot: Field(input.expirySlot ?? 0),
+    guardAddress: PublicKey.fromBase58(contractAddress),
+    destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
+    childAccount: input.childAccount
+      ? PublicKey.fromBase58(input.childAccount)
+      : PublicKey.empty(),
+  });
+}
+
 /**
  * insertAfter for executing an ADD_OWNER: the position whose chain equals the
  * approved `data`, found in the owner list as committed on chain (whatever its
@@ -774,6 +807,12 @@ const workerApi = {
     if (context.action === 'approve' || context.action === 'propose') {
       if (!context.actor || !stores.ownerStore.isOwner(PublicKey.fromBase58(context.actor))) return invalid('The signer is no longer an owner of this vault.');
     }
+    if (context.action === 'propose' && context.input && context.configNonce !== undefined) {
+      const hash = buildNewProposal(context.input, context.configNonce, context.address, stores.ownerStore).hash();
+      if (stores.approvalStore.getCount(hash).toBigInt() !== 0n) {
+        return { status: 'existing', proposalHash: hash.toString() };
+      }
+    }
     const input = proposal ?? context.input;
     if (!input) return { status: 'unknown' };
     if (input.txType !== 'createChild') {
@@ -937,36 +976,10 @@ const workerApi = {
       }
     }
 
-    const receivers = buildReceiversForProposal(params.input);
-    const txType = uiTxTypeToField(params.input.txType);
-    const data = buildProposalDataField(params.input, ownerStore);
-
-    const isRemote =
-      isCreateChild ||
-      params.input.txType === 'reclaimChild' ||
-      params.input.txType === 'destroyChild' ||
-      params.input.txType === 'enableChildMultiSig';
-
-    const memoHash = memoToField(params.input.memo ?? '');
-
-    const proposal = new TransactionProposal({
-      receivers,
-      tokenId: Field(0),
-      txType,
-      data,
-      memoHash,
-      nonce: Field(params.input.nonce),
-      configNonce: Field(params.configNonce),
-      expirySlot: Field(params.input.expirySlot ?? 0),
-      guardAddress: PublicKey.fromBase58(params.contractAddress),
-      destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
-      childAccount: params.input.childAccount
-        ? PublicKey.fromBase58(params.input.childAccount)
-        : PublicKey.empty(),
-    });
-
+    const proposal = buildNewProposal(params.input, params.configNonce, params.contractAddress, ownerStore);
     const proposalHash = proposal.hash();
     const hashStr = proposalHash.toString();
+    requireUnregisteredProposal(hashStr, approvalStore.getCount(proposalHash).toBigInt());
 
     progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
     const signature = await signProposalHash(hashStr, signFn);
@@ -997,7 +1010,6 @@ const workerApi = {
     const contract = new MinaGuard(contractAddress);
     const fetches: Promise<any>[] = [
       fetchAccount({ publicKey: proposer }),
-      fetchAccount({ publicKey: contractAddress }),
     ];
     // REMOTE non-create proposals read child state (parentNonce, ownersCommitment,
     // parent) via getAndRequireEquals() inside propose(). For createChild, the
@@ -1008,6 +1020,7 @@ const workerApi = {
       fetches.push(fetchAccount({ publicKey: childAccount }));
     }
     await Promise.all(fetches);
+    assertStoresMatchChain(stores, await requireContractState(params.contractAddress));
 
     logProposeDiagnostics({
       contract,
@@ -1136,6 +1149,7 @@ const workerApi = {
     progressFn('Building transaction...');
     const contract = new MinaGuard(PublicKey.fromBase58(params.contractAddress));
     await fetchAccount({ publicKey: approver });
+    assertStoresMatchChain(stores, await requireContractState(params.contractAddress));
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(approver), async () => {
       await contract.approveProposal(

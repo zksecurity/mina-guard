@@ -1,5 +1,7 @@
 # Offline Signing (Air-Gapped CLI) — Architecture & Security Notes
 
+The online creation flow also detects proposals another owner already created and links to the existing proposal. Offline requests and signed responses keep their existing formats; imported propose responses still require review of the original form when stale.
+
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 

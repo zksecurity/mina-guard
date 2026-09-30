@@ -79,6 +79,21 @@ try {
     await page.getByRole('button', { name: 'Dismiss' }).click();
     expect(await attempt).toContain('cancelled');
   }
+  await page.evaluate(() => { (window as any).eligibility = { status: 'existing', proposalHash: '42' }; });
+  attempt = online('createOnchainProposal');
+  await expect(page.getByRole('heading', { name: 'Proposal already exists', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'View proposal', exact: true })).toHaveAttribute('href', '/transactions/42');
+  await expect(page.getByRole('button', { name: 'Rebuild transaction' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  expect(await attempt).toContain('cancelled');
+  await page.evaluate(() => { (window as any).storeError = 'MINAGUARD_PROPOSAL_EXISTS:42'; });
+  attempt = online('createOnchainProposal');
+  await expect(page.getByRole('heading', { name: 'Proposal already exists', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'View proposal', exact: true })).toHaveAttribute('href', '/transactions/42');
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  expect(await attempt).toContain('cancelled');
+  await page.evaluate(() => { (window as any).storeError = null; });
   outage = true;
   await page.evaluate(() => { (window as any).eligibility = { status: 'eligible' }; });
   const builds = await page.evaluate(() => (window as any).builds);
