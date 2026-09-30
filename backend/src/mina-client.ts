@@ -1,4 +1,4 @@
-import { Mina, PublicKey, fetchAccount, UInt32 } from 'o1js';
+import { Field, Mina, PublicKey, TokenId, fetchAccount, UInt32 } from 'o1js';
 import { GUARD_PERMISSION_KINDS, MinaGuard } from 'contracts';
 import type { Pool } from 'pg';
 import type { BackendConfig } from './config.js';
@@ -542,24 +542,91 @@ export async function fetchDecodedContractEvents(
   fromHeight: number,
   toHeight: number
 ): Promise<ChainEvent[]> {
-  const contract = new MinaGuard(PublicKey.fromBase58(address));
+  // Fetched untyped: anyone can attach events to a vault, and o1js's typed
+  // fetch throws on the first malformed one, stalling the vault's indexing.
   // TODO: restore toHeight once archive node supports upper-bound filtering
-  const rawEvents = await contract.fetchEvents(UInt32.from(fromHeight));
+  const blocks = await Mina.fetchEvents(
+    PublicKey.fromBase58(address),
+    TokenId.default,
+    fromHeight > 0 ? { from: UInt32.from(fromHeight) } : {},
+  );
+  return decodeContractEvents(address, blocks);
+}
 
-  return rawEvents
-    .filter((entry) => isFromAppliedTransaction((entry.event as any).transactionInfo?.transactionStatus))
-    .map((entry) => {
-      const txInfo = (entry.event as any).transactionInfo;
-      return {
-        type: entry.type,
-        event: toSerializableObject((entry.event as any).data),
-        blockHeight: Number(entry.blockHeight.toString()),
-        blockHash: (entry as any).blockHash as string,
-        parentHash: (entry as any).parentBlockHash as string,
-        txHash: (txInfo?.transactionHash as string | undefined) ?? null,
-        txMemo: (txInfo?.transactionMemo as string | undefined) ?? null,
-      };
-    });
+/** Raw events of one block, as returned by `Mina.fetchEvents`. */
+export type RawEventBlock = Awaited<ReturnType<typeof Mina.fetchEvents>>[number];
+
+/**
+ * Decodes fetched events, dropping events of failed transactions and skipping
+ * (with a warning) any event that is not a well-formed MinaGuard event.
+ */
+export function decodeContractEvents(address: string, blocks: readonly RawEventBlock[]): ChainEvent[] {
+  const decoded: ChainEvent[] = [];
+  for (const block of blocks) {
+    const blockHeight = Number(block.blockHeight.toString());
+    for (const raw of block.events) {
+      const txInfo = raw.transactionInfo as { hash?: string; memo?: string; status?: string } | undefined;
+      if (!isFromAppliedTransaction(txInfo?.status)) continue;
+      const result = decodeMinaGuardEvent(raw.data);
+      if ('error' in result) {
+        console.warn(
+          `[mina-client] skipping malformed event on ${address} at block ${blockHeight} (tx ${txInfo?.hash ?? '?'}): ${result.error}`,
+        );
+        continue;
+      }
+      decoded.push({
+        type: result.type,
+        event: result.event,
+        blockHeight,
+        blockHash: block.blockHash,
+        parentHash: block.parentBlockHash,
+        txHash: txInfo?.hash ?? null,
+        txMemo: txInfo?.memo ?? null,
+      });
+    }
+  }
+  return decoded;
+}
+
+type ProvableEvent = {
+  sizeInFields(): number;
+  fromFields(fields: Field[]): unknown;
+  check?(value: unknown): void;
+};
+
+const MINAGUARD_EVENTS = new MinaGuard(PublicKey.empty()).events as unknown as Record<string, ProvableEvent>;
+// o1js prefixes each event with its index in the sorted list of event names.
+const MINAGUARD_EVENT_NAMES = Object.keys(MINAGUARD_EVENTS).sort();
+
+/**
+ * Decodes one event's raw fields the way o1js does, but checks each step: the
+ * type index names a declared event, the field count matches that event, every
+ * field is a canonical field element, and the value passes the type's checks.
+ */
+export function decodeMinaGuardEvent(
+  data: unknown,
+): { type: string; event: Record<string, unknown> } | { error: string } {
+  if (!Array.isArray(data) || data.length === 0) return { error: 'no event data' };
+  if (!data.every((f) => typeof f === 'string' && /^\d+$/.test(f) && BigInt(f) < Field.ORDER)) {
+    return { error: 'event data is not a list of field elements' };
+  }
+  const index = Number(data[0]);
+  const type = MINAGUARD_EVENT_NAMES[index];
+  if (!Number.isSafeInteger(index) || type === undefined) {
+    return { error: `unknown event type index ${data[0]}` };
+  }
+  const provable = MINAGUARD_EVENTS[type];
+  const fields = (data as string[]).slice(1).map((f) => Field(f));
+  if (fields.length !== provable.sizeInFields()) {
+    return { error: `${type} expects ${provable.sizeInFields()} fields, got ${fields.length}` };
+  }
+  try {
+    const value = provable.fromFields(fields);
+    provable.check?.(value);
+    return { type, event: toSerializableObject(value) };
+  } catch (err) {
+    return { error: `${type} does not decode: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 /** Runs a GraphQL request with optional endpoint fallback. */
