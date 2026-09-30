@@ -1135,6 +1135,9 @@ const workerApi = {
       for (const r of proposalStruct.receivers) {
         if (r.address.isEmpty().toBoolean()) continue;
         const { account } = await fetchAccount({ publicKey: r.address });
+        if (!account && txType === 'allocateChild') {
+          throw new Error('Allocation recipients must be initialized children of this vault');
+        }
         if (!account) newAccountCount += 1;
       }
     }

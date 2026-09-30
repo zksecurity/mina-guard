@@ -498,3 +498,22 @@ standard and not discussed.
 > The Auro wallet is **not** an npm dependency — it is a browser extension reached via the
 > injected `window.mina` provider (`auroWallet.ts`), so it does not appear in
 > `package.json` and its version/behavior is outside this package's lockfile.
+
+## Safe child funding
+
+Allocation execution fetches every non-empty recipient account. The contract
+requires nonzero `ownersCommitment` and `parent == sending vault` through
+ledger-enforced preconditions. Missing, uninitialized, and unrelated recipients
+cannot receive an allocation; account-creation fees apply only to ordinary
+transfers. Empty padding is exempt, but non-empty zero-value recipients are checked.
+
+Offline allocation export includes each recipient's full snapshot in `accounts`,
+so the air-gapped CLI can prove the same checks. This uses the existing v2 format;
+old allocation bundles lacking snapshots must be exported again. Desktop uses
+these same worker/exporter paths. Rebuild UI, offline CLI, and desktop together
+with the changed circuit and canonical verification-key hashes.
+
+Complete child setup before funding by any route. Ordinary transfers and external
+deposits remain possible before initialization, with no parent reclaim/destroy
+until setup succeeds. See [safe child funding](./contracts-audit-guide.md#safe-child-funding)
+for the remediation boundary and retained deposit risk.

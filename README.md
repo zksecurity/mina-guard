@@ -15,6 +15,7 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with session-only zkApp private key usage.
 - Child reservations validate governance bounds and initialized root-parent state; successful child setup clears the consumed reservation hash.
+- Child allocations require initialized recipients bound to the sending parent. Complete child setup before funding; ordinary transfers and external deposits to uninitialized children remain unrecoverable until setup succeeds. See [safe child funding](docs/contracts-audit-guide.md#safe-child-funding).
 
 ## o1js dependency
 

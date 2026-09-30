@@ -1149,13 +1149,21 @@ export async function handleExecute(
 
   // -- Local execution (transfer, governance, allocate, delegate) --
 
-  // Count new accounts for fundNewAccount. Derive strictly from the canonical,
-  // hash-bound receivers (proposalStruct.receivers, sliced to MAX_RECEIVERS) so
-  // untrusted bundle rows beyond the contract limit cannot inflate the
-  // executor-signed account-creation fee. An address absent from / false in the
-  // bundle's receiverAccountExists map is treated as not-yet-existing.
+  // Allocation recipients must already be initialized. Require snapshots even
+  // for legacy bundles; an existence flag alone cannot support state reads.
+  if (txType === 'allocateChild') {
+    for (const receiver of proposalStruct.receivers) {
+      if (receiver.address.isEmpty().toBoolean()) continue;
+      const address = receiver.address.toBase58();
+      if (!bundle.accounts[address]?.zkappState) {
+        throw new Error(`Allocation requires a child account snapshot for ${address}; export a fresh execution bundle`);
+      }
+    }
+  }
+  // Ordinary transfers may create accounts. Count only hash-bound receivers;
+  // absent/false existence flags mean the executor funds account creation.
   let newAccountCount = 0;
-  if (txType === 'transfer' || txType === 'allocateChild') {
+  if (txType === 'transfer') {
     newAccountCount = countNewReceiverAccounts(
       proposalStruct.receivers,
       (addr) => bundle.receiverAccountExists[addr] === true,

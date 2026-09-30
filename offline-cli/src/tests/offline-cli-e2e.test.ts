@@ -1224,3 +1224,76 @@ describe('offline-cli e2e', () => {
     }, 120_000);
   });
 });
+
+describe('offline child allocation', () => {
+  it('requires recipient snapshots and signs an allocation the ledger accepts', async () => {
+    const helpers = await import('../../../contracts/build/src/tests/test-helpers.js');
+    const source = await import('../../../contracts/build/src/MinaGuard.js');
+    const ctx = await helpers.setupLocalBlockchain(3);
+    await helpers.deployAndSetup(ctx, 2);
+    const childKey = PrivateKey.random();
+    const childAddress = childKey.toPublicKey();
+    const child = new source.MinaGuard(childAddress);
+    await helpers.deployAndSetupChildGuard(
+      ctx, ctx.zkAppAddress, child, childKey, childAddress,
+      ctx.owners.map(o => o.pub), 2, [0, 1],
+    );
+    const amount = UInt64.from(500_000_000);
+    const proposal = helpers.createAllocateChildProposal(
+      [new source.Receiver({ address: childAddress, amount })],
+      Field(1), Field(0), ctx.zkAppAddress, Field(0),
+    );
+    const hash = await helpers.proposeTransaction(ctx, proposal, 0);
+    await helpers.approveTransaction(ctx, proposal, 1);
+    const events = (await ctx.zkApp.fetchEvents()).map(e => ({
+      eventType: e.type, payload: JSON.parse(safeStringify(e.event.data)),
+    }));
+    const address = childAddress.toBase58();
+    const bundle = {
+      version: 2, action: 'execute', minaNetwork: 'testnet',
+      contractAddress: ctx.zkAppAddress.toBase58(), feePayerAddress: ctx.deployerAccount.toBase58(),
+      accounts: {
+        [ctx.zkAppAddress.toBase58()]: snapshotAccount(ctx.zkAppAddress),
+        [ctx.deployerAccount.toBase58()]: snapshotAccount(ctx.deployerAccount),
+      } as Record<string, unknown>,
+      events: [],
+      storeCheckpoint: checkpointStores(rebuildStores(events), {
+        network: 'testnet', address: ctx.zkAppAddress.toBase58(),
+      }, null),
+      proposal: {
+        proposalHash: hash.toString(), txType: 'allocateChild', tokenId: '0', data: '0',
+        nonce: '1', configNonce: '0', expirySlot: '0', memoHash: '0',
+        guardAddress: ctx.zkAppAddress.toBase58(), destination: 'local', childAccount: null,
+        receivers: [{ address, amount: amount.toString() }],
+      },
+      // An older exporter may mark this false; allocation never creates accounts.
+      receiverAccountExists: { [address]: false },
+    };
+    mkdirSync(tmpDir, { recursive: true });
+    const path = join(tmpDir, 'safe-child-allocation.json');
+    writeFileSync(path, JSON.stringify(bundle));
+    const missing = await runCLI(path, ctx.deployerKey.toBase58(), 120_000, { SKIP_PROOFS: '1' });
+    expect(missing.code).not.toBe(0);
+    expect(missing.stderr).toContain('Allocation requires a child account snapshot');
+    expect(missing.stdout).not.toContain('offline-signed-tx');
+
+    bundle.accounts[address] = snapshotAccount(childAddress);
+    writeFileSync(path, JSON.stringify(bundle));
+    const result = await runCLI(path, ctx.deployerKey.toBase58(), 120_000, { SKIP_PROOFS: '1' });
+    expect(result.stderr).not.toContain('new account(s) will be funded');
+    expect(result.code).toBe(0);
+    const response = JSON.parse(result.stdout);
+    // SKIP_PROOFS serializes a literal placeholder; LocalBlockchain still
+    // expects a well-formed dummy proof even with proof verification disabled.
+    const dummy = await MinaGuard.Proof().dummy(
+      { accountUpdate: Field(0), calls: Field(0) }, undefined, 2,
+    );
+    for (const update of response.transaction.accountUpdates) {
+      if (update.authorization.proof === 'dummy') update.authorization.proof = dummy.toJSON().proof;
+    }
+    const before = helpers.getBalance(childAddress);
+    const txn = Mina.Transaction.fromJSON(response.transaction);
+    await txn.send();
+    expect(helpers.getBalance(childAddress).sub(before)).toEqual(amount);
+  }, 180_000);
+});

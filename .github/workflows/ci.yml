@@ -258,7 +258,7 @@ jobs:
           check_hash devnet || FAIL=1
           exit $FAIL
 
-      - name: Run genuine-proof parent-state binding regression
+      - name: Run genuine-proof parent/child state and allocation regressions
         if: steps.detect.outputs.verify == 'true'
         working-directory: contracts
         run: >-
