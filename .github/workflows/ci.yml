@@ -267,6 +267,15 @@ jobs:
           --timeout 900000
         timeout-minutes: 20
 
+      - name: Run genuine-proof child reservation lifecycle
+        if: steps.detect.outputs.verify == 'true'
+        working-directory: contracts
+        run: >-
+          RUN_REAL_PROOF_TESTS=1 bun test src/tests/reservation.test.ts
+          --test-name-pattern "genuine proofs"
+          --timeout 900000
+        timeout-minutes: 20
+
   test-offline-cli-windows:
     timeout-minutes: 45
     runs-on: windows-latest

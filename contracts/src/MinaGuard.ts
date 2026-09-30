@@ -272,6 +272,7 @@ export class MinaGuard extends SmartContract {
   // For a CREATE_CHILD child: the config hash reserveForParent() committed from
   // the emitted owner set. propose() binds the parent-approved proposal.data to
   // THIS value so the config owners sign == the config displayed via events.
+  // Cleared after successful executeSetupChild(); it is not a live config hash.
   @state(Field) reservedConfigHash = State<Field>();
 
   events = {
@@ -703,6 +704,15 @@ export class MinaGuard extends SmartContract {
     }
   }
 
+  private assertValidInitialGovernance(threshold: Field, numOwners: Field): void {
+    threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
+    numOwners.assertGreaterThanOrEqual(
+      threshold,
+      'Owners must be >= threshold'
+    );
+    numOwners.assertLessThanOrEqual(Field(MAX_OWNERS), 'Too many owners');
+  }
+
   /** Shared initialization: validates config, sets all state, emits setup + owner events. */
   private initializeState(
     threshold: Field,
@@ -716,19 +726,14 @@ export class MinaGuard extends SmartContract {
     // be combined in a single transaction (no account cache read needed).
     this.ownersCommitment.requireEquals(Field(0));
 
+    this.assertValidInitialGovernance(threshold, numOwners);
+
     // Compute the commitment ON-CHAIN from the supplied owner list rather than
     // trusting a caller-supplied value: this makes commitment == hash(ownerSet)
     // true by construction, so the stored anchor and emitted setupOwner events
     // can never describe a different set than the one committed to.
     assertCoherentSetupOwners(initialOwners.owners, numOwners);
     const ownersCommitment = computeSetupOwnersChain(initialOwners.owners, numOwners);
-
-    threshold.assertGreaterThan(Field(0), 'Threshold must be > 0');
-    numOwners.assertGreaterThanOrEqual(
-      threshold,
-      'Owners must be >= threshold'
-    );
-    numOwners.assertLessThanOrEqual(Field(MAX_OWNERS), 'Too many owners');
 
     this.ownersCommitment.set(ownersCommitment);
     this.setGovernanceState(threshold, numOwners);
@@ -813,6 +818,18 @@ export class MinaGuard extends SmartContract {
     // a non-point parent can never host a guard: the child could never be
     // initialized or reclaimed
     parentAddress.toGroup();
+    parentAddress.equals(this.address).assertFalse('Parent must not be this account');
+
+    const parentGuard = new MinaGuard(parentAddress);
+    // Attach the foreign account update so these reads are checked by the
+    // ledger, just like the parent reads in assertParentApprovalState().
+    AccountUpdate.attachToTransaction(parentGuard.self);
+    parentGuard.ownersCommitment.getAndRequireEquals()
+      .assertNotEquals(Field(0), 'Parent must be initialized');
+    parentGuard.parent.getAndRequireEquals().equals(PublicKey.empty())
+      .assertTrue('Parent must be a root guard');
+
+    this.assertValidInitialGovernance(threshold, numOwners);
     this.parent.set(parentAddress);
 
     // Compute the commitment on-chain from the owner list so the emitted
@@ -908,6 +925,9 @@ export class MinaGuard extends SmartContract {
       Field(0),
       initialOwners,
     );
+
+    // The reservation has been consumed; ownersCommitment now prevents setup replay.
+    this.reservedConfigHash.set(Field(0));
 
     this.emitEvent('execution', {
       proposalHash,

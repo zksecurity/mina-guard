@@ -16,6 +16,7 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Transfer, add/remove owner, threshold change, and delegate execution support.
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with session-only zkApp private key usage.
+- Child reservations validate governance bounds and initialized root-parent state; successful child setup clears the consumed reservation hash.
 
 ## o1js dependency
 
