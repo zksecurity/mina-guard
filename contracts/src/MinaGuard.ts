@@ -1219,7 +1219,8 @@ export class MinaGuard extends SmartContract {
 
   /**
    * Executes an ALLOCATE_CHILD proposal, sending MINA from parent to child addresses.
-   * Same mechanics as executeTransfer but with ALLOCATE_CHILD txType.
+   * Each non-empty recipient must be an initialized child of this guard.
+   * Direct deposits and ordinary TRANSFER proposals do not use this check.
    */
   @method async executeAllocateToChildren(
     proposal: TransactionProposal,
@@ -1245,7 +1246,24 @@ export class MinaGuard extends SmartContract {
     this.assertApprovalWitnessValue(proposalHash, approvalWitness, approvalCount);
     this.assertAndIncrementLocalNonce(proposal);
 
-    this.executeTransfers(proposal);
+    for (const receiver of proposal.receivers) {
+      const isEmpty = receiver.address.equals(PublicKey.empty());
+      // Padding reads this guard, avoiding a precondition on the empty address.
+      const recipient = Provable.if(isEmpty, PublicKey, this.address, receiver.address);
+      const child = new MinaGuard(recipient);
+      // Foreign state reads must be attached to the proof's call forest so the
+      // ledger enforces them, including when a prover supplies stale state.
+      AccountUpdate.attachToTransaction(child.self);
+      const ownersCommitment = child.ownersCommitment.getAndRequireEquals();
+      const parent = child.parent.getAndRequireEquals();
+      isEmpty.or(ownersCommitment.equals(Field(0)).not())
+        .assertTrue('Allocation recipient not initialized');
+      isEmpty.or(parent.equals(this.address))
+        .assertTrue('Allocation recipient not bound to this parent');
+      // Credit the checked update itself, keeping one update per receiver.
+      const amount = Provable.if(isEmpty, UInt64, UInt64.zero, receiver.amount);
+      this.send({ to: child.self, amount });
+    }
 
     const writtenRoot = this.markExecuted(approvalWitness);
 

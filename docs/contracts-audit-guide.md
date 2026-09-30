@@ -330,7 +330,7 @@ After execution the contract increments `nonce` and overwrites the approval coun
 **permissionless** — anyone can trigger it once the threshold is met.
 
 - **`executeTransfer`** — Loops through all receiver slots, sending to each non-empty one. Empty slots are converted into zero-value self-sends so they have no effect on balances. Emits `ExecutionEvent`.
-- **`executeAllocateToChildren`** — Same structure as `executeTransfer` but asserts `txType == ALLOCATE_CHILD`. Typically sends MINA from a parent to its children. Emits `ExecutionEvent { txType: ALLOCATE_CHILD }`. The indexer distinguishes allocations from generic transfers by txType.
+- **`executeAllocateToChildren`** — Requires `txType == ALLOCATE_CHILD` and verifies each non-empty recipient is initialized and bound to the sending parent using ledger-enforced state preconditions. Emits `ExecutionEvent { txType: ALLOCATE_CHILD }`. The indexer distinguishes allocations from generic transfers by txType.
 - **`executeOwnerChange`** — Handles both `ADD_OWNER` and `REMOVE_OWNER` via boolean flags. The owner pubkey is read from `receivers[0]`. Runs both `addOwnerToCommitment` and `removeOwnerFromCommitment` circuits and selects the correct result based on `txType`. For `ADD_OWNER`, asserts the post-add commitment equals `proposal.data`, so the executor-supplied `insertAfter` cannot place the new owner anywhere other than the position the approvers signed (removal is order-preserving, nothing to bind). Asserts `newNumOwners >= threshold` and `<= MAX_OWNERS`. Updates `ownersCommitment` and `numOwners`. Increments `configNonce`. Emits `ExecutionEvent` + `OwnerChangeEvent`.
 - **`executeThresholdChange`** — Validates `proposal.data == newThreshold`, `newThreshold > 0`, `numOwners >= newThreshold`. Updates `threshold`. Increments `configNonce`. Emits `ExecutionEvent` + `ThresholdChangeEvent`.
 - **`executeDelegate`** — Reads the target delegate from `receivers[0]` (empty slot = undelegate to self). Sets `account.delegate`. Does **not** increment `configNonce`. Emits `ExecutionEvent` + `DelegateEvent`.
@@ -721,3 +721,33 @@ The clients that reuse this package's source (the `TransactionProposal` struct, 
 `Destination` enum, `MAX_OWNERS`/`MAX_RECEIVERS`, and the Merkle stores) do so by importing the
 **same** source, so client-side reconstruction matches the contract exactly. Changes to those
 exports should be audited as contract changes, not client changes.
+
+## Safe child funding
+
+`ALLOCATE_CHILD` execution requires every non-empty recipient to have a nonzero
+`ownersCommitment` and a `parent` equal to the sending vault. These recipient
+state preconditions are attached beneath the allocation proof and enforced by the
+ledger, on the same account update that receives the funds. These checks bind
+recipient application state; they do not pin its verification key. Empty receiver
+padding is exempt; non-empty zero-value recipients are still checked. A reserved child must complete `executeSetupChild` before funding.
+Disabling an initialized child's independent multisig does not prevent funding or
+parent recovery.
+
+The online worker fetches recipient accounts before allocation. Offline execute
+bundles include those full accounts in the existing `accounts` map; the CLI
+requires the snapshots and proves the same contract checks. The JSON format stays
+at v2: older allocation bundles without recipient snapshots fail closed with an
+instruction to export again. Proposal hashes, approval signatures, events, and
+signed-response format are unchanged. Allocation does not fund new accounts.
+Desktop uses the same UI exporter and contract execution path.
+
+This prevents premature funding through allocation (F-2026-19028) and enforces
+allocation parent binding (F-2026-19017). It does not block ordinary `TRANSFER`
+proposals or external deposits to a reserved address. Such deposits remain
+unrecoverable through parent reclaim/destroy until valid setup succeeds; no
+pre-initialization recovery method is added. Operators must complete child setup
+before sending funds by any route. This residual risk is not full remediation of
+arbitrary pre-initialization deposits.
+
+The proof-enabled CI filter (`genuine MinaGuard proof`) includes the allocation
+regression, checking recipient state binding and successful ledger submission.

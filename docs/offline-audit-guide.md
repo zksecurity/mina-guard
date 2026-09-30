@@ -486,3 +486,22 @@ recompiled.
 - **`o1js` (3.0.0-mesa.final, hoisted)** — compile/prove; the wasm shim exists
   to embed its prover WASM (plonk + kimchi) into the single-file binary and to
   keep its CJS module resolution working inside Bun's virtual filesystem.
+
+## Safe child funding
+
+For `allocateChild` execution, the online exporter includes every non-empty
+recipient's full account in the existing `accounts` map. The CLI rejects missing
+recipient snapshots with an instruction to export again, then proves that each
+recipient is initialized and bound to the sending parent. These state reads are
+ledger-enforced. Allocation never charges for creating recipient accounts, even
+if `receiverAccountExists` is missing an entry or marks it false.
+
+The request format remains v2 and signed responses are unchanged; older allocation
+bundles without recipient snapshots fail closed. Proposal hashes and owner approval
+signatures are unchanged. Rebuild the CLI, UI, and desktop with the changed circuit
+and canonical verification-key hashes.
+
+Only fund children after setup. Ordinary transfers and external deposits to a
+reserved child remain unrecoverable through parent reclaim/destroy until setup
+succeeds; this change adds no pre-initialization recovery method. See
+[safe child funding](./contracts-audit-guide.md#safe-child-funding).

@@ -103,3 +103,20 @@ describe('v2 offline bundle network selection', () => {
     });
   }
 });
+
+describe('offline allocation snapshots', () => {
+  it('exports each recipient account for offline child-state preconditions', async () => {
+    configure('testnet');
+    const bundle = await buildOfflineExecuteBundle({
+      ...common,
+      proposal: { ...proposal, txType: 'allocateChild', receivers: [
+        { address: 'child-a', amount: '100' },
+        { address: 'child-b', amount: '200' },
+        { address: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG', amount: '0' },
+      ] },
+    });
+    expect(Object.keys(bundle.accounts).sort()).toEqual(['child-a', 'child-b', 'payer', 'vault']);
+    expect(bundle.accounts['child-a'].publicKey).toBe('child-a');
+    expect(bundle.receiverAccountExists).toEqual({ 'child-a': true, 'child-b': true });
+  });
+});

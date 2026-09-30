@@ -536,6 +536,95 @@ describe('MinaGuard - Child Lifecycle', () => {
   // -- executeAllocateToChildren (on the parent) ------------------------------
 
   describe('executeAllocateToChildren', () => {
+    async function allocationTo(address: PublicKey, amount = UInt64.from(500_000_000)) {
+      const proposal = createAllocateChildProposal(
+        [new Receiver({ address, amount })], Field(1), Field(0),
+        parentCtx.zkAppAddress, Field(0),
+      );
+      const hash = await proposeTransaction(parentCtx, proposal, 0);
+      await approveTransaction(parentCtx, proposal, 1);
+      return () => Mina.transaction(parentCtx.deployerAccount, async () => {
+        await parentCtx.zkApp.executeAllocateToChildren(
+          proposal, parentCtx.approvalStore.getWitness(hash), parentCtx.approvalStore.getCount(hash),
+        );
+      });
+    }
+
+    it('rejects a reserved child before initialization', async () => {
+      const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
+        AccountUpdate.fundNewAccount(parentCtx.deployerAccount);
+        await childZkApp.deploy();
+        await childZkApp.reserveForParent(
+          parentCtx.zkAppAddress, Field(1234), Field(2), Field(3),
+          new SetupOwnersInput({ owners: toFixedSetupOwners(parentCtx.owners.map(o => o.pub)) }),
+        );
+      });
+      await txn.prove();
+      await txn.sign([parentCtx.deployerKey, childKey]).send();
+      const build = await allocationTo(childAddress);
+      await expect(build()).rejects.toThrow('Allocation recipient not initialized');
+      expect(getBalance(childAddress)).toEqual(UInt64.zero);
+    });
+
+    it('rejects an ordinary account', async () => {
+      const build = await allocationTo(parentCtx.owners[0].pub);
+      await expect(build()).rejects.toThrow();
+    });
+
+    it('rejects a root vault even for a zero-value recipient', async () => {
+      const build = await allocationTo(parentCtx.zkAppAddress, UInt64.zero);
+      await expect(build()).rejects.toThrow('Allocation recipient not bound to this parent');
+    });
+
+    it('rejects an initialized child of another parent', async () => {
+      const otherKey = PrivateKey.random();
+      const otherAddress = otherKey.toPublicKey();
+      const otherCtx = {
+        ...parentCtx, zkAppKey: otherKey, zkAppAddress: otherAddress,
+        zkApp: new MinaGuard(otherAddress),
+        approvalStore: new ApprovalStore(), nullifierStore: new VoteNullifierStore(),
+      };
+      await deployAndSetup(otherCtx, 2);
+      await deployAndSetupChildGuard(
+        otherCtx, otherAddress, childZkApp, childKey, childAddress,
+        parentCtx.owners.map(o => o.pub), 2, [0, 1],
+      );
+      const build = await allocationTo(childAddress);
+      await expect(build()).rejects.toThrow('Allocation recipient not bound to this parent');
+    });
+
+    async function checkAllocation(realProof = false) {
+      await setupChildWithParentOwners();
+      const build = await allocationTo(childAddress);
+      if (realProof) Mina.activeInstance.proofsEnabled = true;
+      const txn = await build();
+      const updates = JSON.parse(txn.toJSON()).accountUpdates;
+      const proofUpdate = updates.find((u: any) => u.body.authorizationKind.isProved);
+      const recipientStateUpdates = updates.filter((u: any) =>
+        u.body.publicKey === childAddress.toBase58() &&
+        u.body.preconditions.account.state.some((value: unknown) => value !== null));
+      expect(recipientStateUpdates).toHaveLength(1);
+      expect(updates.filter((u: any) => u.body.publicKey === childAddress.toBase58())).toHaveLength(1);
+      const recipientUpdate = recipientStateUpdates[0];
+      expect(recipientUpdate.body.callDepth).toBe(proofUpdate.body.callDepth + 1);
+      expect(recipientUpdate.body.preconditions.account.state.flatMap(
+        (value: unknown, index: number) => value === null ? [] : [index],
+      )).toEqual([0, 7, 8]);
+      const before = getBalance(childAddress);
+      const proved = await txn.prove();
+      if (realProof) expect(proved.proofs.some(proof => proof !== undefined)).toBe(true);
+      await txn.sign([parentCtx.deployerKey]).send();
+      expect(getBalance(childAddress).sub(before)).toEqual(UInt64.from(500_000_000));
+    }
+
+    it('binds recipient state to the allocation proof and accepts empty padding', async () => {
+      await checkAllocation();
+    });
+
+    realProofIt('funds an initialized child with a genuine MinaGuard proof', async () => {
+      await checkAllocation(true);
+    }, 15 * 60_000);
+
     it('sends MINA to multiple children with different amounts', async () => {
       await setupChildWithParentOwners();
 

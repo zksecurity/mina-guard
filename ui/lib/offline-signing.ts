@@ -277,7 +277,14 @@ export async function buildOfflineExecuteBundle(params: {
     params.proposal.receivers
       .filter((r) => r.address && r.address !== emptyKey)
       .map(async (r) => {
-        receiverAccountExists[r.address] = await checkAccountExists(r.address);
+        if (params.proposal.txType === 'allocateChild') {
+          // Allocation proves recipient initialization and parent binding.
+          // The air-gapped CLI needs the complete account, not just existence.
+          accounts[r.address] = await fetchGraphQLAccount(r.address);
+          receiverAccountExists[r.address] = true;
+        } else {
+          receiverAccountExists[r.address] = await checkAccountExists(r.address);
+        }
       }),
   );
 
