@@ -320,10 +320,13 @@ async function signProposalHash(
 /** Signs the fee payer, sends directly to the network, and returns the formatted success message. */
 async function signAndSend(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
+  progressFn: ProgressFn,
   extraKeys: InstanceType<typeof PrivateKey>[] = []
 ): Promise<string> {
   tx.sign([testPrivateKey!, ...extraKeys]);
+  progressFn('Checking latest vault state...');
   await checkBeforeBroadcast(serializeTx(tx));
+  progressFn('Broadcasting transaction...');
   const result = await tx.send();
   const hash = typeof result.hash === 'function'
     ? (result.hash as () => string)()
@@ -654,11 +657,13 @@ async function getSignerClient(): Promise<InstanceType<typeof Client>> {
 /** Signs the fee payer via Ledger and broadcasts directly to the Mina GraphQL endpoint. */
 async function broadcastWithLedgerSig(
   txJson: string,
-  signFeePayerFn: SignFeePayerFn
+  signFeePayerFn: SignFeePayerFn,
+  progressFn: ProgressFn
 ): Promise<string | null> {
   const parsed = JSON.parse(txJson);
   const client = await getSignerClient();
   const { fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
+  progressFn('Waiting for wallet confirmation...');
   const sig = await signFeePayerFn(fullCommitment.toString());
   if (!sig) return null;
 
@@ -682,7 +687,9 @@ async function broadcastWithLedgerSig(
     }
   }
 
+  progressFn('Checking latest vault state...');
   await checkBeforeBroadcast(JSON.stringify(parsed));
+  progressFn('Broadcasting transaction...');
   const [response, error] = await sendZkapp(JSON.stringify(parsed));
   if (error) {
     const message = typeof error === 'string'
@@ -699,13 +706,14 @@ async function broadcastWithLedgerSig(
 async function submitTx(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
   sendFn: SendTxFn | null,
+  progressFn: ProgressFn,
   signFeePayerFn?: SignFeePayerFn,
   extraKeys: InstanceType<typeof PrivateKey>[] = [],
   memo?: string
 ): Promise<string | null> {
   // E2E test mode: sign and send directly
   if (testPrivateKey) {
-    return await signAndSend(tx, extraKeys);
+    return await signAndSend(tx, progressFn, extraKeys);
   }
   // Sign with extra keys (e.g. zkApp key for deploy) before Auro/Ledger submission
   if (extraKeys.length > 0) {
@@ -714,11 +722,13 @@ async function submitTx(
   const txJson = serializeTx(tx);
   // Ledger path: sign fee payer via Ledger and broadcast directly
   if (signFeePayerFn) {
-    return broadcastWithLedgerSig(txJson, signFeePayerFn);
+    return broadcastWithLedgerSig(txJson, signFeePayerFn, progressFn);
   }
   // Auro path: send via Auro wallet
   if (sendFn) {
+    progressFn('Checking latest vault state...');
     await checkBeforeBroadcast(txJson);
+    progressFn('Waiting for wallet confirmation...');
     return sendFn(txJson, memo);
   }
   return null;
@@ -873,8 +883,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, [zkAppKey]);
     if (!txHash) return null;
     return `Transaction submitted: ${txHash}`;
   },
@@ -1049,9 +1058,8 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const extraKeys = childKey ? [childKey] : [];
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn, extraKeys, proposalMemo);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, extraKeys, proposalMemo);
     if (!txHash) return null;
     return { proposalHash: hashStr, txHash };
   },
@@ -1144,8 +1152,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn);
     if (!txHash) return null;
     return `Approval submitted: ${txHash}`;
   },
@@ -1259,8 +1266,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const executeHash = await submitTx(tx, sendFn, signFeePayerFn, [], proposalMemo);
+    const executeHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, [], proposalMemo);
     if (!executeHash) return null;
     return `Transaction submitted: ${executeHash}`;
   },
@@ -1353,8 +1359,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn);
     if (!txHash) return null;
     return `SubVault setup submitted: ${txHash}`;
   },
@@ -1455,8 +1460,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [], childMemo);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, [], childMemo);
     if (!txHash) return null;
     return `SubVault action submitted: ${txHash}`;
   },

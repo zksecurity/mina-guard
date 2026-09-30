@@ -2,6 +2,8 @@
 
 **Pre-broadcast state checks:** the actual transaction app-state preconditions are compared with fresh node state before sending (before Auro wallet handoff). Stale transactions require explicit, eligibility-checked recovery. Node failures block broadcast; a successful check does not guarantee inclusion. See [design and boundaries](transaction-coordination-design.md). Permission-loading notices on vault and proposal pages are delayed and neutral; action gates remain fail-closed.
 
+Online progress follows the submission boundary: Auro shows “Checking latest vault state…” after proving, then “Waiting for wallet confirmation…” only after the check passes. Ledger requests wallet confirmation first, checks the signed transaction, then shows “Broadcasting transaction…”. Early store/root mismatches still stop with an indexer/retry error; the post-proof check uses the recovery panel.
+
 This document describes the **online web UI** (`ui/`) — the Next.js app that
 MinaGuard owners use to connect a wallet, deploy vaults, and run the propose →
 approve → execute lifecycle against a live Mina network.
