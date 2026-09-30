@@ -167,6 +167,16 @@ bundle array; CREATE_CHILD executes re-derive the child config hash against
 `proposal.data` and refuse an already-initialized child. The broadcast memo
 on executes is the bundle's advisory `proposal.memo` (see the UI guide).
 
+Child reservation enforces the same governance bounds as initialization and rejects
+self-parenting or a parent without initialized root state. The parent's owners
+commitment and empty parent field are ledger preconditions, not only client
+checks. Successful child setup clears the consumed `reservedConfigHash`; consumers
+must use initialized state and events for the active configuration. Method arguments,
+proposal hashes, events, and offline bundle formats are unchanged. The circuit and
+verification keys change, so UI, offline CLI, and desktop builds must use the matching
+per-network `contracts/.vk-hash`; older deployed verification keys are not upgraded
+by this source change.
+
 Before compiling, the CLI also refuses proposals the contract is certain to reject, with the contract's own reasoning, so no operator spends a proof on them: an `ADD_OWNER` whose target an owner already holds, the same key or its negation (propose and approve, `hasOwnerWithSameX`), an `ADD_OWNER` whose `data` matches inserting the target at no position of the current owner list (approve, `assertExecutableAddOwnerData`; any position is accepted, not only the sorted one the app proposes), and a transfer row that sends a non-zero amount to the empty address (`buildTransferReceivers`). The web worker carries the same checks.
 
 ### 3. Broadcast (`UploadSignedResponse`, `ui/components/OfflineSigningFlow.tsx`)
