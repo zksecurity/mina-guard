@@ -1,5 +1,7 @@
 # Desktop App (Electron) — Architecture & Security Notes
 
+**Transaction preflight:** the shared UI queries the runtime-configured node before broadcast and uses existing node CSP access. Auro is checked before its combined sign/send call; Ledger and offline uploads are checked after signing. See [design and boundaries](transaction-coordination-design.md).
+
 This document describes the **desktop app** (`desktop/`) — an Electron shell that
 packages the same Next.js UI as the web app *plus* the backend indexer into a
 single, self-contained, locally-running application.

@@ -6,9 +6,11 @@ import * as Comlink from 'comlink';
 import Client from 'mina-signer';
 import type { WorkerApi } from './multisigClient.worker';
 import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
-import { getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
+import { getAuroAccounts, getAuroNetwork, getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
 import { signFields as ledgerSignFields, signFeePayer, checkLedgerReady } from '@/lib/ledgerWallet';
 import { getMinaGuardConfig } from '@/lib/endpoints';
+import { fetchProposal, fetchVaultSecurityStatus, isCanonicalVaultSecurity } from './api';
+import { preflightBeforeSend, preflightGeneration, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD, type PreflightContext, type RetryEligibility } from './preflight-flow';
 
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
@@ -58,9 +60,57 @@ function getWorkerApi(): Comlink.Remote<WorkerApi> {
     api = Comlink.wrap<WorkerApi>(worker);
     // Push endpoints into the worker before it tries to compile or network.
     // The worker gates configureNetwork() on this call, so no race.
+    workerConfig = JSON.stringify(getMinaGuardConfig());
     void api.setConfig(getMinaGuardConfig());
+    void api.setPreflightCheck(Comlink.proxy(async (txJson: string) => {
+      if (!activePreflight) throw new Error('No active transaction context.');
+      if (activeGeneration !== preflightGeneration()) throw new Error(PREFLIGHT_CANCELLED);
+      if (JSON.stringify(getMinaGuardConfig()) !== activeConfig || workerConfig !== activeConfig) throw new Error('Network configuration changed. Reload before preparing a new transaction.');
+      const context = activePreflight;
+      await preflightBeforeSend(txJson, () => assessPreflightRetry(context));
+      if (JSON.stringify(getMinaGuardConfig()) !== activeConfig) throw new Error('Network configuration changed. Reload before preparing a new transaction.');
+    }));
   }
   return api;
+}
+
+let activePreflight: PreflightContext | null = null;
+let activeGeneration = 0;
+let activeConfig = '';
+let workerConfig = '';
+
+export async function assessPreflightRetry(context: PreflightContext): Promise<RetryEligibility> {
+  if (context.action !== 'deploy') {
+    for (const address of [context.address, context.proposal?.childAccount].filter(Boolean) as string[]) {
+      if (!isCanonicalVaultSecurity(await fetchVaultSecurityStatus(address))) return { status: 'unknown' };
+    }
+  }
+  const result = await getWorkerApi().assessRetry(context);
+  if (result.status === 'executed' && context.proposal) {
+    const proposal = await fetchProposal(context.address, context.proposal.proposalHash);
+    return { ...result, executionHash: proposal?.executionTxHash ?? undefined };
+  }
+  return result;
+}
+
+async function runPreflightAction<T>(context: PreflightContext, fn: () => Promise<T>): Promise<T> {
+  if (activePreflight) throw new Error('Another transaction is being prepared in this tab.');
+  activePreflight = context;
+  activeGeneration = preflightGeneration();
+  activeConfig = JSON.stringify(getMinaGuardConfig());
+  const endpoint = getMinaGuardConfig().minaEndpoint;
+  try {
+    for (;;) {
+      if (activeGeneration !== preflightGeneration()) throw new Error(PREFLIGHT_CANCELLED);
+      if (getMinaGuardConfig().minaEndpoint !== endpoint) throw new Error('Network changed. Prepare a new transaction.');
+      try { return await fn(); }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== PREFLIGHT_REBUILD) throw error;
+        const eligibility = await assessPreflightRetry(context);
+        if (eligibility.status !== 'eligible') throw new Error(eligibility.message ?? 'This action could not be verified as eligible. Refresh the proposal before trying again.');
+      }
+    }
+  } finally { activePreflight = null; }
 }
 
 /** Verifies the Ledger device is unlocked and the Mina app is open before starting expensive work. */
@@ -72,7 +122,13 @@ export async function assertLedgerReady(signer?: SignerConfig): Promise<void> {
 /** Proxied Auro sendTransaction callback for use inside the worker. Returns null for Ledger. */
 function proxiedSendTx(signer?: SignerConfig) {
   if (signer?.type === 'ledger') return null;
-  return Comlink.proxy((txJson: string, memo?: string) => sendTransaction(txJson, undefined, memo));
+  return Comlink.proxy(async (txJson: string, memo?: string) => {
+    const [network, accounts] = await Promise.all([getAuroNetwork(), getAuroAccounts()]);
+    const configured = getMinaGuardConfig().networkId;
+    if (!network || (network === 'mainnet') !== (configured === 'mainnet')) throw new Error('Confirm the configured network in Auro before trying again.');
+    if (!activePreflight?.actor || !accounts.includes(activePreflight.actor)) throw new Error('The connected wallet changed. Prepare a new transaction with the intended signer.');
+    return sendTransaction(txJson, undefined, memo);
+  });
 }
 
 /** Proxied Ledger fee payer signing callback. Returns undefined for Auro. */
@@ -187,7 +243,7 @@ export async function deployAndSetupContract(params: {
   threshold: number;
 }, onProgress?: OnProgress, signer?: SignerConfig): Promise<string | null> {
   await assertLedgerReady(signer);
-  return getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer));
+  return runPreflightAction({ action: 'deploy', address: params.feePayerAddress, actor: params.feePayerAddress }, () => getWorkerApi().deployAndSetupContract(params, proxiedSendTx(signer), proxiedProgress(onProgress), proxiedSignFeePayer(signer)));
 }
 
 /** Creates an on-chain proposal via zkApp.propose(). Returns the proposalHash and
@@ -205,13 +261,13 @@ export async function createOnchainProposal(params: {
   const captured = captureWorkerCall('createOnchainProposal', params, CAPTURED_RESULT);
   if (captured) return captured.result;
   await assertLedgerReady(signer);
-  return getWorkerApi().createOnchainProposal(
+  return runPreflightAction({ action: 'propose', address: params.contractAddress, actor: params.proposerAddress, configNonce: params.configNonce, input: params.input }, () => getWorkerApi().createOnchainProposal(
     params,
     proxiedSignFields(signer),
     proxiedSendTx(signer),
     proxiedProgress(onProgress),
     proxiedSignFeePayer(signer),
-  );
+  ));
 }
 
 /** Submits an on-chain approveProposal tx. Returns the tx hash string on success. */
@@ -223,13 +279,13 @@ export async function approveProposalOnchain(params: {
   const captured = captureWorkerCall('approveProposalOnchain', params, CAPTURED_RESULT.txHash);
   if (captured) return captured.result;
   await assertLedgerReady(signer);
-  return getWorkerApi().approveProposalOnchain(
+  return runPreflightAction({ action: 'approve', address: params.contractAddress, actor: params.approverAddress, proposal: params.proposal }, () => getWorkerApi().approveProposalOnchain(
     params,
     proxiedSignFields(signer),
     proxiedSendTx(signer),
     proxiedProgress(onProgress),
     proxiedSignFeePayer(signer),
-  );
+  ));
 }
 
 /** Submits the appropriate single-sig execute* transaction for the given proposal. */
@@ -241,12 +297,12 @@ export async function executeProposalOnchain(params: {
   const captured = captureWorkerCall('executeProposalOnchain', params, CAPTURED_RESULT.txHash);
   if (captured) return captured.result;
   await assertLedgerReady(signer);
-  return getWorkerApi().executeProposalOnchain(
+  return runPreflightAction({ action: 'execute', address: params.contractAddress, actor: params.executorAddress, proposal: params.proposal }, () => getWorkerApi().executeProposalOnchain(
     params,
     proxiedSendTx(signer),
     proxiedProgress(onProgress),
     proxiedSignFeePayer(signer),
-  );
+  ));
 }
 
 /**
@@ -290,12 +346,12 @@ export async function executeSetupChildOnchain(params: {
   const captured = captureWorkerCall('executeSetupChildOnchain', params, CAPTURED_RESULT.txHash);
   if (captured) return captured.result;
   await assertLedgerReady(signer);
-  return getWorkerApi().executeSetupChildOnchain(
+  return runPreflightAction({ action: 'execute', address: params.parentAddress, actor: params.executorAddress, proposal: params.proposal }, () => getWorkerApi().executeSetupChildOnchain(
     params,
     proxiedSendTx(signer),
     proxiedProgress(onProgress),
     proxiedSignFeePayer(signer),
-  );
+  ));
 }
 
 /**
@@ -311,12 +367,12 @@ export async function executeChildLifecycleOnchain(params: {
   const captured = captureWorkerCall('executeChildLifecycleOnchain', params, CAPTURED_RESULT.txHash);
   if (captured) return captured.result;
   await assertLedgerReady(signer);
-  return getWorkerApi().executeChildLifecycleOnchain(
+  return runPreflightAction({ action: 'execute', address: params.parentAddress, actor: params.executorAddress, proposal: params.proposal }, () => getWorkerApi().executeChildLifecycleOnchain(
     params,
     proxiedSendTx(signer),
     proxiedProgress(onProgress),
     proxiedSignFeePayer(signer),
-  );
+  ));
 }
 
 /** Fetch and verify public reconstruction state without signing or proving. */

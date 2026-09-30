@@ -1,5 +1,7 @@
 # E2E Tests
 
+Transaction preflight browser checks: `bun e2e/preflight/browser.ts` from the repo root. Requires Playwright Chromium; runs without a database or development stack. Wallet/prover/node I/O is simulated; this does not validate physical wallets or live inclusion. CI runs this before the full UI suite.
+
 End-to-end tests for MinaGuard using [Playwright](https://playwright.dev/). The test suite exercises the full lifecycle — deploy, propose, approve, execute — against a real Mina network through the UI with a mock wallet.
 
 ## Prerequisites
@@ -213,3 +215,11 @@ The frontend caches o1js prover/verifier keys in IndexedDB so that page reloads 
 - Playwright HTML report is generated at `e2e/playwright-report/` (run `bunx playwright show-report` to view)
 - Traces and screenshots are captured on failure (in `e2e/test-results/`)
 - Logs are prefixed with `[e2e-setup]`, `[e2e-teardown]`, and `[e2e]` for easy filtering
+
+
+For the Linux packaged desktop smoke, build `desktop` with its checked-in scripts,
+run `bunx --no-install electron-builder --dir --publish never` there, then run
+`xvfb-run -a node e2e/preflight/desktop.ts` from the repo root. It uses a fresh
+throwaway profile and loopback node fixture, checks startup/native SQLite/runtime
+endpoint/CSP, and closes only its own app. Ports 5050, 5051 and 5099 must be free.
+This is a packaging smoke, not a Ledger or live-chain transaction test.

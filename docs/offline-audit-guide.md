@@ -1,5 +1,7 @@
 # Offline Signing (Air-Gapped CLI) — Architecture & Security Notes
 
+**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests remain version 2 and signed responses version 1; the CLI protocol is unchanged. See [design and boundaries](transaction-coordination-design.md).
+
 This document describes the **air-gapped signing path**: the bundle
 export/import UI inside the web app (`ui/lib/offline-signing.ts`,
 `ui/components/OfflineSigningFlow.tsx`) and the standalone CLI

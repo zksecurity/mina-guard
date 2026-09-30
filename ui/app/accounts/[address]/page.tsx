@@ -19,6 +19,7 @@ import TxTypeIcon from '@/components/TxTypeIcon';
 import { fetchBalance, fetchChildren } from '@/lib/api';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
+import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import {
   clearPendingTx,
@@ -154,11 +155,10 @@ export default function AccountPage() {
         ) : multisig && multisig.address === urlAddress ? (
           <div className="space-y-6">
             {!permissionsVerified && (
-              <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
-                {liveSecurity === 'checking'
-                  ? 'Checking the complete on-chain permission vector. Transaction actions remain blocked.'
-                  : 'Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Do not fund or use this account; transaction actions are blocked.'}
-              </div>
+              <VaultSecurityNotice
+                checking={liveSecurity === null || liveSecurity === 'checking'}
+                message="Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Do not fund or use this account; transaction actions are blocked."
+              />
             )}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-safe-gray border border-safe-border rounded-xl p-5">

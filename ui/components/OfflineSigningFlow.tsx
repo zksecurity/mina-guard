@@ -3,6 +3,9 @@
 import { useRef, useState } from 'react';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
 import { getMinaGuardConfig } from '@/lib/endpoints';
+import { assessPreflightRetry } from '@/lib/multisigClient';
+import { fetchProposal } from '@/lib/api';
+import { preflightBeforeSend, preflightFailureMessage, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD } from '@/lib/preflight-flow';
 
 // CLI binaries are published per release by the offline-cli-release workflow
 // (binaries + SHA256SUMS + minaguard-vk-hash.txt). There is deliberately NO
@@ -16,7 +19,7 @@ import { getMinaGuardConfig } from '@/lib/endpoints';
 // When unset, the download section shows setup guidance instead of a link.
 const CLI_RELEASE_DOWNLOAD_BASE = process.env.NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL;
 
-async function broadcastSignedTx(txJson: string): Promise<string> {
+export async function broadcastSignedTx(txJson: string): Promise<string> {
   const query = `mutation($input: SendZkappInput!) { sendZkapp(input: $input) { zkapp { hash } } }`;
   const zkappCommand = JSON.parse(txJson);
   // Resolved at call time so the desktop shell's runtime endpoint override applies.
@@ -240,6 +243,17 @@ function extractBundleWarnings(bundle: any): string[] {
   return warnings;
 }
 
+export function downloadOfflineBundle(action: 'propose' | 'approve' | 'execute', bundle: unknown): string {
+  const filename = bundleFilename(action, bundle);
+  const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  return filename;
+}
+
 export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, cliBinaryName }: OfflineSigningFlowProps) {
   const [building, setBuilding] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -254,14 +268,7 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
     try {
       const bundle = await onBuildBundle();
       setWarnings(extractBundleWarnings(bundle));
-      const filename = bundleFilename(action, bundle);
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      const filename = downloadOfflineBundle(action, bundle);
       setExportedFilename(filename);
       onExported?.(filename);
     } catch (err) {
@@ -315,6 +322,8 @@ interface UploadSignedResponseProps {
   /** Live, online policy check performed immediately before broadcasting. */
   beforeBroadcast?: (response: OfflineSignedTxResponse) => Promise<void>;
   onComplete?: (response: OfflineSignedTxResponse, txHash: string) => void;
+  /** Rebuild the same action after eligibility is refreshed, never a replacement proposal. */
+  onRecreate?: (response: OfflineSignedTxResponse) => Promise<void>;
 }
 
 export function UploadSignedResponse({
@@ -323,14 +332,20 @@ export function UploadSignedResponse({
   expectedProposalHash,
   beforeBroadcast,
   onComplete,
+  onRecreate,
 }: UploadSignedResponseProps) {
   const [broadcasting, setBroadcasting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [recreated, setRecreated] = useState(false);
+  const processingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = async (file: File) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setRecreated(false);
     setBroadcasting(false);
     setError(null);
     setDone(false);
@@ -380,20 +395,35 @@ export function UploadSignedResponse({
         );
       }
 
-      // A signed offline response can outlive the page state from which its
-      // bundle was exported. Re-run the caller's live security policy at the
-      // final online boundary instead of trusting an old UI check or any
-      // account snapshot carried inside the untrusted bundle.
-      await beforeBroadcast?.(response);
-
-      setBroadcasting(true);
       const txJson = typeof response.transaction === 'string'
         ? response.transaction : JSON.stringify(response.transaction);
+      const assess = async () => {
+        if (response.action === 'propose') {
+          return { status: 'review' as const, message: 'The original proposal request is needed to recreate this transaction. Review the proposal form and export a fresh request.' };
+        }
+        const proposal = await fetchProposal(response.contractAddress, response.proposalHash);
+        if (!proposal) return { status: 'unknown' as const };
+        return assessPreflightRetry({ action: response.action, address: response.contractAddress, proposal,
+          actor: JSON.parse(txJson)?.feePayer?.body?.publicKey });
+      };
+      try {
+        await preflightBeforeSend(txJson, assess, true, !!onRecreate, () => beforeBroadcast?.(response) ?? Promise.resolve());
+      } catch (err) {
+        if (err instanceof Error && err.message === PREFLIGHT_REBUILD && onRecreate) {
+          const eligible = await assess();
+          if (eligible.status !== 'eligible') throw new Error(eligible.message ?? 'This action is no longer verified as eligible. Nothing was exported.');
+          await onRecreate(response);
+          setRecreated(true);
+          return;
+        }
+        throw err;
+      }
+      setBroadcasting(true);
       let txHash: string;
       try {
         txHash = await broadcastSignedTx(txJson);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = preflightFailureMessage(err);
         if (msg.includes('Invalid_signature') || msg.includes('invalid signature')) {
           throw new Error('The Mina node rejected the transaction signature. This usually means the private key used on the air-gapped machine does not match the fee payer address.');
         }
@@ -408,8 +438,9 @@ export function UploadSignedResponse({
       setDone(true);
       onComplete?.(response, txHash);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (!(err instanceof Error && err.message === PREFLIGHT_CANCELLED)) setError(err instanceof Error ? err.message : String(err));
     } finally {
+      processingRef.current = false;
       setBroadcasting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -451,6 +482,7 @@ export function UploadSignedResponse({
       {broadcasting && (
         <p className="text-sm text-safe-text">Broadcasting transaction...</p>
       )}
+      {recreated && <p className="text-sm text-safe-green">Fresh request downloaded. Sign it on your offline device, then upload the new signed file.</p>}
       {done && (
         <p className="text-sm text-safe-green">Transaction broadcast successfully.</p>
       )}

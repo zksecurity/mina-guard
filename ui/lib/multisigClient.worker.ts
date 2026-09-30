@@ -2,6 +2,7 @@
 // Runs o1js compilation and proof generation off the main thread.
 
 import './disable-wasm-finalizers';
+import type { PreflightContext, RetryEligibility } from './preflight-flow';
 import * as Comlink from 'comlink';
 
 import {
@@ -30,6 +31,8 @@ import {
   Receiver,
   TransactionProposal,
   MAX_OWNERS,
+  EXECUTED_MARKER,
+  PROPOSED_MARKER,
   MAX_RECEIVERS,
   SetupOwnersInput,
   OwnerStore,
@@ -77,6 +80,12 @@ interface RuntimeConfig {
   minaEndpoint: string;
   archiveEndpoint: string;
   networkId: NetworkId;
+}
+
+let preflightCheck: ((txJson: string) => Promise<void>) | null = null;
+async function checkBeforeBroadcast(txJson: string) {
+  if (!preflightCheck) throw new Error('Transaction state checker is not ready.');
+  await preflightCheck(txJson);
 }
 
 let runtimeConfig: RuntimeConfig | null = null;
@@ -314,6 +323,7 @@ async function signAndSend(
   extraKeys: InstanceType<typeof PrivateKey>[] = []
 ): Promise<string> {
   tx.sign([testPrivateKey!, ...extraKeys]);
+  await checkBeforeBroadcast(serializeTx(tx));
   const result = await tx.send();
   const hash = typeof result.hash === 'function'
     ? (result.hash as () => string)()
@@ -672,6 +682,7 @@ async function broadcastWithLedgerSig(
     }
   }
 
+  await checkBeforeBroadcast(JSON.stringify(parsed));
   const [response, error] = await sendZkapp(JSON.stringify(parsed));
   if (error) {
     const message = typeof error === 'string'
@@ -707,6 +718,7 @@ async function submitTx(
   }
   // Auro path: send via Auro wallet
   if (sendFn) {
+    await checkBeforeBroadcast(txJson);
     return sendFn(txJson, memo);
   }
   return null;
@@ -717,6 +729,69 @@ async function submitTx(
 // ---------------------------------------------------------------------------
 
 const workerApi = {
+  setPreflightCheck(check: (txJson: string) => Promise<void>) { preflightCheck = check; },
+
+  /** Retry guidance is based on roots verified against the node, not pending metadata.
+   * The normal builder still reruns every contract assertion before proving.
+   */
+  async assessRetry(context: PreflightContext): Promise<RetryEligibility> {
+    const invalid = (message: string): RetryEligibility => ({ status: 'invalid', message });
+    if (context.action === 'deploy') return invalid('Review the account before preparing another deployment.');
+    const stores = await rebuildStoresFromBackend(context.address);
+    const state = await requireContractState(context.address);
+    assertStoresMatchChain(stores, state);
+    const guard = new MinaGuard(PublicKey.fromBase58(context.address));
+    const proposal = context.proposal;
+    if (proposal) {
+      const hash = Field(proposal.proposalHash);
+      const count = stores.approvalStore.getCount(hash);
+      if (count.equals(EXECUTED_MARKER).toBoolean()) return { status: 'executed' };
+      if (proposal.childAccount && proposal.destination === 'remote') {
+        const map = await rebuildChildExecutionMapFromBackend(proposal.childAccount);
+        const child = await requireContractState(proposal.childAccount);
+        assertChildExecutionMapMatchesChain(map, child.childExecutionRoot);
+        if (map.get(hash).equals(EXECUTED_MARKER).toBoolean()) return { status: 'executed' };
+      }
+      if (count.toBigInt() < PROPOSED_MARKER.toBigInt()) return invalid('This proposal is no longer registered.');
+      if (String(state.configNonce) !== proposal.configNonce) return invalid('The vault configuration changed and invalidated this proposal.');
+      if (context.action === 'approve' && context.actor && stores.nullifierStore.isNullified(hash, PublicKey.fromBase58(context.actor))) {
+        return invalid('This owner has already approved this proposal.');
+      }
+      if (context.action === 'execute' && count.sub(PROPOSED_MARKER).toBigInt() < BigInt(state.threshold)) return invalid('This proposal does not have enough approvals.');
+    } else if (context.configNonce !== undefined && state.configNonce !== context.configNonce) {
+      return invalid('The vault configuration changed. Review your proposal before creating a new request.');
+    }
+    if (context.action === 'approve' || context.action === 'propose') {
+      if (!context.actor || !stores.ownerStore.isOwner(PublicKey.fromBase58(context.actor))) return invalid('The signer is no longer an owner of this vault.');
+    }
+    const input = proposal ?? context.input;
+    if (!input) return { status: 'unknown' };
+    if (input.txType !== 'createChild') {
+      let nonce = BigInt(state.nonce);
+      if (input.childAccount && ['reclaimChild', 'destroyChild', 'enableChildMultiSig'].includes(input.txType ?? '')) {
+        await fetchAccount({ publicKey: PublicKey.fromBase58(input.childAccount) });
+        nonce = new MinaGuard(PublicKey.fromBase58(input.childAccount)).parentNonce.get().toBigInt();
+      }
+      if (BigInt(input.nonce ?? 0) <= nonce) return invalid('Another transaction invalidated this proposal nonce.');
+      if (context.action === 'execute' && BigInt(input.nonce ?? 0) !== nonce + 1n) return invalid('An earlier proposal must execute first.');
+    }
+    // Disabled child multisigs cannot propose/approve/local-execute. Reclaim is
+    // a remote parent-authorized action and is intentionally exempt.
+    if (!guard.parent.get().equals(PublicKey.empty()).toBoolean() && guard.childMultiSigEnabled.get().equals(Field(0)).toBoolean()) {
+      return invalid('This SubVault’s multisig is disabled.');
+    }
+    if (BigInt(input.expirySlot ?? 0) !== 0n) {
+      const cfg = runtimeConfig!;
+      const response = await fetch(cfg.minaEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ bestChain(maxLength: 1) { protocolState { consensusState { slotSinceGenesis } } } }' }),
+        signal: AbortSignal.timeout(15000), cache: 'no-store' });
+      const data = await response.json();
+      const slot = data.data?.bestChain?.[0]?.protocolState?.consensusState?.slotSinceGenesis;
+      if (!response.ok || data.errors?.length || slot == null) return { status: 'unknown' };
+      if (BigInt(slot) > BigInt(input.expirySlot!)) return invalid('This proposal has expired.');
+    }
+    return { status: 'eligible' };
+  },
   /** Complete, verified public snapshot for a version 2 offline request. */
   async exportStoreCheckpoint(contractAddress: string) {
     const cfg = runtimeConfig ?? (await configReady);

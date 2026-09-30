@@ -1,5 +1,7 @@
 'use client';
 
+import TransactionPreflightPanel from '@/components/TransactionPreflightPanel';
+
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
@@ -38,9 +40,10 @@ import {
   savePendingTx,
 } from '@/lib/storage';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
+import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
-import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
+import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse, downloadOfflineBundle } from '@/components/OfflineSigningFlow';
 
 /**
  * Re-authenticates every account involved in a proposal immediately before an
@@ -686,6 +689,8 @@ export default function TransactionDetailPage() {
           />
         )}
 
+        <TransactionPreflightPanel />
+
         {isConfigStale && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
             <p className="font-semibold mb-1">Outdated config nonce</p>
@@ -719,18 +724,16 @@ export default function TransactionDetailPage() {
         )}
 
         {(!permissionsSafe || childPermissionCheck === 'mismatch') && (
-          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
-            <p className="font-semibold mb-1">Unsafe permission vector</p>
-            <p className="opacity-90">
-              {!permissionsSafe
-                ? parentPermissionCheck === 'checking'
-                  ? 'The complete on-chain Vault permission check is still running.'
-                  : 'This Vault has not passed the complete canonical permission check.'
-                : 'The proposed SubVault has a missing or non-canonical on-chain permission field.'}{' '}
-              Approval, execution, deletion, and offline bundle creation are
-              blocked.
-            </p>
-          </div>
+          <VaultSecurityNotice
+            checking={childPermissionCheck !== 'mismatch' &&
+              (parentPermissionCheck === null || parentPermissionCheck === 'checking')}
+            message={
+              (childPermissionCheck === 'mismatch'
+                ? 'The proposed SubVault has a missing or non-canonical on-chain permission field.'
+                : 'This Vault has not passed the complete canonical permission check.') +
+              ' Approval, execution, deletion, and offline bundle creation are blocked.'
+            }
+          />
         )}
 
         {childConfigCheck === 'unavailable' && (
@@ -1067,6 +1070,21 @@ export default function TransactionDetailPage() {
                           proposal!.childAccount,
                         )
                       }
+                      onRecreate={async (response) => {
+                        // Keep the original signed action and signer. Never turn an
+                        // obsolete approve/execute into a newly proposed operation.
+                        const signed = typeof response.transaction === 'string'
+                          ? JSON.parse(response.transaction) : response.transaction;
+                        const feePayerAddress = (signed as { feePayer?: { body?: { publicKey?: string } } }).feePayer?.body?.publicKey ?? '';
+                        assertValidMinaAddress(feePayerAddress);
+                        await assertProposalVaultSecurity(multisig!.address, proposal!.childAccount);
+                        const params = { contractAddress: multisig!.address, feePayerAddress,
+                          proposal: { ...proposal!, receivers: proposal!.receivers.map(r => ({ address: r.address, amount: r.amount })) } };
+                        const bundle = response.action === 'approve'
+                          ? await buildOfflineApproveBundle(params)
+                          : await buildOfflineExecuteBundle(params);
+                        setExportedBundleName(downloadOfflineBundle(response.action, bundle));
+                      }}
                       onComplete={(response, txHash) => {
                         const kind = response.action as 'approve' | 'execute';
                         void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);

@@ -322,3 +322,15 @@ describe('memo match derivation', () => {
     expect(computeMemoExecutionMatch(null, hash)).toBeNull();
   });
 });
+
+// Execution links must never use the public submission-report field.
+import { serializeProposalRecord, type ProposalWithDerived } from '../proposal-record.js';
+test('execution link uses the indexed execution hash, not the reported submission hash', () => {
+  const proposal = { receivers: [], executions: [], _count: { approvals: 0 },
+    lastExecuteTxHash: 'unverified-report', memo: null, memoHash: null, executionMemoHash: null,
+    expirySlot: '0', nonce: '1', configNonce: '0', txType: '0', destination: 'local',
+  } as unknown as ProposalWithDerived;
+  expect(serializeProposalRecord(proposal, 0).executionTxHash).toBeNull();
+  proposal.executions = [{ blockHeight: 10, txHash: 'confirmed-execution' }];
+  expect(serializeProposalRecord(proposal, 0).executionTxHash).toBe('confirmed-execution');
+});

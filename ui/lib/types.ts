@@ -54,6 +54,8 @@ export interface Proposal {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  /** Confirmed execution from the indexer, never a submission report. */
+  executionTxHash?: string | null;
   lastApproveTxHash: string | null;
   lastExecuteTxHash: string | null;
   lastApproveError: string | null;
