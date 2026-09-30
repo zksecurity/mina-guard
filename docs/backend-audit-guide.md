@@ -1,5 +1,7 @@
 # Backend Indexer & Read API — Architecture & Security Notes
 
+**Confirmed execution links:** proposal serialization exposes `executionTxHash` from the indexed execution relation. The UI does not use the unauthenticated submission-report hash as a confirmed execution link. No schema migration is added.
+
 This document describes the **backend** (`backend/`) — an Express read API backed by
 a polling indexer that turns MinaGuard's on-chain events into normalized database
 tables. It is **untrusted for integrity**: it holds no keys, and everything it serves

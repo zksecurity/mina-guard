@@ -42,6 +42,7 @@ export interface SerializedProposalRecord {
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
+  executionTxHash: string | null;
   lastApproveTxHash: string | null;
   lastExecuteTxHash: string | null;
   lastApproveError: string | null;
@@ -184,6 +185,7 @@ export function serializeProposalRecord(
     approvalCount: proposal._count.approvals,
     createdAtBlock: proposal.createdAtBlock,
     executedAtBlock: execution?.blockHeight ?? null,
+    executionTxHash: execution?.txHash ?? null,
     lastApproveTxHash: proposal.lastApproveTxHash,
     lastExecuteTxHash: proposal.lastExecuteTxHash,
     lastApproveError: proposal.lastApproveError,

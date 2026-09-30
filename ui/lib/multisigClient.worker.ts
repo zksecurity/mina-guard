@@ -2,6 +2,8 @@
 // Runs o1js compilation and proof generation off the main thread.
 
 import './disable-wasm-finalizers';
+import type { PreflightContext, RetryEligibility } from './preflight-flow';
+import { requireUnregisteredProposal } from './proposal-preparation';
 import * as Comlink from 'comlink';
 
 import {
@@ -30,6 +32,8 @@ import {
   Receiver,
   TransactionProposal,
   MAX_OWNERS,
+  EXECUTED_MARKER,
+  PROPOSED_MARKER,
   MAX_RECEIVERS,
   SetupOwnersInput,
   OwnerStore,
@@ -77,6 +81,12 @@ interface RuntimeConfig {
   minaEndpoint: string;
   archiveEndpoint: string;
   networkId: NetworkId;
+}
+
+let preflightCheck: ((txJson: string) => Promise<void>) | null = null;
+async function checkBeforeBroadcast(txJson: string) {
+  if (!preflightCheck) throw new Error('Transaction state checker is not ready.');
+  await preflightCheck(txJson);
 }
 
 let runtimeConfig: RuntimeConfig | null = null;
@@ -311,9 +321,13 @@ async function signProposalHash(
 /** Signs the fee payer, sends directly to the network, and returns the formatted success message. */
 async function signAndSend(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
+  progressFn: ProgressFn,
   extraKeys: InstanceType<typeof PrivateKey>[] = []
 ): Promise<string> {
   tx.sign([testPrivateKey!, ...extraKeys]);
+  progressFn('Checking latest vault state...');
+  await checkBeforeBroadcast(serializeTx(tx));
+  progressFn('Broadcasting transaction...');
   const result = await tx.send();
   const hash = typeof result.hash === 'function'
     ? (result.hash as () => string)()
@@ -467,6 +481,38 @@ function buildProposalDataField(
     return ownerStore.commitmentWithSortedAdd(PublicKey.fromBase58(input.newOwner));
   }
   return Field(0);
+}
+
+/** Build the same intent for initial creation and retry eligibility. */
+function buildNewProposal(input: NewProposalInput, configNonce: number, contractAddress: string, ownerStore: InstanceType<typeof OwnerStore>) {
+  const isCreateChild = input.txType === 'createChild';
+  const receivers = buildReceiversForProposal(input);
+  const txType = uiTxTypeToField(input.txType);
+  const data = buildProposalDataField(input, ownerStore);
+
+  const isRemote =
+    isCreateChild ||
+    input.txType === 'reclaimChild' ||
+    input.txType === 'destroyChild' ||
+    input.txType === 'enableChildMultiSig';
+
+  const memoHash = memoToField(input.memo ?? '');
+
+  return new TransactionProposal({
+    receivers,
+    tokenId: Field(0),
+    txType,
+    data,
+    memoHash,
+    nonce: Field(input.nonce),
+    configNonce: Field(configNonce),
+    expirySlot: Field(input.expirySlot ?? 0),
+    guardAddress: PublicKey.fromBase58(contractAddress),
+    destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
+    childAccount: input.childAccount
+      ? PublicKey.fromBase58(input.childAccount)
+      : PublicKey.empty(),
+  });
 }
 
 /**
@@ -644,11 +690,13 @@ async function getSignerClient(): Promise<InstanceType<typeof Client>> {
 /** Signs the fee payer via Ledger and broadcasts directly to the Mina GraphQL endpoint. */
 async function broadcastWithLedgerSig(
   txJson: string,
-  signFeePayerFn: SignFeePayerFn
+  signFeePayerFn: SignFeePayerFn,
+  progressFn: ProgressFn
 ): Promise<string | null> {
   const parsed = JSON.parse(txJson);
   const client = await getSignerClient();
   const { fullCommitment } = client.getZkappCommandCommitmentsFromJSON(parsed);
+  progressFn('Waiting for wallet confirmation...');
   const sig = await signFeePayerFn(fullCommitment.toString());
   if (!sig) return null;
 
@@ -672,6 +720,9 @@ async function broadcastWithLedgerSig(
     }
   }
 
+  progressFn('Checking latest vault state...');
+  await checkBeforeBroadcast(JSON.stringify(parsed));
+  progressFn('Broadcasting transaction...');
   const [response, error] = await sendZkapp(JSON.stringify(parsed));
   if (error) {
     const message = typeof error === 'string'
@@ -688,13 +739,14 @@ async function broadcastWithLedgerSig(
 async function submitTx(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
   sendFn: SendTxFn | null,
+  progressFn: ProgressFn,
   signFeePayerFn?: SignFeePayerFn,
   extraKeys: InstanceType<typeof PrivateKey>[] = [],
   memo?: string
 ): Promise<string | null> {
   // E2E test mode: sign and send directly
   if (testPrivateKey) {
-    return await signAndSend(tx, extraKeys);
+    return await signAndSend(tx, progressFn, extraKeys);
   }
   // Sign with extra keys (e.g. zkApp key for deploy) before Auro/Ledger submission
   if (extraKeys.length > 0) {
@@ -703,10 +755,13 @@ async function submitTx(
   const txJson = serializeTx(tx);
   // Ledger path: sign fee payer via Ledger and broadcast directly
   if (signFeePayerFn) {
-    return broadcastWithLedgerSig(txJson, signFeePayerFn);
+    return broadcastWithLedgerSig(txJson, signFeePayerFn, progressFn);
   }
   // Auro path: send via Auro wallet
   if (sendFn) {
+    progressFn('Checking latest vault state...');
+    await checkBeforeBroadcast(txJson);
+    progressFn('Waiting for wallet confirmation...');
     return sendFn(txJson, memo);
   }
   return null;
@@ -717,6 +772,75 @@ async function submitTx(
 // ---------------------------------------------------------------------------
 
 const workerApi = {
+  setPreflightCheck(check: (txJson: string) => Promise<void>) { preflightCheck = check; },
+
+  /** Retry guidance is based on roots verified against the node, not pending metadata.
+   * The normal builder still reruns every contract assertion before proving.
+   */
+  async assessRetry(context: PreflightContext): Promise<RetryEligibility> {
+    const invalid = (message: string): RetryEligibility => ({ status: 'invalid', message });
+    if (context.action === 'deploy') return invalid('Review the account before preparing another deployment.');
+    const stores = await rebuildStoresFromBackend(context.address);
+    const state = await requireContractState(context.address);
+    assertStoresMatchChain(stores, state);
+    const guard = new MinaGuard(PublicKey.fromBase58(context.address));
+    const proposal = context.proposal;
+    if (proposal) {
+      const hash = Field(proposal.proposalHash);
+      const count = stores.approvalStore.getCount(hash);
+      if (count.equals(EXECUTED_MARKER).toBoolean()) return { status: 'executed' };
+      if (proposal.childAccount && proposal.destination === 'remote') {
+        const map = await rebuildChildExecutionMapFromBackend(proposal.childAccount);
+        const child = await requireContractState(proposal.childAccount);
+        assertChildExecutionMapMatchesChain(map, child.childExecutionRoot);
+        if (map.get(hash).equals(EXECUTED_MARKER).toBoolean()) return { status: 'executed' };
+      }
+      if (count.toBigInt() < PROPOSED_MARKER.toBigInt()) return invalid('This proposal is no longer registered.');
+      if (String(state.configNonce) !== proposal.configNonce) return invalid('The vault configuration changed and invalidated this proposal.');
+      if (context.action === 'approve' && context.actor && stores.nullifierStore.isNullified(hash, PublicKey.fromBase58(context.actor))) {
+        return invalid('This owner has already approved this proposal.');
+      }
+      if (context.action === 'execute' && count.sub(PROPOSED_MARKER).toBigInt() < BigInt(state.threshold)) return invalid('This proposal does not have enough approvals.');
+    } else if (context.configNonce !== undefined && state.configNonce !== context.configNonce) {
+      return invalid('The vault configuration changed. Review your proposal before creating a new request.');
+    }
+    if (context.action === 'approve' || context.action === 'propose') {
+      if (!context.actor || !stores.ownerStore.isOwner(PublicKey.fromBase58(context.actor))) return invalid('The signer is no longer an owner of this vault.');
+    }
+    if (context.action === 'propose' && context.input && context.configNonce !== undefined) {
+      const hash = buildNewProposal(context.input, context.configNonce, context.address, stores.ownerStore).hash();
+      if (stores.approvalStore.getCount(hash).toBigInt() !== 0n) {
+        return { status: 'existing', proposalHash: hash.toString() };
+      }
+    }
+    const input = proposal ?? context.input;
+    if (!input) return { status: 'unknown' };
+    if (input.txType !== 'createChild') {
+      let nonce = BigInt(state.nonce);
+      if (input.childAccount && ['reclaimChild', 'destroyChild', 'enableChildMultiSig'].includes(input.txType ?? '')) {
+        await fetchAccount({ publicKey: PublicKey.fromBase58(input.childAccount) });
+        nonce = new MinaGuard(PublicKey.fromBase58(input.childAccount)).parentNonce.get().toBigInt();
+      }
+      if (BigInt(input.nonce ?? 0) <= nonce) return invalid('Another transaction invalidated this proposal nonce.');
+      if (context.action === 'execute' && BigInt(input.nonce ?? 0) !== nonce + 1n) return invalid('An earlier proposal must execute first.');
+    }
+    // Disabled child multisigs cannot propose/approve/local-execute. Reclaim is
+    // a remote parent-authorized action and is intentionally exempt.
+    if (!guard.parent.get().equals(PublicKey.empty()).toBoolean() && guard.childMultiSigEnabled.get().equals(Field(0)).toBoolean()) {
+      return invalid('This SubVault’s multisig is disabled.');
+    }
+    if (BigInt(input.expirySlot ?? 0) !== 0n) {
+      const cfg = runtimeConfig!;
+      const response = await fetch(cfg.minaEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ bestChain(maxLength: 1) { protocolState { consensusState { slotSinceGenesis } } } }' }),
+        signal: AbortSignal.timeout(15000), cache: 'no-store' });
+      const data = await response.json();
+      const slot = data.data?.bestChain?.[0]?.protocolState?.consensusState?.slotSinceGenesis;
+      if (!response.ok || data.errors?.length || slot == null) return { status: 'unknown' };
+      if (BigInt(slot) > BigInt(input.expirySlot!)) return invalid('This proposal has expired.');
+    }
+    return { status: 'eligible' };
+  },
   /** Complete, verified public snapshot for a version 2 offline request. */
   async exportStoreCheckpoint(contractAddress: string) {
     const cfg = runtimeConfig ?? (await configReady);
@@ -798,8 +922,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [zkAppKey]);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, [zkAppKey]);
     if (!txHash) return null;
     return `Transaction submitted: ${txHash}`;
   },
@@ -853,36 +976,10 @@ const workerApi = {
       }
     }
 
-    const receivers = buildReceiversForProposal(params.input);
-    const txType = uiTxTypeToField(params.input.txType);
-    const data = buildProposalDataField(params.input, ownerStore);
-
-    const isRemote =
-      isCreateChild ||
-      params.input.txType === 'reclaimChild' ||
-      params.input.txType === 'destroyChild' ||
-      params.input.txType === 'enableChildMultiSig';
-
-    const memoHash = memoToField(params.input.memo ?? '');
-
-    const proposal = new TransactionProposal({
-      receivers,
-      tokenId: Field(0),
-      txType,
-      data,
-      memoHash,
-      nonce: Field(params.input.nonce),
-      configNonce: Field(params.configNonce),
-      expirySlot: Field(params.input.expirySlot ?? 0),
-      guardAddress: PublicKey.fromBase58(params.contractAddress),
-      destination: isRemote ? Destination.REMOTE : Destination.LOCAL,
-      childAccount: params.input.childAccount
-        ? PublicKey.fromBase58(params.input.childAccount)
-        : PublicKey.empty(),
-    });
-
+    const proposal = buildNewProposal(params.input, params.configNonce, params.contractAddress, ownerStore);
     const proposalHash = proposal.hash();
     const hashStr = proposalHash.toString();
+    requireUnregisteredProposal(hashStr, approvalStore.getCount(proposalHash).toBigInt());
 
     progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
     const signature = await signProposalHash(hashStr, signFn);
@@ -913,7 +1010,6 @@ const workerApi = {
     const contract = new MinaGuard(contractAddress);
     const fetches: Promise<any>[] = [
       fetchAccount({ publicKey: proposer }),
-      fetchAccount({ publicKey: contractAddress }),
     ];
     // REMOTE non-create proposals read child state (parentNonce, ownersCommitment,
     // parent) via getAndRequireEquals() inside propose(). For createChild, the
@@ -924,6 +1020,7 @@ const workerApi = {
       fetches.push(fetchAccount({ publicKey: childAccount }));
     }
     await Promise.all(fetches);
+    assertStoresMatchChain(stores, await requireContractState(params.contractAddress));
 
     logProposeDiagnostics({
       contract,
@@ -974,9 +1071,8 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
     const extraKeys = childKey ? [childKey] : [];
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn, extraKeys, proposalMemo);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, extraKeys, proposalMemo);
     if (!txHash) return null;
     return { proposalHash: hashStr, txHash };
   },
@@ -1053,6 +1149,7 @@ const workerApi = {
     progressFn('Building transaction...');
     const contract = new MinaGuard(PublicKey.fromBase58(params.contractAddress));
     await fetchAccount({ publicKey: approver });
+    assertStoresMatchChain(stores, await requireContractState(params.contractAddress));
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(approver), async () => {
       await contract.approveProposal(
@@ -1069,8 +1166,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn);
     if (!txHash) return null;
     return `Approval submitted: ${txHash}`;
   },
@@ -1187,8 +1283,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const executeHash = await submitTx(tx, sendFn, signFeePayerFn, [], proposalMemo);
+    const executeHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, [], proposalMemo);
     if (!executeHash) return null;
     return `Transaction submitted: ${executeHash}`;
   },
@@ -1281,8 +1376,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn);
     if (!txHash) return null;
     return `SubVault setup submitted: ${txHash}`;
   },
@@ -1383,8 +1477,7 @@ const workerApi = {
     progressFn('Generating proof...');
     await maybeProve(tx);
 
-    progressFn(testPrivateKey ? 'Signing and sending transaction...' : 'Submitting transaction...');
-    const txHash = await submitTx(tx, sendFn, signFeePayerFn, [], childMemo);
+    const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, [], childMemo);
     if (!txHash) return null;
     return `SubVault action submitted: ${txHash}`;
   },

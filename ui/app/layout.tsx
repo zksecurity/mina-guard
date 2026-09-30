@@ -1,5 +1,7 @@
 'use client';
 
+import { useSyncExternalStore } from 'react';
+import { getPreflightView, subscribePreflight, preflightFailureMessage, PREFLIGHT_CANCELLED } from '@/lib/preflight-flow';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import localFont from 'next/font/local';
@@ -74,6 +76,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   const [isOperating, setIsOperating] = useState(false);
   const [operationLabel, setOperationLabel] = useState('');
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
+  const preflightView = useSyncExternalStore(subscribePreflight, getPreflightView, () => null);
   const [operationBanner, setOperationBanner] = useState<OperationBanner | null>(null);
   const refreshRef = useRef(refreshMultisig);
   refreshRef.current = refreshMultisig;
@@ -130,10 +133,11 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         await refreshRef.current();
         console.log('[startOperation] refresh done');
       } catch (err) {
+        if (err instanceof Error && err.message === PREFLIGHT_CANCELLED) return;
         console.error('[startOperation] error:', err);
         setOperationBanner({
           type: 'error',
-          message: err instanceof Error ? err.message : `${label.replace(/\.\.\.$/, '')} failed`,
+          message: preflightFailureMessage(err),
         });
       } finally {
         setIsOperating(false);
@@ -215,7 +219,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         {/* Fixed toast notifications – bottom-right corner */}
         {(isOperating || operationBanner) && (
           <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 w-96 max-w-[calc(100vw-3rem)]">
-            {isOperating && (
+            {isOperating && !preflightView && (
               <div className="animate-toast-in rounded-xl px-4 py-3 text-sm bg-safe-gray border border-safe-border shadow-lg shadow-black/40">
                 <div className="space-y-2">
                   {completedSteps.map((step, i) => (

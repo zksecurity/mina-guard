@@ -1,5 +1,7 @@
 # MinaGuard Backend
 
+Proposal responses include `executionTxHash` from indexed execution records for confirmed explorer links. This is separate from the unverified `lastExecuteTxHash` submission report.
+
 Express API + polling indexer for MinaGuard contracts.
 
 Moved: architecture, security notes, **and** operator docs (setup, scripts, env

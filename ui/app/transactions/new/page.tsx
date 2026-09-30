@@ -1,5 +1,7 @@
 'use client';
 
+import TransactionPreflightPanel from '@/components/TransactionPreflightPanel';
+
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
@@ -21,6 +23,7 @@ import {
   isCanonicalVaultSecurity,
 } from '@/lib/api';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
+import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { savePendingTx } from '@/lib/storage';
 import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
@@ -245,7 +248,7 @@ function NewTransactionPageInner() {
 
       return `Proposal created: ${result.proposalHash}`;
     });
-    router.push(createdHash ? `/transactions/${createdHash}` : '/transactions');
+    if (createdHash) router.push(`/transactions/${createdHash}`);
   };
 
   return (
@@ -261,16 +264,16 @@ function NewTransactionPageInner() {
           </svg>
           Back
         </button>
+        <TransactionPreflightPanel />
         {!wallet.connected || !multisig ? (
           <div className="text-center py-20">
             <p className="text-safe-text">Connect your wallet and select a contract to create proposals.</p>
           </div>
         ) : !permissionsSafe ? (
-          <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-5 text-sm text-red-200">
-            {liveSecurity === 'checking'
-              ? 'Checking the complete on-chain permission vector. Proposal creation remains blocked.'
-              : 'Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Proposal creation is blocked.'}
-          </div>
+          <VaultSecurityNotice
+            checking={liveSecurity === null || liveSecurity === 'checking'}
+            message="Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Proposal creation is blocked."
+          />
         ) : multisig.ownersCommitment == null ? (
           <div className="text-center py-20">
             <p className="text-safe-text">Contract not initialized. Run Setup first before creating proposals.</p>

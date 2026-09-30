@@ -345,6 +345,10 @@ jobs:
         run: cd backend && bunx prisma generate
       - name: Install Playwright browsers
         run: cd e2e && bunx playwright install --with-deps chromium
+      - name: Run transaction preparation worker regression
+        run: bun e2e/preflight/worker-preparation.ts
+      - name: Run transaction preflight browser checks
+        run: bun e2e/preflight/browser.ts
       - name: Run preflight polling regression tests
         run: bun test e2e/browser/preflight-check.test.ts
       - name: Run UI test suite

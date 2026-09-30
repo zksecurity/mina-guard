@@ -1,5 +1,12 @@
 # MinaGuard Monorepo
 
+Online creation checks whether the exact proposal already exists before requesting a signature, and again when assessing a stale transaction. The recovery panel offers **View proposal** so another owner can approve the existing proposal. Propose and approve recheck their indexed witnesses against fresh vault state after the proposal signature, before building the transaction.
+
+Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
+
+
+Prepared transactions are checked against current on-chain state before broadcast (before wallet handoff for Auro). The UI shows “Checking latest vault state…” before Auro handoff, then “Waiting for wallet confirmation…”. Stale transactions stop with an explicit recovery action. See [transaction preflight](docs/transaction-coordination-design.md).
+
 MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI and an Express indexer API.
 
 ## Packages

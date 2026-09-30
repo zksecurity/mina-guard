@@ -407,6 +407,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),
+    executionTxHash: asNullableString(input.executionTxHash),
     lastApproveTxHash: asNullableString(input.lastApproveTxHash),
     lastExecuteTxHash: asNullableString(input.lastExecuteTxHash),
     lastApproveError: asNullableString(input.lastApproveError),

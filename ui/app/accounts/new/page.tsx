@@ -1,5 +1,7 @@
 'use client';
 
+import TransactionPreflightPanel from '@/components/TransactionPreflightPanel';
+
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -21,6 +23,7 @@ import {
   subscribeAddress,
 } from '@/lib/api';
 import { resolveIndexerMode } from '@/lib/indexer-mode';
+import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 
 const NETWORKS = [
@@ -215,7 +218,8 @@ function CreateAccountWizard() {
     const childPrivateKey = keypair.privateKey;
     const childAddress = keypair.publicKey;
 
-    void startOperation('Preparing SubVault proposal…', async (onProgress) => {
+    let submitted = false;
+    await startOperation('Preparing SubVault proposal…', async (onProgress) => {
       const [freshParent, parentSecurity] = await Promise.all([
         fetchContract(parentAddress),
         fetchVaultSecurityStatus(parentAddress),
@@ -251,6 +255,7 @@ function CreateAccountWizard() {
       }, onProgress, signer);
 
       if (!result) return null;
+      submitted = true;
       const { proposalHash, txHash } = result;
 
       if (name.trim()) saveAccountName(childAddress, name);
@@ -276,11 +281,12 @@ function CreateAccountWizard() {
       return `SubVault deployed and proposal submitted. Approve on the Vault, then execute to initialize.`;
     });
 
-    router.push(`/accounts/${parentAddress}`);
+    if (submitted) router.push(`/accounts/${parentAddress}`);
   };
 
   return (
     <div>
+      <TransactionPreflightPanel />
       <div className="p-6 max-w-3xl mx-auto w-full">
         {!wallet.connected ? (
           <div className="text-center py-20">
@@ -456,11 +462,10 @@ function CreateAccountWizard() {
                     </label>
 
                     {isSubaccount && parentContract && !parentPermissionsSafe && (
-                      <p className="text-sm text-red-400">
-                        {parentLiveSecurity === 'checking'
-                          ? 'Checking the parent Vault permission vector. SubVault creation remains blocked.'
-                          : 'Unsafe parent Vault: its permission vector has not passed the canonical security check.'}
-                      </p>
+                      <VaultSecurityNotice
+                        checking={parentLiveSecurity === null || parentLiveSecurity === 'checking'}
+                        message="Unsafe parent Vault: its permission vector has not passed the canonical security check."
+                      />
                     )}
                     {formError && <p className="text-sm text-red-400">{formError}</p>}
                   </div>

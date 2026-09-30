@@ -1,5 +1,9 @@
 # E2E Tests
 
+Transaction preparation worker regression: build contracts, then run `MINA_NETWORK_DOMAIN=testnet bun e2e/preflight/worker-preparation.ts`. This runs the actual worker against an owned LocalBlockchain with stubbed network/indexer I/O and proving/compilation disabled. It checks a proposal included while another owner waits to sign, duplicate creation on retry, existing-proposal guidance, and a different nonce remaining available. It does not validate production proofs or physical wallets.
+
+Transaction preflight browser checks: `bun e2e/preflight/browser.ts` from the repo root. Requires Playwright Chromium; runs without a database or development stack. Covers initial store-mismatch retry/cancel for online preparation and offline export, as well as post-proof recovery. Wallet/prover/node I/O is simulated; this does not validate physical wallets or live inclusion. CI runs this before the full UI suite.
+
 End-to-end tests for MinaGuard using [Playwright](https://playwright.dev/). The test suite exercises the full lifecycle — deploy, propose, approve, execute — against a real Mina network through the UI with a mock wallet.
 
 ## Prerequisites
@@ -190,7 +194,10 @@ Everything the chain suite used to cover per tx type lives in faster tiers:
 
 ### UI suite (`ui/*.test.ts`)
 
-32 tests against the seeded backend (see "UI test suite" above): derived-status
+The unsafe CREATE_CHILD regression asserts the child-specific permission alert and checks that online
+approval, offline approval export, and signed-response upload are all blocked.
+
+36 tests against the seeded backend (see "UI test suite" above): derived-status
 API sanity, vault list/dashboard/settings rendering, per-status detail pages
 (action buttons, badges, memo match/mismatch indicators), transactions
 filtering and tab counts, per-tx-type form payload capture, and all
@@ -214,6 +221,13 @@ The frontend caches o1js prover/verifier keys in IndexedDB so that page reloads 
 - Traces and screenshots are captured on failure (in `e2e/test-results/`)
 - Logs are prefixed with `[e2e-setup]`, `[e2e-teardown]`, and `[e2e]` for easy filtering
 
+
+For the Linux packaged desktop smoke, build `desktop` with its checked-in scripts,
+run `bunx --no-install electron-builder --dir --publish never` there, then run
+`xvfb-run -a node e2e/preflight/desktop.ts` from the repo root. It uses a fresh
+throwaway profile and loopback node fixture, checks startup/native SQLite/runtime
+endpoint/CSP, and closes only its own app. Ports 5050, 5051 and 5099 must be free.
+This is a packaging smoke, not a Ledger or live-chain transaction test.
 ## Preflight polling regression tests
 
 Run `bun test e2e/browser/preflight-check.test.ts` from the repository root after

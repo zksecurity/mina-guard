@@ -1,5 +1,9 @@
 # MinaGuard Desktop
 
+Online creation checks whether the exact proposal already exists before requesting a signature, and again when assessing a stale transaction. The recovery panel offers **View proposal** so another owner can approve the existing proposal. Propose and approve recheck their indexed witnesses against fresh vault state after the proposal signature, before building the transaction.
+
+The shared UI checks transaction state using the configured Mina node before broadcast, with persistent recovery controls. Initial indexed-store mismatches offer Retry / Cancel before preparation can continue. No shared activity backend or reporting login is required. See [transaction preflight](../docs/transaction-coordination-design.md).
+
 Electron wrapper around the MinaGuard Next.js UI + backend. Runs fully local:
 SQLite DB in the user's app-data directory, lite-mode indexer, Auro signing
 bridged through the user's browser. See

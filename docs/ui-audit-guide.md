@@ -1,5 +1,14 @@
 # Online UI — Architecture & Security Notes
 
+Online creation checks whether the exact proposal already exists before requesting a signature, and again when assessing a stale transaction. The recovery panel offers **View proposal** so another owner can approve the existing proposal. Propose and approve recheck their indexed witnesses against fresh vault state after the proposal signature, before building the transaction.
+
+Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
+
+
+**Pre-broadcast state checks:** the actual transaction app-state preconditions are compared with fresh node state before sending (before Auro wallet handoff). Stale transactions require explicit, eligibility-checked recovery. Node failures block broadcast; a successful check does not guarantee inclusion. See [design and boundaries](transaction-coordination-design.md). Permission-loading notices on vault and proposal pages are delayed and neutral; action gates remain fail-closed.
+
+Online progress follows the submission boundary: Auro shows “Checking latest vault state…” after proving, then “Waiting for wallet confirmation…” only after the check passes. Ledger requests wallet confirmation first, checks the signed transaction, then shows “Broadcasting transaction…”. Early store/root mismatches offer explicit Retry / Cancel; the post-proof check uses the recovery panel.
+
 This document describes the **online web UI** (`ui/`) — the Next.js app that
 MinaGuard owners use to connect a wallet, deploy vaults, and run the propose →
 approve → execute lifecycle against a live Mina network.
@@ -126,6 +135,8 @@ reclaimable.
   against a proposed child before CREATE_CHILD approval or execution. Security-critical operations, such as
   proposal creation, approval, and execution, are performed on-chain. Transactions are also submitted
   directly to the node.
+  The chainless UI regression checks the child-specific permission alert and verifies that both online
+  approval and offline bundle creation/broadcast remain unavailable for an unsafe CREATE_CHILD target.
 - **Interactions with the chain.** Interactions with the chain, like transactions submitted, reach the node
   directly. Note, however, that:
   - Transactions submitted through Auro wallet reach the node endpoint defined by Auro.
