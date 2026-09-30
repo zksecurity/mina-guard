@@ -62,6 +62,9 @@ Both scripts expect to be run from the repo root.
 - `up` uses `--force-recreate`: every deploy starts a fresh chain, and the app DB is wiped on `down -v` because its indexed state mirrors the lightnet chain.
 - URLs after deploy: `https://mina-nodes.duckdns.org/app/` (app), `/app/health`, `/app/graphql`, `/app/accounts/acquire-account`, `/app/explorer`.
 - Auto-deployed on every push to `main` by `.github/workflows/deploy-lightnet.yml` (self-hosted runner on the box); `.github/workflows/reset.yml` runs the same `down` + `up` on a 3-day schedule so the stack self-heals from bloat/drift during quiet periods.
+  Both workflows generate and verify the VK manifest for the checked-out commit
+  before invoking `deploy.sh`; a missing or stale manifest stops the job before
+  the stack is taken down.
 
 ### Mesa Trail deployment (`/trail/*`, mesa-mut)
 

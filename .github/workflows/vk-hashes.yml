@@ -51,7 +51,7 @@ jobs:
             --test-name-pattern "genuine MinaGuard proof" --timeout 900000
         timeout-minutes: 20
       - name: Run genuine-proof child reservation lifecycle
-        if: matrix.network == 'testnet' && inputs.run-proof-tests
+        if: matrix.network == 'mainnet' && inputs.run-proof-tests
         working-directory: contracts
         run: >-
           RUN_REAL_PROOF_TESTS=1 bun test src/tests/reservation.test.ts

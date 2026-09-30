@@ -140,6 +140,9 @@ CI compiles the testnet and mainnet circuits in parallel and publishes a
 testnet circuit. Release and deploy jobs verify the artifact's commit before
 using its network hash for the backend, UI, or desktop bundle. Local builds do
 not need to compile the circuit just to update a committed hash file.
+The testnet runner proves parent-state paths and, when present, proposal-signing
+paths. The mainnet runner proves child reservation and setup. Each reuses its
+own circuit compilation.
 
 ## PR Preview Environments
 

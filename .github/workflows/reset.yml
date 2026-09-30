@@ -10,12 +10,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  vk-hashes:
+    uses: ./.github/workflows/vk-hashes.yml
+
   reset:
+    needs: vk-hashes
     runs-on: [self-hosted, deploy-lightnet]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Download VK manifest for this commit
+        uses: actions/download-artifact@v4
+        with:
+          name: minaguard-vk-manifest
+          path: contracts
+      - name: Verify VK manifest source
+        run: bash contracts/scripts/verify-vk-manifest.sh
 
       - name: Reset
         # Safety net for quiet periods on main: same `down && up` sequence
