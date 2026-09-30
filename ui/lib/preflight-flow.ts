@@ -4,7 +4,7 @@ import { getMinaGuardConfig } from './endpoints';
 
 export type RetryEligibility = { status: 'eligible' | 'executed' | 'invalid' | 'review' | 'unknown'; message?: string; executionHash?: string };
 export type PreflightContext = { action: 'propose' | 'approve' | 'execute' | 'deploy'; address: string; actor?: string; proposal?: import('./types').Proposal; configNonce?: number; input?: import('./types').NewProposalInput };
-export type PreflightView = { kind: 'checking' | 'stale' | 'unavailable' | 'executed' | 'invalid' | 'review'; message?: string; offline: boolean; canRebuild: boolean; executionHash?: string };
+export type PreflightView = { kind: 'checking' | 'stores' | 'stale' | 'unavailable' | 'executed' | 'invalid' | 'review'; message?: string; offline: boolean; canRebuild: boolean; executionHash?: string };
 const listeners = new Set<() => void>();
 let view: PreflightView | null = null;
 let choice: ((value: 'retry' | 'rebuild' | 'cancel') => void) | null = null;
@@ -62,6 +62,45 @@ async function runPreflightCheck(
 }
 
 let gateBusy = false;
+
+/** Only the verified-store assertions qualify; network and unrelated errors keep their normal handling. */
+export function isStoreStateMismatch(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return /^Rebuilt (owner list|approval map|vote nullifier map|child execution map) does not match /.test(message) &&
+    message.endsWith('The indexed events do not reproduce this state yet; wait for the indexer to catch up and retry.');
+}
+
+/** Restart preparation only after an explicit retry, reloading both chain state and indexed stores. */
+export async function withStoreRecovery<T>(prepare: () => Promise<T>, offline = false): Promise<T> {
+  const started = generation;
+  const config = JSON.stringify(getMinaGuardConfig());
+  for (;;) {
+    if (generation !== started) throw new Error(PREFLIGHT_CANCELLED);
+    if (JSON.stringify(getMinaGuardConfig()) !== config) throw new Error('Network changed. Prepare a new transaction.');
+    try {
+      const result = await prepare();
+      // An offline request must not download after navigation/config changes.
+      // Online completion may already represent a broadcast and must retain its result.
+      if (offline && generation !== started) throw new Error(PREFLIGHT_CANCELLED);
+      if (offline && JSON.stringify(getMinaGuardConfig()) !== config) throw new Error('Network changed. Prepare a new transaction.');
+      return result;
+    }
+    catch (error) {
+      if (!isStoreStateMismatch(error)) throw error;
+      if (!hosts || generation !== started) throw new Error(PREFLIGHT_CANCELLED);
+      if (gateBusy) throw error;
+      gateBusy = true;
+      try {
+        const decision = await new Promise<'retry' | 'rebuild' | 'cancel'>(resolve => {
+          choice = resolve;
+          publish({ kind: 'stores', offline, canRebuild: false });
+        });
+        if (decision !== 'retry') throw new Error(PREFLIGHT_CANCELLED);
+      } finally { gateBusy = false; choice = null; publish(null); }
+    }
+  }
+}
+
 export async function preflightBeforeSend(...args: Parameters<typeof runPreflightCheck>): Promise<void> {
   if (gateBusy) throw new Error('Resolve the current transaction check before starting another.');
   gateBusy = true;

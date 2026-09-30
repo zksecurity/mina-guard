@@ -8,12 +8,14 @@ export default function TransactionPreflightPanel() {
   if (!state) return null;
   const checking = state.kind === 'checking';
   const title = checking ? 'Checking latest vault state…'
+    : state.kind === 'stores' ? 'Vault data isn’t up to date'
     : state.kind === 'executed' ? 'Proposal already executed'
     : state.kind === 'review' ? 'Review the original request'
     : state.kind === 'invalid' ? 'This action is no longer available'
     : state.kind === 'unavailable' ? 'Couldn’t check the vault'
     : state.offline ? 'This transaction needs a new proof' : 'The vault changed';
   const message = checking ? 'Checking that the vault still matches before sending this transaction.'
+    : state.kind === 'stores' ? 'Nothing was sent. The indexed data doesn’t match the blockchain yet. Wait a moment, then retry.'
     : state.kind === 'executed' ? 'This proposal has already been executed. Your transaction wasn’t sent and is no longer needed.'
     : state.kind === 'review' ? `${state.message} Your transaction wasn’t sent.`
     : state.kind === 'invalid' ? `${state.message || 'The proposal is no longer eligible.'} Your transaction wasn’t sent.`
@@ -25,6 +27,7 @@ export default function TransactionPreflightPanel() {
     <p className="text-safe-text leading-relaxed">{message}</p>
     {state.kind === 'stale' && state.offline && !state.canRebuild && <p className="text-safe-text mt-2">Return to the proposal form to review and export a fresh request.</p>}
     {!checking && <div className="flex flex-wrap gap-3 mt-4">
+      {state.kind === 'stores' && <button className="bg-safe-green text-safe-dark font-semibold px-4 py-2 rounded-lg" onClick={() => choosePreflight('retry')}>Retry</button>}
       {state.kind === 'stale' && state.canRebuild && <button className="bg-safe-green text-safe-dark font-semibold px-4 py-2 rounded-lg" onClick={() => choosePreflight('rebuild')}>{state.offline ? 'Export fresh request' : 'Rebuild transaction'}</button>}
       {state.kind === 'unavailable' && <button className="bg-safe-green text-safe-dark font-semibold px-4 py-2 rounded-lg" onClick={() => choosePreflight('retry')}>Retry check</button>}
       {state.kind === 'executed' && state.executionHash && process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL && <a className="text-safe-green underline py-2" href={`${process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL}/tx/${encodeURIComponent(state.executionHash)}?type=zk-tx`} target="_blank" rel="noopener noreferrer">View execution</a>}

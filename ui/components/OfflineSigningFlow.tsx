@@ -5,7 +5,7 @@ import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { assessPreflightRetry } from '@/lib/multisigClient';
 import { fetchProposal } from '@/lib/api';
-import { preflightBeforeSend, preflightFailureMessage, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD } from '@/lib/preflight-flow';
+import { preflightBeforeSend, preflightFailureMessage, withStoreRecovery, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD } from '@/lib/preflight-flow';
 
 // CLI binaries are published per release by the offline-cli-release workflow
 // (binaries + SHA256SUMS + minaguard-vk-hash.txt). There is deliberately NO
@@ -266,13 +266,15 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
     setWarnings([]);
     setExportedFilename(null);
     try {
-      const bundle = await onBuildBundle();
+      const bundle = await withStoreRecovery(onBuildBundle, true);
       setWarnings(extractBundleWarnings(bundle));
       const filename = downloadOfflineBundle(action, bundle);
       setExportedFilename(filename);
       onExported?.(filename);
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : String(err));
+      if (!(err instanceof Error && err.message === PREFLIGHT_CANCELLED)) {
+        setExportError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBuilding(false);
     }

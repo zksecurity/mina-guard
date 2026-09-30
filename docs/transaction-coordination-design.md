@@ -1,5 +1,8 @@
 # Check transaction state before broadcast
 
+Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
+
+
 PR #144 now checks prepared transactions against the Mina node. It replaces the
 activity-reporting design: no activity service, login signature, session, migration,
 or sharing setting is added. The existing pending-submission UI behavior from main
@@ -99,7 +102,7 @@ bun test src/tests/proposal-record.test.ts
 The browser checks use real UI/components and online wrappers with fixture
 wallet/prover/node responses. They verify no broadcast on stale state, explicit
 rebuild, terminal execution handling, connection retry without another proof,
-offline regeneration and page-leave cancellation. Unit tests also use actual o1js
+offline regeneration, initial store-mismatch retry/cancel for online preparation and offline export, and cancellation on network changes or leaving the page. Unit tests also use actual o1js
 account-update serialization. These are not physical-wallet or live-chain evidence.
 
 
@@ -107,5 +110,5 @@ Validation on 2026-09-30: contracts/backend/production UI/desktop builds passed;
 UI unit, offline CLI unit, proposal serialization and Chromium recovery checks
 passed. The Linux directory package starts with native SQLite and reaches its
 runtime node through the packaged CSP. Physical Auro/Ledger, live-chain inclusion,
-macOS/Windows packaging, and the database-resetting full UI/E2E stack were not
-rerun locally. No circuit changed and no new real proof was generated.
+macOS/Windows packaging, and live-chain E2E were not rerun locally. The 36-test
+chainless UI suite passed against a fresh isolated PostgreSQL database. No circuit changed and no new real proof was generated.

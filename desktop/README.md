@@ -1,6 +1,6 @@
 # MinaGuard Desktop
 
-The shared UI checks transaction state using the configured Mina node before broadcast, with persistent recovery controls. No shared activity backend or reporting login is required. See [transaction preflight](../docs/transaction-coordination-design.md).
+The shared UI checks transaction state using the configured Mina node before broadcast, with persistent recovery controls. Initial indexed-store mismatches offer Retry / Cancel before preparation can continue. No shared activity backend or reporting login is required. See [transaction preflight](../docs/transaction-coordination-design.md).
 
 Electron wrapper around the MinaGuard Next.js UI + backend. Runs fully local:
 SQLite DB in the user's app-data directory, lite-mode indexer, Auro signing

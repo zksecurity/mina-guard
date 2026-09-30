@@ -1,5 +1,8 @@
 # Desktop App (Electron) — Architecture & Security Notes
 
+Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
+
+
 **Transaction preflight:** the shared UI queries the runtime-configured node before broadcast and uses existing node CSP access. Auro is checked before its combined sign/send call; Ledger and offline uploads are checked after signing. See [design and boundaries](transaction-coordination-design.md).
 
 This document describes the **desktop app** (`desktop/`) — an Electron shell that

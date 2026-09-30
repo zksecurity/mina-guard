@@ -10,7 +10,7 @@ import { getAuroAccounts, getAuroNetwork, getAuroSignFields, sendTransaction } f
 import { signFields as ledgerSignFields, signFeePayer, checkLedgerReady } from '@/lib/ledgerWallet';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { fetchProposal, fetchVaultSecurityStatus, isCanonicalVaultSecurity } from './api';
-import { preflightBeforeSend, preflightGeneration, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD, type PreflightContext, type RetryEligibility } from './preflight-flow';
+import { preflightBeforeSend, preflightGeneration, withStoreRecovery, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD, type PreflightContext, type RetryEligibility } from './preflight-flow';
 
 /** Re-export types consumed by page components. */
 export type { Proposal, NewProposalInput };
@@ -103,7 +103,7 @@ async function runPreflightAction<T>(context: PreflightContext, fn: () => Promis
     for (;;) {
       if (activeGeneration !== preflightGeneration()) throw new Error(PREFLIGHT_CANCELLED);
       if (getMinaGuardConfig().minaEndpoint !== endpoint) throw new Error('Network changed. Prepare a new transaction.');
-      try { return await fn(); }
+      try { return await withStoreRecovery(fn); }
       catch (error) {
         if (!(error instanceof Error) || error.message !== PREFLIGHT_REBUILD) throw error;
         const eligibility = await assessPreflightRetry(context);

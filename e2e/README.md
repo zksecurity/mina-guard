@@ -1,6 +1,6 @@
 # E2E Tests
 
-Transaction preflight browser checks: `bun e2e/preflight/browser.ts` from the repo root. Requires Playwright Chromium; runs without a database or development stack. Wallet/prover/node I/O is simulated; this does not validate physical wallets or live inclusion. CI runs this before the full UI suite.
+Transaction preflight browser checks: `bun e2e/preflight/browser.ts` from the repo root. Requires Playwright Chromium; runs without a database or development stack. Covers initial store-mismatch retry/cancel for online preparation and offline export, as well as post-proof recovery. Wallet/prover/node I/O is simulated; this does not validate physical wallets or live inclusion. CI runs this before the full UI suite.
 
 End-to-end tests for MinaGuard using [Playwright](https://playwright.dev/). The test suite exercises the full lifecycle — deploy, propose, approve, execute — against a real Mina network through the UI with a mock wallet.
 
