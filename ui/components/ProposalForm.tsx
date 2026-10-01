@@ -422,6 +422,14 @@ export default function ProposalForm({
         />
       )}
 
+      {!deleteMode && txType === 'transfer' && (
+        <p className="text-sm text-amber-300 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3">
+          A new recipient account costs 1 MINA to create. Whoever executes this transfer pays
+          that cost from their own balance, in addition to the transaction fee. If no one pays,
+          this proposal can delay later proposals until it is executed or replaced.
+        </p>
+      )}
+
       {!deleteMode && (txType === 'reclaimChild' || txType === 'destroyChild' || txType === 'enableChildMultiSig') && (
         <div>
           <label className="block text-sm text-safe-text mb-2">Target SubVault</label>

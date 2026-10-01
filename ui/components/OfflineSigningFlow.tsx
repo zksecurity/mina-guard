@@ -232,12 +232,12 @@ function extractBundleWarnings(bundle: any): string[] {
     }
   }
 
-  if (bundle?.action === 'execute' && bundle.receiverAccountExists) {
+  if (bundle?.action === 'execute' && bundle?.proposal?.txType === 'transfer' && bundle.receiverAccountExists) {
     const newAccounts = Object.entries(bundle.receiverAccountExists)
       .filter(([, exists]) => !exists)
       .map(([addr]) => addr);
     if (newAccounts.length > 0) {
-      warnings.push(`${newAccounts.length} receiver(s) don't have on-chain accounts. Fee payer needs an extra ${newAccounts.length} MINA for account creation.`);
+      warnings.push(`${newAccounts.length} recipient account(s) appear new in this snapshot. The executor pays approximately ${newAccounts.length} MINA for account creation, plus the transaction fee. Account status can change before broadcast.`);
     }
   }
 

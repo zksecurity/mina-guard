@@ -20,6 +20,7 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Propose -> approve -> execute lifecycle using proposal hash keyed approvals.
 - Optional proposal deadlines apply to proposing, approving, and executing. Zero means no expiry; other values must fit in 32 bits, and inclusion at the deadline is allowed.
 - Transfer, add/remove owner, threshold change, and delegate execution support.
+- For transfers to new recipient accounts, the executor pays the account-creation cost and transaction fee; see the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with session-only zkApp private key usage.
 - Child reservations validate governance bounds and initialized root-parent state; successful child setup clears the consumed reservation hash.

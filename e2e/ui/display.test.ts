@@ -100,6 +100,8 @@ test('non-existent proposal hash shows not-found, not a crash', async ({ page })
 
 test('rejects an unsupported signed response before broadcast', async ({ page }) => {
   await openProposal(page, PROPOSALS.pendingTransfer);
+  await expect(page.getByText('New recipient account costs')).toBeVisible();
+  await expect(page.getByText(/later proposals can wait behind this nonce/)).toBeVisible();
   await page.getByRole('button', { name: 'Offline', exact: true }).click();
   const broadcasts: string[] = [];
   page.on('request', request => {

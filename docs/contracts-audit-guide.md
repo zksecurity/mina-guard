@@ -349,7 +349,12 @@ initialization.
 
 After execution the contract increments `nonce` and overwrites the approval count with
 `EXECUTED_MARKER`, permanently preventing re-execution or further approvals. Execution is
-**permissionless** — anyone can trigger it once the threshold is met.
+**permissionless** — anyone can trigger it once the threshold is met, but an
+executor must still fund transaction fees and any new transfer-recipient accounts.
+Those account-creation costs are not reimbursed from the vault. If nobody pays,
+the required next nonce can delay higher-nonce proposals; owners can approve and
+execute a same-nonce replacement. See the accepted risk in
+[`security-audit-guide.md`](./security-audit-guide.md#accepted-risks-and-known-limitations).
 
 - **`executeTransfer`** — Loops through all receiver slots, sending to each non-empty one. Empty slots are converted into zero-value self-sends so they have no effect on balances. Emits `ExecutionEvent`.
 - **`executeAllocateToChildren`** — Requires `txType == ALLOCATE_CHILD` and verifies each non-empty recipient is initialized and bound to the sending parent using ledger-enforced state preconditions. Emits `ExecutionEvent { txType: ALLOCATE_CHILD }`. The indexer distinguishes allocations from generic transfers by txType.
@@ -645,7 +650,7 @@ match, and compiles both distinct domains on a cache miss).
 | Hierarchy depth capped at 2 | `propose` rejects REMOTE proposals on any guard whose `parent != PublicKey.empty()`, so children can never raise `CREATE_CHILD` |
 | Vault cannot be locked | Remove-owner asserts `newNumOwners >= threshold` |
 | Reclaim and destroy are recovery paths | Child-lifecycle methods bypass `childMultiSigEnabled`; the parent can always retrieve funds |
-| Anyone can execute | Execution is permissionless once threshold is met |
+| Anyone can submit execution | No owner gate once threshold is met; executor funding is still required for fees and new transfer-recipient accounts |
 | MINA receivable | `receive: Permissions.none()` allows deposits without proof |
 | State changes proof-only | `editState: Permissions.proof()` — no signature fallback |
 | Permission downgrade prevented after canonical deployment | `setPermissions: Permissions.impossible()`; online consumers first verify the complete stored vector against `GUARD_PERMISSIONS` |
