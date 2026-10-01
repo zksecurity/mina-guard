@@ -102,9 +102,11 @@ After building, the UI surfaces **pre-transfer warnings** from data already in
 the bundle (missing fee-payer account, balance under 1 MINA, account-creation
 fees) and downloads the bundle as `<action>-<id>-<timestamp>.json`. For ordinary
 transfer execution, the warning estimates the executor-funded creation cost
-from the receiver-account snapshot. It appears before offline signing, but the
-snapshot can become stale before broadcast; the vault does not reimburse that
-cost. The proposal detail also warns before approval. See the accepted risk in
+per canonical receiver slot from the receiver-account snapshot. Repeated new
+addresses count once per slot, matching the CLI transaction builder. It appears
+before offline signing, but the snapshot can become stale before broadcast.
+The vault does not reimburse that cost. The proposal detail also warns before
+approval. See the accepted risk in
 [`security-audit-guide.md`](./security-audit-guide.md#accepted-risks-and-known-limitations).
 
 > Endpoint note: the snapshot/broadcast endpoint and the bundle's

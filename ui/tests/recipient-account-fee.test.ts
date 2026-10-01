@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { countNewRecipientSlots } from '../lib/recipient-account-fee';
+import { countNewRecipientSlots, countNewRecipientSlotsFromSnapshot } from '../lib/recipient-account-fee';
 import { EMPTY_PUBKEY_B58 } from '../lib/types';
 
 const previousWindow = globalThis.window;
@@ -36,4 +36,27 @@ test('fails closed when recipient status cannot be checked', async () => {
   } as unknown as Window & typeof globalThis;
   globalThis.fetch = (async () => Response.json({ errors: [{ message: 'node unavailable' }] })) as typeof fetch;
   await expect(countNewRecipientSlots([{ address: 'new' }])).rejects.toThrow('Could not check recipient accounts');
+});
+
+test('offline estimate counts canonical slots, including repeated new recipients', () => {
+  const receivers = [
+    { address: 'new' },
+    { address: 'new' },
+    { address: 'existing' },
+    { address: EMPTY_PUBKEY_B58 },
+    { address: '' },
+    { address: 'unknown' },
+    { address: 'new' },
+    { address: 'existing' },
+    { address: EMPTY_PUBKEY_B58 },
+    { address: 'outside-canonical-limit' },
+  ];
+  const snapshot = {
+    new: false,
+    existing: true,
+    'outside-canonical-limit': false,
+  };
+  // The absent "unknown" key is treated as new, as in the offline CLI.
+  expect(countNewRecipientSlotsFromSnapshot(receivers, snapshot)).toBe(4);
+  expect(countNewRecipientSlotsFromSnapshot([{ address: 'existing' }], snapshot)).toBe(0);
 });
