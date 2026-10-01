@@ -162,9 +162,20 @@ describe('event authorization', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  test('fails closed when the archive omits the authorization kind', () => {
+  test('fails closed when the archive omits or garbles the authorization kind', () => {
     expect(() => decodeContractEvents('vault', [block(5, [{ data: approval(1n), kind: null }])]))
-      .toThrow('no authorization kind');
+      .toThrow('no recognized authorization kind');
+    expect(() => decodeContractEvents('vault', [block(5, [{ data: approval(1n), kind: 'Proof(abc)' }])]))
+      .toThrow('no recognized authorization kind');
+  });
+
+  test('matches authorization kinds case-insensitively', () => {
+    spyOn(console, 'warn').mockImplementation(() => {});
+    const events = decodeContractEvents('vault', [block(5, [
+      { data: approval(1n), kind: 'proof' },
+      { data: approval(2n), kind: 'none_given' },
+    ])]);
+    expect(events.map((e) => e.event.proposalHash)).toEqual(['1']);
   });
 });
 

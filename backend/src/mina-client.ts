@@ -625,14 +625,18 @@ export function decodeContractEvents(address: string, blocks: readonly ArchiveEv
       const txInfo = raw.transactionInfo ?? undefined;
       if (!isFromAppliedTransaction(txInfo?.status)) continue;
       const where = `on ${address} at block ${blockHeight} (tx ${txInfo?.hash ?? '?'})`;
+      // The archive reports Mina's authorization_kind enum: Proof, Signature or
+      // None_given. Anything else means an incompatible archive, so fail closed
+      // rather than drop every genuine event as unauthorized.
       const kind = txInfo?.authorizationKind;
-      if (typeof kind !== 'string') {
-        throw new Error(`Archive event ${where} has no authorization kind; refusing to index it`);
+      const normalized = typeof kind === 'string' ? kind.toLowerCase() : null;
+      if (normalized !== 'proof' && normalized !== 'signature' && normalized !== 'none_given') {
+        throw new Error(`Archive event ${where} has no recognized authorization kind (${String(kind)}); refusing to index it`);
       }
       const result = decodeMinaGuardEvent(raw.data);
-      if (kind !== 'Proof') {
+      if (normalized !== 'proof') {
         // deploy() emits `deployed` under the deployer's signature; nothing reads it.
-        const expected = kind === 'Signature' && !('error' in result) && result.type === 'deployed';
+        const expected = normalized === 'signature' && !('error' in result) && result.type === 'deployed';
         if (!expected) console.warn(`[mina-client] skipping ${kind}-authorized event ${where}`);
         continue;
       }
