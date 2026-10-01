@@ -140,6 +140,26 @@ describe('atomic event application', () => {
     expect(await prisma.contractConfig.count()).toBe(1);
   });
 
+  test('an undecodable event is recorded with applyError and no state changes, and later events still apply', async () => {
+    const malformed: ChainEvent = {
+      type: 'malformed', blockHeight: 5, txHash: 'tx-bad', txMemo: null, ...HASHES(5),
+      event: { data: ['99', '0'] }, decodeError: 'unknown event type index 99',
+    };
+    const { contractId, address } = await seedContract([malformed, setupEvent]);
+    const indexer = new MinaGuardIndexer(stubConfig);
+
+    await indexer.syncSingleContract(contractId, address, 0, 20);
+    await indexer.syncSingleContract(contractId, address, 0, 20);
+
+    const raw = await prisma.eventRaw.findMany({ orderBy: { eventType: 'asc' } });
+    expect(raw.map((r) => [r.eventType, r.applyError])).toEqual([
+      ['malformed', 'Malformed event: unknown event type index 99'],
+      ['setup', null],
+    ]);
+    expect(JSON.parse(raw[0].payload)).toEqual({ data: ['99', '0'] });
+    expect(await prisma.contractConfig.count()).toBe(1);
+  });
+
   test('a non-transient error that does not repeat is retried and applies', async () => {
     const { contractId, address } = await seedContract([setupEvent]);
     const indexer = new MinaGuardIndexer(stubConfig);

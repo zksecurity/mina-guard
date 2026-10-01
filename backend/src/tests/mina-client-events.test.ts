@@ -116,14 +116,28 @@ describe('event decoding', () => {
     }
   });
 
-  test('a malformed event is skipped without dropping the valid events around it', () => {
+  test('passes an undecodable proof-authorized event on as malformed, keeping its neighbours', () => {
+    const error = spyOn(console, 'error').mockImplementation(() => {});
     const events = decodeContractEvents('vault', [
       block(5, [{ data: approval(1n) }, { data: ['99', '0'] }]),
       block(6, [{ data: approval(2n).slice(0, 3) }, { data: approval(3n) }]),
     ]);
-    expect(events.map((e) => [e.blockHeight, e.event.proposalHash])).toEqual([[5, '1'], [6, '3']]);
-    expect(events[1].blockHash).toBe('hash-6');
-    expect(events[1].parentHash).toBe('hash-5');
+    expect(events.map((e) => [e.blockHeight, e.type])).toEqual([
+      [5, 'approval'], [5, 'malformed'], [6, 'malformed'], [6, 'approval'],
+    ]);
+    expect(events[1]).toMatchObject({ event: { data: ['99', '0'] }, decodeError: 'unknown event type index 99' });
+    expect(events[3].event.proposalHash).toBe('3');
+    expect(events[3].blockHash).toBe('hash-6');
+    expect(events[3].parentHash).toBe('hash-5');
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  test('drops a malformed event that is not proof-authorized, like any forged event', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const events = decodeContractEvents('vault', [block(5, [{ data: ['99', '0'], kind: 'None_given' }])]);
+    expect(events).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 

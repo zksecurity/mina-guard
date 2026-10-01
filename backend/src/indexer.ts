@@ -550,6 +550,8 @@ export class MinaGuardIndexer {
    *   changes. Retrying cannot fix it, and one bad event must not halt
    *   indexing for every vault.
    * - Losing a race with an overlapping sync of the same event is a no-op.
+   * - An event the decoder could not read ('malformed') is recorded the same
+   *   way without being applied.
    */
   private async ingestEvent(
     contractId: number,
@@ -558,6 +560,9 @@ export class MinaGuardIndexer {
     fingerprint: string,
     setupFallback: OnChainState | null,
   ): Promise<'applied' | 'quarantined' | 'duplicate'> {
+    if (chainEvent.decodeError !== undefined) {
+      return this.recordFailedEvent(contractId, chainEvent, fingerprint, `Malformed event: ${chainEvent.decodeError}`);
+    }
     let error: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -577,8 +582,18 @@ export class MinaGuardIndexer {
       `[indexer] quarantined ${chainEvent.type} event at block ${chainEvent.blockHeight} (tx ${chainEvent.txHash ?? '?'}):`,
       error,
     );
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : describeThrown(error);
+    return this.recordFailedEvent(contractId, chainEvent, fingerprint, reason);
+  }
+
+  /** Records an event with `applyError` and no state changes, so it is kept and visible. */
+  private async recordFailedEvent(
+    contractId: number,
+    chainEvent: ChainEvent,
+    fingerprint: string,
+    reason: string,
+  ): Promise<'quarantined' | 'duplicate'> {
     try {
-      const reason = error instanceof Error ? `${error.name}: ${error.message}` : describeThrown(error);
       await prisma.$transaction((db) => this.recordEvent(db, contractId, chainEvent, fingerprint, reason));
     } catch (recordError) {
       if (await this.isRecorded(fingerprint)) return 'duplicate';
