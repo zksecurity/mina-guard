@@ -1,6 +1,7 @@
-import { Bool, Field, MerkleMap, PublicKey, Poseidon } from 'o1js';
+import { Bool, Field, MerkleMap, PublicKey } from 'o1js';
 import { computeOwnerChain, PublicKeyOption, OwnerWitness } from './list-commitment.js';
 import { MAX_OWNERS } from './constants.js';
+import { voteNullifierKey } from './hash-domains.js';
 
 // -- Serialization helpers ---------------------------------------------------
 
@@ -226,7 +227,7 @@ export class VoteNullifierStore {
   private keys = new Set<string>();
 
   private nullifierKey(proposalHash: Field, approver: PublicKey): Field {
-    return Poseidon.hash([proposalHash, ...approver.toFields()]);
+    return voteNullifierKey(proposalHash, approver);
   }
 
   isNullified(proposalHash: Field, approver: PublicKey): boolean {

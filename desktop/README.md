@@ -207,7 +207,8 @@ discard older files rather than reusing them. See `docs/offline-audit-guide.md` 
 ### Proposal signing compatibility
 
 Desktop packages the same hashing/signing worker and backend as the web
-release. Offline requests and signed responses both use v1 after the pre-release reset.
+release, including tagged owner, vote-nullifier, and SubVault configuration
+hashes. Offline requests and signed responses both use v1 after the pre-release reset.
 Discard older files and use matching UI and CLI builds.
 Rebuild packaged UI/backend assets and copy the updated per-network `contracts/.vk-hash`
 when packaging this release. Existing test vaults need fresh deployments and proposals;

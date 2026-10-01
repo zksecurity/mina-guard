@@ -205,8 +205,9 @@ takes over.
 
 ## Bundle format reference (requests version 1; signed responses version 1)
 
-The new signing domains are a breaking change: new proposal hashes, purpose-bound
-owner signatures, memo commitments, and verification keys. There is no legacy
+The new hash domains are a breaking change: new proposal hashes, purpose-bound
+owner signatures, memo commitments, owner commitments, vote-nullifier keys,
+child configuration hashes, and verification keys. There is no legacy
 signature fallback. Request and response formats both use v1 as a pre-release
 reset; this version number does not distinguish older v1 files from current files.
 Discard all earlier requests and signed responses and regenerate them with matching

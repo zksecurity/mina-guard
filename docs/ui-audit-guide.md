@@ -294,6 +294,9 @@ this — store roots, owner ordering, `childExecutionRoot`, the
 `executeSetupChild` pre-flights (`worker.ts:1248-1254`, `1273-1279`, on-chain
 anchors `MinaGuard.ts:818`, `823-825`) — all run from indexer data.
 
+The owner-chain links, vote-nullifier keys, and SubVault configuration hashes use
+separate tags. The worker and offline CLI use the contract's shared hash helpers.
+
 The memo is the worked example (three roles, one enforced — see the overview).
 The **hashed** `memoHash` is the only representation owners' signatures cover
 (`worker.ts:900`; part of `TransactionProposal.hash()`, `MinaGuard.ts:85`).

@@ -12,11 +12,11 @@ import {
   AccountUpdate,
   TokenId,
   Signature,
-  Poseidon,
 } from 'o1js';
 import {
   memoToField,
   proposalSigningMessage,
+  childConfigHash,
   MinaGuard,
   Receiver,
   TransactionProposal,
@@ -649,7 +649,7 @@ describe('offline-cli e2e', () => {
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
-        data: Poseidon.hash([ownersCommitment, thresholdField, numOwnersField]),
+        data: childConfigHash(ownersCommitment, thresholdField, numOwnersField),
         nonce: Field(0),
         configNonce: Field(0),
         expirySlot: Field(0),
@@ -919,7 +919,7 @@ describe('offline-cli e2e', () => {
     function configHash(): string {
       const childOS = new OwnerStore();
       for (const addr of childOwnerAddrs()) childOS.addSorted(PublicKey.fromBase58(addr));
-      return Poseidon.hash([childOS.getCommitment(), Field(2), Field(owners.length)]).toString();
+      return childConfigHash(childOS.getCommitment(), Field(2), Field(owners.length)).toString();
     }
 
     it('propose createChild', async () => {
@@ -997,7 +997,7 @@ describe('offline-cli e2e', () => {
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
-        data: Poseidon.hash([childOwnersCommitment, Field(2), Field(owners.length)]),
+        data: childConfigHash(childOwnersCommitment, Field(2), Field(owners.length)),
         nonce: Field(0),
         configNonce: Field(0),
         expirySlot: Field(0),
@@ -1112,7 +1112,7 @@ describe('offline-cli e2e', () => {
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
-        data: Poseidon.hash([childOwnersCommitment, Field(2), Field(owners.length)]),
+        data: childConfigHash(childOwnersCommitment, Field(2), Field(owners.length)),
         nonce: Field(0),
         configNonce: Field(0),
         expirySlot: Field(0),

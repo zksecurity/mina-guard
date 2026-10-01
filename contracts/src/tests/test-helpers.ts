@@ -1,5 +1,6 @@
 import { memoToField } from '../memo.js';
 import { proposalSigningMessage } from '../proposal-signing.js';
+import { childConfigHash } from '../hash-domains.js';
 import {
   Field,
   Mina,
@@ -7,7 +8,6 @@ import {
   PublicKey,
   AccountUpdate,
   Signature,
-  Poseidon,
   UInt64,
   Bool,
   MerkleMapWitness,
@@ -386,7 +386,7 @@ export function createDeleteProposal(
 // -- Child Proposal Helpers --------------------------------------------------
 
 /**
- * Builds a CREATE_CHILD proposal. `data` is the Poseidon commitment of the
+ * Builds a CREATE_CHILD proposal. `data` is the tagged commitment of the
  * child's intended config so the child's executeSetupChild can bind to it.
  * REMOTE destination, targets the given child address.
  */
@@ -404,7 +404,7 @@ export function createCreateChildProposal(
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.CREATE_CHILD,
-    data: Poseidon.hash([ownersCommitment, threshold, numOwners]),
+    data: childConfigHash(ownersCommitment, threshold, numOwners),
     memoHash: memoToField(''),
     nonce,
     configNonce,

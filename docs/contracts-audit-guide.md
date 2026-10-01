@@ -101,7 +101,7 @@ represents the entire list via a chain hash:
 ```
 chain = Poseidon.hashWithPrefix('owner-chain', [])   // INITIAL_OWNER_CHAIN
 for each owner in list:
-  chain = Poseidon.hash([chain, owner.x, owner.isOdd.toField()])
+  chain = Poseidon.hashWithPrefix('owner-link', [chain, owner.x, owner.isOdd.toField()])
 ```
 
 This design means the full owner list is the witness, not a Merkle path. The witness
@@ -173,7 +173,7 @@ approval of fabricated proposals. Methods: `getCount()`, `setCount()`, `getWitne
 `isExecuted()`, `getRoot()`.
 
 **`VoteNullifierStore`** — a `MerkleMap` keyed by
-`Poseidon.hash([proposalHash, ...approver.toFields()])`. Value is `Field(0)` (not voted)
+`Poseidon.hashWithPrefix('vote-nullifier', [proposalHash, ...approver.toFields()])`. Value is `Field(0)` (not voted)
 or `Field(1)` (voted). Prevents the same owner from approving the same proposal twice.
 Methods: `isNullified()`, `nullify()`, `getWitness()`, `getRoot()`.
 
@@ -678,7 +678,7 @@ sees what actions exist and why they're locked.
 **CREATE_CHILD two-transaction flow.** Deploying a subaccount requires two separate Mina
 transactions:
 
-1. **Propose + Deploy** — `/accounts/new?parent=…` generates a fresh keypair for the child, deploys the child contract, computes `Poseidon.hash([ownersCommitment, threshold, numOwners])` for the proposal `data`, and submits a `CREATE_CHILD` REMOTE proposal to the parent via the parent's `propose()`. The child contract is deployed in this step but left uninitialized (`ownersCommitment == 0`). The child config (owners, threshold, address) is persisted to `localStorage` keyed by `<parentAddress>:<childAddress>`.
+1. **Propose + Deploy** — `/accounts/new?parent=…` generates a fresh keypair for the child, deploys the child contract, computes `Poseidon.hashWithPrefix('child-config', [ownersCommitment, threshold, numOwners])` for the proposal `data`, and submits a `CREATE_CHILD` REMOTE proposal to the parent via the parent's `propose()`. The child contract is deployed in this step but left uninitialized (`ownersCommitment == 0`). The child config (owners, threshold, address) is persisted to `localStorage` keyed by `<parentAddress>:<childAddress>`.
 2. **Execute** — once the parent's CREATE_CHILD proposal has reached threshold approvals, any user can execute it from the `/transactions/[id]` page. Execution calls `executeSetupChild` on the already-deployed child address, initializing it with the approved config and binding it to the parent.
 
 `localStorage` records are auto-pruned once the child's `SetupEvent` has been indexed. The

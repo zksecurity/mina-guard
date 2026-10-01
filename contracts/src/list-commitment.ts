@@ -1,5 +1,6 @@
-import { Option, Poseidon, Field, Provable, PublicKey, Bool, Struct, Group } from "o1js";
+import { Option, Field, Provable, PublicKey, Bool, Struct, Group } from "o1js";
 import { INITIAL_OWNER_CHAIN, MAX_OWNERS } from "./constants.js";
+import { ownerChainLink } from './hash-domains.js';
 
 class PublicKeyOption extends Option(PublicKey) { }
 const OwnerWitnessArray = Provable.Array(PublicKeyOption, MAX_OWNERS);
@@ -8,7 +9,7 @@ class OwnerWitness extends Struct({ owners: OwnerWitnessArray }) { }
 function computeOwnerChain(owners: PublicKey[]): Field {
   let currentChain = INITIAL_OWNER_CHAIN;
   owners.forEach((pk) => {
-    currentChain = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
+    currentChain = ownerChainLink(currentChain, pk);
   });
   return currentChain;
 }
@@ -33,7 +34,7 @@ function computeSetupOwnersChain(owners: PublicKey[], numOwners: Field): Field {
   let currentChain = INITIAL_OWNER_CHAIN;
   owners.forEach((pk, i) => {
     const active = Field(i).lessThan(numOwners);
-    const next = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
+    const next = ownerChainLink(currentChain, pk);
     currentChain = Provable.if(active, next, currentChain);
   });
   return currentChain;
@@ -107,7 +108,7 @@ function assertOwnerMembership(
   let found = Bool(false);
   let currentChain = INITIAL_OWNER_CHAIN;
   ownersWitness.owners.forEach(({ value: pk, isSome }) => {
-    let newChain = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
+    let newChain = ownerChainLink(currentChain, pk);
     currentChain = Provable.if(isSome, newChain, currentChain);
     found = Provable.if(claimedOwner.equals(pk).and(isSome), Bool(true), found);
   });
@@ -150,7 +151,7 @@ function addOwnerToCommitment(
 
   // when insertAfter is none, prepend
   const prepend = insertAfter.isSome.not();
-  const prependHash = Poseidon.hash([newChain, ownerToAdd.x, ownerToAdd.isOdd.toField()]);
+  const prependHash = ownerChainLink(newChain, ownerToAdd);
   newChain = Provable.if(prepend, prependHash, newChain);
 
   // if prepend, already "found" position. Else, start with false
@@ -158,13 +159,13 @@ function addOwnerToCommitment(
 
   ownersWitness.owners.forEach(({ value: pk, isSome }) => {
 
-    let currentChainTemp = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
+    let currentChainTemp = ownerChainLink(currentChain, pk);
     currentChain = Provable.if(isSome, currentChainTemp, currentChain);
 
-    let newChainTemp = Poseidon.hash([newChain, pk.x, pk.isOdd.toField()]);
+    let newChainTemp = ownerChainLink(newChain, pk);
     newChain = Provable.if(isSome, newChainTemp, newChain);
 
-    const toAdd = Poseidon.hash([newChain, ownerToAdd.x, ownerToAdd.isOdd.toField()]);
+    const toAdd = ownerChainLink(newChain, ownerToAdd);
 
     const isPosition = pk.equals(insertAfter.value).and(isSome).and(insertAfter.isSome);
     foundPosition = Provable.if(isPosition, Bool(true), foundPosition);
@@ -207,13 +208,13 @@ function removeOwnerFromCommitment(
 
   ownersWitness.owners.forEach(({ value: pk, isSome }) => {
 
-    let currentChainTemp = Poseidon.hash([currentChain, pk.x, pk.isOdd.toField()]);
+    let currentChainTemp = ownerChainLink(currentChain, pk);
     currentChain = Provable.if(isSome, currentChainTemp, currentChain);
 
     const isPosition = pk.equals(ownerToRemove).and(isSome);
 
     // to remove from chain, just skip ownerToRemove
-    let newChainTemp = Poseidon.hash([newChain, pk.x, pk.isOdd.toField()]);
+    let newChainTemp = ownerChainLink(newChain, pk);
     newChain = Provable.if(isSome.and(isPosition.not()), newChainTemp, newChain);
 
     foundOwner = Provable.if(isPosition, Bool(true), foundOwner);

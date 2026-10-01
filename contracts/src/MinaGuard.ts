@@ -35,6 +35,7 @@ import {
 import { addOwnerToCommitment, removeOwnerFromCommitment, assertOwnerMembership, OwnerWitness, PublicKeyOption, computeSetupOwnersChain, assertCoherentSetupOwners, assertOnCurveIf } from './list-commitment.js';
 
 import { PROPOSAL_HASH_PREFIX, proposalSigningMessage } from './proposal-signing.js';
+import { childConfigHash, voteNullifierKey as computeVoteNullifierKey } from './hash-domains.js';
 
 // -- Types -------------------------------------------------------------------
 
@@ -845,7 +846,7 @@ export class MinaGuard extends SmartContract {
     // this, so what gets deployed can't drift from what these events display.
     // Write-once: reserve is gated by parent == empty (above), so it can't be
     // replayed to change this value.
-    const reservedConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    const reservedConfigHash = childConfigHash(ownersCommitment, threshold, numOwners);
     this.reservedConfigHash.set(reservedConfigHash);
 
     this.emitEvent('createChildConfig', {
@@ -903,15 +904,15 @@ export class MinaGuard extends SmartContract {
     // commitment.
     assertCoherentSetupOwners(initialOwners.owners, numOwners);
     const ownersCommitment = computeSetupOwnersChain(initialOwners.owners, numOwners);
-    const childConfigHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
-    proposal.data.assertEquals(childConfigHash, 'Child config mismatch');
+    const configHash = childConfigHash(ownersCommitment, threshold, numOwners);
+    proposal.data.assertEquals(configHash, 'Child config mismatch');
 
     // Bind to the config reserveForParent() committed (== the events shown to
     // approvers). Without this, an executor could init any config whose hash
     // equals a malicious proposal.data, drifting from the displayed config.
     this.reservedConfigHash
       .getAndRequireEquals()
-      .assertEquals(childConfigHash, 'Executed config must match reserved child config');
+      .assertEquals(configHash, 'Executed config must match reserved child config');
     const proposalHash = this.assertParentApprovalState(
       proposal,
       parentAddress,
@@ -1069,7 +1070,7 @@ export class MinaGuard extends SmartContract {
     // --- approval logic ---
     signature.verify(proposer, [proposalSigningMessage(proposalHash, 'propose')]).assertTrue('Invalid signature');
 
-    const voteNullifierKey = Poseidon.hash([proposalHash, ...proposer.toFields()]);
+    const voteNullifierKey = computeVoteNullifierKey(proposalHash, proposer);
     const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
     const [computedVoteRoot, computedVoteKey] =
       voteNullifierWitness.computeRootAndKey(Field(0));
@@ -1144,7 +1145,7 @@ export class MinaGuard extends SmartContract {
     this.assertNotExecuted(currentApprovalCount);
     this.assertProposalExists(currentApprovalCount);
 
-    const voteNullifierKey = Poseidon.hash([proposalHash, ...approver.toFields()]);
+    const voteNullifierKey = computeVoteNullifierKey(proposalHash, approver);
     const voteNullifierRoot = this.voteNullifierRoot.getAndRequireEquals();
     const [computedVoteRoot, computedVoteKey] =
       voteNullifierWitness.computeRootAndKey(Field(0));

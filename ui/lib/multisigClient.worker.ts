@@ -19,7 +19,6 @@ import {
   sendZkapp,
   Bool,
   MerkleMap,
-  Poseidon,
   Proof,
   Void,
 } from 'o1js';
@@ -43,6 +42,7 @@ import {
   Destination,
   memoToField,
   proposalSigningMessage,
+  childConfigHash,
   NETWORK_DOMAIN_NAME,
   IncrementalStoreCache,
   checkpointStores,
@@ -1332,7 +1332,7 @@ const workerApi = {
     const numOwners = Field(ownerStore.owners.length);
     const threshold = Field(params.childThreshold);
 
-    const expectedData = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    const expectedData = childConfigHash(ownersCommitment, threshold, numOwners);
     if (expectedData.toString() !== (params.proposal.data ?? '0')) {
       throw new Error(
         'SubVault config mismatch: announced owners/threshold do not match the proposal data hash. ' +
@@ -1487,8 +1487,8 @@ const workerApi = {
   },
 
   /**
-   * Computes the createChild `data` field: Poseidon.hash([ownersCommitment, threshold, numOwners]).
-   * Exposed so the wizard can compute it without dragging Poseidon into the main thread.
+   * Computes the tagged child config hash used as the createChild proposal's `data` field.
+   * Exposed so the wizard can compute it without hashing on the main thread.
    */
   computeCreateChildConfigHash(params: {
     childOwners: string[];
@@ -1507,7 +1507,7 @@ const workerApi = {
     const ownersCommitment = ownerStore.getCommitment();
     const numOwners = Field(params.childOwners.length);
     const threshold = Field(params.childThreshold);
-    const configHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    const configHash = childConfigHash(ownersCommitment, threshold, numOwners);
     return {
       ownersCommitment: ownersCommitment.toString(),
       configHash: configHash.toString(),

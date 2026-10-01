@@ -294,7 +294,9 @@ the existing pagination cap fail closed; cursor pagination is tracked in
 Offline requests exported by this UI use **version 1** with a complete public
 store snapshot. Proposals use application-tagged hashes, distinct
 propose/approve signing messages, and length-prefixed memo commitments (including
-empty memos). Use matching CLI/UI/backend/desktop builds and new network VKs.
+empty memos). Owner-chain links, vote-nullifier keys, and child configuration
+hashes also have separate tags. Use matching CLI/UI/backend/desktop builds and
+new network VKs.
 Requests and signed responses both use v1 after the pre-release reset. Discard
 older files: the version number alone does not distinguish them from current files.
 This breaking change requires fresh vaults and recreated proposals.

@@ -28,7 +28,6 @@ import {
   Signature,
   Bool,
   Cache,
-  Poseidon,
   addCachedAccount,
   TokenId,
 } from 'o1js';
@@ -48,6 +47,7 @@ import {
   Destination,
   memoToField,
   proposalSigningMessage,
+  childConfigHash,
   NETWORK_DOMAIN_NAME,
   storesFromOfflineRequest,
   type StoreCheckpoint,
@@ -1036,11 +1036,11 @@ export async function handleExecute(
     const paddedOwners = [...childOwnerStore.owners];
     while (paddedOwners.length < MAX_OWNERS) paddedOwners.push(PublicKey.empty());
 
-    const expectedData = Poseidon.hash([
+    const expectedData = childConfigHash(
       childOwnerStore.getCommitment(),
       Field(bundle.childThreshold!),
       Field(bundle.childOwners!.length),
-    ]);
+    );
     if (expectedData.toString() !== (bundle.proposal.data ?? '0')) {
       throw new Error(
         'SubVault config mismatch: announced owners/threshold do not match the proposal data hash. ' +

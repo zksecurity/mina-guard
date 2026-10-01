@@ -25,7 +25,6 @@ export const MAX_OWNERS = 20;
 // transaction cost budget caps out at 9. At 10 receivers the transaction fails with
 // "transaction is too expensive" during proving.
 export const MAX_RECEIVERS = 9;
-export const INITIAL_SIGNER_CHAIN = Poseidon.hashWithPrefix('signer-chain', []);
 export const INITIAL_OWNER_CHAIN = Poseidon.hashWithPrefix('owner-chain', []);
 
 export const PROPOSED_MARKER = Field(1);

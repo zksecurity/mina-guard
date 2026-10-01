@@ -1,8 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { AccountUpdate, Cache, Field, Mina, Poseidon, PrivateKey, PublicKey } from 'o1js';
+import { AccountUpdate, Cache, Field, Mina, PrivateKey, PublicKey } from 'o1js';
 import { MinaGuard, SetupOwnersInput } from '../MinaGuard.js';
 import { MAX_OWNERS } from '../constants.js';
 import { computeOwnerChain } from '../list-commitment.js';
+import { childConfigHash } from '../hash-domains.js';
 import {
   deployAndSetup,
   deployAndSetupChildGuard,
@@ -105,9 +106,9 @@ describe('Reserved child configuration', () => {
     expect(state[8]).toBe(empty[1].toString());
     await tx.prove();
     await tx.sign([ctx.deployerKey, childKey]).send();
-    expect(child.reservedConfigHash.get()).toEqual(Poseidon.hash([
+    expect(child.reservedConfigHash.get()).toEqual(childConfigHash(
       computeOwnerChain(ctx.owners.map((o) => o.pub)), Field(2), Field(3),
-    ]));
+    ));
     expect(child.ownersCommitment.get()).toEqual(Field(0));
     await expect(async () => {
       const repeat = await Mina.transaction(ctx.deployerAccount, async () => {
