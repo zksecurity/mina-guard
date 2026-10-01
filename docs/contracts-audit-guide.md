@@ -592,8 +592,10 @@ past `MAX_OWNERS` (circuit-size overflow).
 proof-authorized `setup()` or `reserveForParent()` overwrites the full vector and sets
 `setPermissions: impossible()` in the same transaction. Confirm no production path broadcasts
 `deploy()` alone, no other method writes permissions, and no method path re-authorizes state/fund
-movement outside a proof. Also confirm that the deployed VK matches the pinned
-`contracts/.vk-hash` (the `check-vk-hash` CI job enforces this per network).
+movement outside a proof. Also confirm that the deployed VK matches the
+CI-generated `contracts/.vk-hash` for that source commit (the
+`check-vk-hash` job uses a cached compilation only when the circuit inputs
+match, and compiles both distinct domains on a cache miss).
 
 ## Security properties
 
@@ -696,8 +698,8 @@ contracts/
 │       ├── delegate.test.ts    memo.test.ts        list-commitment.test.ts
 │       ├── storage.test.ts     test-helpers.ts
 │
-└── .vk-hash                    # Canonical VK hashes (testnet= / mainnet= / devnet=); check-vk-hash CI
-                                #   recompiles both and fails on drift
+└── .vk-hash                    # Generated CI artifact (testnet= / mainnet= / devnet=),
+                                #   downloaded for releases and deployments
 ```
 
 ---

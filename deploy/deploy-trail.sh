@@ -41,8 +41,8 @@ fi
 : "${ARCHIVE_DB_PASSWORD:?ARCHIVE_DB_PASSWORD must be set in deploy/.env (see deploy/.env.example) or exported in the shell — read-only role on the node-stack archive postgres}"
 
 # The MinaGuard VK hash is a property of the contract source, not deploy-time
-# config — it's committed at contracts/.vk-hash. Read it from there (stripping
-# the comment header) unless explicitly overridden in the environment. The
+# config — CI generates contracts/.vk-hash for this source commit. Read the
+# downloaded manifest unless explicitly overridden in the environment. The
 # backend image takes it as a build arg; the indexer filters events by it.
 if [ -z "${MINAGUARD_VK_HASH:-}" ] && [ -f contracts/.vk-hash ]; then
   # trail is a testnet deploy; read-vk-hash.sh is the single validated parser

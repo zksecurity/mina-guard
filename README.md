@@ -134,6 +134,20 @@ bun run --filter backend build
 NEXT_PUBLIC_MINA_NETWORK=testnet bun run --filter ui build
 ```
 
+CI computes a fingerprint of the tracked circuit inputs. It compiles testnet
+and mainnet in parallel when their cached hashes are missing, then publishes a
+`minaguard-vk-manifest` artifact for the exact source commit. It contains
+`contracts/.vk-hash` with testnet, mainnet, and devnet entries; devnet uses the
+testnet circuit. Release and deploy jobs verify the artifact's commit before
+using its network hash for the backend, UI, or desktop bundle. Local builds do
+not need to compile the circuit just to update a committed hash file.
+The testnet runner proves parent-state paths and, when present, proposal-signing
+paths in separate steps so each has its own timeout. The mainnet runner proves
+child reservation and setup. These proof
+tests still run on every PR check. A VK cache miss recompiles the circuit,
+including after cache expiry or a merge to a branch that cannot access the
+PR's cache.
+
 ## PR Preview Environments
 
 Each PR targeting `main` gets an isolated preview stack deployed to the Hetzner server via a self-hosted GitHub Actions runner. Preview URLs follow the pattern `https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/`.

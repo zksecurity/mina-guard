@@ -181,7 +181,7 @@ checks. Successful child setup clears the consumed `reservedConfigHash`; consume
 must use initialized state and events for the active configuration. Method arguments,
 proposal hashes, events, and offline bundle formats are unchanged. The circuit and
 verification keys change, so UI, offline CLI, and desktop builds must use the matching
-per-network `contracts/.vk-hash`; older deployed verification keys are not upgraded
+per-network CI-generated `contracts/.vk-hash`; older deployed verification keys are not upgraded
 by this source change.
 
 Before compiling, the CLI also refuses proposals the contract is certain to reject, with the contract's own reasoning, so no operator spends a proof on them: an `ADD_OWNER` whose target an owner already holds, the same key or its negation (propose and approve, `hasOwnerWithSameX`), an `ADD_OWNER` whose `data` matches inserting the target at no position of the current owner list (approve, `assertExecutableAddOwnerData`; any position is accepted, not only the sorted one the app proposes), and a transfer row that sends a non-zero amount to the empty address (`buildTransferReceivers`). The web worker carries the same checks.
@@ -462,8 +462,8 @@ pushing an `offline-cli-v*` tag builds all five platform binaries **natively**
 on a three-leg runner matrix (each leg smoke-tests its own-arch binary,
 exercising module init and the embedded WASM), signs the macOS ones, and an
 aggregation job attaches one canonical `SHA256SUMS` plus
-`minaguard-vk-hash.txt` (a copy of `contracts/.vk-hash`, one hash per
-network), publishing everything as a **draft** release for manual review
+`minaguard-vk-hash.txt` (a copy of the CI-generated `contracts/.vk-hash` for
+the tagged source, one hash per network), publishing everything as a **draft** release for manual review
 (`workflow_dispatch` = dry run, CI artifacts only). The UI's download panel
 links the binary and `SHA256SUMS` of the release pinned by
 `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`. There is deliberately **no default

@@ -1,0 +1,127 @@
+name: Generate MinaGuard VK hashes
+
+on:
+  workflow_call:
+    inputs:
+      run-proof-tests:
+        type: boolean
+        default: false
+
+jobs:
+  compile:
+    name: Compile ${{ matrix.network }} circuit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        network: [testnet, mainnet]
+    env:
+      MINA_NETWORK_DOMAIN: ${{ matrix.network }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Fingerprint circuit inputs
+        id: inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          fingerprint="$(bash contracts/scripts/vk-input-fingerprint.sh)"
+          echo "value=$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Reuse VK hash for unchanged inputs
+        id: vk-cache
+        uses: actions/cache@v4
+        with:
+          path: vk-parts/${{ matrix.network }}.txt
+          key: minaguard-vk-${{ runner.os }}-${{ matrix.network }}-${{ steps.inputs.outputs.value }}
+      - uses: oven-sh/setup-bun@v2
+        if: steps.vk-cache.outputs.cache-hit != 'true' || inputs.run-proof-tests
+        with:
+          bun-version: 1.3.10
+      - name: Install dependencies
+        if: steps.vk-cache.outputs.cache-hit != 'true' || inputs.run-proof-tests
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Compile current source and capture VK hash
+        if: steps.vk-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vk-parts
+          bun run dev-helpers/cli.ts vk-hash compile 2>&1 | tee vk-compile.log
+          hash="$(sed -n 's/^vkHash\[${{ matrix.network }}\]: \([0-9][0-9]*\)$/\1/p' vk-compile.log | tail -1)"
+          [[ "$hash" =~ ^[0-9]+$ ]]
+          printf '%s\n' "$hash" > vk-parts/${{ matrix.network }}.txt
+      - name: Validate VK hash from compilation or cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          hash="$(cat vk-parts/${{ matrix.network }}.txt)"
+          [[ "$hash" =~ ^[0-9]{1,78}$ ]]
+          if [[ '${{ matrix.network }}' == testnet ]]; then
+            printf 'testnet=%s\n' "$hash" > contracts/.vk-hash
+          fi
+      - name: Run genuine-proof parent-state tests
+        if: matrix.network == 'testnet' && inputs.run-proof-tests
+        working-directory: contracts
+        run: >-
+          RUN_REAL_PROOF_TESTS=1 bun test src/tests/child.test.ts
+          --test-name-pattern "genuine MinaGuard proof" --timeout 900000
+        timeout-minutes: 20
+      - name: Run genuine-proof proposal signing lifecycle
+        if: matrix.network == 'testnet' && inputs.run-proof-tests
+        working-directory: contracts
+        run: |
+          if [[ -f src/tests/proposal-signing.test.ts ]]; then
+            RUN_REAL_PROOF_TESTS=1 bun test src/tests/proposal-signing.test.ts \
+              --test-name-pattern "genuine MinaGuard proof" --timeout 900000
+          else
+            echo 'No proposal-signing proof test in this revision.'
+          fi
+        timeout-minutes: 25
+      - name: Run genuine-proof child reservation lifecycle
+        if: matrix.network == 'mainnet' && inputs.run-proof-tests
+        working-directory: contracts
+        run: >-
+          RUN_REAL_PROOF_TESTS=1 bun test src/tests/reservation.test.ts
+          --test-name-pattern "genuine proofs" --timeout 900000
+        timeout-minutes: 20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vk-part-${{ matrix.network }}
+          path: vk-parts/${{ matrix.network }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  manifest:
+    name: Assemble VK manifest
+    runs-on: ubuntu-latest
+    needs: compile
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vk-part-*
+          merge-multiple: true
+          path: vk-parts
+      - name: Validate both domains and generate manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          for network in testnet mainnet; do
+            [[ -f "vk-parts/${network}.txt" ]]
+            hash="$(cat "vk-parts/${network}.txt")"
+            [[ "$hash" =~ ^[0-9]+$ ]]
+          done
+          mkdir -p vk-manifest
+          testnet="$(cat vk-parts/testnet.txt)"
+          mainnet="$(cat vk-parts/mainnet.txt)"
+          printf 'testnet=%s\nmainnet=%s\ndevnet=%s\n' "$testnet" "$mainnet" "$testnet" > vk-manifest/.vk-hash
+          printf '%s\n' "$GITHUB_SHA" > vk-manifest/vk-source.sha
+          cat vk-manifest/.vk-hash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minaguard-vk-manifest
+          path: vk-manifest/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

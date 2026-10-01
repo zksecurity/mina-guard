@@ -62,6 +62,9 @@ Both scripts expect to be run from the repo root.
 - `up` uses `--force-recreate`: every deploy starts a fresh chain, and the app DB is wiped on `down -v` because its indexed state mirrors the lightnet chain.
 - URLs after deploy: `https://mina-nodes.duckdns.org/app/` (app), `/app/health`, `/app/graphql`, `/app/accounts/acquire-account`, `/app/explorer`.
 - Auto-deployed on every push to `main` by `.github/workflows/deploy-lightnet.yml` (self-hosted runner on the box); `.github/workflows/reset.yml` runs the same `down` + `up` on a 3-day schedule so the stack self-heals from bloat/drift during quiet periods.
+  Both workflows generate and verify the VK manifest for the checked-out commit
+  before invoking `deploy.sh`; a missing or stale manifest stops the job before
+  the stack is taken down.
 
 ### Mesa Trail deployment (`/trail/*`, mesa-mut)
 
@@ -86,20 +89,16 @@ unless these are set:
 - `MESA_NODE_HOST` — address of the node-stack box
 - `ARCHIVE_DB_PASSWORD` — password for `minaguard_ro` on the archive postgres
 
-`MINAGUARD_VK_HASH` is deliberately **not** deploy-time config: it's a property of the contract
-source, committed at `contracts/.vk-hash`, and read from there automatically (override by
-exporting it). The backend indexer filters contract discovery by this hash for the target network.
-`contracts/.vk-hash` contains three labeled entries (`testnet=`, `mainnet=`, and `devnet=`); the deploy scripts
-pick the entry matching the target network. To regenerate after a contract change, run all three:
-
-```
-MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile
-MINA_NETWORK_DOMAIN=mainnet bun run dev-helpers/cli.ts vk-hash compile
-MINA_NETWORK_DOMAIN=devnet bun run dev-helpers/cli.ts vk-hash compile
-```
-
-then update the three lines in `contracts/.vk-hash`. The testnet and devnet
-lines must match because both compile with `Field(2)`.
+`MINAGUARD_VK_HASH` is a property of the contract source. CI reuses compiled
+testnet and mainnet hashes when their circuit-input fingerprint matches a
+cached result. On a cache miss, it compiles both circuits in parallel. It
+writes `contracts/.vk-hash` as a downloadable artifact and derives the
+`devnet=` entry from testnet because both use `Field(2)`. Release and deploy
+jobs download that manifest for the exact source commit and verify it before
+selecting a hash. The backend uses the selected hash to filter contract
+discovery. A local checkout can compile
+either network with `MINA_NETWORK_DOMAIN=<network> bun run dev-helpers/cli.ts vk-hash compile`
+for debugging; local results do not need to be committed.
 
 - URLs after deploy: `https://mina-trail.duckdns.org/trail/` (app), `/trail/health`, `/trail/graphql`, `/trail/archive`, `/trail/explorer`. The frontend bundle bakes these `mina-trail.duckdns.org/trail` URLs (both the on-box `docker-compose.trail.yml` build args and the pull-based `trail-release.yml` build) — **not** `mina-nodes` (which serves `/app/*`).
 - **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). What fires on every push to `main` is instead `.github/workflows/trail-release.yml`, which **builds, pushes, and attests** the `/trail` GHCR images and deploys nothing — the box pulls and verifies them itself (see *Pull-based deploy* below).

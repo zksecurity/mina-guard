@@ -3,6 +3,8 @@ node_modules/
 
 # build output
 contracts/build/
+contracts/.vk-hash
+contracts/vk-source.sha
 ui/.next/
 ui/out/
 .next
