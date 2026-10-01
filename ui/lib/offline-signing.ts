@@ -1,5 +1,5 @@
 import { parseChildConfigFromEvents, fetchAllEvents } from './api';
-import { exportStoreCheckpoint } from './multisigClient';
+import { computeCreateChildConfigHash, exportStoreCheckpoint } from './multisigClient';
 import type { StoreCheckpoint } from 'contracts';
 import { OFFLINE_RESPONSE_VERSION } from './offline-format';
 import { getMinaGuardConfig } from './endpoints';
@@ -307,12 +307,20 @@ export async function buildOfflineExecuteBundle(params: {
   if (isCreateChild && childAddr) {
     childAddress = childAddr;
     childEvents = await fetchAllEvents(childAddress);
-    const config = parseChildConfigFromEvents(childEvents, params.proposal.proposalHash);
+    const config = parseChildConfigFromEvents(childEvents, childAddr);
     if (!config) {
       throw new Error(
         'SubVault config events not found for this proposal. ' +
         'The createChildConfig events may not have been indexed yet — try again shortly.',
       );
+    }
+    const { configHash } = await computeCreateChildConfigHash({
+      childOwners: config.owners,
+      childThreshold: config.threshold,
+      preserveOrder: true,
+    });
+    if (configHash !== params.proposal.data) {
+      throw new Error('SubVault reservation does not match the parent-approved proposal data');
     }
     childOwners = config.owners;
     childThreshold = config.threshold;

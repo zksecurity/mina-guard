@@ -177,7 +177,7 @@ block it became valid at. Current state is the latest row; reorg rollback is a s
 (Poseidon hash of the UTF-8 memo bytes). The plaintext memo is not stored on-chain — it travels
 as the Mina transaction memo set by the wallet.
 
-- **Proposal creation**: the proposer sets the memo as the transaction memo. The indexer decodes `txMemo` (base58 → plaintext via `decodeTxMemo`) and stores it as `Proposal.memo`; the `memoHash` from the `ProposalEvent` is stored separately. If decoding fails, the raw base58 string is stored as a fallback (display-only; the authoritative hash is always `memoHash` from the event).
+- **Proposal creation**: the proposer sets the memo as the transaction memo. The indexer decodes `txMemo` using the shared contracts helper, which checks the base58check checksum, user-memo tag, and declared length, then stores plaintext as `Proposal.memo`; the `memoHash` from the `ProposalEvent` is stored separately. If decoding fails, the raw base58 string is stored as a fallback (display-only; the authoritative hash is always `memoHash` from the event).
 - **Execution**: the executor's wallet sets the same memo. The indexer decodes `txMemo`, hashes it via `memoToField`, and stores the result as `Proposal.executionMemoHash`. At read time, `computeMemoExecutionMatch` compares `memoHash === executionMemoHash` → `true`/`false`/`null`.
 - **Empty memos**: the memo commitment includes the UTF-8 byte length and bytes under `mina-guard-memo`, including the empty string. Zero is not an absence sentinel; the backend verifies empty memo commitments and the UI shows them. Missing memo data still yields an unknown match. Event and database shapes are unchanged; existing test vaults/proposals are not migrated into the new protocol.
 

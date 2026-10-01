@@ -1,6 +1,31 @@
 import { Field, Poseidon } from 'o1js';
 import { memoToField, decodeTxMemo } from '../memo.js';
 import { describe, expect, it } from 'bun:test';
+import { sha256 } from '@noble/hashes/sha256';
+
+const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58Encode(bytes: Uint8Array): string {
+  let value = 0n;
+  for (const byte of bytes) value = value * 256n + BigInt(byte);
+  let result = '';
+  while (value > 0n) {
+    result = alphabet[Number(value % 58n)] + result;
+    value /= 58n;
+  }
+  return '1'.repeat(bytes.findIndex((byte) => byte !== 0) < 0
+    ? bytes.length : bytes.findIndex((byte) => byte !== 0)) + result;
+}
+
+function encodedMemo(content = 'rent payment', tag = 1): string {
+  const payload = new Uint8Array(39);
+  const bytes = new TextEncoder().encode(content);
+  payload[0] = 0x14;
+  payload[1] = tag;
+  payload[2] = bytes.length;
+  payload.set(bytes, 3);
+  payload.set(sha256(sha256(payload.subarray(0, 35))).subarray(0, 4), 35);
+  return base58Encode(payload);
+}
 
 describe('memoToField', () => {
   it('uniformly commits the empty string under the memo domain', () => {
@@ -45,5 +70,29 @@ describe('decodeTxMemo', () => {
     expect(memoToField(decodeTxMemo(encoded)).toString()).toEqual(
       memoToField(plaintext).toString()
     );
+  });
+
+  it('rejects a flipped checksum byte', () => {
+    const bytes = new Uint8Array(39);
+    bytes[0] = 0x14;
+    bytes[1] = 1;
+    bytes.set(sha256(sha256(bytes.subarray(0, 35))).subarray(0, 4), 35);
+    bytes[38] ^= 1;
+    expect(() => decodeTxMemo(base58Encode(bytes))).toThrow('invalid checksum');
+  });
+
+  it('rejects another memo tag even with a valid checksum', () => {
+    expect(() => decodeTxMemo(encodedMemo('rent payment', 2))).toThrow('invalid memo tag');
+  });
+
+  it('rejects a truncated payload and a length beyond the content capacity', () => {
+    expect(() => decodeTxMemo(base58Encode(new Uint8Array([0x14, 1, 0]))))
+      .toThrow('expected 39 bytes');
+    const bytes = new Uint8Array(39);
+    bytes[0] = 0x14;
+    bytes[1] = 1;
+    bytes[2] = 33;
+    bytes.set(sha256(sha256(bytes.subarray(0, 35))).subarray(0, 4), 35);
+    expect(() => decodeTxMemo(base58Encode(bytes))).toThrow('invalid content length');
   });
 });

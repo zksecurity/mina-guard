@@ -66,7 +66,7 @@ the wallet shows only a hash — is the online path's central risk and is analyz
 | `storage.ts` | Off-chain stores: `OwnerStore`, `ApprovalStore`, `VoteNullifierStore` |
 | `list-commitment.ts` | Owner chain hash circuits: membership proof, add, remove, setup-list commitment + coherence |
 | `proposal-signing.ts` | Application-specific proposal/memo domains and action-specific owner signature messages |
-| `memo.ts` | `memoToField()` (application-tagged, length-prefixed Poseidon commitment of UTF-8 memo bytes), `decodeTxMemo()` (base58 tx memo → plaintext) |
+| `memo.ts` | `memoToField()` (application-tagged, length-prefixed Poseidon commitment of UTF-8 memo bytes), `decodeTxMemo()` (validated base58check user memo → plaintext) |
 | `index.ts` | Public exports |
 
 ### On-chain state (12 fields)
@@ -451,6 +451,9 @@ on-chain-computed commitment (write-once — a second reserve is blocked by the 
 guard), and emits `CreateChildConfigEvent` + 20 `CreateChildOwnerEvent`s on-chain so the child's
 intended owner list is publicly available before `executeSetupChild` runs. (The indexer stores
 these as raw events but does not parse them; the UI and offline CLI fetch and parse them directly.)
+The reservation event's `proposalHash` is a caller-supplied label, not proof of
+the parent's approval. Consumers locate the reservation by child address and
+recompute its config hash against the parent-approved proposal data before use.
 It also installs the complete `GUARD_PERMISSIONS` vector under proof authorization and permanently
 seals `setPermissions`; this must happen at reservation time, not later in `executeSetupChild`, so
 the child is never included on chain with creator-chosen permissions.

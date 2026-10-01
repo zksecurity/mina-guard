@@ -35,6 +35,7 @@
     "typecheck": "bun run tsc --noEmit"
   },
   "dependencies": {
+    "@noble/hashes": "^1.8.0",
     "o1js": "3.0.0"
   },
   "devDependencies": {
