@@ -76,7 +76,7 @@ describe('MinaGuard - Child Lifecycle', () => {
     if (RUN_REAL_PROOF_TESTS) {
       // A VK hash cache hit skips the compile step, so compile the prover
       // cache here with a worker limit that fits the CI runner.
-      setNumberOfWorkers(2);
+      setNumberOfWorkers(1);
       await MinaGuard.compile({ cache: Cache.FileSystem('../cache') });
     }
   });
