@@ -263,7 +263,8 @@ that both use `Field(2)`; a chain-specific protocol domain would be needed.
 ### On-chain multi-step flow
 
 **Deploy.** `deploy()` installs `GUARD_DEPLOY_PERMISSIONS` and emits a `DeployEvent` with the
-contract address for indexer discovery. The temporary vector matches the final vector except that
+contract address. It is informational: the indexer discovers vaults by verification key and, since
+the event is signature-authorized, does not index it. The temporary vector matches the final vector except that
 `setPermissions` is `proof()`. `deploy()` is transaction-building code, not a proved method: the
 deployment signature authenticates the installed values, while the MinaGuard verification key does
 not. `setup()` and `reserveForParent()` create separate, proof-authorized AccountUpdates. Atomicity

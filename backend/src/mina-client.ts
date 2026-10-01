@@ -1,4 +1,4 @@
-import { Mina, PublicKey, fetchAccount, UInt32 } from 'o1js';
+import { Field, Mina, PublicKey, TokenId, fetchAccount } from 'o1js';
 import { GUARD_PERMISSION_KINDS, MinaGuard } from 'contracts';
 import type { Pool } from 'pg';
 import type { BackendConfig } from './config.js';
@@ -19,6 +19,8 @@ export interface ChainEvent {
   parentHash: string;
   txHash: string | null;
   txMemo: string | null;
+  /** Set when a proof-authorized event could not be decoded; `type` is then 'malformed'. */
+  decodeError?: string;
 }
 
 /** Block identity row returned by the daemon's bestChain query. */
@@ -27,6 +29,13 @@ export interface BestChainHeader {
   blockHash: string;
   parentHash: string;
 }
+
+/** Archive GraphQL endpoints for event fetches; set by configureNetwork. */
+export interface ArchiveEndpoints {
+  primary: string;
+  fallback: string | null;
+}
+let archiveEndpoints: ArchiveEndpoints | null = null;
 
 /** Configures o1js network endpoints once at process start. */
 export function configureNetwork(config: BackendConfig): void {
@@ -39,6 +48,7 @@ export function configureNetwork(config: BackendConfig): void {
         : {}),
     })
   );
+  archiveEndpoints = { primary: config.archiveEndpoint, fallback: config.archiveFallbackEndpoint };
 }
 
 /**
@@ -542,24 +552,164 @@ export async function fetchDecodedContractEvents(
   fromHeight: number,
   toHeight: number
 ): Promise<ChainEvent[]> {
-  const contract = new MinaGuard(PublicKey.fromBase58(address));
+  if (!archiveEndpoints) throw new Error('configureNetwork must run before fetching events');
   // TODO: restore toHeight once archive node supports upper-bound filtering
-  const rawEvents = await contract.fetchEvents(UInt32.from(fromHeight));
+  const blocks = await fetchArchiveEventBlocks(archiveEndpoints, address, fromHeight);
+  return decodeContractEvents(address, blocks);
+}
 
-  return rawEvents
-    .filter((entry) => isFromAppliedTransaction((entry.event as any).transactionInfo?.transactionStatus))
-    .map((entry) => {
-      const txInfo = (entry.event as any).transactionInfo;
-      return {
-        type: entry.type,
-        event: toSerializableObject((entry.event as any).data),
-        blockHeight: Number(entry.blockHeight.toString()),
-        blockHash: (entry as any).blockHash as string,
-        parentHash: (entry as any).parentBlockHash as string,
-        txHash: (txInfo?.transactionHash as string | undefined) ?? null,
-        txMemo: (txInfo?.transactionMemo as string | undefined) ?? null,
-      };
-    });
+/** One block of a vault's events, as the archive API returns them. */
+export interface ArchiveEventBlock {
+  blockInfo: { height: number; stateHash: string; parentHash: string };
+  eventData: Array<{
+    transactionInfo?: { hash?: string; memo?: string; status?: string; authorizationKind?: string } | null;
+    data: unknown;
+  } | null> | null;
+}
+
+// Queried directly rather than through o1js, whose fetchEvents does not ask for
+// the emitting account update's authorization kind.
+const EVENTS_QUERY = `query VaultEvents($input: EventFilterOptionsInput!) {
+  events(input: $input) {
+    blockInfo { height stateHash parentHash }
+    eventData {
+      transactionInfo { hash memo status authorizationKind }
+      data
+    }
+  }
+}`;
+
+/** Fetches a vault's raw events, with each emitting update's authorization kind. */
+export async function fetchArchiveEventBlocks(
+  endpoints: ArchiveEndpoints,
+  address: string,
+  fromHeight: number,
+): Promise<ArchiveEventBlock[]> {
+  const input = {
+    address,
+    tokenId: TokenId.toBase58(TokenId.default),
+    ...(fromHeight > 0 ? { from: fromHeight } : {}),
+  };
+  try {
+    const data = await graphqlRequest<{ events?: ArchiveEventBlock[] | null }>(
+      EVENTS_QUERY, endpoints.primary, endpoints.fallback, { input },
+    );
+    if (!Array.isArray(data.events)) throw new Error('archive response has no events list');
+    return data.events;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/authorizationKind/.test(message)) {
+      throw new Error(
+        `The archive endpoint does not report event authorization (${message}). ` +
+        'MinaGuard needs an Archive-Node-API that exposes transactionInfo.authorizationKind on events (v0.0.8 or later).',
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Decodes fetched events. Drops events of failed transactions and, because
+ * any account update can attach events to a vault, keeps only events emitted
+ * by proof-authorized updates: those are the vault's own methods, proved
+ * against its verification key. A proof-authorized event that does not decode
+ * is passed on as type 'malformed' with `decodeError`, for the indexer to
+ * record. Fails closed if the archive omits the authorization kind.
+ */
+export function decodeContractEvents(address: string, blocks: readonly ArchiveEventBlock[]): ChainEvent[] {
+  const decoded: ChainEvent[] = [];
+  for (const block of blocks) {
+    const blockHeight = Number(block.blockInfo.height);
+    for (const raw of block.eventData ?? []) {
+      if (!raw) continue;
+      const txInfo = raw.transactionInfo ?? undefined;
+      if (!isFromAppliedTransaction(txInfo?.status)) continue;
+      const where = `on ${address} at block ${blockHeight} (tx ${txInfo?.hash ?? '?'})`;
+      // The archive reports Mina's authorization_kind enum: Proof, Signature or
+      // None_given. Anything else means an incompatible archive, so fail closed
+      // rather than drop every genuine event as unauthorized.
+      const kind = txInfo?.authorizationKind;
+      const normalized = typeof kind === 'string' ? kind.toLowerCase() : null;
+      if (normalized !== 'proof' && normalized !== 'signature' && normalized !== 'none_given') {
+        throw new Error(`Archive event ${where} has no recognized authorization kind (${String(kind)}); refusing to index it`);
+      }
+      const result = decodeMinaGuardEvent(raw.data);
+      if (normalized !== 'proof') {
+        // deploy() emits `deployed` under the deployer's signature; nothing reads it.
+        const expected = normalized === 'signature' && !('error' in result) && result.type === 'deployed';
+        if (!expected) console.warn(`[mina-client] skipping ${kind}-authorized event ${where}`);
+        continue;
+      }
+      if ('error' in result) {
+        // The vault's own circuit emitted this, so it must decode; failing to
+        // means a backend/VK version mismatch or bad archive data. Pass it on
+        // so the indexer records it instead of losing it.
+        console.error(`[mina-client] undecodable proof-authorized event ${where}: ${result.error}`);
+        decoded.push({
+          type: 'malformed',
+          event: { data: raw.data },
+          blockHeight,
+          blockHash: block.blockInfo.stateHash,
+          parentHash: block.blockInfo.parentHash,
+          txHash: txInfo?.hash ?? null,
+          txMemo: txInfo?.memo ?? null,
+          decodeError: result.error,
+        });
+        continue;
+      }
+      decoded.push({
+        type: result.type,
+        event: result.event,
+        blockHeight,
+        blockHash: block.blockInfo.stateHash,
+        parentHash: block.blockInfo.parentHash,
+        txHash: txInfo?.hash ?? null,
+        txMemo: txInfo?.memo ?? null,
+      });
+    }
+  }
+  return decoded;
+}
+
+type ProvableEvent = {
+  sizeInFields(): number;
+  fromFields(fields: Field[]): unknown;
+  check?(value: unknown): void;
+};
+
+const MINAGUARD_EVENTS = new MinaGuard(PublicKey.empty()).events as unknown as Record<string, ProvableEvent>;
+// o1js prefixes each event with its index in the sorted list of event names.
+const MINAGUARD_EVENT_NAMES = Object.keys(MINAGUARD_EVENTS).sort();
+
+/**
+ * Decodes one event's raw fields the way o1js does, but checks each step: the
+ * type index names a declared event, the field count matches that event, every
+ * field is a canonical field element, and the value passes the type's checks.
+ */
+export function decodeMinaGuardEvent(
+  data: unknown,
+): { type: string; event: Record<string, unknown> } | { error: string } {
+  if (!Array.isArray(data) || data.length === 0) return { error: 'no event data' };
+  if (!data.every((f) => typeof f === 'string' && /^\d+$/.test(f) && BigInt(f) < Field.ORDER)) {
+    return { error: 'event data is not a list of field elements' };
+  }
+  const index = Number(data[0]);
+  const type = MINAGUARD_EVENT_NAMES[index];
+  if (!Number.isSafeInteger(index) || type === undefined) {
+    return { error: `unknown event type index ${data[0]}` };
+  }
+  const provable = MINAGUARD_EVENTS[type];
+  const fields = (data as string[]).slice(1).map((f) => Field(f));
+  if (fields.length !== provable.sizeInFields()) {
+    return { error: `${type} expects ${provable.sizeInFields()} fields, got ${fields.length}` };
+  }
+  try {
+    const value = provable.fromFields(fields);
+    provable.check?.(value);
+    return { type, event: toSerializableObject(value) };
+  } catch (err) {
+    return { error: `${type} does not decode: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 /** Runs a GraphQL request with optional endpoint fallback. */
