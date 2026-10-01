@@ -10,7 +10,7 @@
 //   - Network: worker connects to a real Mina node; CLI uses a dummy
 //     endpoint with a patched getNetworkState.
 //   - Merkle stores: worker maintains them in memory across operations;
-//     CLI restores a v2 leaf snapshot, or replays legacy v1 events.
+//     CLI restores a v1 request leaf snapshot.
 //
 // The contract calls and proof generation are identical. A future
 // refactor could move the proof to the browser (2-trip flow), which
@@ -28,7 +28,6 @@ import {
   Signature,
   Bool,
   Cache,
-  Poseidon,
   addCachedAccount,
   TokenId,
 } from 'o1js';
@@ -47,6 +46,8 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
+  proposalSigningMessage,
+  childConfigHash,
   NETWORK_DOMAIN_NAME,
   storesFromOfflineRequest,
   type StoreCheckpoint,
@@ -99,8 +100,8 @@ interface BundleAccount {
 
 /** Fields common to all bundle actions. */
 interface BundleBase {
-  version: 1 | 2;
-  storeCheckpoint?: StoreCheckpoint;
+  version: 1;
+  storeCheckpoint: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
   feePayerAddress: string;
@@ -414,6 +415,7 @@ function buildProposalStruct(
   const childAccount = proposal.childAccount
     ? safePublicKey(proposal.childAccount)
     : PublicKey.empty();
+  if (proposal.memoHash == null) throw new Error('Proposal is missing its memo commitment');
   return new TransactionProposal({
     receivers: buildTransferReceivers(proposal.receivers),
     tokenId: Field(proposal.tokenId ?? '0'),
@@ -425,7 +427,7 @@ function buildProposalStruct(
     guardAddress: safePublicKey(proposal.guardAddress ?? fallbackGuardAddress),
     destination,
     childAccount,
-    memoHash: Field(proposal.memoHash ?? '0'),
+    memoHash: Field(proposal.memoHash),
   });
 }
 
@@ -804,14 +806,14 @@ export async function handlePropose(
   const hashStr = proposalHash.toString();
   log(`Proposal hash: ${hashStr}`);
 
-  // Sign the proposal hash with mina-signer.
+  // Sign the action-specific proposal message with mina-signer.
   // NOTE: signFields' hardcoded 'devnet' domain is CORRECT here and must stay. This signature
   // is verified in-circuit via Signature.verify, which always uses the 'devnet' prefix
   // regardless of network (o1js lib/provable/crypto/signature.ts). Do not make it
   // network-aware — that would break on-chain proposal verification.
-  log('Signing proposal hash...');
+  log('Signing proposal authorization...');
   const client = new Client({ network: bundle.minaNetwork });
-  const signedFields = client.signFields([BigInt(hashStr)], privateKey);
+  const signedFields = client.signFields([proposalSigningMessage(proposalHash, 'propose').toBigInt()], privateKey);
   const signature = Signature.fromBase58(String(signedFields.signature));
 
   // Get witnesses
@@ -921,14 +923,14 @@ export async function handleApprove(
   assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'approve this proposal');
   log(`Proposal hash: ${hashStr}`);
 
-  // Sign the proposal hash.
+  // Sign the action-specific approval message.
   // NOTE: signFields' hardcoded 'devnet' domain is CORRECT here and must stay. This signature
   // is verified in-circuit via Signature.verify, which always uses the 'devnet' prefix
   // regardless of network (o1js lib/provable/crypto/signature.ts). Do not make it
   // network-aware — that would break on-chain proposal verification.
-  log('Signing proposal hash...');
+  log('Signing proposal authorization...');
   const client = new Client({ network: bundle.minaNetwork });
-  const signedFields = client.signFields([BigInt(hashStr)], privateKey);
+  const signedFields = client.signFields([proposalSigningMessage(proposalHash, 'approve').toBigInt()], privateKey);
   const signature = Signature.fromBase58(String(signedFields.signature));
 
   // Get witnesses
@@ -1034,11 +1036,11 @@ export async function handleExecute(
     const paddedOwners = [...childOwnerStore.owners];
     while (paddedOwners.length < MAX_OWNERS) paddedOwners.push(PublicKey.empty());
 
-    const expectedData = Poseidon.hash([
+    const expectedData = childConfigHash(
       childOwnerStore.getCommitment(),
       Field(bundle.childThreshold!),
       Field(bundle.childOwners!.length),
-    ]);
+    );
     if (expectedData.toString() !== (bundle.proposal.data ?? '0')) {
       throw new Error(
         'SubVault config mismatch: announced owners/threshold do not match the proposal data hash. ' +

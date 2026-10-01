@@ -58,6 +58,9 @@ export {
   type ChainState,
 } from './event-rebuild.js';
 
+export { proposalSigningMessage } from './proposal-signing.js';
+export { ownerChainLink, voteNullifierKey, childConfigHash } from './hash-domains.js';
+
 export { memoToField, decodeTxMemo } from './memo.js';
 
 export {

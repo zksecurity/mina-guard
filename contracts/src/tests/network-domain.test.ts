@@ -55,26 +55,32 @@ describe('compile-time network domain selection', () => {
     expect(result.stderr).toContain('NEXT_PUBLIC_MINA_NETWORK and MINA_NETWORK_DOMAIN disagree');
   });
 
-  it('separates mainnet from the shared testnet/devnet proposal hash', () => {
-    const constantsUrl = new URL('../constants.ts', import.meta.url).href;
+  it('separates mainnet from testnet/devnet proposal identities and both signing actions', () => {
+    const helpersUrl = new URL('./test-helpers.ts', import.meta.url).href;
+    const signingUrl = new URL('../proposal-signing.ts', import.meta.url).href;
     const script = `
-      import { Field, Poseidon } from 'o1js';
-      import { NETWORK_DOMAIN } from '${constantsUrl}';
-      console.log(Poseidon.hash([Field(42), NETWORK_DOMAIN]).toString());
+      import { Field, PrivateKey } from 'o1js';
+      import { createTransferProposal } from '${helpersUrl}';
+      import { proposalSigningMessage } from '${signingUrl}';
+      const proposal = createTransferProposal([], Field(1), Field(0), PrivateKey.fromBigInt(1n).toPublicKey());
+      const hash = proposal.hash();
+      console.log(JSON.stringify([hash, proposalSigningMessage(hash, 'propose'), proposalSigningMessage(hash, 'approve')].map(f => f.toString())));
     `;
     const hashes = ['mainnet', 'testnet', 'devnet'].map((network) => {
       const env = { ...process.env, MINA_NETWORK_DOMAIN: network };
       delete env.NEXT_PUBLIC_MINA_NETWORK;
       const result = spawnSync(process.execPath, ['-e', script], {
-        cwd: new URL('../../..', import.meta.url).pathname,
+        cwd: new URL('../..', import.meta.url).pathname,
         env,
         encoding: 'utf8',
       });
       if (result.status !== 0) throw new Error(result.stderr);
-      return result.stdout.trim();
+      return JSON.parse(result.stdout.trim()) as string[];
     });
-    expect(hashes[0]).not.toBe(hashes[1]);
-    expect(hashes[1]).toBe(hashes[2]);
+    for (let i = 0; i < 3; i++) {
+      expect(hashes[0][i]).not.toBe(hashes[1][i]);
+      expect(hashes[1][i]).toBe(hashes[2][i]);
+    }
   });
 
   it('keeps the selected domain fixed after module initialization', () => {

@@ -12,9 +12,11 @@ import {
   AccountUpdate,
   TokenId,
   Signature,
-  Poseidon,
 } from 'o1js';
 import {
+  memoToField,
+  proposalSigningMessage,
+  childConfigHash,
   MinaGuard,
   Receiver,
   TransactionProposal,
@@ -40,6 +42,18 @@ const BINARY_PATH = join(import.meta.dirname, '..', '..', 'dist',
     : `mina-guard-cli-linux-${process.arch === 'arm64' ? 'arm64' : 'x64'}`,
 );
 const tmpDir = join(tmpdir(), `offline-cli-e2e-${Date.now()}`);
+
+/** Fixtures may describe full histories; the wire request always carries a v1 snapshot. */
+function writeBundle(path: string, bundle: {
+  contractAddress: string;
+  events: Parameters<typeof rebuildStores>[0];
+  storeCheckpoint?: ReturnType<typeof checkpointStores>;
+}) {
+  const storeCheckpoint = bundle.storeCheckpoint ?? checkpointStores(
+    rebuildStores(bundle.events), { network: 'testnet', address: bundle.contractAddress }, null,
+  );
+  writeFileSync(path, JSON.stringify({ ...bundle, events: [], storeCheckpoint }, null, 2));
+}
 
 function safeStringify(obj: unknown): string {
   return JSON.stringify(obj, (_, v) => {
@@ -214,7 +228,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 1,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -233,10 +247,11 @@ describe('offline-cli e2e', () => {
     };
 
     const bundlePath = join(tmpDir, 'propose-bundle.json');
-    writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+    writeBundle(bundlePath, bundle);
 
     console.log('[e2e] Running CLI: propose...');
-    const result = await runCLI(bundlePath, proposer.key.toBase58());
+    // The first CLI invocation compiles a cold prover cache on macOS CI.
+    const result = await runCLI(bundlePath, proposer.key.toBase58(), 900_000);
     console.log('[e2e] CLI stderr:', result.stderr);
     if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
 
@@ -270,11 +285,11 @@ describe('offline-cli e2e', () => {
       guardAddress: zkAppAddress,
       destination: Destination.LOCAL,
       childAccount: PublicKey.empty(),
-      memoHash: Field(0),
+      memoHash: memoToField(''),
     });
     const pHash = proposal.hash();
 
-    const sig = Signature.create(proposer.key, [pHash]);
+    const sig = Signature.create(proposer.key, [proposalSigningMessage(pHash, 'propose')]);
     const propTx = await Mina.transaction(proposer.pub, async () => {
       await zkApp.propose(
         proposal,
@@ -291,7 +306,7 @@ describe('offline-cli e2e', () => {
     approvalStore.setCount(pHash, PROPOSED_MARKER.add(1));
 
     console.log('[e2e] Propose OK, hash:', proposalHash);
-  }, 600_000);
+  }, 900_000);
 
   it('approve', async () => {
     expect(proposalHash).toBeTruthy();
@@ -304,7 +319,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 1,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -331,12 +346,13 @@ describe('offline-cli e2e', () => {
         guardAddress: zkAppAddress.toBase58(),
         destination: 'local',
         childAccount: null,
+        memoHash: memoToField('').toString(),
         receivers: proposalReceivers,
       },
     };
 
     const bundlePath = join(tmpDir, 'approve-bundle.json');
-    writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+    writeBundle(bundlePath, bundle);
 
     console.log('[e2e] Running CLI: approve...');
     const result = await runCLI(bundlePath, approver.key.toBase58());
@@ -369,10 +385,10 @@ describe('offline-cli e2e', () => {
       guardAddress: zkAppAddress,
       destination: Destination.LOCAL,
       childAccount: PublicKey.empty(),
-      memoHash: Field(0),
+      memoHash: memoToField(''),
     });
     const pHash = proposal.hash();
-    const approverSig = Signature.create(approver.key, [pHash]);
+    const approverSig = Signature.create(approver.key, [proposalSigningMessage(pHash, 'approve')]);
     const currentCount = approvalStore.getCount(pHash);
     const approveTx = await Mina.transaction(approver.pub, async () => {
       await zkApp.approveProposal(
@@ -430,11 +446,12 @@ describe('offline-cli e2e', () => {
         guardAddress: zkAppAddress.toBase58(),
         destination: 'local',
         childAccount: null,
+        memoHash: memoToField('').toString(),
         receivers: proposalReceivers,
       },
     };
     const bundlePath = join(tmpDir, 'tampered-approve-bundle.json');
-    writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+    writeBundle(bundlePath, bundle);
 
     const result = await runCLI(bundlePath, owners[2].key.toBase58(), 120_000, { SKIP_PROOFS: '1' });
     expect(result.code).not.toBe(0);
@@ -453,7 +470,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 1,
       action: 'execute',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -480,6 +497,7 @@ describe('offline-cli e2e', () => {
         guardAddress: zkAppAddress.toBase58(),
         destination: 'local',
         childAccount: null,
+        memoHash: memoToField('').toString(),
         receivers: proposalReceivers,
       },
       receiverAccountExists: {
@@ -488,7 +506,7 @@ describe('offline-cli e2e', () => {
     };
 
     const bundlePath = join(tmpDir, 'execute-bundle.json');
-    writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+    writeBundle(bundlePath, bundle);
 
     console.log('[e2e] Running CLI: execute...');
     const result = await runCLI(bundlePath, executor.key.toBase58());
@@ -533,7 +551,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 1,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -552,7 +570,7 @@ describe('offline-cli e2e', () => {
     };
 
     const bundlePath = join(isolatedDir, 'propose-bundle.json');
-    writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+    writeBundle(bundlePath, bundle);
 
     console.log('[e2e] Running compiled binary from isolated dir...');
     const result = await runBinary(binaryDest, bundlePath, proposer.key.toBase58(), isolatedDir);
@@ -594,7 +612,7 @@ describe('offline-cli e2e', () => {
       guardAddress: zkAppAddress.toBase58(),
       destination: 'remote',
       childAccount: childAddress.toBase58(),
-      memoHash: '0',
+      memoHash: memoToField('').toString(),
       receivers: [{ address: emptyKey, amount: '0' }],
     });
 
@@ -632,19 +650,19 @@ describe('offline-cli e2e', () => {
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
-        data: Poseidon.hash([ownersCommitment, thresholdField, numOwnersField]),
+        data: childConfigHash(ownersCommitment, thresholdField, numOwnersField),
         nonce: Field(0),
         configNonce: Field(0),
         expirySlot: Field(0),
         guardAddress: zkAppAddress,
         destination: Destination.REMOTE,
         childAccount: childAddress,
-        memoHash: Field(0),
+        memoHash: memoToField(''),
       });
       const ccHash = createChildProposal.hash();
       const setupOwners = toFixedOwners(childOwners);
 
-      const ccSig0 = Signature.create(owners[0].key, [ccHash]);
+      const ccSig0 = Signature.create(owners[0].key, [proposalSigningMessage(ccHash, 'propose')]);
       const ccProposeTx = await Mina.transaction(owners[0].pub, async () => {
         AccountUpdate.fundNewAccount(owners[0].pub);
         await childZkApp.deploy();
@@ -662,7 +680,7 @@ describe('offline-cli e2e', () => {
       nullifierStore.nullify(ccHash, owners[0].pub);
       approvalStore.setCount(ccHash, PROPOSED_MARKER.add(1));
 
-      const ccSig1 = Signature.create(owners[1].key, [ccHash]);
+      const ccSig1 = Signature.create(owners[1].key, [proposalSigningMessage(ccHash, 'approve')]);
       const ccCount = approvalStore.getCount(ccHash);
       const ccApproveTx = await Mina.transaction(owners[1].pub, async () => {
         await zkApp.approveProposal(
@@ -699,7 +717,7 @@ describe('offline-cli e2e', () => {
         guardAddress: zkAppAddress,
         destination: Destination.REMOTE,
         childAccount: childAddress,
-        memoHash: Field(0),
+        memoHash: memoToField(''),
       });
 
       console.log('[e2e] Child guard deployed at', childAddress.toBase58());
@@ -726,7 +744,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'child-propose-bundle.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       console.log('[e2e] Running CLI: propose enableChildMultiSig...');
       const result = await runCLI(bundlePath, proposer.key.toBase58());
@@ -745,7 +763,7 @@ describe('offline-cli e2e', () => {
 
       // Execute propose on-chain to advance state
       const pHash = enableProposal.hash();
-      const sig = Signature.create(proposer.key, [pHash]);
+      const sig = Signature.create(proposer.key, [proposalSigningMessage(pHash, 'propose')]);
       const propTx = await Mina.transaction(proposer.pub, async () => {
         await zkApp.propose(
           enableProposal, ownerStore.getWitness(), proposer.pub, sig,
@@ -776,7 +794,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'child-approve-bundle.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       console.log('[e2e] Running CLI: approve enableChildMultiSig...');
       const result = await runCLI(bundlePath, approver.key.toBase58());
@@ -794,7 +812,7 @@ describe('offline-cli e2e', () => {
 
       // Execute approve on-chain to advance state
       const pHash = enableProposal.hash();
-      const approverSig = Signature.create(approver.key, [pHash]);
+      const approverSig = Signature.create(approver.key, [proposalSigningMessage(pHash, 'approve')]);
       const currentCount = approvalStore.getCount(pHash);
       const approveTx = await Mina.transaction(approver.pub, async () => {
         await zkApp.approveProposal(
@@ -835,7 +853,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'child-execute-bundle.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       console.log('[e2e] Running CLI: execute enableChildMultiSig...');
       const result = await runCLI(bundlePath, executor.key.toBase58());
@@ -895,14 +913,14 @@ describe('offline-cli e2e', () => {
       guardAddress: zkAppAddress.toBase58(),
       destination: 'remote',
       childAccount: childAddr.toBase58(),
-      memoHash: '0',
+      memoHash: memoToField('').toString(),
       receivers: [{ address: emptyKey, amount: '0' }],
     });
 
     function configHash(): string {
       const childOS = new OwnerStore();
       for (const addr of childOwnerAddrs()) childOS.addSorted(PublicKey.fromBase58(addr));
-      return Poseidon.hash([childOS.getCommitment(), Field(2), Field(owners.length)]).toString();
+      return childConfigHash(childOS.getCommitment(), Field(2), Field(owners.length)).toString();
     }
 
     it('propose createChild', async () => {
@@ -929,7 +947,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'create-child-propose.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       console.log('[e2e] Running CLI: propose createChild (SKIP_PROOFS)...');
       const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
@@ -980,17 +998,17 @@ describe('offline-cli e2e', () => {
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
-        data: Poseidon.hash([childOwnersCommitment, Field(2), Field(owners.length)]),
+        data: childConfigHash(childOwnersCommitment, Field(2), Field(owners.length)),
         nonce: Field(0),
         configNonce: Field(0),
         expirySlot: Field(0),
         guardAddress: zkAppAddress,
         destination: Destination.REMOTE,
         childAccount: childAddr,
-        memoHash: Field(0),
+        memoHash: memoToField(''),
       });
       const ccHash = createChildProposal.hash();
-      const sig = Signature.create(proposer.key, [ccHash]);
+      const sig = Signature.create(proposer.key, [proposalSigningMessage(ccHash, 'propose')]);
       const setupOwners = toFixedOwners(owners.map((o) => o.pub));
       const childZkApp = new MinaGuard(childAddr);
       const propTx = await Mina.transaction(proposer.pub, async () => {
@@ -1042,7 +1060,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'propose-memo.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       console.log('[e2e] Running CLI: propose with memo (SKIP_PROOFS)...');
       const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
@@ -1071,7 +1089,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'create-child-approve.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       console.log('[e2e] Running CLI: approve createChild (SKIP_PROOFS)...');
       const result = await runCLI(bundlePath, approver.key.toBase58(), 600_000, skipEnv);
@@ -1095,17 +1113,17 @@ describe('offline-cli e2e', () => {
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
         tokenId: Field(0),
         txType: TxType.CREATE_CHILD,
-        data: Poseidon.hash([childOwnersCommitment, Field(2), Field(owners.length)]),
+        data: childConfigHash(childOwnersCommitment, Field(2), Field(owners.length)),
         nonce: Field(0),
         configNonce: Field(0),
         expirySlot: Field(0),
         guardAddress: zkAppAddress,
         destination: Destination.REMOTE,
         childAccount: childAddr,
-        memoHash: Field(0),
+        memoHash: memoToField(''),
       });
       const pHash = createChildProposal.hash();
-      const approverSig = Signature.create(approver.key, [pHash]);
+      const approverSig = Signature.create(approver.key, [proposalSigningMessage(pHash, 'approve')]);
       const currentCount = approvalStore.getCount(pHash);
       const approveTx = await Mina.transaction(approver.pub, async () => {
         await zkApp.approveProposal(
@@ -1160,7 +1178,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'create-child-execute.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       console.log('[e2e] Running CLI: execute createChild (SKIP_PROOFS)...');
       const result = await runCLI(bundlePath, executor.key.toBase58(), 600_000, skipEnv);
@@ -1216,7 +1234,7 @@ describe('offline-cli e2e', () => {
       };
 
       const bundlePath = join(tmpDir, 'create-child-tampered.json');
-      writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+      writeBundle(bundlePath, bundle);
 
       const result = await runCLI(bundlePath, executor.key.toBase58(), 600_000, skipEnv);
       expect(result.code).not.toBe(0);
@@ -1250,7 +1268,7 @@ describe('offline child allocation', () => {
     }));
     const address = childAddress.toBase58();
     const bundle = {
-      version: 2, action: 'execute', minaNetwork: 'testnet',
+      version: 1, action: 'execute', minaNetwork: 'testnet',
       contractAddress: ctx.zkAppAddress.toBase58(), feePayerAddress: ctx.deployerAccount.toBase58(),
       accounts: {
         [ctx.zkAppAddress.toBase58()]: snapshotAccount(ctx.zkAppAddress),
@@ -1262,7 +1280,7 @@ describe('offline child allocation', () => {
       }, null),
       proposal: {
         proposalHash: hash.toString(), txType: 'allocateChild', tokenId: '0', data: '0',
-        nonce: '1', configNonce: '0', expirySlot: '0', memoHash: '0',
+        nonce: '1', configNonce: '0', expirySlot: '0', memoHash: proposal.memoHash.toString(),
         guardAddress: ctx.zkAppAddress.toBase58(), destination: 'local', childAccount: null,
         receivers: [{ address, amount: amount.toString() }],
       },

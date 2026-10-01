@@ -19,7 +19,6 @@ import {
   sendZkapp,
   Bool,
   MerkleMap,
-  Poseidon,
   Proof,
   Void,
 } from 'o1js';
@@ -42,6 +41,8 @@ import {
   PublicKeyOption,
   Destination,
   memoToField,
+  proposalSigningMessage,
+  childConfigHash,
   NETWORK_DOMAIN_NAME,
   IncrementalStoreCache,
   checkpointStores,
@@ -295,14 +296,16 @@ async function fetchContractState(
   }
 }
 
-async function signProposalHash(
+async function signProposalAuthorization(
   hashAsFieldString: string,
+  action: 'propose' | 'approve',
   signFn: SignFieldsFn
 ): Promise<ReturnType<typeof Signature.fromBase58> | null> {
+  const message = proposalSigningMessage(Field(hashAsFieldString), action);
   if (testPrivateKey) {
-    return Signature.create(testPrivateKey, [Field(hashAsFieldString)]);
+    return Signature.create(testPrivateKey, [message]);
   }
-  const signed = await signFn([hashAsFieldString]);
+  const signed = await signFn([message.toString()]);
   if (!signed?.signature) return null;
   try {
     if (typeof signed.signature === 'string') {
@@ -402,7 +405,7 @@ function logProposeDiagnostics(args: {
     contractAddress: contractAddress.toBase58(),
     proposer: proposer.toBase58(),
     proposalHash: proposalHash.toString(),
-    signatureVerifies: signature.verify(proposer, [proposalHash]).toBoolean(),
+    signatureVerifies: signature.verify(proposer, [proposalSigningMessage(proposalHash, 'propose')]).toBoolean(),
     proposalGuardAddress: proposal.guardAddress.toBase58(),
     proposalChildAccount: proposal.childAccount.toBase58(),
     proposalDestination: proposal.destination.toString(),
@@ -631,12 +634,13 @@ function buildProposalStruct(
   const childAccount = proposal.childAccount
     ? safePublicKey(proposal.childAccount)
     : PublicKey.empty();
+  if (proposal.memoHash == null) throw new Error('Proposal is missing its memo commitment');
   return new TransactionProposal({
     receivers: buildTransferReceivers(proposal.receivers),
     tokenId: Field(proposal.tokenId ?? '0'),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
-    memoHash: Field(proposal.memoHash ?? '0'),
+    memoHash: Field(proposal.memoHash),
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
     expirySlot: Field(proposal.expirySlot ?? '0'),
@@ -841,7 +845,7 @@ const workerApi = {
     }
     return { status: 'eligible' };
   },
-  /** Complete, verified public snapshot for a version 2 offline request. */
+  /** Complete, verified public snapshot for a version 1 offline request. */
   async exportStoreCheckpoint(contractAddress: string) {
     const cfg = runtimeConfig ?? (await configReady);
     const stores = await rebuildStoresFromBackend(contractAddress);
@@ -981,8 +985,8 @@ const workerApi = {
     const hashStr = proposalHash.toString();
     requireUnregisteredProposal(hashStr, approvalStore.getCount(proposalHash).toBigInt());
 
-    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
-    const signature = await signProposalHash(hashStr, signFn);
+    progressFn(testPrivateKey ? 'Signing proposal authorization...' : 'Awaiting wallet signature...');
+    const signature = await signProposalAuthorization(hashStr, 'propose', signFn);
     if (!signature) return null;
 
     const proposer = PublicKey.fromBase58(params.proposerAddress);
@@ -1096,7 +1100,7 @@ const workerApi = {
 
   /**
    * Submits an on-chain approveProposal tx for the given proposal. Each approver
-   * sends their own transaction and signs the proposal hash with their wallet.
+   * sends their own transaction and signs the action-specific approval digest with their wallet.
    */
   async approveProposalOnchain(
     params: {
@@ -1136,8 +1140,8 @@ const workerApi = {
     const hashStr = proposalHash.toString();
     assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'approve this proposal');
 
-    progressFn(testPrivateKey ? 'Signing proposal hash...' : 'Awaiting wallet signature...');
-    const signature = await signProposalHash(hashStr, signFn);
+    progressFn(testPrivateKey ? 'Signing proposal authorization...' : 'Awaiting wallet signature...');
+    const signature = await signProposalAuthorization(hashStr, 'approve', signFn);
     if (!signature) return null;
 
     const approver = PublicKey.fromBase58(params.approverAddress);
@@ -1328,7 +1332,7 @@ const workerApi = {
     const numOwners = Field(ownerStore.owners.length);
     const threshold = Field(params.childThreshold);
 
-    const expectedData = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    const expectedData = childConfigHash(ownersCommitment, threshold, numOwners);
     if (expectedData.toString() !== (params.proposal.data ?? '0')) {
       throw new Error(
         'SubVault config mismatch: announced owners/threshold do not match the proposal data hash. ' +
@@ -1483,8 +1487,8 @@ const workerApi = {
   },
 
   /**
-   * Computes the createChild `data` field: Poseidon.hash([ownersCommitment, threshold, numOwners]).
-   * Exposed so the wizard can compute it without dragging Poseidon into the main thread.
+   * Computes the tagged child config hash used as the createChild proposal's `data` field.
+   * Exposed so the wizard can compute it without hashing on the main thread.
    */
   computeCreateChildConfigHash(params: {
     childOwners: string[];
@@ -1503,7 +1507,7 @@ const workerApi = {
     const ownersCommitment = ownerStore.getCommitment();
     const numOwners = Field(params.childOwners.length);
     const threshold = Field(params.childThreshold);
-    const configHash = Poseidon.hash([ownersCommitment, threshold, numOwners]);
+    const configHash = childConfigHash(ownersCommitment, threshold, numOwners);
     return {
       ownersCommitment: ownersCommitment.toString(),
       configHash: configHash.toString(),

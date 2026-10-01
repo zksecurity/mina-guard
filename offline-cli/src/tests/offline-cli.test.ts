@@ -13,6 +13,8 @@ import {
   Signature,
 } from 'o1js';
 import {
+  memoToField,
+  proposalSigningMessage,
   MinaGuard,
   Receiver,
   TransactionProposal,
@@ -89,9 +91,9 @@ describe('offline-cli', () => {
     expect(result.code).not.toBe(0);
   }, 30_000);
 
-  it('rejects invalid bundle version', async () => {
+  it.each([2, 3, 99])('rejects incompatible bundle version %i', async (version) => {
     const bundlePath = join(tmpDir, 'bad-version.json');
-    writeFileSync(bundlePath, JSON.stringify({ version: 99, action: 'propose' }));
+    writeFileSync(bundlePath, JSON.stringify({ version, action: 'propose' }));
     const result = await runCLI(bundlePath, 'EKtest');
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Unsupported bundle version');
@@ -211,7 +213,7 @@ describe('offline-cli', () => {
       guardAddress: zkAppAddress,
       destination: Destination.LOCAL,
       childAccount: PublicKey.empty(),
-      memoHash: Field(0),
+      memoHash: memoToField(''),
     });
     const proposalHash = proposal.hash();
 
@@ -221,7 +223,7 @@ describe('offline-cli', () => {
     const approvalStore = new ApprovalStore();
     const nullifierStore = new VoteNullifierStore();
 
-    const sig = Signature.create(owners[0].key, [proposalHash]);
+    const sig = Signature.create(owners[0].key, [proposalSigningMessage(proposalHash, 'propose')]);
     const propTx = await Mina.transaction(owners[0].pub, async () => {
       await zkApp.propose(
         proposal,
@@ -240,7 +242,7 @@ describe('offline-cli', () => {
 
     // Now approve with owner 1, proving the on-chain state is consistent
     const approver = owners[1];
-    const approverSig = Signature.create(approver.key, [proposalHash]);
+    const approverSig = Signature.create(approver.key, [proposalSigningMessage(proposalHash, 'approve')]);
     const currentCount = approvalStore.getCount(proposalHash);
     const approveTx = await Mina.transaction(approver.pub, async () => {
       await zkApp.approveProposal(
@@ -330,6 +332,24 @@ describe('offline-cli', () => {
     const verified = client.verifyFields(signed);
     expect(verified).toBe(true);
   }, 10_000);
+
+  it('mina-signer produces action-bound signatures accepted by o1js on both networks', async () => {
+    // @ts-ignore — built by ui postinstall
+    const Client = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+    const key = PrivateKey.random();
+    const hash = Field(123);
+    for (const network of ['testnet', 'mainnet'] as const) {
+      const client = new Client({ network });
+      for (const action of ['propose', 'approve'] as const) {
+        const message = proposalSigningMessage(hash, action);
+        const signed = client.signFields([message.toBigInt()], key.toBase58());
+        const signature = Signature.fromBase58(String(signed.signature));
+        expect(signature.verify(key.toPublicKey(), [message]).toBoolean()).toBe(true);
+        expect(signature.verify(key.toPublicKey(), [hash]).toBoolean()).toBe(false);
+        expect(signature.verify(key.toPublicKey(), [proposalSigningMessage(hash, action === 'propose' ? 'approve' : 'propose')]).toBoolean()).toBe(false);
+      }
+    }
+  });
 
   // -- Network-aware fee-payer signing (signZkappCommand path) --
 
@@ -536,7 +556,7 @@ describe('assertExecutableAddOwnerData', () => {
     const receivers = [new Receiver({ address: target, amount: UInt64.from(0) })];
     while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
     return new TransactionProposal({
-      receivers, tokenId: Field(0), txType: TxType.ADD_OWNER, data, memoHash: Field(0),
+      receivers, tokenId: Field(0), txType: TxType.ADD_OWNER, data, memoHash: memoToField(''),
       nonce: Field(1), configNonce: Field(0), expirySlot: Field(0),
       guardAddress: PrivateKey.random().toPublicKey(), destination: Destination.LOCAL, childAccount: PublicKey.empty(),
     });

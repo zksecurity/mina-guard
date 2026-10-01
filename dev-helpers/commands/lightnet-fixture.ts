@@ -16,6 +16,7 @@ import {
   EXECUTED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
+  proposalSigningMessage,
   MinaGuard,
   OwnerStore,
   PROPOSED_MARKER,
@@ -378,7 +379,7 @@ async function propose(
   const ownerWitness = contract.ownerStore.getWitness();
   const approvalWitness = contract.approvalStore.getWitness(proposalHash);
   const nullifierWitness = contract.nullifierStore.getWitness(proposalHash, proposer.pub);
-  const signature = Signature.create(proposer.key, [proposalHash]);
+  const signature = Signature.create(proposer.key, [proposalSigningMessage(proposalHash, 'propose')]);
   const zkApp = new MinaGuard(contract.zkAppAddress);
 
   const tx = await Mina.transaction({ sender: feePayer.pub, fee: TX_FEE }, async () => {
@@ -410,7 +411,7 @@ async function approve(
   const ownerWitness = contract.ownerStore.getWitness();
   const approvalWitness = contract.approvalStore.getWitness(proposalHash);
   const nullifierWitness = contract.nullifierStore.getWitness(proposalHash, approver.pub);
-  const signature = Signature.create(approver.key, [proposalHash]);
+  const signature = Signature.create(approver.key, [proposalSigningMessage(proposalHash, 'approve')]);
   const zkApp = new MinaGuard(contract.zkAppAddress);
 
   const tx = await Mina.transaction({ sender: feePayer.pub, fee: TX_FEE }, async () => {

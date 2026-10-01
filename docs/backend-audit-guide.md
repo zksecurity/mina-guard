@@ -179,7 +179,7 @@ as the Mina transaction memo set by the wallet.
 
 - **Proposal creation**: the proposer sets the memo as the transaction memo. The indexer decodes `txMemo` (base58 → plaintext via `decodeTxMemo`) and stores it as `Proposal.memo`; the `memoHash` from the `ProposalEvent` is stored separately. If decoding fails, the raw base58 string is stored as a fallback (display-only; the authoritative hash is always `memoHash` from the event).
 - **Execution**: the executor's wallet sets the same memo. The indexer decodes `txMemo`, hashes it via `memoToField`, and stores the result as `Proposal.executionMemoHash`. At read time, `computeMemoExecutionMatch` compares `memoHash === executionMemoHash` → `true`/`false`/`null`.
-- **No-memo proposals**: `memoToField('')` returns `Field(0)`, so `memoHash` is `"0"`. The UI treats `"0"` as absent and hides the memo row.
+- **Empty memos**: the memo commitment includes the UTF-8 byte length and bytes under `mina-guard-memo`, including the empty string. Zero is not an absence sentinel; the backend verifies empty memo commitments and the UI shows them. Missing memo data still yields an unknown match. Event and database shapes are unchanged; existing test vaults/proposals are not migrated into the new protocol.
 
 The two memo match flags are computed **by this untrusted indexer**, not the contract. They defend
 against an *honest* indexer that dropped or mismatched a memo; a *lying* indexer can serve a

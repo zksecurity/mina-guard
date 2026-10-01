@@ -147,7 +147,7 @@ export interface NewProposalInput {
   reclaimAmount?: string;
   /** Toggle target (true=enable, false=disable) for enableChildMultiSig. */
   childMultiSigEnable?: boolean;
-  /** Pre-computed Poseidon hash of [ownersCommitment, threshold, numOwners] for createChild. */
+  /** Tagged child config hash of the owners commitment, threshold, and count for createChild. */
   createChildConfigHash?: string;
 }
 

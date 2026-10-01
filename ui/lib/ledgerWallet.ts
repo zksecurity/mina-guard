@@ -20,7 +20,7 @@ let app: MinaApp | null = null;
 //    worker uses to build and broadcast the tx (the Electron runtime config when
 //    present, else NEXT_PUBLIC_* env), so a fee-payer signature can never
 //    disagree with the network the tx is actually sent to.
-//  - Owner-approval signatures over the proposal hash (signFields) are verified
+//  - Owner-approval signatures over the action-specific proposal digest (signFields) are verified
 //    IN-CIRCUIT by o1js Signature.verify, which always uses the 'devnet' prefix
 //    (network id 0) regardless of the deployment. Signing these with the mainnet
 //    id produced approvals the contract rejects.
@@ -210,7 +210,7 @@ export async function signFields(
 
   let result;
   try {
-    // Owner-approval signature over the proposal hash: verified in-circuit by
+    // Owner-approval signature over the action-specific proposal digest: verified in-circuit by
     // o1js Signature.verify, which always uses the devnet prefix. Must be signed
     // with the devnet id regardless of the deployment network.
     result = await ledger.signFieldElement(accountIndex, LEDGER_APPROVAL_NETWORK_ID, bytes);

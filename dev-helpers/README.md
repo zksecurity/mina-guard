@@ -38,6 +38,8 @@ MINA_NETWORK_DOMAIN=devnet bun run dev-helpers/cli.ts vk-hash compile
 The `testnet` and `devnet` selections share `Field(2)` and must print the same VK hash.
 
 Output includes `vkHash[<network>]: <hash>` for the selected network.
+Run these compilations sequentially and follow the process-group memory limits and
+Node 24 lower-heap fallback in [AGENTS.md](../AGENTS.md#memory-safe-validation).
 
 Read verification key hash from a deployed zkApp address:
 
@@ -134,6 +136,10 @@ Available scenarios:
 - `Remove Owner`: one approved-and-ready proposal
 - `Threshold`: one approved-and-ready proposal
 - `Delegate`: one approved-and-ready proposal
+
+Fixtures use the current application-tagged proposal hash and distinct propose/approve
+signature messages from `contracts`; rebuild contracts before creating fixtures
+for a new protocol release. Existing vaults are not migrated by this command.
 
 This command is meant for proofs-disabled preview/lightnet flows. It creates real on-chain state, so the backend and UI stay consistent without DB-only mocking.
 

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
+import { assertOfflineResponseVersion } from '@/lib/offline-format';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { assessPreflightRetry } from '@/lib/multisigClient';
 import { fetchProposal } from '@/lib/api';
@@ -370,9 +371,7 @@ export function UploadSignedResponse({
         }
         throw new Error('Unrecognized file format. Expected the signed JSON output from the offline CLI.');
       }
-      if (response.version !== 1) {
-        throw new Error(`Unsupported signed response version (${response.version}). You may need a newer version of the UI.`);
-      }
+      assertOfflineResponseVersion(response.version);
       if (!acceptActions.includes(response.action)) {
         throw new Error(`This is a signed "${response.action}" transaction, but this upload expects ${acceptActions.join(' or ')}.`);
       }

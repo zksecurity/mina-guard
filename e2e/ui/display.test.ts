@@ -98,6 +98,28 @@ test('non-existent proposal hash shows not-found, not a crash', async ({ page })
 
 // --- former steps 50/51 + restored 52 ----------------------------------------
 
+test('rejects an unsupported signed response before broadcast', async ({ page }) => {
+  await openProposal(page, PROPOSALS.pendingTransfer);
+  await page.getByRole('button', { name: 'Offline', exact: true }).click();
+  const broadcasts: string[] = [];
+  page.on('request', request => {
+    if (request.postData()?.includes('sendZkapp')) broadcasts.push(request.url());
+  });
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'unsupported-signed.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ version: 2, type: 'offline-signed-tx', action: 'approve',
+      contractAddress: TREASURY, proposalHash: PROPOSALS.pendingTransfer, transaction: {} })),
+  });
+  await expect(page.getByText(/Unsupported signed response version/)).toBeVisible();
+  expect(broadcasts).toEqual([]);
+});
+
+test('an empty memo is displayed as a committed empty value', async ({ page }) => {
+  await openProposal(page, PROPOSALS.pendingAddOwner);
+  await expect(page.getByText('Memo', { exact: true })).toBeVisible();
+  await expect(page.getByText('(empty)', { exact: true })).toBeVisible();
+});
+
 test('executed proposal has no action buttons and shows memo match', async ({ page }) => {
   await openProposal(page, PROPOSALS.executedTransfer);
 

@@ -109,6 +109,52 @@ These instructions apply to the entire MinaGuard monorepo.
   - `bun run test:ui`
   - `bun run test:e2e`
 
+### Memory-safe validation
+
+- Before starting a build, compilation, proof, or test suite, check `free -h`
+  (especially `MemAvailable`) and the largest processes with
+  `ps -eo pid,ppid,rss,comm --sort=-rss`. Budget against current available RAM,
+  not total RAM; other worktrees and editor processes share this host.
+- Run memory-heavy jobs sequentially. Do not overlap VK compilation, real-proof
+  tests, contract/CLI lifecycle suites, Next.js builds or browser tests, and
+  `bun build --compile`. Await process completion, including child processes,
+  before starting the next job. Run network-specific VK checks one at a time.
+- Limit o1js worker parallelism. On Linux, wrap the checked-in command with
+  `taskset -c <two-allowed-CPUs>` (inspect `taskset -pc $$` first); o1js sizes its
+  worker pool from available CPUs. A dedicated JS harness may instead call
+  `setNumberOfWorkers(1)` before compilation. CPU limits alone are not RAM limits.
+- For Bun-driven compilation/proving under a tight budget, use `bun --smol`
+  to request more frequent garbage collection (for example,
+  `bun --smol run dev-helpers/cli.ts vk-hash compile`). Keep the script itself
+  unchanged; do not replace intentional Node invocations with Bun.
+- If Bun still cannot fit, the VK helper supports Node 24's native TypeScript
+  loading: `node --max-old-space-size=1536 dev-helpers/cli.ts vk-hash compile`.
+  This lower-heap validation invocation still runs the helper's Bun contract
+  rebuild and forced recompilation. It does not replace the repository's build
+  scripts. The V8 heap limit does not bound WASM/native allocations, so retain
+  the process-group memory cap below. The 1536 MiB heap is a VK-compilation
+  setting, not a proven budget for lifecycle proofs. If a proof hits the V8
+  heap limit, size its heap separately within the same total memory budget;
+  distinguish a JavaScript heap failure from a cgroup or host OOM.
+- On hosts with a user systemd manager, put each heavy job and its descendants
+  in a transient scope with `MemoryHigh`, `MemoryMax`, and `MemorySwapMax=0`.
+  For example, only when at least 10 GiB is currently available:
+  `systemd-run --user --scope -p MemoryHigh=6800M -p MemoryMax=7G -p MemorySwapMax=0 taskset -c <two-allowed-CPUs> node --max-old-space-size=1536 dev-helpers/cli.ts vk-hash compile`
+  (set `MINA_NETWORK_DOMAIN` for the target network). Choose limits that leave
+  at least 3 GiB available for unrelated workloads; verify the scope properties
+  and monitor `MemoryCurrent`/`MemoryPeak` and host `MemAvailable` during the run.
+  Use an equivalent process-group memory limit where systemd is unavailable.
+- If headroom is insufficient, defer the next heavy job. If a job is killed or
+  times out under memory pressure, inspect its exit status and cgroup memory
+  events before retrying; do not repeat the same unbounded concurrency or raise
+  the cap beyond available headroom. A killed compile is not a verified VK, and
+  skipped proofs are not a substitute for real-proof validation.
+- Stop only task-owned processes whose identity has been checked. Do not kill
+  unrelated editors, test processes, services, or containers to reclaim RAM.
+  For file-watcher exhaustion during isolated Next.js tests, use
+  `WATCHPACK_POLLING=1000` rather than changing host limits or stopping unrelated
+  watchers.
+
 ## Operations
 
 - Do not deploy, publish releases, reset databases, stop shared containers,

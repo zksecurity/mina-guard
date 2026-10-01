@@ -1,3 +1,6 @@
+import { memoToField } from '../memo.js';
+import { proposalSigningMessage } from '../proposal-signing.js';
+import { childConfigHash } from '../hash-domains.js';
 import {
   Field,
   Mina,
@@ -5,7 +8,6 @@ import {
   PublicKey,
   AccountUpdate,
   Signature,
-  Poseidon,
   UInt64,
   Bool,
   MerkleMapWitness,
@@ -96,8 +98,8 @@ export function toFixedSetupOwners(owners: PublicKey[]): PublicKey[] {
 }
 
 /** Creates and activates a local Mina blockchain test context with funded accounts. */
-export async function setupLocalBlockchain(numOwners = 3): Promise<TestContext> {
-  const Local = await Mina.LocalBlockchain({ proofsEnabled: false });
+export async function setupLocalBlockchain(numOwners = 3, proofsEnabled = false): Promise<TestContext> {
+  const Local = await Mina.LocalBlockchain({ proofsEnabled });
   Mina.setActiveInstance(Local);
 
   const deployerKey = Local.testAccounts[0].key;
@@ -185,7 +187,7 @@ export function createTransferProposal(
   expirySlot = Field(0),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
-  memoHash = Field(0),
+  memoHash = memoToField(''),
 ): TransactionProposal {
   const padded = [...receivers];
   while (padded.length < MAX_RECEIVERS) {
@@ -233,7 +235,7 @@ export function createAddOwnerProposal(
   expirySlot = Field(0),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
-  memoHash = Field(0),
+  memoHash = memoToField(''),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(newOwner),
@@ -259,7 +261,7 @@ export function createRemoveOwnerProposal(
   expirySlot = Field(0),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
-  memoHash = Field(0),
+  memoHash = memoToField(''),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(ownerToRemove),
@@ -285,7 +287,7 @@ export function createThresholdProposal(
   expirySlot = Field(0),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
-  memoHash = Field(0),
+  memoHash = memoToField(''),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -311,7 +313,7 @@ export function createDelegateProposal(
   expirySlot = Field(0),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
-  memoHash = Field(0),
+  memoHash = memoToField(''),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(delegate),
@@ -336,7 +338,7 @@ export function createUndelegateProposal(
   expirySlot = Field(0),
   childAccount = PublicKey.empty(),
   destination = Destination.LOCAL,
-  memoHash = Field(0),
+  memoHash = memoToField(''),
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
@@ -371,7 +373,7 @@ export function createDeleteProposal(
     tokenId: Field(0),
     txType: TxType.TRANSFER,
     data: Field(0),
-    memoHash: Field(0),
+    memoHash: memoToField(''),
     nonce,
     configNonce,
     expirySlot,
@@ -384,7 +386,7 @@ export function createDeleteProposal(
 // -- Child Proposal Helpers --------------------------------------------------
 
 /**
- * Builds a CREATE_CHILD proposal. `data` is the Poseidon commitment of the
+ * Builds a CREATE_CHILD proposal. `data` is the tagged commitment of the
  * child's intended config so the child's executeSetupChild can bind to it.
  * REMOTE destination, targets the given child address.
  */
@@ -402,8 +404,8 @@ export function createCreateChildProposal(
     receivers: emptyReceivers(),
     tokenId: Field(0),
     txType: TxType.CREATE_CHILD,
-    data: Poseidon.hash([ownersCommitment, threshold, numOwners]),
-    memoHash: Field(0),
+    data: childConfigHash(ownersCommitment, threshold, numOwners),
+    memoHash: memoToField(''),
     nonce,
     configNonce,
     expirySlot,
@@ -433,7 +435,7 @@ export function createAllocateChildProposal(
     tokenId: Field(0),
     txType: TxType.ALLOCATE_CHILD,
     data: Field(0),
-    memoHash: Field(0),
+    memoHash: memoToField(''),
     nonce,
     configNonce,
     expirySlot,
@@ -460,7 +462,7 @@ export function createReclaimChildProposal(
     tokenId: Field(0),
     txType: TxType.RECLAIM_CHILD,
     data: amount.value,
-    memoHash: Field(0),
+    memoHash: memoToField(''),
     nonce,
     configNonce,
     expirySlot,
@@ -483,7 +485,7 @@ export function createDestroyChildProposal(
     tokenId: Field(0),
     txType: TxType.DESTROY_CHILD,
     data: Field(0),
-    memoHash: Field(0),
+    memoHash: memoToField(''),
     nonce,
     configNonce,
     expirySlot,
@@ -507,7 +509,7 @@ export function createEnableChildMultiSigProposal(
     tokenId: Field(0),
     txType: TxType.ENABLE_CHILD_MULTI_SIG,
     data: enabled,
-    memoHash: Field(0),
+    memoHash: memoToField(''),
     nonce,
     configNonce,
     expirySlot,
@@ -531,7 +533,7 @@ export async function proposeTransaction(
   const proposalHash = proposal.hash();
 
   const ownerWitness = makeOwnerWitness(owners.map((o) => o.pub));
-  const sig = Signature.create(proposer.key, [proposalHash]);
+  const sig = Signature.create(proposer.key, [proposalSigningMessage(proposalHash, 'propose')]);
   const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer.pub);
   const approvalWitness = approvalStore.getWitness(proposalHash);
   const txn = await Mina.transaction(proposer.pub, async () => {
@@ -563,7 +565,7 @@ export async function approveTransaction(
   const approver = owners[approverIndex];
   const proposalHash = proposal.hash();
 
-  const sig = Signature.create(approver.key, [proposalHash]);
+  const sig = Signature.create(approver.key, [proposalSigningMessage(proposalHash, 'approve')]);
   const currentCount = approvalStore.getCount(proposalHash);
   const ownerWitness = makeOwnerWitness(owners.map((o) => o.pub));
   const approvalWitness = approvalStore.getWitness(proposalHash);
@@ -667,7 +669,7 @@ export async function deployAndSetupChildGuard(
 
   const parentContract = new MinaGuard(parentAddress);
   const ownerWitness = makeOwnerWitness(owners.map((o) => o.pub));
-  const sig = Signature.create(proposer.key, [proposalHash]);
+  const sig = Signature.create(proposer.key, [proposalSigningMessage(proposalHash, 'propose')]);
   const nullifierWitness = nullifierStore.getWitness(proposalHash, proposer.pub);
   const approvalWitness = approvalStore.getWitness(proposalHash);
 

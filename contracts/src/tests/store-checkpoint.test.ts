@@ -154,18 +154,17 @@ describe('verified incremental store checkpoints', () => {
     expect(roots(await cache.get(h.source))).toEqual(roots(b));
   });
 
-  it('accepts legacy v1 and snapshot v2, rejects incompatible or inconsistent requests', () => {
+  it('accepts snapshot v1, rejects incompatible or inconsistent requests', () => {
     const stores = rebuildStores(history);
     const request = { version: 1, minaNetwork: scope.network, contractAddress: scope.address, events: history };
-    expect(roots(storesFromOfflineRequest(request, roots(stores)))).toEqual(roots(stores));
-    const v2 = { ...request, version: 2, events: [], storeCheckpoint: checkpointStores(stores, scope, null) };
-    expect(roots(storesFromOfflineRequest(v2, roots(stores)))).toEqual(roots(stores));
-    for (const invalid of [ { ...v2, version: 3 }, { ...v2, version: 1 }, { ...v2, storeCheckpoint: undefined }, { ...v2, events: history } ]) {
+    const v1 = { ...request, version: 1, events: [], storeCheckpoint: checkpointStores(stores, scope, null) };
+    expect(roots(storesFromOfflineRequest(v1, roots(stores)))).toEqual(roots(stores));
+    for (const invalid of [ { ...v1, version: 2 }, { ...v1, version: 4 }, { ...v1, version: 3 }, { ...v1, storeCheckpoint: undefined }, { ...v1, events: history } ]) {
       expect(() => storesFromOfflineRequest(invalid, roots(stores))).toThrow();
     }
-    expect(() => storesFromOfflineRequest(v2, { ...roots(stores), approvalRoot: '1' })).toThrow();
-    expect(() => storesFromOfflineRequest(v2, {})).toThrow();
-    const modified = { ...v2, storeCheckpoint: { ...v2.storeCheckpoint, nullifiers: '{"keys":[]}' } };
+    expect(() => storesFromOfflineRequest(v1, { ...roots(stores), approvalRoot: '1' })).toThrow();
+    expect(() => storesFromOfflineRequest(v1, {})).toThrow();
+    const modified = { ...v1, storeCheckpoint: { ...v1.storeCheckpoint, nullifiers: '{"keys":[]}' } };
     expect(() => storesFromOfflineRequest(modified, roots(stores))).toThrow();
   });
 });

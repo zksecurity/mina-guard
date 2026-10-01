@@ -1,3 +1,4 @@
+import { proposalSigningMessage } from '../proposal-signing.js';
 import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64 } from 'o1js';
 import { Receiver, TransactionProposal } from '../MinaGuard.js';
 import { MAX_RECEIVERS, TxType, Destination } from '../constants.js';
@@ -21,6 +22,20 @@ describe('MinaGuard - Propose', () => {
   beforeEach(async () => {
     ctx = await setupLocalBlockchain();
     await deployAndSetup(ctx, 2);
+  });
+
+  it.each(['bare', 'approve'] as const)('rejects %s signatures for propose', async (kind) => {
+    const proposal = createTransferProposal([new Receiver({ address: ctx.deployerAccount, amount: UInt64.from(1) })], Field(1), Field(0), ctx.zkAppAddress);
+    const hash = proposal.hash();
+    const owner = ctx.owners[0];
+    const message = kind === 'bare' ? hash : proposalSigningMessage(hash, 'approve');
+    const signature = Signature.create(owner.key, [message]);
+    const witness = makeOwnerWitness(ctx.owners.map(o => o.pub));
+    const nullifier = ctx.nullifierStore.getWitness(hash, owner.pub);
+    const approval = ctx.approvalStore.getWitness(hash);
+    await expect(Mina.transaction(owner.pub, async () => {
+      await ctx.zkApp.propose(proposal, witness, owner.pub, signature, nullifier, approval);
+    })).rejects.toThrow('Invalid signature');
   });
 
   it('should allow owner to propose and auto-approve a transfer', async () => {
@@ -50,7 +65,7 @@ describe('MinaGuard - Propose', () => {
     );
 
     const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-    const signature = Signature.create(nonOwner, [proposal.hash()]);
+    const signature = Signature.create(nonOwner, [proposalSigningMessage(proposal.hash(), 'propose')]);
     const nullifierWitness = ctx.nullifierStore.getWitness(
       proposal.hash(),
       nonOwner.toPublicKey()
@@ -84,7 +99,7 @@ describe('MinaGuard - Propose', () => {
 
     await expect(async () => {
       const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const signature = Signature.create(ctx.owners[0].key, [proposalSigningMessage(proposal.hash(), 'propose')]);
       const nullifierWitness = ctx.nullifierStore.getWitness(
         proposal.hash(),
         ctx.owners[0].pub
@@ -117,7 +132,7 @@ describe('MinaGuard - Propose', () => {
 
     await expect(async () => {
       const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-      const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+      const signature = Signature.create(ctx.owners[0].key, [proposalSigningMessage(proposal.hash(), 'propose')]);
       const nullifierWitness = ctx.nullifierStore.getWitness(
         proposal.hash(),
         ctx.owners[0].pub
@@ -202,7 +217,7 @@ describe('MinaGuard - Propose shape rules', () => {
 
   async function tryPropose(proposal: TransactionProposal): Promise<void> {
     const ownerWitness = makeOwnerWitness(ctx.owners.map((o) => o.pub));
-    const signature = Signature.create(ctx.owners[0].key, [proposal.hash()]);
+    const signature = Signature.create(ctx.owners[0].key, [proposalSigningMessage(proposal.hash(), 'propose')]);
     const nullifierWitness = ctx.nullifierStore.getWitness(proposal.hash(), ctx.owners[0].pub);
     const approvalWitness = ctx.approvalStore.getWitness(proposal.hash());
     const txn = await Mina.transaction(ctx.owners[0].pub, async () => {

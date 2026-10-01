@@ -573,7 +573,7 @@ export default function TransactionDetailPage() {
     ? 'Delete proposal'
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
-  const hasMemo = proposal.memoHash != null && proposal.memoHash !== '0';
+  const hasMemo = proposal.memoHash != null;
   const isExecuted = proposal.status === 'executed';
   const memoAdornment: ReactNode | undefined = (() => {
     if (!hasMemo) return undefined;
@@ -791,7 +791,7 @@ export default function TransactionDetailPage() {
             <DetailRow label="Config Nonce" value={proposal.configNonce ?? '-'} mono />
             <DetailRow label="Expiry Slot" value={proposal.expirySlot ?? '0'} mono />
             {hasMemo && (
-              <DetailRow label="Memo" value={proposal.memo ?? proposal.memoHash!} mono={!proposal.memo} labelAdornment={memoAdornment} />
+              <DetailRow label="Memo" value={proposal.memo === '' ? '(empty)' : proposal.memo ?? proposal.memoHash!} mono={!proposal.memo} labelAdornment={memoAdornment} />
             )}
             <DetailRow label="Created" value={new Date(proposal.createdAt).toLocaleString()} />
           </div>

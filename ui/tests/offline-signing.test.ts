@@ -70,12 +70,12 @@ const builders = [
   { action: 'execute', build: () => buildOfflineExecuteBundle({ ...common, proposal }) },
 ];
 
-describe('v2 offline bundle network selection', () => {
+describe('v1 offline bundle network selection', () => {
   for (const { action, build } of builders) {
     it(`${action}: maps devnet to testnet without changing the snapshot endpoint`, async () => {
       configure('devnet');
       const bundle = await build();
-      expect(bundle.version).toBe(2);
+      expect(bundle.version).toBe(1);
       expect(bundle.events).toEqual([]);
       expect(bundle.storeCheckpoint.network).toBe('testnet');
       expect(checkpointCalls).toEqual(['vault']);

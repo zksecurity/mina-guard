@@ -197,11 +197,17 @@ Everything the chain suite used to cover per tx type lives in faster tiers:
 The unsafe CREATE_CHILD regression asserts the child-specific permission alert and checks that online
 approval, offline approval export, and signed-response upload are all blocked.
 
-36 tests against the seeded backend (see "UI test suite" above): derived-status
+Tests against the seeded backend (see "UI test suite" above) cover derived-status
 API sanity, vault list/dashboard/settings rendering, per-status detail pages
 (action buttons, badges, memo match/mismatch indicators), transactions
 filtering and tab counts, per-tx-type form payload capture, and all
-client-side form validation.
+client-side form validation. Proposal signing coverage includes the committed empty-memo
+display and rejecting unsupported signed-response versions before broadcast. Offline request
+export tests cover v1 snapshots; signed responses use v1.
+
+Run heavy validation sequentially with the limits in
+[AGENTS.md](../AGENTS.md#memory-safe-validation). The chainless suite still needs
+its own disposable database; inspect the reset/seed commands before starting it.
 
 ## Compile cache (IndexedDB)
 
