@@ -495,9 +495,10 @@ export class MinaGuardIndexer {
 
     const rawEvents = await fetchDecodedContractEvents(address, fromHeight, toHeight);
 
-    // o1js fetchEvents returns events within a single tx in *reverse* emission
-    // order (archive GraphQL returns them newest-first per tx). Reverse per-tx
-    // groups so receiver events land in contract-emission slot order —
+    // Each account update stores its events newest-first: o1js prepends every
+    // emitted event and the transaction commits to that list, which the
+    // archive returns as is. Reverse per-tx groups so receiver events land in
+    // contract-emission slot order —
     // otherwise multi-receiver transfer proposals have receivers stored in
     // reversed idx, which breaks the proposal-hash recomputation on the UI
     // side and causes "Proposal not found" errors on approve.
@@ -1419,9 +1420,10 @@ export class MinaGuardIndexer {
 
 /**
  * Reverses per-tx event groups to restore contract emission order.
- * o1js fetchEvents returns events within a single tx in newest-first order
- * (reverse of the contract's `this.emitEvent` sequence). Cross-tx ordering
- * (block height, tx index) is preserved; only within-tx groups are reversed.
+ * An account update's events list is newest-first (o1js prepends each
+ * `this.emitEvent`, and the transaction commits to that order), and the
+ * archive returns it unchanged. Cross-tx ordering (block height, tx index) is
+ * preserved; only within-tx groups are reversed.
  */
 function reverseEventsWithinEachTx(events: ChainEvent[]): ChainEvent[] {
   const groups = new Map<string, ChainEvent[]>();

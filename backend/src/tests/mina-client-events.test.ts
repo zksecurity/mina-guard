@@ -1,11 +1,12 @@
-import { describe, expect, test } from 'bun:test';
-import { Field, PrivateKey, PublicKey, UInt32 } from 'o1js';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { Field, PrivateKey, PublicKey } from 'o1js';
 import { MinaGuard } from 'contracts';
 import {
   decodeContractEvents,
   decodeMinaGuardEvent,
+  fetchArchiveEventBlocks,
   isFromAppliedTransaction,
-  type RawEventBlock,
+  type ArchiveEventBlock,
 } from '../mina-client.js';
 
 type Provable = { toFields(value: unknown): Field[] };
@@ -28,19 +29,28 @@ function approval(proposalHash: bigint): string[] {
   });
 }
 
-function block(height: number, events: Array<{ data: unknown; status?: string; hash?: string }>): RawEventBlock {
+type RawEvent = { data: unknown; status?: string; hash?: string; kind?: string | null };
+
+/** A block as the archive API returns it; events default to proof-authorized. */
+function block(height: number, events: RawEvent[]): ArchiveEventBlock {
   return {
-    blockHeight: UInt32.from(height),
-    blockHash: `hash-${height}`,
-    parentBlockHash: `hash-${height - 1}`,
-    globalSlot: UInt32.from(height),
-    chainStatus: 'canonical',
-    events: events.map((e, i) => ({
+    blockInfo: { height, stateHash: `hash-${height}`, parentHash: `hash-${height - 1}` },
+    eventData: events.map((e, i) => ({
       data: e.data,
-      transactionInfo: { hash: e.hash ?? `tx-${height}-${i}`, memo: '', status: e.status ?? 'applied' },
+      transactionInfo: {
+        hash: e.hash ?? `tx-${height}-${i}`,
+        memo: '',
+        status: e.status ?? 'applied',
+        ...(e.kind === null ? {} : { authorizationKind: e.kind ?? 'Proof' }),
+      },
     })),
-  } as unknown as RawEventBlock;
+  };
 }
+
+afterEach(() => {
+  spyOn(console, 'warn').mockRestore();
+  spyOn(globalThis, 'fetch').mockRestore();
+});
 
 describe('failed-transaction events', () => {
   test('isFromAppliedTransaction drops only an explicit failure', () => {
@@ -114,5 +124,73 @@ describe('event decoding', () => {
     expect(events.map((e) => [e.blockHeight, e.event.proposalHash])).toEqual([[5, '1'], [6, '3']]);
     expect(events[1].blockHash).toBe('hash-6');
     expect(events[1].parentHash).toBe('hash-5');
+  });
+});
+
+describe('event authorization', () => {
+  test('keeps only events from proof-authorized account updates', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const events = decodeContractEvents('vault', [block(5, [
+      { data: approval(1n), kind: 'Proof' },
+      { data: approval(2n), kind: 'None_given' },
+      { data: approval(3n), kind: 'Signature' },
+    ])]);
+    expect(events.map((e) => e.event.proposalHash)).toEqual(['1']);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0][0])).toContain('None_given-authorized');
+  });
+
+  test('skips the signed deploy event without a warning', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const deployed = encode('deployed', { guardAddress: approver });
+    const events = decodeContractEvents('vault', [block(5, [{ data: deployed, kind: 'Signature' }])]);
+    expect(events).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test('fails closed when the archive omits the authorization kind', () => {
+    expect(() => decodeContractEvents('vault', [block(5, [{ data: approval(1n), kind: null }])]))
+      .toThrow('no authorization kind');
+  });
+});
+
+describe('archive event query', () => {
+  const endpoints = { primary: 'http://archive', fallback: 'http://archive-fallback' };
+
+  test('asks the archive for each event\'s authorization kind', async () => {
+    const bodies: Array<{ query: string; variables: { input: Record<string, unknown> } }> = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ data: { events: [block(5, [{ data: approval(1n) }])] } });
+    }) as typeof fetch);
+
+    const blocks = await fetchArchiveEventBlocks(endpoints, 'B62qvault', 4);
+
+    expect(blocks).toHaveLength(1);
+    expect(bodies[0].query).toContain('authorizationKind');
+    expect(bodies[0].variables.input).toMatchObject({ address: 'B62qvault', from: 4 });
+    expect(typeof bodies[0].variables.input.tokenId).toBe('string');
+  });
+
+  test('omits `from` for a scan from genesis and falls back to the second endpoint', async () => {
+    const urls: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (url: unknown, init?: RequestInit) => {
+      urls.push(String(url));
+      if (String(url) === endpoints.primary) return new Response('down', { status: 502 });
+      expect(JSON.parse(String(init?.body)).variables.input).not.toHaveProperty('from');
+      return Response.json({ data: { events: [] } });
+    }) as typeof fetch);
+
+    expect(await fetchArchiveEventBlocks(endpoints, 'B62qvault', 0)).toEqual([]);
+    expect(urls).toEqual([endpoints.primary, endpoints.fallback]);
+  });
+
+  test('explains an archive that does not expose authorizationKind', async () => {
+    spyOn(globalThis, 'fetch').mockImplementation((async () => Response.json({
+      errors: [{ message: 'Cannot query field "authorizationKind" on type "TransactionInfo".' }],
+    })) as typeof fetch);
+
+    await expect(fetchArchiveEventBlocks({ primary: 'http://old-archive', fallback: null }, 'B62qvault', 0))
+      .rejects.toThrow('v0.0.8 or later');
   });
 });

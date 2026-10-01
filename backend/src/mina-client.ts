@@ -1,4 +1,4 @@
-import { Field, Mina, PublicKey, TokenId, fetchAccount, UInt32 } from 'o1js';
+import { Field, Mina, PublicKey, TokenId, fetchAccount } from 'o1js';
 import { GUARD_PERMISSION_KINDS, MinaGuard } from 'contracts';
 import type { Pool } from 'pg';
 import type { BackendConfig } from './config.js';
@@ -28,6 +28,13 @@ export interface BestChainHeader {
   parentHash: string;
 }
 
+/** Archive GraphQL endpoints for event fetches; set by configureNetwork. */
+export interface ArchiveEndpoints {
+  primary: string;
+  fallback: string | null;
+}
+let archiveEndpoints: ArchiveEndpoints | null = null;
+
 /** Configures o1js network endpoints once at process start. */
 export function configureNetwork(config: BackendConfig): void {
   Mina.setActiveInstance(
@@ -39,6 +46,7 @@ export function configureNetwork(config: BackendConfig): void {
         : {}),
     })
   );
+  archiveEndpoints = { primary: config.archiveEndpoint, fallback: config.archiveFallbackEndpoint };
 }
 
 /**
@@ -542,44 +550,100 @@ export async function fetchDecodedContractEvents(
   fromHeight: number,
   toHeight: number
 ): Promise<ChainEvent[]> {
-  // Fetched untyped: anyone can attach events to a vault, and o1js's typed
-  // fetch throws on the first malformed one, stalling the vault's indexing.
+  if (!archiveEndpoints) throw new Error('configureNetwork must run before fetching events');
   // TODO: restore toHeight once archive node supports upper-bound filtering
-  const blocks = await Mina.fetchEvents(
-    PublicKey.fromBase58(address),
-    TokenId.default,
-    fromHeight > 0 ? { from: UInt32.from(fromHeight) } : {},
-  );
+  const blocks = await fetchArchiveEventBlocks(archiveEndpoints, address, fromHeight);
   return decodeContractEvents(address, blocks);
 }
 
-/** Raw events of one block, as returned by `Mina.fetchEvents`. */
-export type RawEventBlock = Awaited<ReturnType<typeof Mina.fetchEvents>>[number];
+/** One block of a vault's events, as the archive API returns them. */
+export interface ArchiveEventBlock {
+  blockInfo: { height: number; stateHash: string; parentHash: string };
+  eventData: Array<{
+    transactionInfo?: { hash?: string; memo?: string; status?: string; authorizationKind?: string } | null;
+    data: unknown;
+  } | null> | null;
+}
+
+// Queried directly rather than through o1js, whose fetchEvents does not ask for
+// the emitting account update's authorization kind.
+const EVENTS_QUERY = `query VaultEvents($input: EventFilterOptionsInput!) {
+  events(input: $input) {
+    blockInfo { height stateHash parentHash }
+    eventData {
+      transactionInfo { hash memo status authorizationKind }
+      data
+    }
+  }
+}`;
+
+/** Fetches a vault's raw events, with each emitting update's authorization kind. */
+export async function fetchArchiveEventBlocks(
+  endpoints: ArchiveEndpoints,
+  address: string,
+  fromHeight: number,
+): Promise<ArchiveEventBlock[]> {
+  const input = {
+    address,
+    tokenId: TokenId.toBase58(TokenId.default),
+    ...(fromHeight > 0 ? { from: fromHeight } : {}),
+  };
+  try {
+    const data = await graphqlRequest<{ events?: ArchiveEventBlock[] | null }>(
+      EVENTS_QUERY, endpoints.primary, endpoints.fallback, { input },
+    );
+    if (!Array.isArray(data.events)) throw new Error('archive response has no events list');
+    return data.events;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/authorizationKind/.test(message)) {
+      throw new Error(
+        `The archive endpoint does not report event authorization (${message}). ` +
+        'MinaGuard needs an Archive-Node-API that exposes transactionInfo.authorizationKind on events (v0.0.8 or later).',
+      );
+    }
+    throw err;
+  }
+}
 
 /**
- * Decodes fetched events, dropping events of failed transactions and skipping
- * (with a warning) any event that is not a well-formed MinaGuard event.
+ * Decodes fetched events. Drops events of failed transactions and, because
+ * any account update can attach events to a vault, keeps only events emitted
+ * by proof-authorized updates: those are the vault's own methods, proved
+ * against its verification key. Skips (with a warning) anything else that is
+ * not a well-formed MinaGuard event. Fails closed if the archive omits the
+ * authorization kind.
  */
-export function decodeContractEvents(address: string, blocks: readonly RawEventBlock[]): ChainEvent[] {
+export function decodeContractEvents(address: string, blocks: readonly ArchiveEventBlock[]): ChainEvent[] {
   const decoded: ChainEvent[] = [];
   for (const block of blocks) {
-    const blockHeight = Number(block.blockHeight.toString());
-    for (const raw of block.events) {
-      const txInfo = raw.transactionInfo as { hash?: string; memo?: string; status?: string } | undefined;
+    const blockHeight = Number(block.blockInfo.height);
+    for (const raw of block.eventData ?? []) {
+      if (!raw) continue;
+      const txInfo = raw.transactionInfo ?? undefined;
       if (!isFromAppliedTransaction(txInfo?.status)) continue;
+      const where = `on ${address} at block ${blockHeight} (tx ${txInfo?.hash ?? '?'})`;
+      const kind = txInfo?.authorizationKind;
+      if (typeof kind !== 'string') {
+        throw new Error(`Archive event ${where} has no authorization kind; refusing to index it`);
+      }
       const result = decodeMinaGuardEvent(raw.data);
+      if (kind !== 'Proof') {
+        // deploy() emits `deployed` under the deployer's signature; nothing reads it.
+        const expected = kind === 'Signature' && !('error' in result) && result.type === 'deployed';
+        if (!expected) console.warn(`[mina-client] skipping ${kind}-authorized event ${where}`);
+        continue;
+      }
       if ('error' in result) {
-        console.warn(
-          `[mina-client] skipping malformed event on ${address} at block ${blockHeight} (tx ${txInfo?.hash ?? '?'}): ${result.error}`,
-        );
+        console.warn(`[mina-client] skipping malformed event ${where}: ${result.error}`);
         continue;
       }
       decoded.push({
         type: result.type,
         event: result.event,
         blockHeight,
-        blockHash: block.blockHash,
-        parentHash: block.parentBlockHash,
+        blockHash: block.blockInfo.stateHash,
+        parentHash: block.blockInfo.parentHash,
         txHash: txInfo?.hash ?? null,
         txMemo: txInfo?.memo ?? null,
       });
