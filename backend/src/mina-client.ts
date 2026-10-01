@@ -19,6 +19,8 @@ export interface ChainEvent {
   parentHash: string;
   txHash: string | null;
   txMemo: string | null;
+  /** Set when a proof-authorized event could not be decoded; `type` is then 'malformed'. */
+  decodeError?: string;
 }
 
 /** Block identity row returned by the daemon's bestChain query. */
@@ -610,9 +612,9 @@ export async function fetchArchiveEventBlocks(
  * Decodes fetched events. Drops events of failed transactions and, because
  * any account update can attach events to a vault, keeps only events emitted
  * by proof-authorized updates: those are the vault's own methods, proved
- * against its verification key. Skips (with a warning) anything else that is
- * not a well-formed MinaGuard event. Fails closed if the archive omits the
- * authorization kind.
+ * against its verification key. A proof-authorized event that does not decode
+ * is passed on as type 'malformed' with `decodeError`, for the indexer to
+ * record. Fails closed if the archive omits the authorization kind.
  */
 export function decodeContractEvents(address: string, blocks: readonly ArchiveEventBlock[]): ChainEvent[] {
   const decoded: ChainEvent[] = [];
@@ -635,7 +637,20 @@ export function decodeContractEvents(address: string, blocks: readonly ArchiveEv
         continue;
       }
       if ('error' in result) {
-        console.warn(`[mina-client] skipping malformed event ${where}: ${result.error}`);
+        // The vault's own circuit emitted this, so it must decode; failing to
+        // means a backend/VK version mismatch or bad archive data. Pass it on
+        // so the indexer records it instead of losing it.
+        console.error(`[mina-client] undecodable proof-authorized event ${where}: ${result.error}`);
+        decoded.push({
+          type: 'malformed',
+          event: { data: raw.data },
+          blockHeight,
+          blockHash: block.blockInfo.stateHash,
+          parentHash: block.blockInfo.parentHash,
+          txHash: txInfo?.hash ?? null,
+          txMemo: txInfo?.memo ?? null,
+          decodeError: result.error,
+        });
         continue;
       }
       decoded.push({
