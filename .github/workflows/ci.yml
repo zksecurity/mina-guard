@@ -126,7 +126,7 @@ jobs:
       - name: Run offline-cli e2e test (with proofs)
         working-directory: offline-cli
         run: bun test src/tests/offline-cli-e2e.test.ts --test-name-pattern "propose"
-        timeout-minutes: 20
+        timeout-minutes: 25
       - name: Build offline-cli binary (darwin-arm64)
         working-directory: offline-cli
         run: bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/mina-guard-cli-darwin-arm64 --define 'process.versions.node=""'

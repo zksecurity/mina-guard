@@ -250,7 +250,8 @@ describe('offline-cli e2e', () => {
     writeBundle(bundlePath, bundle);
 
     console.log('[e2e] Running CLI: propose...');
-    const result = await runCLI(bundlePath, proposer.key.toBase58());
+    // The first CLI invocation compiles a cold prover cache on macOS CI.
+    const result = await runCLI(bundlePath, proposer.key.toBase58(), 900_000);
     console.log('[e2e] CLI stderr:', result.stderr);
     if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
 
@@ -305,7 +306,7 @@ describe('offline-cli e2e', () => {
     approvalStore.setCount(pHash, PROPOSED_MARKER.add(1));
 
     console.log('[e2e] Propose OK, hash:', proposalHash);
-  }, 600_000);
+  }, 900_000);
 
   it('approve', async () => {
     expect(proposalHash).toBeTruthy();
