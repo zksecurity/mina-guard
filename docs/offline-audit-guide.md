@@ -5,7 +5,7 @@ The online creation flow also detects proposals another owner already created an
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests remain version 2 and signed responses version 1; the CLI protocol is unchanged. See [design and boundaries](transaction-coordination-design.md).
+**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests and signed responses remain version 1. See [design and boundaries](transaction-coordination-design.md).
 
 This document describes the **air-gapped signing path**: the bundle
 export/import UI inside the web app (`ui/lib/offline-signing.ts`,
@@ -226,8 +226,10 @@ takes over.
 The new hash domains are a breaking change: new proposal hashes, purpose-bound
 owner signatures, memo commitments, owner commitments, vote-nullifier keys,
 child configuration hashes, and verification keys. There is no legacy
-signature fallback. Request and response formats both use v1 as a pre-release
-reset; this version number does not distinguish older v1 files from current files.
+signature fallback. New proposals sign the native MINA token ID `Field(1)`
+instead of the former `Field(0)` sentinel. Request and response formats both
+remain v1; this version number does not distinguish older v1 files from current
+files.
 Discard all earlier requests and signed responses and regenerate them with matching
 UI and CLI builds. Requests must include a checkpoint and empty events; legacy
 full-event requests are rejected. Existing test vaults require fresh deployment;

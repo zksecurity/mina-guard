@@ -23,6 +23,7 @@ import {
 import {
   MAX_OWNERS,
   MAX_RECEIVERS,
+  NATIVE_TOKEN_ID,
   INITIAL_OWNER_CHAIN,
   PROPOSED_MARKER,
   EXECUTED_MARKER,
@@ -1066,11 +1067,11 @@ export class MinaGuard extends SmartContract {
       .or(proposal.data.equals(Field(0)).or(proposal.data.equals(Field(1))))
       .assertTrue('Enabled must be 0 or 1');
 
-    // Rule 5: only the native MINA token (tokenId 0) is supported. `tokenId` is
+    // Rule 5: only the native MINA token (tokenId 1) is supported. `tokenId` is
     // part of the signed/approved proposal but executeTransfers always sends on
-    // the default token, so a non-zero tokenId would be approved as a MINA send.
+    // the default token, so a different tokenId would be approved as a MINA send.
     // Reject it at proposal time so no such proposal can exist on-chain.
-    proposal.tokenId.assertEquals(Field(0), 'Only the native MINA token (tokenId 0) is supported');
+    proposal.tokenId.assertEquals(NATIVE_TOKEN_ID, 'Only the native MINA token (tokenId 1) is supported');
 
     // Rule 6: non-empty receivers must be curve points. o1js does not
     // constrain `x` to the curve; a non-point receiver would be an

@@ -301,8 +301,9 @@ propose/approve signing messages, and length-prefixed memo commitments (includin
 empty memos). Owner-chain links, vote-nullifier keys, and child configuration
 hashes also have separate tags. Use matching CLI/UI/backend/desktop builds and
 new network VKs.
-Requests and signed responses both use v1 after the pre-release reset. Discard
-older files: the version number alone does not distinguish them from current files.
+Requests and signed responses both use v1. Discard older files: the version
+number alone does not distinguish them from current files, and proposals now
+sign the native MINA token ID `Field(1)`.
 This breaking change requires fresh vaults and recreated proposals.
 See [the offline audit guide](docs/offline-audit-guide.md) for migration and trust
 boundaries. Desktop packages the same worker and exporter.

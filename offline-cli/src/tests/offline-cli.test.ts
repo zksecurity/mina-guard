@@ -204,7 +204,7 @@ describe('offline-cli', () => {
     while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
     const proposal = new TransactionProposal({
       receivers,
-      tokenId: Field(0),
+      tokenId: Field(1),
       txType: Field(0),
       data: Field(0),
       nonce: Field(1),
@@ -556,7 +556,7 @@ describe('assertExecutableAddOwnerData', () => {
     const receivers = [new Receiver({ address: target, amount: UInt64.from(0) })];
     while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
     return new TransactionProposal({
-      receivers, tokenId: Field(0), txType: TxType.ADD_OWNER, data, memoHash: memoToField(''),
+      receivers, tokenId: Field(1), txType: TxType.ADD_OWNER, data, memoHash: memoToField(''),
       nonce: Field(1), configNonce: Field(0), expirySlot: Field(0),
       guardAddress: PrivateKey.random().toPublicKey(), destination: Destination.LOCAL, childAccount: PublicKey.empty(),
     });

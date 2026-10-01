@@ -130,7 +130,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Signature purpose is explicit | Distinct propose/approve digests over the application-tagged proposal hash; empty and non-empty memos share a length-prefixed domain | `proposal-signing.test.ts`, `memo.test.ts`, cross-action rejection in `propose.test.ts` / `approve.test.ts` |
 | No double-voting | vote nullifier map keyed `hash(proposalHash, approver)` | `approve.test.ts` |
 | Approvals bind to exact content | approvals keyed by `TransactionProposal.hash()` (includes `guardAddress`, `destination`, `childAccount`) | `propose.test.ts`, `approve.test.ts` |
-| Only native MINA is transferable | `propose()` asserts `proposal.tokenId == 0` — `executeTransfers` always sends on the default token, so a non-zero tokenId is rejected at proposal time and can never be approved as a MINA send | `propose.test.ts` ("reject a proposal with a non-zero tokenId") |
+| Only native MINA is transferable | `propose()` asserts `proposal.tokenId == 1` (`TokenId.default`) — `executeTransfers` sends on the default token, so a different token ID is rejected at proposal time | `propose.test.ts` ("reject a proposal with a non-native tokenId") |
 | Cannot approve a nonexistent proposal | approval slot must be `>= PROPOSED_MARKER` | `approve.test.ts` |
 | No LOCAL re-execution | `EXECUTED_MARKER` overwrites the approval slot | `execute.test.ts` |
 | No REMOTE re-execution | child's `childExecutionRoot` marks executed proposals | `child.test.ts` |
@@ -162,7 +162,7 @@ owner selected. (Propose mints a fresh proposal with no prior identity, so it ha
 against and skips the check.) The worker updates cached owner, approval and nullifier
 stores with later indexed events using `contracts/src/store-checkpoint.ts` and the
 shared, order-independent `contracts/src/event-rebuild.ts`. The CLI reconstructs
-version 1 request checkpoint leaves; requests without checkpoints are rejected. Both clients
+version 1 checkpoint leaves from version 1 requests; requests without checkpoints are rejected. Both clients
 refuse to prove unless the result reproduces on-chain state (the worker reads the Mina node, the
 CLI the bundle's account snapshot); events are unauthenticated, so the per-event roots the
 contract emits only locate a divergence and are never trusted on their own. Covered by

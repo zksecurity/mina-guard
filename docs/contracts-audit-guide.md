@@ -184,7 +184,7 @@ class Receiver extends Struct({
 
 class TransactionProposal extends Struct({
   receivers:    Provable.Array(Receiver, MAX_RECEIVERS),  // Fixed-size array of recipients
-  tokenId:      Field,       // Token ID (Field(0) for MINA)
+  tokenId:      Field,       // Token ID (Field(1) for native MINA)
   txType:       Field,       // TxType value
   data:         Field,       // Context-dependent payload (see below)
   memoHash:     Field,       // Poseidon hash of the memo bytes (memoToField); bound into hash()
@@ -257,7 +257,7 @@ Propose-time rules enforced in `propose()`:
 - All receiver amounts must be zero for non-transfer proposals, including unused slots.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, `ENABLE_CHILD_MULTI_SIG`, or `ADD_OWNER`. For `ADD_OWNER`, `data` must be non-zero (the expected post-add owners commitment).
 - `CHANGE_THRESHOLD` data must be between one and the current owner count; `ENABLE_CHILD_MULTI_SIG` data must be zero or one. Execution repeats these checks.
-- `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
+- `tokenId` must be `Field(1)` (`NATIVE_TOKEN_ID`, equal to Mina's `TokenId.default`) — only native MINA is supported. `executeTransfers` sends on the default token, so a different signed token ID is rejected at proposal time.
 - Every non-empty receiver slot must be a curve point (`assertOnCurveIf`), so no proposal can be signed that pays, adds as owner, or delegates to an address no private key exists for.
 - Every empty receiver slot must carry a zero amount. Receiver events and `executeTransfers` zero the amount of an empty slot while the proposal hash commits the raw value, so a non-zero amount there would produce a proposal that event-sourced clients cannot rebuild or approve.
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
@@ -319,7 +319,7 @@ initialization.
 4. Assert `destination` and `childAccount` are consistent
 5. Range-check expiry and require inclusion by its deadline; assert proposal nonce freshness for the relevant domain (`nonce` or `parentNonce`; `CREATE_CHILD` requires `0`)
 6. Enforce per-txType propose rules (see TxType table)
-7. Assert `tokenId == Field(0)` (only native MINA is supported)
+7. Assert `tokenId == Field(1)` (only native MINA is supported)
 8. Verify proposer's signature over `[proposalSigningMessage(proposalHash, 'propose')]`
 9. Check and set vote nullifier (prevents re-proposal)
 10. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`

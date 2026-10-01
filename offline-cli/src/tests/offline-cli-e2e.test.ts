@@ -47,7 +47,7 @@ const BINARY_PATH = join(import.meta.dirname, '..', '..', 'dist',
 );
 const tmpDir = join(tmpdir(), `offline-cli-e2e-${Date.now()}`);
 
-/** Fixtures may describe full histories; the wire request always carries a v1 snapshot. */
+/** Fixtures may describe full histories; the v1 wire request carries a v1 checkpoint. */
 function writeBundle(path: string, bundle: {
   contractAddress: string;
   events: Parameters<typeof rebuildStores>[0];
@@ -280,7 +280,7 @@ describe('offline-cli e2e', () => {
     while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
     const proposal = new TransactionProposal({
       receivers,
-      tokenId: Field(0),
+      tokenId: Field(1),
       txType: Field(0),
       data: Field(0),
       nonce: Field(1),
@@ -340,7 +340,7 @@ describe('offline-cli e2e', () => {
         proposalHash,
         proposer: owners[0].pub.toBase58(),
         toAddress: null,
-        tokenId: '0',
+        tokenId: '1',
         txType: 'transfer',
         data: '0',
         nonce: '1',
@@ -380,7 +380,7 @@ describe('offline-cli e2e', () => {
     while (receivers.length < MAX_RECEIVERS) receivers.push(Receiver.empty());
     const proposal = new TransactionProposal({
       receivers,
-      tokenId: Field(0),
+      tokenId: Field(1),
       txType: Field(0),
       data: Field(0),
       nonce: Field(1),
@@ -459,7 +459,7 @@ describe('offline-cli e2e', () => {
       action: 'approve',
       proposal: {
         proposalHash, proposer: owners[0].pub.toBase58(), toAddress: null,
-        tokenId: '0', txType: 'transfer', data: '0', nonce: '1', configNonce: '0',
+        tokenId: '1', txType: 'transfer', data: '0', nonce: '1', configNonce: '0',
         expirySlot: '0', guardAddress: base.contractAddress, destination: 'local',
         childAccount: null, memoHash: memoToField('').toString(), receivers: proposalReceivers,
       },
@@ -502,7 +502,7 @@ describe('offline-cli e2e', () => {
         proposalHash,
         proposer: owners[0].pub.toBase58(),
         toAddress: null,
-        tokenId: '0',
+        tokenId: '1',
         txType: 'transfer',
         data: '0',
         nonce: '1',
@@ -553,7 +553,7 @@ describe('offline-cli e2e', () => {
         proposalHash,
         proposer: owners[0].pub.toBase58(),
         toAddress: null,
-        tokenId: '0',
+        tokenId: '1',
         txType: 'transfer',
         data: '0',
         nonce: '1',
@@ -668,7 +668,7 @@ describe('offline-cli e2e', () => {
       proposalHash: childProposalHash,
       proposer: owners[0].pub.toBase58(),
       toAddress: null,
-      tokenId: '0',
+      tokenId: '1',
       txType: 'enableChildMultiSig',
       data: '0',
       nonce: '1',
@@ -714,7 +714,7 @@ describe('offline-cli e2e', () => {
       // then approve, then executeSetupChild separately.
       const createChildProposal = new TransactionProposal({
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
-        tokenId: Field(0),
+        tokenId: Field(1),
         txType: TxType.CREATE_CHILD,
         data: childConfigHash(ownersCommitment, thresholdField, numOwnersField),
         nonce: Field(0),
@@ -774,7 +774,7 @@ describe('offline-cli e2e', () => {
       // Build the enableChildMultiSig proposal struct (reused across tests)
       enableProposal = new TransactionProposal({
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
-        tokenId: Field(0),
+        tokenId: Field(1),
         txType: TxType.ENABLE_CHILD_MULTI_SIG,
         data: Field(0),
         nonce: Field(1),
@@ -969,7 +969,7 @@ describe('offline-cli e2e', () => {
       proposalHash: createChildProposalHash,
       proposer: owners[0].pub.toBase58(),
       toAddress: null,
-      tokenId: '0',
+      tokenId: '1',
       txType: 'createChild',
       data: configHash(),
       nonce: '0',
@@ -1062,7 +1062,7 @@ describe('offline-cli e2e', () => {
       })();
       const createChildProposal = new TransactionProposal({
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
-        tokenId: Field(0),
+        tokenId: Field(1),
         txType: TxType.CREATE_CHILD,
         data: childConfigHash(childOwnersCommitment, Field(2), Field(owners.length)),
         nonce: Field(0),
@@ -1177,7 +1177,7 @@ describe('offline-cli e2e', () => {
       })();
       const createChildProposal = new TransactionProposal({
         receivers: Array.from({ length: MAX_RECEIVERS }, () => Receiver.empty()),
-        tokenId: Field(0),
+        tokenId: Field(1),
         txType: TxType.CREATE_CHILD,
         data: childConfigHash(childOwnersCommitment, Field(2), Field(owners.length)),
         nonce: Field(0),
@@ -1345,7 +1345,7 @@ describe('offline child allocation', () => {
         network: 'testnet', address: ctx.zkAppAddress.toBase58(),
       }, null),
       proposal: {
-        proposalHash: hash.toString(), txType: 'allocateChild', tokenId: '0', data: '0',
+        proposalHash: hash.toString(), txType: 'allocateChild', tokenId: '1', data: '0',
         nonce: '1', configNonce: '0', expirySlot: '0', memoHash: proposal.memoHash.toString(),
         guardAddress: ctx.zkAppAddress.toBase58(), destination: 'local', childAccount: null,
         receivers: [{ address, amount: amount.toString() }],
