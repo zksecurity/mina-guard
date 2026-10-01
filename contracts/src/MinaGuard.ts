@@ -557,10 +557,10 @@ export class MinaGuard extends SmartContract {
     approvalCount.assertGreaterThanOrEqual(PROPOSED_MARKER, 'Proposal not found');
   }
 
-  /** Verifies approvals satisfy threshold after marker offset normalization. */
+  /** Verifies approvals without subtracting the marker from an absent proposal. */
   private assertThresholdSatisfied(approvalCount: Field, threshold: Field): void {
-    approvalCount.sub(PROPOSED_MARKER).assertGreaterThanOrEqual(
-      threshold,
+    approvalCount.assertGreaterThanOrEqual(
+      threshold.add(PROPOSED_MARKER),
       'Insufficient approvals'
     );
   }
@@ -994,6 +994,14 @@ export class MinaGuard extends SmartContract {
       .or(isEnableChildMultiSig)
       .assertTrue('Unknown txType');
 
+    const isLocalType = isTransfer.or(isChangeThreshold).or(isAddOwner)
+      .or(isRemoveOwner).or(isSetDelegate).or(isAllocateChild);
+    const isRemoteType = isCreateChild.or(isReclaimChild)
+      .or(isDestroyChild).or(isEnableChildMultiSig);
+    isLocalType.and(proposal.destination.equals(Destination.LOCAL))
+      .or(isRemoteType.and(proposal.destination.equals(Destination.REMOTE)))
+      .assertTrue('txType and destination mismatch');
+
     /*
     * Receivers are used:
     * - For recipients of transfers (MAX_RECEIVERS allowed, meaning batch transfer)
@@ -1025,6 +1033,12 @@ export class MinaGuard extends SmartContract {
     isTransferLike.or(this.atMostOneReceiver(proposal))
       .assertTrue('Non-transfer proposal has extra receivers');
 
+    // Every non-transfer execution ignores receiver amounts, including slot 0.
+    for (const receiver of proposal.receivers) {
+      isTransferLike.or(receiver.amount.value.equals(Field(0)))
+        .assertTrue('Non-transfer proposal must have zero receiver amounts');
+    }
+
     // Rule 4: `data` must be 0 except for txTypes that use it:
     //   CHANGE_THRESHOLD (new threshold), CREATE_CHILD (child config hash),
     //   RECLAIM_CHILD (amount), ENABLE_CHILD_MULTI_SIG (flag),
@@ -1042,6 +1056,15 @@ export class MinaGuard extends SmartContract {
     // a zero here would make the proposal unexecutable anyway.
     isAddOwner.and(proposal.data.equals(Field(0)))
       .assertFalse('addOwner requires expected owners commitment in data');
+
+    const { numOwners } = this.getGovernanceState();
+    isChangeThreshold.not().or(proposal.data.greaterThan(Field(0)))
+      .assertTrue('Threshold must be > 0');
+    isChangeThreshold.not().or(proposal.data.lessThanOrEqual(numOwners))
+      .assertTrue('Threshold cannot exceed owner count');
+    isEnableChildMultiSig.not()
+      .or(proposal.data.equals(Field(0)).or(proposal.data.equals(Field(1))))
+      .assertTrue('Enabled must be 0 or 1');
 
     // Rule 5: only the native MINA token (tokenId 0) is supported. `tokenId` is
     // part of the signed/approved proposal but executeTransfers always sends on

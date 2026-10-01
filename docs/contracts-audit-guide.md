@@ -116,7 +116,7 @@ Active owners are `Some(pk)`, padding slots are `None`. Three circuit functions 
 
 - **`assertOwnerMembership`** — Iterates the witness, recomputes the chain hash, checks that the claimed owner appears, and asserts the final chain equals `ownersCommitment`.
 - **`addOwnerToCommitment`** — Inserts a new owner into the chain. Accepts an `insertAfter: Option(PublicKey)` parameter: `None` prepends, `Some(pk)` inserts after that key. Returns `[newChain, valid]`. Caller must check `valid` and enforce size bounds.
-- **`removeOwnerFromCommitment`** — Rebuilds the chain while skipping the target owner. Returns `[newChain, valid]`. Caller must check `valid` and enforce `numOwners >= threshold`.
+- **`removeOwnerFromCommitment`** — Rebuilds the chain while skipping the target owner. Returns `[newChain, valid]`; `valid` is false when removal would leave no owners. The caller must also enforce `numOwners >= threshold`.
 
 Two more circuit functions serve the setup path (`setup`, `reserveForParent`,
 `executeSetupChild`), which takes a plain fixed-size `PublicKey[]`
@@ -249,12 +249,15 @@ runs an execute method for them. Replay protection lives on the child in `childE
 | `ENABLE_CHILD_MULTI_SIG` | 9 | `REMOTE` | `0` or `1` | Empty |
 
 Propose-time rules enforced in `propose()`:
+- `txType` and `destination` must agree: transfers, allocation, and governance are LOCAL; child lifecycle operations are REMOTE.
 - `expirySlot` must fit in 32 bits. A non-zero expiry sets a ledger precondition requiring inclusion at or before that slot; the same check applies to approval and LOCAL/REMOTE execution.
 - `receivers[0]` must be non-empty for `ADD_OWNER`/`REMOVE_OWNER`.
 - `receivers[0]` must be empty for `CHANGE_THRESHOLD`.
 - `receivers[0]` must be empty for `CREATE_CHILD`, `RECLAIM_CHILD`, `DESTROY_CHILD` and `ENABLE_CHILD_MULTI_SIG`: their execute paths never read receivers, so a filled slot could only advertise a payment that never happens.
 - Only `TRANSFER` and `ALLOCATE_CHILD` may use more than one receiver slot.
+- All receiver amounts must be zero for non-transfer proposals, including unused slots.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, `ENABLE_CHILD_MULTI_SIG`, or `ADD_OWNER`. For `ADD_OWNER`, `data` must be non-zero (the expected post-add owners commitment).
+- `CHANGE_THRESHOLD` data must be between one and the current owner count; `ENABLE_CHILD_MULTI_SIG` data must be zero or one. Execution repeats these checks.
 - `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
 - Every non-empty receiver slot must be a curve point (`assertOnCurveIf`), so no proposal can be signed that pays, adds as owner, or delegates to an address no private key exists for.
 - Every empty receiver slot must carry a zero amount. Receiver events and `executeTransfers` zero the amount of an empty slot while the proposal hash commits the raw value, so a non-zero amount there would produce a proposal that event-sourced clients cannot rebuild or approve.
