@@ -13,6 +13,7 @@ import {
   PublicKey,
   Signature,
   UInt64,
+  setNumberOfWorkers,
 } from 'o1js';
 import { MinaGuard, Receiver, SetupOwnersInput, TransactionProposal } from '../MinaGuard.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
@@ -73,8 +74,9 @@ describe('MinaGuard - Child Lifecycle', () => {
 
   beforeAll(async () => {
     if (RUN_REAL_PROOF_TESTS) {
-      // check-vk-hash populates this same repository cache before invoking the
-      // opt-in real-proof regression in CI.
+      // A VK hash cache hit skips the compile step, so compile the prover
+      // cache here with a worker limit that fits the CI runner.
+      setNumberOfWorkers(2);
       await MinaGuard.compile({ cache: Cache.FileSystem('../cache') });
     }
   });
