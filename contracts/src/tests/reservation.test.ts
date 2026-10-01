@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { AccountUpdate, Cache, Field, Mina, PrivateKey, PublicKey } from 'o1js';
+import { AccountUpdate, Cache, Field, Mina, PrivateKey, PublicKey, setNumberOfWorkers } from 'o1js';
 import { MinaGuard, SetupOwnersInput } from '../MinaGuard.js';
 import { MAX_OWNERS } from '../constants.js';
 import { computeOwnerChain } from '../list-commitment.js';
@@ -21,6 +21,9 @@ describe('Reserved child configuration', () => {
 
   beforeAll(async () => {
     if (process.env.RUN_REAL_PROOF_TESTS === '1') {
+      // A VK-hash cache hit skips the earlier compile step, so this test must
+      // compile its prover cache on the CI runner. Limit worker memory.
+      setNumberOfWorkers(2);
       await MinaGuard.compile({ cache: Cache.FileSystem('../cache') });
     }
   });
