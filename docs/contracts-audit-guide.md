@@ -67,7 +67,6 @@ the wallet shows only a hash — is the online path's central risk and is analyz
 | `list-commitment.ts` | Owner chain hash circuits: membership proof, add, remove, setup-list commitment + coherence |
 | `proposal-signing.ts` | Application-specific proposal/memo domains and action-specific owner signature messages |
 | `memo.ts` | `memoToField()` (application-tagged, length-prefixed Poseidon commitment of UTF-8 memo bytes), `decodeTxMemo()` (base58 tx memo → plaintext) |
-| `utils.ts` | `ownerKey()` helper (`Poseidon.hash(owner.toFields())`) |
 | `index.ts` | Public exports |
 
 ### On-chain state (12 fields)
@@ -721,7 +720,6 @@ contracts/
 │   ├── list-commitment.ts      # Owner chain-hash circuits: membership, add, remove,
 │   │                           #   computeSetupOwnersChain + assertCoherentSetupOwners
 │   ├── memo.ts                 # memoToField (Poseidon hash) + decodeTxMemo (base58 parse)
-│   ├── utils.ts                # ownerKey() helper
 │   ├── index.ts                # Public exports (consumed by ui/ and offline-cli/)
 │   └── tests/                  # Invariant coverage — the "Primary tests" column of the map
 │       ├── propose.test.ts     approve.test.ts     execute.test.ts
