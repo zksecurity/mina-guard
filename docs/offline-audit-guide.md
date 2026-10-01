@@ -453,6 +453,11 @@ ui/
 
 ---
 
+The CLI lifecycle regression allows 15 minutes for a cold compile plus proof,
+with an additional minute for the parent test to finish. Platform CI allows
+25 minutes for the selected propose tests. These checks still generate a real
+proof; the separate expiry-precondition regression uses `SKIP_PROOFS=1`.
+
 ## Build & distribution
 
 The CLI is a self-contained Bun-compiled binary bundling o1js (with the

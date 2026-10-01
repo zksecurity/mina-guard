@@ -144,7 +144,9 @@ using its network hash for the backend, UI, or desktop bundle. Local builds do
 not need to compile the circuit just to update a committed hash file.
 The testnet runner proves parent-state paths and, when present, proposal-signing
 paths in separate steps so each has its own timeout. The mainnet runner proves
-child reservation and setup. These proof
+child reservation and setup, plus the proposal expiry lifecycle. The offline
+CLI propose regression allows 15 minutes for a cold compile plus proof, and
+its platform CI step allows 25 minutes for the selected tests. These proof
 tests still run on every PR check. A VK cache miss recompiles the circuit,
 including after cache expiry or a merge to a branch that cannot access the
 PR's cache.

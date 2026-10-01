@@ -35,6 +35,10 @@ import {
 } from 'contracts';
 import { decodeTxMemo } from '../build-tx.ts';
 
+// A cold macOS circuit compile can consume most of ten minutes before proving.
+const CLI_PROOF_TIMEOUT_MS = 15 * 60_000;
+const CLI_TEST_TIMEOUT_MS = CLI_PROOF_TIMEOUT_MS + 60_000;
+
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
 const BINARY_PATH = join(import.meta.dirname, '..', '..', 'dist',
   process.platform === 'darwin'
@@ -251,7 +255,7 @@ describe('offline-cli e2e', () => {
 
     console.log('[e2e] Running CLI: propose...');
     // The first CLI invocation compiles a cold prover cache on macOS CI.
-    const result = await runCLI(bundlePath, proposer.key.toBase58(), 900_000);
+    const result = await runCLI(bundlePath, proposer.key.toBase58(), CLI_PROOF_TIMEOUT_MS);
     console.log('[e2e] CLI stderr:', result.stderr);
     if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
 
@@ -306,7 +310,7 @@ describe('offline-cli e2e', () => {
     approvalStore.setCount(pHash, PROPOSED_MARKER.add(1));
 
     console.log('[e2e] Propose OK, hash:', proposalHash);
-  }, 900_000);
+  }, CLI_TEST_TIMEOUT_MS);
 
   it('approve', async () => {
     expect(proposalHash).toBeTruthy();

@@ -66,3 +66,20 @@ expect(cancelled).toBeNull();
 expect(signingRequests).toBe(2);
 expect(broadcasts).toBe(0);
 console.log('PASS: real worker catches a root change during proposal signing; duplicate retry stops before another signature or broadcast; fresh intent remains available (proofless local ledger).');
+
+// Direct E2E signing must return the hash used by proposal status polling,
+// without the banner prefix that the UI adds to its own success messages.
+let directPreflightChecks = 0;
+api!.setPreflightCheck(async () => { directPreflightChecks++; });
+api!.setTestKey(ctx.owners[0].key.toBase58());
+const submitted = await api!.createOnchainProposal(
+  { ...params, input: { ...input, nonce: 2 } },
+  async () => { throw new Error('Direct signing must not call the wallet'); },
+  send, () => {},
+);
+expect(directPreflightChecks).toBe(1);
+expect(submitted?.proposalHash).toBeTruthy();
+expect(submitted?.txHash).toMatch(/^5J[1-9A-HJ-NP-Za-km-z]+$/);
+expect(submitted!.txHash).not.toContain('Transaction submitted:');
+expect(broadcasts).toBe(0);
+console.log('PASS: direct E2E signing returns a bare transaction hash for proposal status polling.');

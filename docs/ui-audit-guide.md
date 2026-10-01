@@ -352,7 +352,10 @@ holds non-secret prefs + pending-tx metadata.
 `setTestKey` / `setSkipProofs` enable direct signing and dummy proofs, gated
 on `NEXT_PUBLIC_E2E_TEST` (`worker.ts:701-716`, `multisigClient.ts:119-138`;
 `skipProofs`/`DummyProof` feed `maybeProve`, `worker.ts:91-120`), which Next
-inlines at build time so the branch is dead code in production.
+inlines at build time so the branch is dead code in production. Direct test
+submission returns a bare transaction hash, just like Auro and Ledger; the
+caller adds the success-message prefix. Proposal status polling stores and
+queries the bare hash.
 
 ---
 

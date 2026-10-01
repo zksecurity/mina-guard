@@ -321,7 +321,7 @@ async function signProposalAuthorization(
   }
 }
 
-/** Signs the fee payer, sends directly to the network, and returns the formatted success message. */
+/** Signs the fee payer, sends directly to the network, and returns the bare transaction hash. */
 async function signAndSend(
   tx: Awaited<ReturnType<typeof Mina.transaction>>,
   progressFn: ProgressFn,
@@ -346,7 +346,7 @@ async function signAndSend(
   }
 
   console.log('[MultisigWorker] Transaction sent:', hash);
-  return `Transaction submitted: ${hash}`;
+  return hash;
 }
 
 const storeCache = new IncrementalStoreCache();
