@@ -5,6 +5,9 @@ const checkpoint = { version: 1, network: 'testnet', address: 'vault', throughBl
   owners: '{"owners":[]}', approvals: '{"entries":{"entries":{}}}', nullifiers: '{"keys":[]}',
   roots: { ownersCommitment: '1', approvalRoot: '2', voteNullifierRoot: '3' } };
 mock.module('../../ui/lib/multisigClient', () => ({
+  computeCreateChildConfigHash: async () => {
+    throw new Error('Unexpected child config computation in transfer export test');
+  },
   exportStoreCheckpoint: async (address: string) => {
     calls.push(`checkpoint:${address}`);
     return checkpoint;
