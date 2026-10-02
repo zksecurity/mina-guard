@@ -302,7 +302,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       // Build a CREATE_CHILD proposal by hand with a wrong config-hash in `data`.
       const badProposal = new TransactionProposal({
         receivers: Array.from({ length: 9 }, () => Receiver.empty()),
-        tokenId: Field(0),
+        tokenId: Field(1),
         txType: TxType.CREATE_CHILD,
         data: Field(99999), // wrong — should be Poseidon([ownersCommitment, threshold, numOwners])
         memoHash: memoToField(''),

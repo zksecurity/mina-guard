@@ -16,6 +16,8 @@ import {
   EXECUTED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
+  NATIVE_TOKEN_ID,
+  memoToField,
   proposalSigningMessage,
   MinaGuard,
   OwnerStore,
@@ -31,7 +33,6 @@ import {
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const DEFAULT_PREVIEW_BASE_URL = 'https://localhost:10001/preview/1';
-const NETWORK_ID = Field(0);
 const TX_FEE = 100_000_000;
 const MAIN_ACCOUNT_FUNDING = UInt64.from(5_000_000_000);
 const TRANSFER_CONTRACT_FUNDING = UInt64.from(8_000_000_000);
@@ -174,13 +175,13 @@ function createTransferProposal(
 
   return new TransactionProposal({
     receivers: padded,
-    tokenId: Field(0),
+    tokenId: NATIVE_TOKEN_ID,
     txType: TxType.TRANSFER,
     data: Field(0),
     nonce: Field(nonce),
     configNonce: Field(configNonce),
     expirySlot: Field(0),
-    networkId: NETWORK_ID,
+    memoHash: memoToField(''),
     guardAddress: contractAddress,
     destination: Destination.LOCAL,
     childAccount: PublicKey.empty(),
@@ -196,14 +197,14 @@ function createAddOwnerProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(newOwner),
-    tokenId: Field(0),
+    tokenId: NATIVE_TOKEN_ID,
     txType: TxType.ADD_OWNER,
     // bind canonical post-add commitment, required by propose Rule 4b
     data: ownerStore.commitmentWithSortedAdd(newOwner),
     nonce: Field(nonce),
     configNonce: Field(configNonce),
     expirySlot: Field(0),
-    networkId: NETWORK_ID,
+    memoHash: memoToField(''),
     guardAddress: contractAddress,
     destination: Destination.LOCAL,
     childAccount: PublicKey.empty(),
@@ -218,13 +219,13 @@ function createRemoveOwnerProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(ownerToRemove),
-    tokenId: Field(0),
+    tokenId: NATIVE_TOKEN_ID,
     txType: TxType.REMOVE_OWNER,
     data: Field(0),
     nonce: Field(nonce),
     configNonce: Field(configNonce),
     expirySlot: Field(0),
-    networkId: NETWORK_ID,
+    memoHash: memoToField(''),
     guardAddress: contractAddress,
     destination: Destination.LOCAL,
     childAccount: PublicKey.empty(),
@@ -239,13 +240,13 @@ function createThresholdProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
-    tokenId: Field(0),
+    tokenId: NATIVE_TOKEN_ID,
     txType: TxType.CHANGE_THRESHOLD,
     data: Field(newThreshold),
     nonce: Field(nonce),
     configNonce: Field(configNonce),
     expirySlot: Field(0),
-    networkId: NETWORK_ID,
+    memoHash: memoToField(''),
     guardAddress: contractAddress,
     destination: Destination.LOCAL,
     childAccount: PublicKey.empty(),
@@ -260,13 +261,13 @@ function createDelegateProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(delegate),
-    tokenId: Field(0),
+    tokenId: NATIVE_TOKEN_ID,
     txType: TxType.SET_DELEGATE,
     data: Field(0),
     nonce: Field(nonce),
     configNonce: Field(configNonce),
     expirySlot: Field(0),
-    networkId: NETWORK_ID,
+    memoHash: memoToField(''),
     guardAddress: contractAddress,
     destination: Destination.LOCAL,
     childAccount: PublicKey.empty(),
@@ -341,10 +342,8 @@ async function createFixtureContract(
     AccountUpdate.fundNewAccount(deployer.pub);
     await zkApp.deploy();
     await zkApp.setup(
-      ownerStore.getCommitment(),
       Field(threshold),
       Field(ownerStore.length),
-      NETWORK_ID,
       new SetupOwnersInput({ owners: paddedOwners(ownerStore) }),
     );
     if (fundContractAmount) {

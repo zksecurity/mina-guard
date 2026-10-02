@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import MinaSignerClient from 'mina-signer';
 
 const acquiredAccountSchema = z.object({
   pk: z.string().min(1),
@@ -124,13 +125,6 @@ export async function sendSignedLightnetPayment(params: {
   nonce: string;
   privateKey: string;
 }): Promise<string> {
-  const { createRequire } = await import('module');
-  const { dirname, join } = await import('path');
-  const require = createRequire(import.meta.url);
-  const o1jsMain = require.resolve('o1js');
-  const signerPath = join(dirname(o1jsMain), 'mina-signer', 'mina-signer.js');
-  const { default: MinaSignerClient } = await import(signerPath);
-
   const client = new MinaSignerClient({ network: 'testnet' });
   const signed = client.signPayment(
     {

@@ -60,7 +60,7 @@ export function restoreStoreCheckpoint(checkpoint: StoreCheckpoint, scope: Store
   return stores;
 }
 
-/** Current v1 requests require a complete public snapshot after the pre-release reset. */
+/** Current v1 requests require a complete public snapshot; checkpoint encoding remains v1. */
 export function storesFromOfflineRequest(request: {
   version: number; minaNetwork: 'mainnet' | 'testnet'; contractAddress: string;
   events: readonly IndexedEvent[]; storeCheckpoint?: StoreCheckpoint;

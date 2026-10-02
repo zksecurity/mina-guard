@@ -29,6 +29,7 @@ export {
   INITIAL_OWNER_CHAIN,
   MAX_OWNERS,
   MAX_RECEIVERS,
+  NATIVE_TOKEN_ID,
   NETWORK_DOMAIN_NAME,
 } from './constants.js';
 

@@ -1,7 +1,7 @@
 import { proposalSigningMessage } from '../proposal-signing.js';
-import { Field, Mina, PrivateKey, PublicKey, Signature, UInt64 } from 'o1js';
+import { Field, Mina, PrivateKey, PublicKey, Signature, TokenId, UInt64 } from 'o1js';
 import { Receiver, TransactionProposal } from '../MinaGuard.js';
-import { MAX_RECEIVERS, TxType, Destination } from '../constants.js';
+import { MAX_RECEIVERS, NATIVE_TOKEN_ID, TxType, Destination } from '../constants.js';
 import {
   setupLocalBlockchain,
   deployAndSetup,
@@ -22,6 +22,10 @@ describe('MinaGuard - Propose', () => {
   beforeEach(async () => {
     ctx = await setupLocalBlockchain();
     await deployAndSetup(ctx, 2);
+  });
+
+  it('pins the native token field to Mina TokenId.default', () => {
+    expect(NATIVE_TOKEN_ID.toString()).toBe(TokenId.default.toString());
   });
 
   it.each(['bare', 'approve'] as const)('rejects %s signatures for propose', async (kind) => {
@@ -202,7 +206,7 @@ describe('MinaGuard - Propose shape rules', () => {
   }>): TransactionProposal {
     return new TransactionProposal({
       receivers: overrides.receivers ?? emptyReceivers(),
-      tokenId: overrides.tokenId ?? Field(0),
+      tokenId: overrides.tokenId ?? Field(1),
       txType: overrides.txType ?? TxType.TRANSFER,
       data: overrides.data ?? Field(0),
       memoHash: (overrides as any).memoHash ?? Field(0),
@@ -389,15 +393,15 @@ describe('MinaGuard - Propose shape rules', () => {
     }).toThrow('data must be zero for this txType');
   });
 
-  // -- Rule 5: only the native MINA token (tokenId 0) is supported -----------
+  // -- Rule 5: only the native MINA token (tokenId 1) is supported -----------
 
-  it('should reject a proposal with a non-zero tokenId', async () => {
+  it('should reject a proposal with a non-native tokenId', async () => {
     const recipient = PrivateKey.random().toPublicKey();
     const receivers = emptyReceivers();
     receivers[0] = new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) });
-    // A non-zero tokenId would be signed and approved but executeTransfers
+    // A non-native tokenId would be signed and approved but executeTransfers
     // always sends the default MINA token, so propose() must reject it.
-    const proposal = buildProposal({ txType: TxType.TRANSFER, receivers, tokenId: Field(1) });
+    const proposal = buildProposal({ txType: TxType.TRANSFER, receivers, tokenId: Field(0) });
     await expect(async () => {
       await tryPropose(proposal);
     }).toThrow('Only the native MINA token');

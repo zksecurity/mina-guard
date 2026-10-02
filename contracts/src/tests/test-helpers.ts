@@ -195,7 +195,7 @@ export function createTransferProposal(
   }
   return new TransactionProposal({
     receivers: padded,
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.TRANSFER,
     data: Field(0),
     memoHash,
@@ -239,7 +239,7 @@ export function createAddOwnerProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(newOwner),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.ADD_OWNER,
     data: expectedAddOwnerData(currentOwners, newOwner),
     memoHash,
@@ -265,7 +265,7 @@ export function createRemoveOwnerProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(ownerToRemove),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.REMOVE_OWNER,
     data: Field(0),
     memoHash,
@@ -291,7 +291,7 @@ export function createThresholdProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.CHANGE_THRESHOLD,
     data: newThreshold,
     memoHash,
@@ -317,7 +317,7 @@ export function createDelegateProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: singleReceiverArray(delegate),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
     memoHash,
@@ -342,7 +342,7 @@ export function createUndelegateProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.SET_DELEGATE,
     data: Field(0),
     memoHash,
@@ -370,7 +370,7 @@ export function createDeleteProposal(
   receivers[0] = new Receiver({ address: PublicKey.empty(), amount: UInt64.zero });
   return new TransactionProposal({
     receivers,
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.TRANSFER,
     data: Field(0),
     memoHash: memoToField(''),
@@ -402,7 +402,7 @@ export function createCreateChildProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.CREATE_CHILD,
     data: childConfigHash(ownersCommitment, threshold, numOwners),
     memoHash: memoToField(''),
@@ -432,7 +432,7 @@ export function createAllocateChildProposal(
   }
   return new TransactionProposal({
     receivers: padded,
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.ALLOCATE_CHILD,
     data: Field(0),
     memoHash: memoToField(''),
@@ -459,7 +459,7 @@ export function createReclaimChildProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.RECLAIM_CHILD,
     data: amount.value,
     memoHash: memoToField(''),
@@ -482,7 +482,7 @@ export function createDestroyChildProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.DESTROY_CHILD,
     data: Field(0),
     memoHash: memoToField(''),
@@ -506,7 +506,7 @@ export function createEnableChildMultiSigProposal(
 ): TransactionProposal {
   return new TransactionProposal({
     receivers: emptyReceivers(),
-    tokenId: Field(0),
+    tokenId: Field(1),
     txType: TxType.ENABLE_CHILD_MULTI_SIG,
     data: enabled,
     memoHash: memoToField(''),

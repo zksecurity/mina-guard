@@ -32,8 +32,7 @@ import {
   TokenId,
 } from 'o1js';
 
-// @ts-ignore — ESM bundle built by ui/package.json postinstall
-import Client from '../../ui/deps/o1js/src/mina-signer/dist/web/index.js';
+import Client from 'mina-signer';
 
 import {
   MinaGuard,
@@ -42,6 +41,7 @@ import {
   SetupOwnersInput,
   MAX_OWNERS,
   MAX_RECEIVERS,
+  NATIVE_TOKEN_ID,
   OwnerStore,
   PublicKeyOption,
   Destination,
@@ -418,7 +418,7 @@ function buildProposalStruct(
   if (proposal.memoHash == null) throw new Error('Proposal is missing its memo commitment');
   return new TransactionProposal({
     receivers: buildTransferReceivers(proposal.receivers),
-    tokenId: Field(proposal.tokenId ?? '0'),
+    tokenId: Field(proposal.tokenId ?? NATIVE_TOKEN_ID.toString()),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
     nonce: Field(proposal.nonce ?? '0'),
@@ -788,7 +788,7 @@ export async function handlePropose(
 
   const proposal = new TransactionProposal({
     receivers,
-    tokenId: Field(0),
+    tokenId: NATIVE_TOKEN_ID,
     txType,
     data,
     nonce: Field(input.nonce),

@@ -34,6 +34,7 @@ import {
   EXECUTED_MARKER,
   PROPOSED_MARKER,
   MAX_RECEIVERS,
+  NATIVE_TOKEN_ID,
   SetupOwnersInput,
   OwnerStore,
   VoteNullifierStore,
@@ -503,7 +504,7 @@ function buildNewProposal(input: NewProposalInput, configNonce: number, contract
 
   return new TransactionProposal({
     receivers,
-    tokenId: Field(0),
+    tokenId: NATIVE_TOKEN_ID,
     txType,
     data,
     memoHash,
@@ -637,7 +638,7 @@ function buildProposalStruct(
   if (proposal.memoHash == null) throw new Error('Proposal is missing its memo commitment');
   return new TransactionProposal({
     receivers: buildTransferReceivers(proposal.receivers),
-    tokenId: Field(proposal.tokenId ?? '0'),
+    tokenId: Field(proposal.tokenId ?? NATIVE_TOKEN_ID.toString()),
     txType: txType ? uiTxTypeToField(txType) : Field(0),
     data: Field(proposal.data ?? '0'),
     memoHash: Field(proposal.memoHash),

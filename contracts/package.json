@@ -34,6 +34,9 @@
     "lint": "eslint src/* --fix",
     "typecheck": "bun run tsc --noEmit"
   },
+  "dependencies": {
+    "o1js": "3.0.0"
+  },
   "devDependencies": {
     "@babel/preset-env": "^7.16.4",
     "@babel/preset-typescript": "^7.16.0",

@@ -54,7 +54,7 @@ jobs:
       matrix:
         # Each leg builds its own platform's targets natively (bun can
         # cross-compile, but native builds let us actually execute the binary
-        # as a smoke test — which exercises the embedded plonk WASM shim and
+        # as a smoke test — which exercises the embedded Kimchi WASM shim and
         # o1js module init on the real platform). `smoke` is the one binary in
         # `targets` that matches the runner's own OS/arch.
         include:
@@ -82,23 +82,11 @@ jobs:
 
       - name: Git checkout
         uses: actions/checkout@v6
-        with:
-          submodules: true # ui/deps/o1js — mina-signer source the CLI bundles
 
-      # Install with --ignore-scripts: the `ui` package has a postinstall that
-      # builds the mina-signer bundle via `npx esbuild`, which fails under
-      # bun's lifecycle-script shell on Windows. Same approach as ci.yml's
-      # macOS/Windows jobs — skip the script, then build mina-signer
-      # explicitly below.
       # --frozen-lockfile pins bun.lock exactly for this signed release, bun
       # does not freeze in CI by default.
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Build mina-signer (o1js submodule)
-        working-directory: ui/deps/o1js/src/mina-signer
-        shell: bash
-        run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
+        run: bun install --frozen-lockfile
 
       - name: Build contracts
         run: bun run --filter contracts build

@@ -154,10 +154,10 @@ describe('verified incremental store checkpoints', () => {
     expect(roots(await cache.get(h.source))).toEqual(roots(b));
   });
 
-  it('accepts snapshot v1, rejects incompatible or inconsistent requests', () => {
+  it('accepts request v1 with checkpoint v1, rejects incompatible or inconsistent requests', () => {
     const stores = rebuildStores(history);
     const request = { version: 1, minaNetwork: scope.network, contractAddress: scope.address, events: history };
-    const v1 = { ...request, version: 1, events: [], storeCheckpoint: checkpointStores(stores, scope, null) };
+    const v1 = { ...request, events: [], storeCheckpoint: checkpointStores(stores, scope, null) };
     expect(roots(storesFromOfflineRequest(v1, roots(stores)))).toEqual(roots(stores));
     for (const invalid of [ { ...v1, version: 2 }, { ...v1, version: 4 }, { ...v1, version: 3 }, { ...v1, storeCheckpoint: undefined }, { ...v1, events: history } ]) {
       expect(() => storesFromOfflineRequest(invalid, roots(stores))).toThrow();

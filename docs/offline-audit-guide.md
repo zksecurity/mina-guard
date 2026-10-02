@@ -5,7 +5,7 @@ The online creation flow also detects proposals another owner already created an
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests remain version 2 and signed responses version 1; the CLI protocol is unchanged. See [design and boundaries](transaction-coordination-design.md).
+**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests and signed responses remain version 1. See [design and boundaries](transaction-coordination-design.md).
 
 This document describes the **air-gapped signing path**: the bundle
 export/import UI inside the web app (`ui/lib/offline-signing.ts`,
@@ -226,8 +226,10 @@ takes over.
 The new hash domains are a breaking change: new proposal hashes, purpose-bound
 owner signatures, memo commitments, owner commitments, vote-nullifier keys,
 child configuration hashes, and verification keys. There is no legacy
-signature fallback. Request and response formats both use v1 as a pre-release
-reset; this version number does not distinguish older v1 files from current files.
+signature fallback. New proposals sign the native MINA token ID `Field(1)`
+instead of the former `Field(0)` sentinel. Request and response formats both
+remain v1; this version number does not distinguish older v1 files from current
+files.
 Discard all earlier requests and signed responses and regenerate them with matching
 UI and CLI builds. Requests must include a checkpoint and empty events; legacy
 full-event requests are rejected. Existing test vaults require fresh deployment;
@@ -440,7 +442,7 @@ offline-cli/
 │   │                   #   web worker 1:1)
 │   ├── summary.ts      # Human-readable bundle summary + y/N confirmation
 │   │                   #   (the operator's tamper check — duplicated formatters)
-│   ├── wasm-shim.ts    # Embeds plonk + kimchi WASM into the compiled binary
+│   ├── wasm-shim.ts    # Embeds Kimchi WASM into the compiled binary
 │   │                   #   (patches fs.readFileSync; redirects kimchi_wasm.cjs
 │   │                   #   resolution inside Bun-compiled binaries via a temp-dir
 │   │                   #   stub — see the file's comments before touching it)
@@ -448,7 +450,7 @@ offline-cli/
 ├── cache/              # o1js compile cache (prover/verifier keys, SRS) — NOT
 │                       #   committed (gitignored); generated locally on first
 │                       #   run, keyed to the circuit (per network domain)
-└── package.json        # deps: contracts (workspace), mina-signer (ui submodule)
+└── package.json        # deps: contracts (workspace), mina-signer (pinned npm)
 
 ui/
 ├── lib/offline-signing.ts        # Bundle builders + types (main thread; fetches
@@ -467,10 +469,9 @@ proof; the separate expiry-precondition regression uses `SKIP_PROOFS=1`.
 
 ## Build & distribution
 
-The CLI is a self-contained Bun-compiled binary bundling o1js (with the
-Kimchi/Plonk prover), the embedded prover WASM (via `wasm-shim.ts`), the
-browser build of `mina-signer` (the same `ui/deps/o1js` submodule build
-the UI uses — see the dependency note in the UI guide), and the `contracts`
+The CLI is a self-contained Bun-compiled binary bundling o1js, the embedded
+Kimchi prover WASM (via `wasm-shim.ts`), pinned npm `mina-signer@4.1.0`
+(also used by the UI), and the `contracts`
 source:
 
 ```bash
@@ -518,13 +519,16 @@ recompiled.
 - **`contracts` (`workspace:*`)** — the circuit itself plus the shared struct/
   store/memo helpers; the CLI's reconstruction must agree with the contract
   exactly, same as the UI. Inlined into the compiled binary.
-- **`mina-signer` (`file:../ui/deps/o1js/src/mina-signer`)** — proposal-hash
-  field signing and network-aware fee-payer signing. Imported as the
-  postinstall-built browser ESM bundle from the `ui/deps/o1js` submodule; the
-  byte-identity note from the UI guide applies here too.
-- **`o1js` (3.0.0-mesa.final, hoisted)** — compile/prove; the wasm shim exists
-  to embed its prover WASM (plonk + kimchi) into the single-file binary and to
+- **`mina-signer` (`4.1.0`)** — proposal-hash field signing and network-aware fee-payer
+  signing. The package is pinned directly in the CLI and UI manifests.
+- **`o1js` (`3.0.0`, pinned directly in the CLI and contracts)** — compile/prove; the wasm shim exists
+  to embed Kimchi WASM into the single-file binary and to
   keep its CJS module resolution working inside Bun's virtual filesystem.
+
+Before merging an `o1js` or `mina-signer` pin change, run the complete offline
+end-to-end suite with real proofs (`cd offline-cli && bun test src/tests/offline-cli-e2e.test.ts`)
+on a machine with sufficient memory. A run with `SKIP_PROOFS=1` checks signing and
+transaction construction, but does not satisfy the proving gate.
 
 ## Safe child funding
 

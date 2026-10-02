@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="${1:-$(git rev-parse --show-toplevel)}"
 
-# Git index entries include file paths, blob IDs, and the o1js submodule commit.
+# Git index entries include file paths and blob IDs.
 # CI checks out a clean tree, so the index describes exactly what it compiles.
 {
   printf 'minaguard-vk-inputs-v1\nbun-1.3.10\n'
@@ -20,6 +20,5 @@ root="${1:-$(git rev-parse --show-toplevel)}"
     dev-helpers/tsconfig.json \
     dev-helpers/commands/vk-hash-compile.ts \
     contracts/scripts/vk-input-fingerprint.sh \
-    .github/workflows/vk-hashes.yml \
-    ui/deps/o1js
+    .github/workflows/vk-hashes.yml
 } | sha256sum | cut -d ' ' -f1

@@ -26,8 +26,6 @@ jobs:
     steps:
       - name: Git checkout
         uses: actions/checkout@v6
-        with:
-          submodules: true
 
       # Runner is expected to have `docker compose` v2 pre-installed
       # system-wide (`/usr/libexec/docker/cli-plugins/docker-compose`). We

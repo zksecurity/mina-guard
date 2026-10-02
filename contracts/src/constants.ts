@@ -25,6 +25,9 @@ export const MAX_OWNERS = 20;
 // transaction cost budget caps out at 9. At 10 receivers the transaction fails with
 // "transaction is too expensive" during proving.
 export const MAX_RECEIVERS = 9;
+// Mina's default token ID is Field(1) in the pinned protocol/o1js version.
+// Keep this explicit because tokenId is part of the signed proposal hash.
+export const NATIVE_TOKEN_ID = Field(1);
 export const INITIAL_OWNER_CHAIN = Poseidon.hashWithPrefix('owner-chain', []);
 
 export const PROPOSED_MARKER = Field(1);

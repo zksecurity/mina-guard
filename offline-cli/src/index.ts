@@ -81,7 +81,7 @@ function readBundle(path: string): OfflineBundle {
 const bundle = readBundle(bundlePath);
 
 if (bundle.version !== 1) {
-  fatal(`Unsupported bundle version: ${bundle.version} (expected 1)`);
+  fatal(`Unsupported bundle version: ${bundle.version} (expected 1; export a new request with the current UI)`);
 }
 
 // -- Dispatch ---------------------------------------------------------------

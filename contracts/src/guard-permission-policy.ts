@@ -42,7 +42,7 @@ export const GUARD_PERMISSION_KINDS: Record<
   access: 'None',
 };
 
-// o1js@3.0.0-mesa.final's current transaction version, committed by
+// o1js@3.0.0's current transaction version, committed by
 // impossibleDuringCurrentVersion(). vault-security.test.ts proves this stays
 // equal to the version embedded in GUARD_PERMISSIONS.
 export const GUARD_SET_VERIFICATION_KEY_TXN_VERSION = '4';

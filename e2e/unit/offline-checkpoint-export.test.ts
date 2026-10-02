@@ -21,7 +21,7 @@ afterAll(() => {
 });
 
 const proposal = {
-  proposalHash: '100', proposer: 'owner', toAddress: null, tokenId: '0', txType: 'transfer', data: '0',
+  proposalHash: '100', proposer: 'owner', toAddress: null, tokenId: '1', txType: 'transfer', data: '0',
   nonce: '1', configNonce: '0', expirySlot: '0', guardAddress: 'vault', destination: '0',
   childAccount: null, memoHash: '0', receivers: [],
 };

@@ -50,8 +50,6 @@ jobs:
 
       - name: Git checkout
         uses: actions/checkout@v6
-        with:
-          submodules: true # ui/deps/o1js is a submodule the UI build needs
 
       - name: Download VK manifest for this commit
         uses: actions/download-artifact@v4
@@ -62,24 +60,10 @@ jobs:
         shell: bash
         run: bash contracts/scripts/verify-vk-manifest.sh
 
-      # Install with --ignore-scripts: the `ui` package has a postinstall that
-      # builds the mina-signer bundle via `npx esbuild`, which fails under bun's
-      # lifecycle-script shell on Windows ("bunsh: No such file or directory").
-      # ci.yml's macOS/Windows jobs do the same — skip the script here, then run
-      # the mina-signer build explicitly below (with esbuild now installed).
       # --frozen-lockfile pins bun.lock exactly for this signed release, bun
       # does not freeze in CI by default.
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      # The UI build imports mina-signer from the o1js submodule; its web bundle
-      # is not committed for every platform, so (re)build it here — replacing the
-      # skipped postinstall. Matches the step in ci.yml. Harmless on Linux too,
-      # so we run it unconditionally to keep the three legs identical.
-      - name: Build mina-signer (o1js submodule)
-        working-directory: ui/deps/o1js/src/mina-signer
-        shell: bash
-        run: bunx esbuild --bundle --minify mina-signer.ts --outfile=./dist/web/index.js --format=esm --target=es2021 --platform=browser --external:crypto --external:@noble/hashes/* --external:blakejs --external:js-sha256
+        run: bun install --frozen-lockfile
 
       - name: Build contracts
         run: bun run --filter contracts build

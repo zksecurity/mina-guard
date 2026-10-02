@@ -47,8 +47,6 @@ jobs:
     runs-on: [self-hosted, deploy]
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Download VK manifest for this commit
         uses: actions/download-artifact@v4

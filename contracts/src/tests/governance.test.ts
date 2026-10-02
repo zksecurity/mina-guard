@@ -411,7 +411,7 @@ describe('MinaGuard - Governance', () => {
       ];
       const oldProposal = new TransactionProposal({
         receivers,
-        tokenId: Field(0),
+        tokenId: Field(1),
         txType: TxType.TRANSFER,
         data: Field(0),
         memoHash: memoToField(''),

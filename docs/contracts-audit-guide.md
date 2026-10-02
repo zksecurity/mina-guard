@@ -184,7 +184,7 @@ class Receiver extends Struct({
 
 class TransactionProposal extends Struct({
   receivers:    Provable.Array(Receiver, MAX_RECEIVERS),  // Fixed-size array of recipients
-  tokenId:      Field,       // Token ID (Field(0) for MINA)
+  tokenId:      Field,       // Token ID (Field(1) for native MINA)
   txType:       Field,       // TxType value
   data:         Field,       // Context-dependent payload (see below)
   memoHash:     Field,       // Poseidon hash of the memo bytes (memoToField); bound into hash()
@@ -257,7 +257,7 @@ Propose-time rules enforced in `propose()`:
 - All receiver amounts must be zero for non-transfer proposals, including unused slots.
 - `data` must be `Field(0)` unless txType is `CHANGE_THRESHOLD`, `CREATE_CHILD`, `RECLAIM_CHILD`, `ENABLE_CHILD_MULTI_SIG`, or `ADD_OWNER`. For `ADD_OWNER`, `data` must be non-zero (the expected post-add owners commitment).
 - `CHANGE_THRESHOLD` data must be between one and the current owner count; `ENABLE_CHILD_MULTI_SIG` data must be zero or one. Execution repeats these checks.
-- `tokenId` must be `Field(0)` — only the native MINA token is supported (`executeTransfers` always sends on the default token, so a non-zero `tokenId` would be approved as a MINA send).
+- `tokenId` must be `Field(1)` (`NATIVE_TOKEN_ID`, equal to Mina's `TokenId.default`) — only native MINA is supported. `executeTransfers` sends on the default token, so a different signed token ID is rejected at proposal time.
 - Every non-empty receiver slot must be a curve point (`assertOnCurveIf`), so no proposal can be signed that pays, adds as owner, or delegates to an address no private key exists for.
 - Every empty receiver slot must carry a zero amount. Receiver events and `executeTransfers` zero the amount of an empty slot while the proposal hash commits the raw value, so a non-zero amount there would produce a proposal that event-sourced clients cannot rebuild or approve.
 - `destination` and `childAccount` must be consistent: REMOTE requires a non-empty `childAccount`, LOCAL requires an empty one. For REMOTE, `guardAddress` must be the parent.
@@ -319,7 +319,7 @@ initialization.
 4. Assert `destination` and `childAccount` are consistent
 5. Range-check expiry and require inclusion by its deadline; assert proposal nonce freshness for the relevant domain (`nonce` or `parentNonce`; `CREATE_CHILD` requires `0`)
 6. Enforce per-txType propose rules (see TxType table)
-7. Assert `tokenId == Field(0)` (only native MINA is supported)
+7. Assert `tokenId == Field(1)` (only native MINA is supported)
 8. Verify proposer's signature over `[proposalSigningMessage(proposalHash, 'propose')]`
 9. Check and set vote nullifier (prevents re-proposal)
 10. Assert approval slot is empty (`Field(0)`), then write `PROPOSED_MARKER + 1`
@@ -583,8 +583,8 @@ assumptions it *does* rest on:
 
 - **o1js / `mina-signer` correctness.** Poseidon hashing, the proof system, and signature
   verification are trusted primitives (see [Dependencies](#dependencies)). The signing path and the
-  proving path must agree on encoding — that identity is re-checked whenever the `deps/o1js`
-  submodule or the o1js pin moves.
+  proving path must agree on encoding — re-check signatures and commitments whenever either
+  pinned npm package changes.
 - **The deployer's genesis choices.** The initial owner set is the deployer's to
   choose; the contract only guarantees the stored commitment cannot disagree with the announced
   owner list (see [Setup](#on-chain-multi-step-flow)). Depositors verify setup events first.
@@ -735,17 +735,17 @@ contracts/
 
 ## Dependencies
 
-- **`o1js` (`3.0.0-mesa.final`, hoisted at the repo root)** — the proving system, zkApp runtime,
+- **`o1js` (`3.0.0`, a direct contracts dependency)** — the proving system, zkApp runtime,
   and hashing/signature primitives (Poseidon, `Signature.verify`). This is the cryptographic
-  foundation of the TCB. The **Mesa** branch is required specifically because MinaGuard's 12 state
-  fields (13 slots) exceed o1js's legacy 8-slot cap. The circuit's correctness assumptions are o1js's
-  correctness assumptions.
-- **`mina-signer`** — used by the clients (UI worker, offline CLI) that build and sign the structs
-  this contract verifies, resolved from the pinned `ui/deps/o1js` submodule. It is **not** a
-  contract-package dependency, but it is in the contract's trust story: the signing path's
-  commitment/signature encoding must match what the proving path and this circuit expect. The
-  submodule's `mina-signer` source is byte-identical to the copy inside `o1js@3.0.0-mesa.final`;
-  re-verify that identity whenever either pin moves (see
+  foundation of the TCB. MinaGuard's 12 state fields (13 slots) exceed the legacy 8-slot cap;
+  stable `3.0.0` supports Mesa's 32 slots. The earlier `3.0.0-mesa.final` pin preceded the stable
+  release; both produce the same testnet and mainnet VK hashes for this circuit. On any o1js change,
+  compile both domains, compare VK hashes, run a genuine proof, and ship matching deployment and
+  offline CLI VK fingerprints if a hash changes.
+- **`mina-signer` (`4.1.0`)** — pinned separately by the UI, backend lightnet helper, and offline
+  CLI for signing and transaction commitments. It is part of the contract's trust story: its
+  signature and commitment encoding must match what o1js and the circuit expect. Cross-network
+  signing and Ledger commitment tests cover this boundary (see
   [`ui-audit-guide.md` § Dependencies](./ui-audit-guide.md#dependencies)).
 
 The clients that reuse this package's source (the `TransactionProposal` struct, `memoToField`, the
