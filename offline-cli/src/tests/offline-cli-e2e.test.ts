@@ -35,6 +35,10 @@ import {
 } from 'contracts';
 import { decodeTxMemo } from '../build-tx.ts';
 
+// A cold macOS circuit compile can consume most of ten minutes before proving.
+const CLI_PROOF_TIMEOUT_MS = 15 * 60_000;
+const CLI_TEST_TIMEOUT_MS = CLI_PROOF_TIMEOUT_MS + 60_000;
+
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
 const BINARY_PATH = join(import.meta.dirname, '..', '..', 'dist',
   process.platform === 'darwin'
@@ -251,7 +255,7 @@ describe('offline-cli e2e', () => {
 
     console.log('[e2e] Running CLI: propose...');
     // The first CLI invocation compiles a cold prover cache on macOS CI.
-    const result = await runCLI(bundlePath, proposer.key.toBase58(), 900_000);
+    const result = await runCLI(bundlePath, proposer.key.toBase58(), CLI_PROOF_TIMEOUT_MS);
     console.log('[e2e] CLI stderr:', result.stderr);
     if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
 
@@ -306,7 +310,7 @@ describe('offline-cli e2e', () => {
     approvalStore.setCount(pHash, PROPOSED_MARKER.add(1));
 
     console.log('[e2e] Propose OK, hash:', proposalHash);
-  }, 900_000);
+  }, CLI_TEST_TIMEOUT_MS);
 
   it('approve', async () => {
     expect(proposalHash).toBeTruthy();
@@ -408,6 +412,68 @@ describe('offline-cli e2e', () => {
 
     console.log('[e2e] Approve OK');
   }, 600_000);
+
+  it('offline propose and approve include the shared contract expiry precondition', async () => {
+    const signer = owners[2];
+    const events = (await zkApp.fetchEvents()).map((e) => ({
+      eventType: e.type,
+      payload: JSON.parse(safeStringify(e.event.data)),
+    }));
+    const base = {
+      version: 1,
+      minaNetwork: 'testnet',
+      contractAddress: zkAppAddress.toBase58(),
+      feePayerAddress: signer.pub.toBase58(),
+      accounts: {
+        [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
+        [signer.pub.toBase58()]: snapshotAccount(signer.pub),
+      },
+      events: [],
+      storeCheckpoint: checkpointStores(rebuildStores(events), {
+        network: 'testnet', address: zkAppAddress.toBase58(),
+      }, null),
+    };
+
+    async function sign(name: string, fields: Record<string, unknown>) {
+      const path = join(tmpDir, `expiry-${name}.json`);
+      writeFileSync(path, JSON.stringify({ ...base, ...fields }));
+      return runCLI(path, signer.key.toBase58(), 120_000, { SKIP_PROOFS: '1' });
+    }
+    function slotRange(stdout: string) {
+      const output = JSON.parse(stdout);
+      const update = output.transaction.accountUpdates.find(
+        (u: { body: { publicKey: string } }) => u.body.publicKey === base.contractAddress,
+      );
+      expect(update).toBeDefined();
+      return update.body.preconditions.network.globalSlotSinceGenesis;
+    }
+
+    const proposed = await sign('propose', {
+      action: 'propose', configNonce: 0,
+      input: { ...proposalInput, nonce: 2, expirySlot: 12 },
+    });
+    expect(proposed.code).toBe(0);
+    expect(slotRange(proposed.stdout)).toEqual({ lower: '0', upper: '12' });
+
+    const approved = await sign('approve', {
+      action: 'approve',
+      proposal: {
+        proposalHash, proposer: owners[0].pub.toBase58(), toAddress: null,
+        tokenId: '0', txType: 'transfer', data: '0', nonce: '1', configNonce: '0',
+        expirySlot: '0', guardAddress: base.contractAddress, destination: 'local',
+        childAccount: null, memoHash: memoToField('').toString(), receivers: proposalReceivers,
+      },
+    });
+    expect(approved.code).toBe(0);
+    expect(slotRange(approved.stdout)).toEqual({ lower: '0', upper: '4294967295' });
+
+    const invalid = await sign('out-of-range', {
+      action: 'propose', configNonce: 0,
+      input: { ...proposalInput, nonce: 2, expirySlot: 4294967296 },
+    });
+    expect(invalid.code).not.toBe(0);
+    expect(invalid.stdout).not.toContain('offline-signed-tx');
+  }, 360_000);
 
   it('refuses a bundle whose events do not reproduce the vault snapshot', async () => {
     // Anyone can append events to a vault; one forged approval must stop the CLI before it proves.

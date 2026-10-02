@@ -191,7 +191,7 @@ class TransactionProposal extends Struct({
   memoHash:     Field,       // Poseidon hash of the memo bytes (memoToField); bound into hash()
   nonce:        Field,       // Ordered execution nonce (LOCAL or child-REMOTE domain)
   configNonce:  Field,       // Must match on-chain configNonce
-  expirySlot:   Field,       // Global slot deadline (0 = no expiry)
+  expirySlot:   Field,       // UInt32 global slot deadline (0 = no expiry)
   guardAddress: PublicKey,   // Must match the guard the proposal lives on
   destination:  Field,       // LOCAL or REMOTE (see below)
   childAccount: PublicKey,   // Target child for REMOTE; empty for LOCAL
@@ -249,6 +249,7 @@ runs an execute method for them. Replay protection lives on the child in `childE
 | `ENABLE_CHILD_MULTI_SIG` | 9 | `REMOTE` | `0` or `1` | Empty |
 
 Propose-time rules enforced in `propose()`:
+- `expirySlot` must fit in 32 bits. A non-zero expiry sets a ledger precondition requiring inclusion at or before that slot; the same check applies to approval and LOCAL/REMOTE execution.
 - `receivers[0]` must be non-empty for `ADD_OWNER`/`REMOVE_OWNER`.
 - `receivers[0]` must be empty for `CHANGE_THRESHOLD`.
 - `receivers[0]` must be empty for `CREATE_CHILD`, `RECLAIM_CHILD`, `DESTROY_CHILD` and `ENABLE_CHILD_MULTI_SIG`: their execute paths never read receivers, so a filled slot could only advertise a payment that never happens.
@@ -314,7 +315,7 @@ initialization.
 2. Verify proposer is an owner (chain hash witness)
 3. Assert `configNonce`, `guardAddress` match on-chain values
 4. Assert `destination` and `childAccount` are consistent
-5. Assert proposal nonce freshness for the relevant domain (`nonce` or `parentNonce`; `CREATE_CHILD` requires `0`)
+5. Range-check expiry and require inclusion by its deadline; assert proposal nonce freshness for the relevant domain (`nonce` or `parentNonce`; `CREATE_CHILD` requires `0`)
 6. Enforce per-txType propose rules (see TxType table)
 7. Assert `tokenId == Field(0)` (only native MINA is supported)
 8. Verify proposer's signature over `[proposalSigningMessage(proposalHash, 'propose')]`
@@ -328,7 +329,7 @@ initialization.
 1. Assert `childMultiSigEnabled == 1` if this is a child guard
 2. Verify approver is an owner
 3. Assert `configNonce`, `guardAddress` match
-4. Assert proposal nonce freshness for the relevant domain
+4. Range-check expiry and require inclusion by its deadline; assert proposal nonce freshness for the relevant domain
 5. Verify signature over `[proposalSigningMessage(proposalHash, 'approve')]`
 6. Assert proposal exists (`count >= PROPOSED_MARKER`) and not executed
 7. Check and set vote nullifier
@@ -342,7 +343,7 @@ initialization.
 - `txType` matches the method, `destination == LOCAL`
 - `configNonce`, `guardAddress` match on-chain
 - `proposal.nonce == this.nonce + 1`
-- Proposal not expired (if `expirySlot != 0`, asserts `globalSlotSinceGenesis <= expirySlot`)
+- Expiry fits in 32 bits; if non-zero, the ledger requires `globalSlotSinceGenesis <= expirySlot` at inclusion
 - Not executed, exists, and threshold satisfied
 - Approval witness verified against `approvalRoot`
 
@@ -630,7 +631,7 @@ match, and compiles both distinct domains on a cache miss).
 | No LOCAL re-execution | `EXECUTED_MARKER` replaces count after execution |
 | No REMOTE re-execution | `EXECUTED_MARKER` written to child's `childExecutionRoot` |
 | Stale proposals rejected | `configNonce` in proposal must match on-chain value; bumped by governance changes and by child destroy/disable |
-| Time-bounded proposals | Optional `expirySlot` checked against `globalSlotSinceGenesis` |
+| Time-bounded proposals | UInt32 expiry and ledger slot range checked at inclusion for propose, approve, and LOCAL/REMOTE execute; zero means no expiry |
 | No proposal substitution | Approvals keyed by content hash, not sequential ID |
 | Setup owner list coherent with commitment | `ownersCommitment` computed in-circuit from `initialOwners` (`computeSetupOwnersChain`); non-empty padding, empty/non-curve active slots and duplicate x-coordinates rejected (`assertCoherentSetupOwners`) |
 | One secret, one owner slot | Owner identity is the x-coordinate: `assertCoherentSetupOwners` and `addOwnerToCommitment` compare `x` only, so the negation of an owner (same secret, flipped parity, distinct base58) cannot be committed alongside it |

@@ -477,19 +477,17 @@ export class MinaGuard extends SmartContract {
       .assertTrue('Remote destination proposals must be proposed on a root guard');
   }
 
-  /** Asserts optional expiry slot has not passed. */
+  /** Requires inclusion at or before the expiry slot; zero means no expiry. */
   private assertProposalNotExpired(proposal: TransactionProposal): void {
+    const expirySlot = UInt32.Unsafe.fromField(proposal.expirySlot);
+    UInt32.check(expirySlot);
     const noExpiry = proposal.expirySlot.equals(Field(0));
-    const globalSlot = this.network.globalSlotSinceGenesis.get();
-    // Use a range precondition so the tx isn't rejected when the slot advances
-    // between proof generation and inclusion. For proposals with an expiry, the
-    // upper bound is the expiry slot; for no-expiry proposals it's uncapped.
+    // The ledger checks the actual slot at inclusion. A range lets the slot
+    // advance after proving, provided it does not pass the signed deadline.
     this.network.globalSlotSinceGenesis.requireBetween(
       UInt32.from(0),
-      Provable.if(noExpiry, UInt32, UInt32.MAXINT(), UInt32.Unsafe.fromField(proposal.expirySlot))
+      Provable.if(noExpiry, UInt32, UInt32.MAXINT(), expirySlot)
     );
-    const notExpired = globalSlot.value.lessThanOrEqual(proposal.expirySlot);
-    noExpiry.or(notExpired).assertTrue('Proposal expired');
   }
 
   private assertFreshProposalNonce(proposal: TransactionProposal): void {
@@ -969,6 +967,7 @@ export class MinaGuard extends SmartContract {
 
     this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalDestinationAndChildAccount(proposal);
+    this.assertProposalNotExpired(proposal);
     this.assertFreshProposalNonce(proposal);
 
     // Only known txTypes are acceptable.
@@ -1137,6 +1136,7 @@ export class MinaGuard extends SmartContract {
     this.assertOwnerMembership(approver, ownerWitness, ownersCommitment);
     this.assertProposalConfigNetworkAndGuard(proposal);
     this.assertProposalDestinationAndChildAccount(proposal);
+    this.assertProposalNotExpired(proposal);
     this.assertFreshProposalNonce(proposal);
 
     const proposalHash = proposal.hash();
