@@ -44,6 +44,7 @@ import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { usePreflightCheck } from '@/hooks/usePreflightCheck';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
+import { countNewRecipientSlots } from '@/lib/recipient-account-fee';
 import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse, downloadOfflineBundle } from '@/components/OfflineSigningFlow';
 
 /**
@@ -100,6 +101,7 @@ export default function TransactionDetailPage() {
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
   const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
   const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
+  const [checkingRecipientFee, setCheckingRecipientFee] = useState(false);
 
   // Per-signer approve self-disable: did *this* wallet submit an approval
   // that's still in flight for this proposal? Watched via PENDING_TXS_CHANGED
@@ -441,6 +443,23 @@ export default function TransactionDetailPage() {
     } catch (err) {
       void startOperation('Execute proposal', async () => { throw err; });
       return;
+    }
+    if (captured.proposal.txType === 'transfer') {
+      let newAccountCount: number;
+      setCheckingRecipientFee(true);
+      try {
+        newAccountCount = await countNewRecipientSlots(captured.proposal.receivers);
+      } catch (err) {
+        void startOperation('Check recipient accounts', async () => { throw err; });
+        return;
+      } finally {
+        setCheckingRecipientFee(false);
+      }
+      if (newAccountCount > 0 && !window.confirm(
+        `${newAccountCount} recipient account(s) appear new. Executing this proposal will cost ` +
+        `your wallet approximately ${newAccountCount} MINA for account creation, plus the ` +
+        'transaction fee. This estimate can change before inclusion. Continue?',
+      )) return;
     }
     let success = false;
     await startOperation('Building execute transaction...', async (onProgress) => {
@@ -819,6 +838,18 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {proposal.txType === 'transfer' && proposal.status === 'pending' && (
+          <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
+            <p className="font-semibold mb-1">New recipient account costs</p>
+            <p>
+              Whoever executes this transfer pays 1 MINA for each recipient account that is new
+              at execution, plus the transaction fee. The vault does not reimburse them. If no
+              one pays, later proposals can wait behind this nonce until the transfer executes
+              or an approved replacement takes its place.
+            </p>
+          </div>
+        )}
+
         {!isLocalPending && (
           <div className="bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
             <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Confirmations</h3>
@@ -933,10 +964,10 @@ export default function TransactionDetailPage() {
                   {canExecute && (
                     <button
                       onClick={handleExecute}
-                      disabled={isOperating}
+                      disabled={isOperating || checkingRecipientFee}
                       className="flex-1 border border-safe-green text-safe-green font-semibold rounded-lg py-3 text-sm hover:bg-safe-green/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
+                      {checkingRecipientFee ? 'Checking recipient accounts...' : isOperating ? 'Waiting for pending transaction...' : 'Execute Proposal'}
                     </button>
                   )}
                   {canDelete && (

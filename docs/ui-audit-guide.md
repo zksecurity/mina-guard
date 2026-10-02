@@ -59,6 +59,15 @@ re-checks threshold and moves funds / applies the governance change. In all thre
 owner actually **signs is an application-tagged, action-specific digest of the proposal hash — a single `Field`** (blind signing; see the
 threat model), not the human-readable transaction.
 
+For an ordinary transfer to new recipient accounts, the executor pays their
+account-creation costs from their own wallet, in addition to the transaction
+fee; the vault does not reimburse them. The transfer form and proposal detail
+warn owners before approval. Before online execution the UI checks recipient
+accounts again and asks the executor to confirm the estimated extra cost.
+Account existence can change before inclusion, and an unexecuted next-nonce
+proposal can delay later proposals. See the accepted risk in
+[`security-audit-guide.md`](./security-audit-guide.md#accepted-risks-and-known-limitations).
+
 **Proposal deadlines apply to all three stages.** The shared contract rejects
 expiry values outside `0..4294967295`. Zero means no expiry; a non-zero deadline
 requires proposing, approving, and executing transactions to be included at or

@@ -62,6 +62,7 @@ function expectProposalCall(call: { method: string; params: any }): any {
 
 test('transfer form: recipients, memo, and next free nonce', async ({ page }) => {
   await openFormWithCapture(page, 'transfer');
+  await expect(page.getByText(/Whoever executes this transfer pays/)).toBeVisible();
   await fillRecipients(page, `${RECIPIENT},1\n${OWNER_2},0.5`);
   const memoInput = page.locator('input[placeholder*="memo"]').or(
     page.locator('input[placeholder*="Short note"]')

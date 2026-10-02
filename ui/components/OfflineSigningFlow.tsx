@@ -5,6 +5,7 @@ import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
 import { assertOfflineResponseVersion } from '@/lib/offline-format';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { assessPreflightRetry } from '@/lib/multisigClient';
+import { countNewRecipientSlotsFromSnapshot } from '@/lib/recipient-account-fee';
 import { fetchProposal } from '@/lib/api';
 import { preflightBeforeSend, preflightFailureMessage, withStoreRecovery, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD } from '@/lib/preflight-flow';
 
@@ -232,12 +233,12 @@ function extractBundleWarnings(bundle: any): string[] {
     }
   }
 
-  if (bundle?.action === 'execute' && bundle.receiverAccountExists) {
-    const newAccounts = Object.entries(bundle.receiverAccountExists)
-      .filter(([, exists]) => !exists)
-      .map(([addr]) => addr);
-    if (newAccounts.length > 0) {
-      warnings.push(`${newAccounts.length} receiver(s) don't have on-chain accounts. Fee payer needs an extra ${newAccounts.length} MINA for account creation.`);
+  if (bundle?.action === 'execute' && bundle?.proposal?.txType === 'transfer' && bundle.receiverAccountExists) {
+    const newRecipientSlots = countNewRecipientSlotsFromSnapshot(
+      bundle.proposal.receivers ?? [], bundle.receiverAccountExists,
+    );
+    if (newRecipientSlots > 0) {
+      warnings.push(`${newRecipientSlots} recipient slot(s) appear to need account creation funding in this snapshot. The executor pays approximately ${newRecipientSlots} MINA for account creation, plus the transaction fee. Account status can change before broadcast.`);
     }
   }
 
