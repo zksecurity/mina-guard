@@ -30,10 +30,8 @@ This breaking release requires fresh vaults and fresh proposals; there is no leg
 hash/signature acceptance path. See the [offline migration](offline-audit-guide.md#bundle-format-reference-requests-version-1-signed-responses-version-1).
 
 The regression `proposal-signing.test.ts` rejects legacy/application and
-action substitutions. Its opt-in real-proof test calls `proposal-signing-proof.ts`,
-checks the compiled VK against `.vk-hash`, and proves propose, approve, and execution
-by a non-owner. Run from `contracts/` with `RUN_REAL_PROOF_TESTS=1` and the selected
-`MINA_NETWORK_DOMAIN`; follow the memory limits in `AGENTS.md`.
+action substitutions with fast proofs. CI compiles or reuses the network VK
+hashes but does not prove a contract transaction.
 
 ## General overview
 
@@ -776,5 +774,5 @@ pre-initialization recovery method is added. Operators must complete child setup
 before sending funds by any route. This residual risk is not full remediation of
 arbitrary pre-initialization deposits.
 
-The proof-enabled CI filter (`genuine MinaGuard proof`) includes the allocation
-regression, checking recipient state binding and successful ledger submission.
+The fast allocation regression checks recipient state binding and successful
+ledger submission with proofs disabled.

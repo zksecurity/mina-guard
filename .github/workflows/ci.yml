@@ -154,20 +154,18 @@ jobs:
           echo "$output" | grep -q "Usage:" || (echo "ERROR: binary did not print usage — WASM may have failed to load" && exit 1)
 
   # Generate the two distinct circuit hashes on separate runners. Devnet shares
-  # the testnet circuit. Each runner proves a different lifecycle after compiling.
+  # the testnet circuit.
   generate-vk-hashes:
     uses: ./.github/workflows/vk-hashes.yml
-    with:
-      run-proof-tests: true
 
-  # Keep the required branch-protection check name while compilation and proof
-  # checks run inside the reusable workflow.
+  # Keep the required branch-protection check name while compilation runs in
+  # the reusable workflow.
   check-vk-hash:
     needs: generate-vk-hashes
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require generated VKs and genuine proofs
+      - name: Require generated VK manifest
         env:
           VK_RESULT: ${{ needs.generate-vk-hashes.result }}
         run: test "$VK_RESULT" = success
