@@ -293,7 +293,11 @@ version 1 request snapshots. Export rejects unknown runtime networks before work
 access or account reads; devnet uses the shared testnet proof domain. The offline
 CLI independently reconstructs and checks
 them against bundled account snapshots (see the offline audit guide). Child
-execution maps and child reservation configuration still replay child events. The rebuild does not depend on delivery order: approval
+execution maps and child reservation configuration still replay child events.
+Reservation `proposalHash` values are caller-supplied labels. The UI fetches a
+reservation by child address and checks its recomputed configuration hash against
+the parent-approved `CREATE_CHILD` proposal data before approval, execution, or
+offline export. The rebuild does not depend on delivery order: approval
 leaves keep the largest value seen, owners come from the emitted setup slot index,
 and owner changes replay in `configNonce` order with each insert placed where the
 emitted post-change commitment says. Before any proof the worker compares the

@@ -362,8 +362,9 @@ is read from the `MINA_PRIVATE_KEY` environment variable.
 **1. Summary faithfulness & duplicated-logic drift (`summary.ts` ↔
 `build-tx.ts` ↔ `worker.ts` ↔ `contracts`).** The CLI deliberately duplicates
 rather than imports UI logic (`normalizeTxType`, `uiTxTypeToField`,
-`buildReceiversForProposal`, `buildProposalDataField`, a verbatim
-`decodeTxMemo` copy, the `NewProposalInput` mirror, `ZKAPP_TX_FEE`). The
+`buildReceiversForProposal`, `buildProposalDataField`, the `NewProposalInput`
+mirror, `ZKAPP_TX_FEE`). Memo decoding imports the shared contracts helper,
+which checks the base58check checksum, user-memo tag, and declared length. The
 summary renders the fields that feed `proposal.hash()` and the outer tx (fee
 included), so these copies sit on the propose path between what is signed and
 what the operator sees.

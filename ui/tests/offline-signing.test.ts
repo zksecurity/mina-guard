@@ -4,6 +4,7 @@ import type { StoreCheckpoint } from 'contracts';
 let configuredNetwork: string | undefined;
 let checkpointCalls: string[] = [];
 mock.module('../lib/multisigClient', () => ({
+  computeCreateChildConfigHash: async () => ({ configHash: 'approved-config' }),
   exportStoreCheckpoint: async (address: string): Promise<StoreCheckpoint> => {
     checkpointCalls.push(address);
     return {

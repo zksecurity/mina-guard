@@ -1,5 +1,6 @@
 import { Field, Poseidon } from 'o1js';
 import { MEMO_HASH_PREFIX } from './proposal-signing.js';
+import { sha256 } from '@noble/hashes/sha256';
 
 export function memoToField(memo: string): Field {
   const bytes = new TextEncoder().encode(memo);
@@ -32,18 +33,32 @@ function base58Decode(input: string): Uint8Array {
   return new Uint8Array(bytes.reverse());
 }
 
-// Mina memo base58check layout: version (1B) + tag (1B) + length (1B) + content (32B) + checksum (4B)
-// Tag 0x01 = user memo. See MinaProtocol/mina signed_command_memo.ml L49-61.
+// Mina memo base58check layout: version (1B) + tag (1B) + length (1B) + content (32B) + checksum (4B).
+// Version 0x14 and tag 0x01 identify a user memo.
 export function decodeTxMemo(base58Memo: string): string {
   const raw = base58Decode(base58Memo);
-  const payload = raw.slice(1, raw.length - 4); // strip version byte + 4-byte base58check checksum
-  if (payload.length !== 34) {
-    throw new Error(`decodeTxMemo: expected 34-byte payload, got ${payload.length}`);
+  if (raw.length !== 39) {
+    throw new Error(`decodeTxMemo: expected 39 bytes, got ${raw.length}`);
   }
+  if (raw[0] !== 0x14) {
+    throw new Error('decodeTxMemo: invalid memo version');
+  }
+  const data = raw.subarray(0, 35);
+  const expectedChecksum = sha256(sha256(data)).subarray(0, 4);
+  for (let i = 0; i < 4; i++) {
+    if (raw[35 + i] !== expectedChecksum[i]) {
+      throw new Error('decodeTxMemo: invalid checksum');
+    }
+  }
+  const payload = raw.subarray(1, 35);
+  if (payload[0] !== 0x01) throw new Error('decodeTxMemo: invalid memo tag');
   const contentLength = payload[1];
   if (contentLength > 32) {
     throw new Error(`decodeTxMemo: invalid content length ${contentLength}`);
   }
-  const contentBytes = payload.slice(2, 2 + contentLength);
+  if (payload.subarray(2 + contentLength).some((byte) => byte !== 0)) {
+    throw new Error('decodeTxMemo: nonzero bytes after declared content length');
+  }
+  const contentBytes = payload.subarray(2, 2 + contentLength);
   return new TextDecoder().decode(contentBytes);
 }

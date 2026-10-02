@@ -542,61 +542,62 @@ export async function fetchAllEvents(
 }
 
 /**
- * Parses child vault config from createChildConfig/createChildOwner events.
+ * Parses reservation events fetched from one child vault. The proposalHash
+ * emitted at reservation is a caller-supplied label, not an approval proof.
  * Pure function — used by both the online UI (api.ts) and offline bundle builder.
  */
 export function parseChildConfigFromEvents(
   events: ReadonlyArray<{ eventType: string; payload: unknown }>,
-  proposalHash: string,
+  childAddress: string,
 ): { owners: string[]; threshold: number } | null {
   const EMPTY_KEY = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
 
-  const configEvent = events.find(
-    (e) =>
-      e.eventType === 'createChildConfig' &&
-      (e.payload as Record<string, unknown>)?.proposalHash === proposalHash,
-  );
+  const configEvents = events.filter((e) => e.eventType === 'createChildConfig');
+  if (configEvents.length > 1) throw new Error('Multiple SubVault reservations found');
+  const configEvent = configEvents[0];
   if (!configEvent) return null;
   const configPayload = configEvent.payload as Record<string, unknown>;
+  if (configPayload?.childAccount !== childAddress) {
+    throw new Error('SubVault reservation address mismatch');
+  }
   const threshold = Number(configPayload.threshold ?? '0');
   const numOwners = Number(configPayload.numOwners ?? '0');
+  if (!Number.isInteger(numOwners) || numOwners < 1 ||
+      !Number.isInteger(threshold) || threshold < 1 || threshold > numOwners) {
+    throw new Error('Invalid SubVault reservation governance');
+  }
 
   const ownerEvents = events
-    .filter(
-      (e) =>
-        e.eventType === 'createChildOwner' &&
-        (e.payload as Record<string, unknown>)?.proposalHash === proposalHash,
-    )
+    .filter((e) => e.eventType === 'createChildOwner')
     .sort((a, b) => {
       const ai = Number((a.payload as Record<string, unknown>)?.index ?? '0');
       const bi = Number((b.payload as Record<string, unknown>)?.index ?? '0');
       return ai - bi;
     });
 
-  const owners = ownerEvents
-    .slice(0, numOwners)
-    .map((e) => (e.payload as Record<string, unknown>)?.owner as string)
-    .filter((addr) => typeof addr === 'string' && addr.length > 10 && addr !== EMPTY_KEY);
-
-  if (owners.length === 0) return null;
-  if (owners.length !== numOwners) {
-    throw new Error(
-      `SubVault owner event data is corrupt: expected ${numOwners} owners but found ${owners.length}`,
-    );
+  const owners: string[] = [];
+  for (let index = 0; index < numOwners; index++) {
+    const matches = ownerEvents.filter((e) =>
+      Number((e.payload as Record<string, unknown>)?.index) === index);
+    if (matches.length !== 1) throw new Error(`SubVault owner slot ${index} is missing or duplicated`);
+    const owner = (matches[0].payload as Record<string, unknown>)?.owner;
+    if (typeof owner !== 'string' || owner.length <= 10 || owner === EMPTY_KEY) {
+      throw new Error(`Invalid SubVault owner at slot ${index}`);
+    }
+    owners.push(owner);
   }
   return { owners, threshold };
 }
 
 /**
- * Fetches the child vault configuration for a CREATE_CHILD proposal
- * from the child's createChildConfig/createChildOwner events.
+ * Fetches the one reservation for a child. Callers must compare its computed
+ * config hash with the parent-approved CREATE_CHILD proposal's data.
  */
 export async function fetchChildConfigFromEvents(
   childAddress: string,
-  proposalHash: string,
 ): Promise<{ owners: string[]; threshold: number } | null> {
   const events = await fetchAllEvents(childAddress);
-  return parseChildConfigFromEvents(events, proposalHash);
+  return parseChildConfigFromEvents(events, childAddress);
 }
 
 /** Parses JSON strings defensively when backend stores raw payload text. */

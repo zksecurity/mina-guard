@@ -170,7 +170,7 @@ export default function TransactionDetailPage() {
       ? JSON.stringify([...preflightContext, proposal?.childAccount, proposal?.data]) : null,
     async () => {
       if (!proposal?.childAccount || !proposal.data) return 'unavailable';
-      const config = await fetchChildConfigFromEvents(proposal.childAccount, proposalHash);
+      const config = await fetchChildConfigFromEvents(proposal.childAccount);
       if (!config) return 'unavailable';
       const { configHash } = await computeCreateChildConfigHash({
         childOwners: config.owners,
@@ -496,11 +496,16 @@ export default function TransactionDetailPage() {
         const childAddr = captured.proposal.childAccount;
         if (!childAddr) throw new Error('createChild proposal missing childAccount');
         onProgress('Fetching SubVault config from events...');
-        const childConfig = await fetchChildConfigFromEvents(
-          childAddr,
-          captured.proposal.proposalHash,
-        );
+        const childConfig = await fetchChildConfigFromEvents(childAddr);
         if (!childConfig) throw new Error('SubVault config not found in indexed events');
+        const { configHash } = await computeCreateChildConfigHash({
+          childOwners: childConfig.owners,
+          childThreshold: childConfig.threshold,
+          preserveOrder: true,
+        });
+        if (configHash !== captured.proposal.data) {
+          throw new Error('SubVault reservation does not match the parent-approved proposal data');
+        }
         const result = await executeSetupChildOnchain({
           parentAddress: captured.contractAddress,
           childAddress: childAddr,
