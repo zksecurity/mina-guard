@@ -124,6 +124,16 @@ Signing inside the shell:
 | 5050 | `127.0.0.1` | Front server: UI + backend API + `/auro/*` routes    |
 | 5051 | `127.0.0.1` | Next.js standalone child (only reached via the proxy)|
 
+Loopback binding keeps 5051 off the network, but any local process, and
+potentially a web page in the user's browser, can still send it requests, so the
+Next.js version is part of the attack surface. `ui/package.json` and
+`desktop/package.json` both pin `next` at `^15.5.26`: every release before
+15.5.24, including all of 14.x, is affected by GHSA-p293-qw3h-jr36
+(unauthenticated RCE on Windows-hosted servers). Keep the two pins equal so the
+standalone tree cannot trace an older copy. The release workflow also refuses to
+package while any dependency has a critical advisory
+(`bun audit --audit-level=critical`).
+
 The renderer still does all the heavy lifting the web UI does: the o1js worker
 compiles, proves, and broadcasts directly to the configured Mina endpoint. The
 embedded backend is exactly as (un)trusted as the hosted indexer in the online

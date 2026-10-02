@@ -65,6 +65,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Release gate: refuse to package while any dependency has a known
+      # critical advisory. Runs on every leg, since each leg publishes its own
+      # installers.
+      - name: Audit dependencies
+        run: bun audit --audit-level=critical
+
       - name: Build contracts
         run: bun run --filter contracts build
 
