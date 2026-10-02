@@ -45,7 +45,6 @@ export {
   type GuardPermissionKind,
 } from './guard-permission-policy.js';
 
-export { ownerKey } from './utils.js';
 
 export { OwnerStore, ApprovalStore, VoteNullifierStore } from './storage.js';
 export {

@@ -1969,36 +1969,19 @@ describe('MinaGuard - Child Lifecycle', () => {
 
   // -- Input validation on lifecycle methods ----------------------------------
 
-  describe('executeEnableChildMultiSig input validation', () => {
-    it('rejects enabled values outside {0, 1}', async () => {
+  describe('enableChildMultiSig input validation', () => {
+    it('rejects enabled values outside {0, 1} at proposal time', async () => {
       await setupChildWithParentOwners();
 
-      // Propose with data = 2; propose-time validation allows arbitrary data
-      // for ENABLE_CHILD_MULTI_SIG, so the proposal is accepted on the parent.
       const proposal = createEnableChildMultiSigProposal(
         Field(2),
         Field(1),
         Field(0),
         parentCtx.zkAppAddress,
-        Field(0),        childAddress,
+        Field(0), childAddress,
       );
-      const { parentApprovalWitness, parentApprovalCount, proposalHash } =
-        await proposeAndApproveOnParent(parentCtx, proposal, [0, 1]);
-
-      const childExecutionWitness = childExecutionWitnessFor(proposalHash);
-      await expect(async () => {
-        const txn = await Mina.transaction(parentCtx.deployerAccount, async () => {
-          await childZkApp.executeEnableChildMultiSig(
-            proposal,
-            parentApprovalWitness,
-            parentApprovalCount,
-            childExecutionWitness,
-            Field(2),
-          );
-        });
-        await txn.prove();
-        await txn.sign([parentCtx.deployerKey]).send();
-      }).toThrow('Enabled must be 0 or 1');
+      await expect(proposeTransaction(parentCtx, proposal, 0))
+        .rejects.toThrow('Enabled must be 0 or 1');
     });
   });
 

@@ -186,9 +186,8 @@ function addOwnerToCommitment(
  * Circuit to remove an owner. Checks that:
  * - Owner to remove exists in the owners list
  * 
- * IMPORTANT: Caller needs to check `valid` return value.
- *  Caller needs the owner to be removed is not the only one
- * remaining.
+ * IMPORTANT: Caller needs to check `valid` and enforce the threshold bound.
+ * `valid` rejects removal of the last owner.
  * 
  * @param ownerCommitment
  * @param ownerToRemove
@@ -205,6 +204,7 @@ function removeOwnerFromCommitment(
   let newChain = INITIAL_OWNER_CHAIN;
 
   let foundOwner = Bool(false);
+  let remaining = Field(0);
 
   ownersWitness.owners.forEach(({ value: pk, isSome }) => {
 
@@ -212,6 +212,7 @@ function removeOwnerFromCommitment(
     currentChain = Provable.if(isSome, currentChainTemp, currentChain);
 
     const isPosition = pk.equals(ownerToRemove).and(isSome);
+    remaining = remaining.add(isSome.and(isPosition.not()).toField());
 
     // to remove from chain, just skip ownerToRemove
     let newChainTemp = ownerChainLink(newChain, pk);
@@ -222,11 +223,12 @@ function removeOwnerFromCommitment(
 
   // return the new chain and a bool to indicate if operation was valid
   // this allows for more flexible handling by the caller
-  return [newChain, foundOwner.and(currentChain.equals(ownerCommitment))];
+  return [newChain, foundOwner.and(currentChain.equals(ownerCommitment))
+    .and(remaining.greaterThan(Field(0)))];
 }
 
 export {
-  OwnerWitness, OwnerWitnessArray, PublicKeyOption, computeOwnerChain, computeSetupOwnersChain,
+  OwnerWitness, PublicKeyOption, computeOwnerChain, computeSetupOwnersChain,
   assertCoherentSetupOwners, assertOwnerMembership, addOwnerToCommitment, removeOwnerFromCommitment,
   assertOnCurveIf,
 };

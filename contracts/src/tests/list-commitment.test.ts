@@ -275,7 +275,7 @@ describe('removeOwnerFromCommitment', () => {
     });
   });
 
-  it('removing sole owner yields INITIAL_OWNER_CHAIN', async () => {
+  it('rejects removal of the sole owner', async () => {
     const owners = [keyA];
     const commitment = computeOwnerChain(owners);
     const witness = makeWitness(owners);
@@ -283,7 +283,7 @@ describe('removeOwnerFromCommitment', () => {
     await Provable.runAndCheck(() => {
       const [result, valid] = removeOwnerFromCommitment(commitment, keyA, witness);
       result.assertEquals(INITIAL_OWNER_CHAIN);
-      valid.assertTrue();
+      valid.assertFalse();
     });
   });
 

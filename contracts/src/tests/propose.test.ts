@@ -243,6 +243,25 @@ describe('MinaGuard - Propose shape rules', () => {
     }).toThrow('Unknown txType');
   });
 
+  it('rejects a REMOTE-only transaction type with LOCAL destination', async () => {
+    const proposal = buildProposal({ txType: TxType.DESTROY_CHILD });
+    await expect(tryPropose(proposal)).rejects.toThrow('txType and destination mismatch');
+  });
+
+  it.each([0, 4])('rejects an unexecutable threshold value %s', async (value) => {
+    const proposal = buildProposal({ txType: TxType.CHANGE_THRESHOLD, data: Field(value) });
+    await expect(tryPropose(proposal)).rejects.toThrow(
+      value === 0 ? 'Threshold must be > 0' : 'Threshold cannot exceed owner count',
+    );
+  });
+
+  it('rejects nonzero amounts hidden in a governance receiver', async () => {
+    const receivers = receiversWithSlot0(PrivateKey.random().toPublicKey());
+    receivers[0] = new Receiver({ address: receivers[0].address, amount: UInt64.from(1) });
+    const proposal = buildProposal({ txType: TxType.SET_DELEGATE, receivers });
+    await expect(tryPropose(proposal)).rejects.toThrow('Non-transfer proposal must have zero receiver amounts');
+  });
+
   // -- Rule 1: ADD_OWNER / REMOVE_OWNER require non-empty slot 0 -------------
 
   it('should reject ADD_OWNER with empty receivers[0]', async () => {

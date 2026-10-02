@@ -335,20 +335,9 @@ describe('MinaGuard - Governance', () => {
     it('should reject threshold = 0', async () => {
       const newThreshold = Field(0);
       const proposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
-      const proposalHash = await proposeTransaction(ctx, proposal, 0);
-      await approveTransaction(ctx, proposal, 1);
-
-      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-
-      await expect(async () => {
-        const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-          await ctx.zkApp.executeThresholdChange(
-            proposal, approvalWitness, Field(3), newThreshold
-          );
-        });
-        await txn.prove();
-        await txn.sign([ctx.deployerKey]).send();
-      }).toThrow('Threshold must be > 0');
+      await expect(async () => proposeTransaction(ctx, proposal, 0))
+        .toThrow('Threshold must be > 0');
+      expect(ctx.approvalStore.getCount(proposal.hash())).toEqual(Field(0));
     });
 
     it('should reject unproposed threshold change with approvalCount = 0', async () => {
@@ -374,20 +363,9 @@ describe('MinaGuard - Governance', () => {
     it('should reject threshold above numOwners', async () => {
       const newThreshold = Field(10); // Only 3 owners
       const proposal = createThresholdProposal(newThreshold, Field(1), Field(0), ctx.zkAppAddress);
-      const proposalHash = await proposeTransaction(ctx, proposal, 0);
-      await approveTransaction(ctx, proposal, 1);
-
-      const approvalWitness = ctx.approvalStore.getWitness(proposalHash);
-
-      await expect(async () => {
-        const txn = await Mina.transaction(ctx.deployerAccount, async () => {
-          await ctx.zkApp.executeThresholdChange(
-            proposal, approvalWitness, Field(3), newThreshold
-          );
-        });
-        await txn.prove();
-        await txn.sign([ctx.deployerKey]).send();
-      }).toThrow('Threshold cannot exceed owner count');
+      await expect(async () => proposeTransaction(ctx, proposal, 0))
+        .toThrow('Threshold cannot exceed owner count');
+      expect(ctx.approvalStore.getCount(proposal.hash())).toEqual(Field(0));
     });
 
     it('should increment configNonce after threshold change', async () => {
