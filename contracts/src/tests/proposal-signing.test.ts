@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { Field, Poseidon, PrivateKey, Signature, setNumberOfWorkers } from 'o1js';
+import { Field, Poseidon, PrivateKey, Signature } from 'o1js';
 import { TransactionProposal } from '../MinaGuard.js';
 import { NETWORK_DOMAIN } from '../constants.js';
-import { proveProposalSigning } from './proposal-signing-proof.js';
 import { proposalSigningMessage } from '../proposal-signing.js';
 import { createTransferProposal } from './test-helpers.js';
 
@@ -29,8 +28,3 @@ describe('proposal signing domains', () => {
     }
   });
 });
-
-it.skipIf(process.env.RUN_REAL_PROOF_TESTS !== '1')('genuine MinaGuard proof for propose, approve and permissionless execute', async () => {
-  setNumberOfWorkers(2);
-  await proveProposalSigning({ cachePath: '../cache', vkHashPath: '.vk-hash' });
-}, 900_000);

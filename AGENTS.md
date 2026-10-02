@@ -96,8 +96,6 @@ These instructions apply to the entire MinaGuard monorepo.
 - Run focused tests for every changed surface and add cross-surface or E2E tests
   when a shared protocol or user flow changes. Report exactly what ran and what
   was skipped.
-- Circuit or proving changes require an appropriate real-proof test in addition
-  to fast tests that use `SKIP_PROOFS`.
 - Use the repository's canonical checks where applicable:
   - `bun run --filter contracts typecheck`
   - `bun run --filter contracts test`

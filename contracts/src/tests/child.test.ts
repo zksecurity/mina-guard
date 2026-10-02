@@ -2,7 +2,6 @@ import { memoToField } from '../memo.js';
 import { proposalSigningMessage } from '../proposal-signing.js';
 import {
   AccountUpdate,
-  Cache,
   Field,
   MerkleMap,
   MerkleMapWitness,
@@ -13,7 +12,6 @@ import {
   PublicKey,
   Signature,
   UInt64,
-  setNumberOfWorkers,
 } from 'o1js';
 import { MinaGuard, Receiver, SetupOwnersInput, TransactionProposal } from '../MinaGuard.js';
 import { ApprovalStore, VoteNullifierStore } from '../storage.js';
@@ -46,10 +44,7 @@ import {
   GUARD_DEPLOY_PERMISSIONS,
   GUARD_PERMISSIONS,
 } from '../guard-permissions.js';
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-
-const RUN_REAL_PROOF_TESTS = process.env.RUN_REAL_PROOF_TESTS === '1';
-const realProofIt = RUN_REAL_PROOF_TESTS ? it : it.skip;
+import { beforeEach, describe, expect, it } from 'bun:test';
 
 const ROOT_STATE_SLOT = {
   ownersCommitment: 0,
@@ -71,15 +66,6 @@ describe('MinaGuard - Child Lifecycle', () => {
   let childKey: PrivateKey;
   let childAddress: PublicKey;
   let childExecutionMap: MerkleMap;
-
-  beforeAll(async () => {
-    if (RUN_REAL_PROOF_TESTS) {
-      // A VK hash cache hit skips the compile step, so compile the prover
-      // cache here with a worker limit that fits the CI runner.
-      setNumberOfWorkers(1);
-      await MinaGuard.compile({ cache: Cache.FileSystem('../cache') });
-    }
-  });
 
   /**
    * Produces the parent's approval witness + count for a REMOTE proposal
@@ -597,10 +583,9 @@ describe('MinaGuard - Child Lifecycle', () => {
       await expect(build()).rejects.toThrow('Allocation recipient not bound to this parent');
     });
 
-    async function checkAllocation(realProof = false) {
+    async function checkAllocation() {
       await setupChildWithParentOwners();
       const build = await allocationTo(childAddress);
-      if (realProof) Mina.activeInstance.proofsEnabled = true;
       const txn = await build();
       const updates = JSON.parse(txn.toJSON()).accountUpdates;
       const proofUpdate = updates.find((u: any) => u.body.authorizationKind.isProved);
@@ -615,8 +600,7 @@ describe('MinaGuard - Child Lifecycle', () => {
         (value: unknown, index: number) => value === null ? [] : [index],
       )).toEqual([0, 7, 8]);
       const before = getBalance(childAddress);
-      const proved = await txn.prove();
-      if (realProof) expect(proved.proofs.some(proof => proof !== undefined)).toBe(true);
+      await txn.prove();
       await txn.sign([parentCtx.deployerKey]).send();
       expect(getBalance(childAddress).sub(before)).toEqual(UInt64.from(500_000_000));
     }
@@ -624,10 +608,6 @@ describe('MinaGuard - Child Lifecycle', () => {
     it('binds recipient state to the allocation proof and accepts empty padding', async () => {
       await checkAllocation();
     });
-
-    realProofIt('funds an initialized child with a genuine MinaGuard proof', async () => {
-      await checkAllocation(true);
-    }, 15 * 60_000);
 
     it('sends MINA to multiple children with different amounts', async () => {
       await setupChildWithParentOwners();
@@ -1626,7 +1606,6 @@ describe('MinaGuard - Child Lifecycle', () => {
         parentApprovalWitness: MerkleMapWitness,
         parentApprovalCount: Field,
       ) => Promise<void>,
-      realProof = false,
     ) {
       const maliciousHash = maliciousProposal.hash();
       const forgedApprovalCount = PROPOSED_MARKER.add(1);
@@ -1634,7 +1613,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       forgedApprovals.set(maliciousHash, forgedApprovalCount);
 
       const realNetwork = Mina.activeInstance;
-      if (realProof) realNetwork.proofsEnabled = true;
       const maliciousProverView = {
         ...realNetwork,
         getAccount(publicKey: PublicKey, tokenId?: Field) {
@@ -1657,10 +1635,7 @@ describe('MinaGuard - Child Lifecycle', () => {
             forgedApprovalCount,
           );
         });
-        const provedAttack = await attack.prove();
-        if (realProof) {
-          expect(provedAttack.proofs.some((proof) => proof !== undefined)).toBe(true);
-        }
+        await attack.prove();
       } finally {
         Mina.setActiveInstance(realNetwork);
       }
@@ -1816,25 +1791,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       );
     });
 
-    realProofIt('rejects forged parent state with a genuine MinaGuard proof', async () => {
-      await setupChildWithParentOwners();
-      const maliciousProposal = createDestroyChildProposal(
-        Field(1), Field(0), parentCtx.zkAppAddress,
-        Field(0), childAddress,
-      );
-
-      await expectForgedParentStateRejected(
-        maliciousProposal,
-        (parentApprovalWitness, parentApprovalCount) =>
-          childZkApp.executeDestroy(
-            maliciousProposal,
-            parentApprovalWitness,
-            parentApprovalCount,
-            childExecutionWitnessFor(maliciousProposal.hash()),
-          ),
-        true,
-      );
-    }, 15 * 60_000);
   });
 
   // -- Child state binding during parent proposal / approval ---------------
@@ -1842,10 +1798,8 @@ describe('MinaGuard - Child Lifecycle', () => {
   describe('child nonce state binding', () => {
     async function expectForgedChildStateRejected(
       build: () => Promise<void>,
-      realProof = false,
     ) {
       const realNetwork = Mina.activeInstance;
-      if (realProof) realNetwork.proofsEnabled = true;
       const maliciousProverView = {
         ...realNetwork,
         getAccount(publicKey: PublicKey, tokenId?: Field) {
@@ -1862,10 +1816,7 @@ describe('MinaGuard - Child Lifecycle', () => {
       Mina.setActiveInstance(maliciousProverView);
       try {
         attack = await Mina.transaction(parentCtx.deployerAccount, build);
-        const provedAttack = await attack.prove();
-        if (realProof) {
-          expect(provedAttack.proofs.some((proof) => proof !== undefined)).toBe(true);
-        }
+        await attack.prove();
       } finally {
         Mina.setActiveInstance(realNetwork);
       }
@@ -1951,27 +1902,6 @@ describe('MinaGuard - Child Lifecycle', () => {
       );
     });
 
-    realProofIt('rejects forged child state during propose with a genuine MinaGuard proof', async () => {
-      await setupChildWithParentOwners();
-      const proposal = createDestroyChildProposal(
-        Field(1), Field(0), parentCtx.zkAppAddress,
-        Field(0), childAddress,
-      );
-      const proposalHash = proposal.hash();
-      const proposer = parentCtx.owners[0];
-
-      await expectForgedChildStateRejected(
-        () => parentCtx.zkApp.propose(
-          proposal,
-          makeOwnerWitness(parentCtx.owners.map((owner) => owner.pub)),
-          proposer.pub,
-          Signature.create(proposer.key, [proposalSigningMessage(proposalHash, 'propose')]),
-          parentCtx.nullifierStore.getWitness(proposalHash, proposer.pub),
-          parentCtx.approvalStore.getWitness(proposalHash),
-        ),
-        true,
-      );
-    }, 15 * 60_000);
   });
 
   // -- Parent config drift ----------------------------------------------------

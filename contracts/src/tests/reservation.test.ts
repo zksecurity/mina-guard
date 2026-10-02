@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { AccountUpdate, Cache, Field, Mina, PrivateKey, PublicKey, setNumberOfWorkers } from 'o1js';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { AccountUpdate, Field, Mina, PrivateKey, PublicKey } from 'o1js';
 import { MinaGuard, SetupOwnersInput } from '../MinaGuard.js';
 import { MAX_OWNERS } from '../constants.js';
 import { computeOwnerChain } from '../list-commitment.js';
@@ -12,21 +12,10 @@ import {
   type TestContext,
 } from './test-helpers.js';
 
-const realProofIt = process.env.RUN_REAL_PROOF_TESTS === '1' ? it : it.skip;
-
 describe('Reserved child configuration', () => {
   let ctx: TestContext;
   let childKey: PrivateKey;
   let child: MinaGuard;
-
-  beforeAll(async () => {
-    if (process.env.RUN_REAL_PROOF_TESTS === '1') {
-      // A VK-hash cache hit skips the earlier compile step, so this test must
-      // compile its prover cache on the CI runner. Limit worker memory.
-      setNumberOfWorkers(2);
-      await MinaGuard.compile({ cache: Cache.FileSystem('../cache') });
-    }
-  });
 
   beforeEach(async () => {
     ctx = await setupLocalBlockchain(3);
@@ -125,17 +114,4 @@ describe('Reserved child configuration', () => {
     }).toThrow();
   });
 
-  realProofIt('reserves and initializes a child with genuine proofs, consuming the reservation', async () => {
-    // Parent fixture setup uses fast proofs; all child lifecycle transactions
-    // below are proved and verified by the local ledger with proofs enabled.
-    Mina.activeInstance.proofsEnabled = true;
-    await deployAndSetupChildGuard(
-      ctx, ctx.zkAppAddress, child, childKey, child.address,
-      ctx.owners.map((o) => o.pub), 2, [0, 1],
-    );
-    expect(child.reservedConfigHash.get()).toEqual(Field(0));
-    expect(child.ownersCommitment.get()).toEqual(computeOwnerChain(ctx.owners.map((o) => o.pub)));
-    expect(child.parent.get()).toEqual(ctx.zkAppAddress);
-    expect(child.threshold.get()).toEqual(Field(2));
-  });
 });

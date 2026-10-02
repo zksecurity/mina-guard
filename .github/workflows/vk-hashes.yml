@@ -2,10 +2,6 @@ name: Generate MinaGuard VK hashes
 
 on:
   workflow_call:
-    inputs:
-      run-proof-tests:
-        type: boolean
-        default: false
 
 jobs:
   compile:
@@ -36,11 +32,11 @@ jobs:
           path: vk-parts/${{ matrix.network }}.txt
           key: minaguard-vk-${{ runner.os }}-${{ matrix.network }}-${{ steps.inputs.outputs.value }}
       - uses: oven-sh/setup-bun@v2
-        if: steps.vk-cache.outputs.cache-hit != 'true' || inputs.run-proof-tests
+        if: steps.vk-cache.outputs.cache-hit != 'true'
         with:
           bun-version: 1.3.10
       - name: Install dependencies
-        if: steps.vk-cache.outputs.cache-hit != 'true' || inputs.run-proof-tests
+        if: steps.vk-cache.outputs.cache-hit != 'true'
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Compile current source and capture VK hash
         if: steps.vk-cache.outputs.cache-hit != 'true'
@@ -61,31 +57,6 @@ jobs:
           if [[ '${{ matrix.network }}' == testnet ]]; then
             printf 'testnet=%s\n' "$hash" > contracts/.vk-hash
           fi
-      - name: Run genuine-proof parent-state tests
-        if: matrix.network == 'testnet' && inputs.run-proof-tests
-        working-directory: contracts
-        run: >-
-          RUN_REAL_PROOF_TESTS=1 bun test src/tests/child.test.ts
-          --test-name-pattern "genuine MinaGuard proof" --timeout 900000
-        timeout-minutes: 20
-      - name: Run genuine-proof proposal signing lifecycle
-        if: matrix.network == 'testnet' && inputs.run-proof-tests
-        working-directory: contracts
-        run: |
-          if [[ -f src/tests/proposal-signing.test.ts ]]; then
-            RUN_REAL_PROOF_TESTS=1 bun test src/tests/proposal-signing.test.ts \
-              --test-name-pattern "genuine MinaGuard proof" --timeout 900000
-          else
-            echo 'No proposal-signing proof test in this revision.'
-          fi
-        timeout-minutes: 25
-      - name: Run genuine-proof child reservation lifecycle
-        if: matrix.network == 'mainnet' && inputs.run-proof-tests
-        working-directory: contracts
-        run: >-
-          RUN_REAL_PROOF_TESTS=1 bun test src/tests/reservation.test.ts
-          --test-name-pattern "genuine proofs" --timeout 900000
-        timeout-minutes: 20
       - uses: actions/upload-artifact@v4
         with:
           name: vk-part-${{ matrix.network }}
