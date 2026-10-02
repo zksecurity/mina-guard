@@ -583,8 +583,8 @@ assumptions it *does* rest on:
 
 - **o1js / `mina-signer` correctness.** Poseidon hashing, the proof system, and signature
   verification are trusted primitives (see [Dependencies](#dependencies)). The signing path and the
-  proving path must agree on encoding — that identity is re-checked whenever the `deps/o1js`
-  submodule or the o1js pin moves.
+  proving path must agree on encoding — re-check signatures and commitments whenever either
+  pinned npm package changes.
 - **The deployer's genesis choices.** The initial owner set is the deployer's to
   choose; the contract only guarantees the stored commitment cannot disagree with the announced
   owner list (see [Setup](#on-chain-multi-step-flow)). Depositors verify setup events first.
@@ -735,17 +735,17 @@ contracts/
 
 ## Dependencies
 
-- **`o1js` (`3.0.0-mesa.final`, hoisted at the repo root)** — the proving system, zkApp runtime,
+- **`o1js` (`3.0.0`, a direct contracts dependency)** — the proving system, zkApp runtime,
   and hashing/signature primitives (Poseidon, `Signature.verify`). This is the cryptographic
-  foundation of the TCB. The **Mesa** branch is required specifically because MinaGuard's 12 state
-  fields (13 slots) exceed o1js's legacy 8-slot cap. The circuit's correctness assumptions are o1js's
-  correctness assumptions.
-- **`mina-signer`** — used by the clients (UI worker, offline CLI) that build and sign the structs
-  this contract verifies, resolved from the pinned `ui/deps/o1js` submodule. It is **not** a
-  contract-package dependency, but it is in the contract's trust story: the signing path's
-  commitment/signature encoding must match what the proving path and this circuit expect. The
-  submodule's `mina-signer` source is byte-identical to the copy inside `o1js@3.0.0-mesa.final`;
-  re-verify that identity whenever either pin moves (see
+  foundation of the TCB. MinaGuard's 12 state fields (13 slots) exceed the legacy 8-slot cap;
+  stable `3.0.0` supports Mesa's 32 slots. The earlier `3.0.0-mesa.final` pin preceded the stable
+  release; both produce the same testnet and mainnet VK hashes for this circuit. On any o1js change,
+  compile both domains, compare VK hashes, run a genuine proof, and ship matching deployment and
+  offline CLI VK fingerprints if a hash changes.
+- **`mina-signer` (`4.1.0`)** — pinned separately by the UI, backend lightnet helper, and offline
+  CLI for signing and transaction commitments. It is part of the contract's trust story: its
+  signature and commitment encoding must match what o1js and the circuit expect. Cross-network
+  signing and Ledger commitment tests cover this boundary (see
   [`ui-audit-guide.md` § Dependencies](./ui-audit-guide.md#dependencies)).
 
 The clients that reuse this package's source (the `TransactionProposal` struct, `memoToField`, the

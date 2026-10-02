@@ -3,23 +3,17 @@
 // Bun embeds imported file assets into its $bunfs virtual filesystem; we patch
 // the CJS require("fs").readFileSync to redirect WASM loads to the embedded copies.
 //
-// Two WASM entry points ship with o1js:
-//   plonk_wasm_bg.wasm  — entry via plonk_wasm.cjs
-//   kimchi_wasm_bg.wasm — entry via kimchi_wasm.cjs (node-backend.js uses this)
+// o1js uses kimchi_wasm_bg.wasm via kimchi_wasm.cjs.
 //
 // The import path is filesystem-relative (through the top-level node_modules/o1js
 // symlink) rather than a package import (`o1js/dist/...`): o1js's package.json
 // declares a conditional `exports` field that blocks any subpath not explicitly
 // exported, so the package-style import fails to resolve.
-import embeddedPlonkWasmPath from "../../node_modules/o1js/dist/node/bindings/compiled/node_bindings/plonk_wasm_bg.wasm";
 import embeddedKimchiWasmPath from "../../node_modules/o1js/dist/node/bindings/compiled/node_bindings/kimchi_wasm_bg.wasm";
 
 const nodeFs = require("fs");
 const _origReadFileSync = nodeFs.readFileSync;
 nodeFs.readFileSync = function (p, ...args) {
-  if (typeof p === "string" && p.endsWith("plonk_wasm_bg.wasm")) {
-    return _origReadFileSync(embeddedPlonkWasmPath, ...args);
-  }
   if (typeof p === "string" && p.endsWith("kimchi_wasm_bg.wasm")) {
     return _origReadFileSync(embeddedKimchiWasmPath, ...args);
   }

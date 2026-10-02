@@ -13,7 +13,7 @@ These instructions apply to the entire MinaGuard monorepo.
   do not clean up or rewrite adjacent work without a task-related reason.
 - Do not edit or commit generated build output, release binaries, compilation
   caches, or vendored/submodule contents unless the task explicitly requires it.
-  Update the `ui/deps/o1js` submodule pointer deliberately.
+  Update the pinned `o1js` and `mina-signer` versions deliberately.
 
 ## Security and secrets
 

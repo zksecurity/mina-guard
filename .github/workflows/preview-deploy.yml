@@ -181,7 +181,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.head_sha }}
-          submodules: recursive
 
       # bun + workspace deps are needed on the host so preview.sh can compute
       # the MinaGuard verification key hash before invoking docker compose

@@ -15,9 +15,6 @@ COPY dev-helpers/package.json dev-helpers/
 COPY desktop/package.json desktop/
 COPY e2e/package.json e2e/
 
-# Copy o1js submodule (needed by ui postinstall to build mina-signer)
-COPY ui/deps/ ui/deps/
-
 # Install dependencies. Cache Bun's package store so repeated preview builds
 # don't need to re-download and unpack the full workspace dependency tree.
 RUN --mount=type=cache,target=/root/.bun/install/cache \

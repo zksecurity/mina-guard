@@ -319,8 +319,7 @@ describe('offline-cli', () => {
   // -- Fee payer signing --
 
   it('signFeePayer produces valid authorization', async () => {
-    // @ts-ignore — ESM bundle built by ui/package.json postinstall
-    const Client = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+    const Client = (await import('mina-signer')).default;
     const client = new Client({ network: 'testnet' });
     const key = PrivateKey.random();
 
@@ -334,8 +333,7 @@ describe('offline-cli', () => {
   }, 10_000);
 
   it('mina-signer produces action-bound signatures accepted by o1js on both networks', async () => {
-    // @ts-ignore — built by ui postinstall
-    const Client = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+    const Client = (await import('mina-signer')).default;
     const key = PrivateKey.random();
     const hash = Field(123);
     for (const network of ['testnet', 'mainnet'] as const) {
@@ -392,8 +390,17 @@ describe('offline-cli', () => {
 
     let ClientCtor: any;
     beforeAll(async () => {
-      // @ts-ignore — ESM bundle built by ui/package.json postinstall
-      ClientCtor = (await import('../../../ui/deps/o1js/src/mina-signer/dist/web/index.js')).default;
+      ClientCtor = (await import('mina-signer')).default;
+    });
+
+    it('exposes the Ledger fee-payer commitment on both networks', async () => {
+      const { txJson } = await buildSignedSendTxJson('ledger commitment');
+      const tx = JSON.parse(txJson);
+      const testnet = new ClientCtor({ network: 'testnet' }).getZkappCommandCommitmentsFromJSON(tx);
+      const mainnet = new ClientCtor({ network: 'mainnet' }).getZkappCommandCommitmentsFromJSON(tx);
+      expect(typeof testnet.fullCommitment).toBe('bigint');
+      expect(typeof mainnet.fullCommitment).toBe('bigint');
+      expect(testnet.fullCommitment).not.toBe(mainnet.fullCommitment);
     });
 
     it('mainnet signature verifies under mainnet and FAILS under testnet', async () => {

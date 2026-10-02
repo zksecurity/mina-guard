@@ -416,10 +416,11 @@ Only the security/operationally relevant dependencies are called out; framework 
 - **`pg`** — direct PostgreSQL driver used **only** for `DISCOVERY_BACKEND=archive` (a read-only
   role against the Mina archive DB). The pool is hardened with connection/statement timeouts so a
   wedged archive DB fails a tick fast rather than hanging it.
-- **`o1js` (`3.0.0-mesa.final`)** — used read-only to fetch and decode on-chain account state
+- **`o1js` (`3.0.0`)** — used read-only to fetch and decode on-chain account state
   (`fetchOnChainState`) and to compute `memoToField` when reconciling execution memos. The backend
   never proves or signs; it reuses the contract's hashing helpers so its derived `memoHash` matches
   the circuit's.
+- **`mina-signer` (`4.1.0`)** — signs plain funding payments in the lightnet helper.
 
 The backend imports the `contracts` package for shared decoding helpers (`decodeTxMemo`,
 `memoToField`) and enum/constant definitions, so its event interpretation matches the contract's

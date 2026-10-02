@@ -63,8 +63,6 @@ jobs:
     environment: Production   # second-account approval gate (required reviewer)
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive   # ui/deps/o1js submodule the frontend build needs
 
       - name: Download VK manifest for this commit
         uses: actions/download-artifact@v4

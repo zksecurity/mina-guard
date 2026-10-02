@@ -5,7 +5,8 @@
   "type": "module",
   "dependencies": {
     "contracts": "workspace:*",
-    "mina-signer": "file:../ui/deps/o1js/src/mina-signer"
+    "mina-signer": "4.1.0",
+    "o1js": "3.0.0"
   },
   "devDependencies": {
     "bun-types": "latest"

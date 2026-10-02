@@ -22,7 +22,7 @@
     "typecheck": "bun run --filter contracts typecheck && bun run --filter backend build"
   },
   "dependencies": {
-    "o1js": "3.0.0-mesa.final"
+    "o1js": "3.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

@@ -457,12 +457,8 @@ ui/
 │   ├── idb-compile-cache.ts     # IndexedDB cache of compiled artifacts
 │   └── disable-wasm-finalizers.ts  # o1js WASM workaround (see KNOWN_ISSUES.md)
 │
-├── types/
-│   └── mina-signer.d.ts         # Ambient types for the submodule signer
-│
-├── deps/o1js/  (git submodule)  # Source for mina-signer browser build
-├── package.json                 # Deps + postinstall esbuild of mina-signer
-├── next.config.mjs              # mina-signer webpack alias; COOP/COEP headers
+├── package.json                 # Pinned o1js and mina-signer dependencies
+├── next.config.mjs              # COOP/COEP headers
 │                                #   (COEP: credentialless) for SharedArrayBuffer;
 │                                #   minification DISABLED — minifiers mangle o1js
 │                                #   BigInt ops and silently produce wrong tx
@@ -490,24 +486,15 @@ standard and not discussed.
   `TxType` union is its own in `lib/types.ts`.) This is the most security-critical
   dependency — the UI and the contract must agree on hashing and struct layout,
   and they do so by importing the *same* source.
-- **`o1js` (`3.0.0-mesa.final`, hoisted at the repo root)** — the proving system and
+- **`o1js` (`3.0.0`, pinned directly in the UI and contracts)** — the proving system and
   zkApp runtime. The Web Worker uses it to compile `MinaGuard`, generate proofs, and
   build `Mina.transaction`s. Heavy; runs only in the worker.
-- **`mina-signer`** — a *separate, lighter* signer used on the main thread and in the
+- **`mina-signer` (`4.1.0`)** — a *separate, lighter* signer used on the main thread and in the
   worker for keypair generation and for computing transaction/fee-payer commitments
   **without** paying the full o1js cost (`multisigClient.ts`, `multisigClient.worker.ts`).
-  It is **not** consumed from npm: it resolves (via `file:` + a webpack alias, with an
-  ambient type stub at `types/mina-signer.d.ts`) to the **`deps/o1js` git submodule**
-  (`graikos/o1js#develop-3.0`), whose `src/mina-signer/` is built for the browser by the
-  `postinstall` esbuild step (`package.json`). **Why the submodule:** mina-signer is
-  developed as a subpackage inside the o1js repo, and the mesa release did not ship a
-  matching standalone `mina-signer` artifact — so the UI builds its own browser bundle
-  from source. The submodule's mina-signer source is **byte-identical** to the
-  mina-signer sources shipped *inside* `o1js@3.0.0-mesa.final`
-  (`node_modules/o1js/src/mina-signer/`), so there is no protocol divergence between the
-  signing and proving paths today. The guarantee is *identity, not versioning*: it holds
-  as long as the submodule and the o1js pin reference the same mina-signer source that the
-  proving path and the contract use.
+  It comes from the exact npm pin in `ui/package.json`, including its published browser bundle
+  and TypeScript declarations. Cross-network field/fee-payer signatures and the Ledger
+  `getZkappCommandCommitmentsFromJSON` API are tested against the pinned o1js proving path.
 
 ### Signing hardware
 
@@ -519,10 +506,8 @@ standard and not discussed.
 
 ### Hashing primitives
 
-- **`@noble/hashes`, `blakejs`, `js-sha256`** — low-level hash functions. The
-  `postinstall` esbuild marks these (and `crypto`) `--external`, so the browser
-  `mina-signer` bundle resolves them from `node_modules` rather than re-bundling its own
-  copies.
+- **`@noble/hashes`, `blakejs`, `js-sha256`** — low-level hash functions used by the
+  published `mina-signer` browser bundle and the UI.
 
 ### Worker boundary
 

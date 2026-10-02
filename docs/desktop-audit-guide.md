@@ -457,13 +457,13 @@ Runtime (`desktop/package.json`):
   external to the esbuild bundle so exactly one instance of each exists.
   (No `cors` dependency: the embedded API deliberately serves no CORS
   headers — see focus point 2.)
-- **`o1js` (3.0.0-mesa.final)** — imported by the backend bundle at runtime
+- **`o1js` (`3.0.0`)** — imported by the backend bundle at runtime
   (event decoding); same pin as the repo root.
 
 Build-time: `electron-builder`, `esbuild`, `typescript`, `next` (types/build
 only — the runtime Next server ships inside the staged standalone tree).
 
-Everything the UI itself depends on (o1js worker, mina-signer submodule build,
+Everything the UI itself depends on (o1js worker, pinned npm mina-signer,
 Ledger/Auro libraries) is inherited from `ui/` at `build:ui` time — audit those
 via [`ui-audit-guide.md`](./ui-audit-guide.md).
 

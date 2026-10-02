@@ -23,7 +23,7 @@
   "dependencies": {
     "@prisma/client": "6.12.0",
     "express": "^4.21.2",
-    "o1js": "3.0.0-mesa.final",
+    "o1js": "3.0.0",
     "zod": "^3.25"
   },
   "devDependencies": {

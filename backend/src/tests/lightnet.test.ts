@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { PrivateKey } from 'o1js';
+import MinaSignerClient from 'mina-signer';
 import {
   acquireLightnetAccount,
   computeFundingAmount,
   LightnetAcquireError,
+  sendSignedLightnetPayment,
   withLightnetAccount,
 } from '../lightnet.js';
 
@@ -71,6 +74,31 @@ describe('computeFundingAmount', () => {
   test('returns zero when the reserve cannot be covered', () => {
     expect(computeFundingAmount(1_000_000_000n)).toBe(0n);
   });
+});
+
+test('lightnet funding signs with the pinned npm signer', async () => {
+  const sender = PrivateKey.random();
+  const params = {
+    minaEndpoint: 'http://127.0.0.1:8080/graphql',
+    from: sender.toPublicKey().toBase58(),
+    to: PrivateKey.random().toPublicKey().toBase58(),
+    amount: '1000000000',
+    fee: '100000000',
+    nonce: '0',
+    privateKey: sender.toBase58(),
+  };
+  globalThis.fetch = mock(async (_input, init) => {
+    const request = JSON.parse(String(init?.body));
+    const client = new MinaSignerClient({ network: 'testnet' });
+    expect(client.verifyPayment({
+      data: request.variables.input,
+      signature: request.variables.signature,
+      publicKey: params.from,
+    })).toBe(true);
+    return Response.json({ data: { sendPayment: { payment: { hash: 'payment-hash' } } } });
+  }) as typeof fetch;
+
+  expect(await sendSignedLightnetPayment(params)).toBe('payment-hash');
 });
 
 describe('withLightnetAccount', () => {

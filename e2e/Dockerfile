@@ -24,7 +24,6 @@ COPY package.json bun.lock ./
 COPY contracts/package.json contracts/
 COPY backend/package.json backend/
 COPY ui/package.json ui/
-COPY ui/deps/ ui/deps/
 COPY offline-cli/package.json offline-cli/
 COPY dev-helpers/package.json dev-helpers/
 COPY desktop/package.json desktop/

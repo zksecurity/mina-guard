@@ -28,18 +28,16 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 
 ## o1js dependency
 
-The runtime o1js library comes from `o1js@3.0.0-mesa.final` on npm — the canonical Mesa-network release.
+Packages that import o1js pin stable `o1js@3.0.0` directly for proving, decoding, or tests. MinaGuard uses 13 on-chain state slots, so it requires the Mesa 32-slot protocol. `3.0.0-mesa.final` was pinned before stable `3.0.0` was published; the stable package compiles the same testnet and mainnet verification keys for this circuit. The UI, backend lightnet helper, and offline CLI pin `mina-signer@4.1.0` for signing and transaction commitments. Signing and proving compatibility is covered by the cross-network tests; the signer is a separate package from the prover.
 
-The `ui/deps/o1js/` submodule is still required, but only for `mina-signer` — the `ui` and `offline-cli` workspaces import it via `file:` workspace deps (mina-signer is a Mina-specific browser-side signing package shipped as a subpackage inside the o1js repo). The submodule points at [`graikos/o1js#develop-3.0`](https://github.com/graikos/o1js/tree/develop-3.0) (currently tip `a252f8bb`); its mina-signer source is byte-identical to what `o1js@3.0.0-mesa.final` ships in `node_modules/o1js/src/mina-signer/`, so there's no protocol-level divergence. A follow-up could drop the submodule entirely by switching to the standalone [`mina-signer`](https://www.npmjs.com/package/mina-signer) npm package.
+When changing `o1js`, compile and compare both network verification-key hashes with the current release, run a genuine-proof test and signing checks, then publish the generated VK manifest for the new build. If either hash changes, update deployment and offline CLI fingerprints together before users sign or broadcast transactions against the new circuit.
+Run the complete offline CLI end-to-end suite with real proofs before merging a prover or signer dependency change; a `SKIP_PROOFS=1` pass does not satisfy this gate.
 
 ## Development
 
 ### First-time setup
 
 ```bash
-# Fetch submodule (o1js source, needed for mina-signer browser build)
-git submodule update --init
-
 bun install
 
 # Build contracts (required by backend and UI)
@@ -256,7 +254,7 @@ Preview routes are managed via the Caddy admin API (`localhost:2019`) — no sud
 ### Gotchas
 
 - **SharedArrayBuffer**: o1js WASM requires `crossOriginIsolated`, which needs COOP + COEP headers over HTTPS. Do not add `Cross-Origin-Resource-Policy: same-origin` — it blocks o1js blob URL sub-workers.
-- **Bun workspaces**: `ui/deps/` must be copied into Dockerfiles because `mina-signer` is a `file:` dependency.
+- **Bun workspaces**: keep the exact `o1js` and `mina-signer` pins in `bun.lock` when building UI, backend, and offline CLI artifacts.
 - **Minification disabled**: SWC/terser mangle BigInt ops used by o1js.
 - **Server limits**: ~2GB RAM per preview stack, max 2–3 concurrent previews on the 30GB server. Run `docker image prune -f` periodically.
 

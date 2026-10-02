@@ -16,8 +16,6 @@ jobs:
       MINA_NETWORK_DOMAIN: ${{ matrix.network }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: true
       - name: Fingerprint circuit inputs
         id: inputs
         shell: bash
