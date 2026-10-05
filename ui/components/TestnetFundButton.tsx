@@ -13,7 +13,7 @@ interface TestnetFundButtonProps {
   explorerUrl?: string;
 }
 
-async function fetchBalance(address: string): Promise<number | null> {
+export async function fetchBalance(address: string): Promise<number | null> {
   const { minaEndpoint } = getMinaGuardConfig();
   if (!minaEndpoint) return null;
   try {
@@ -21,7 +21,9 @@ async function fetchBalance(address: string): Promise<number | null> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: `{ account(publicKey: "${address}") { balance { total } } }`,
+        // The address goes in as a variable, never into the query text.
+        query: 'query($publicKey: PublicKey!) { account(publicKey: $publicKey) { balance { total } } }',
+        variables: { publicKey: address },
       }),
     });
     const json = await res.json();
