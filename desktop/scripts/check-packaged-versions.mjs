@@ -1,5 +1,6 @@
 // afterPack check: refuse to build installers (or publish them) unless the
-// unpacked app carries allowed Next.js and Electron versions.
+// unpacked app carries Next.js and Electron versions that are still supported
+// and have no known advisory.
 //
 // The release workflow's `bun audit` gate reads the lockfile at install time.
 // This check reads what electron-builder actually packed, on every platform,
@@ -7,15 +8,18 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-// The lines we ship, from the first release with no known advisory.
-// Next.js 15.5.24 fixes GHSA-p293-qw3h-jr36 and GHSA-2xp9-vwfh-vxw4. Moving to
-// Next 16 means adding its line here after checking its advisories: 16.3.3, the
-// GHSA-p293 fix, is still affected by GHSA-vcvr-r3jv-pc5j. Electron 43.5.0 is
-// the first 43.x release with none of the advisories 43.1.0 had (the last one,
-// GHSA-qmv3-fv6v-rmhq, was fixed in 43.5.0).
+// The lines we ship: each starts at its first release with no known advisory
+// and is allowed until its vendor support ends, after which a release fails
+// until we move to a supported line and update this list.
+// - Next.js 16: 16.3.6 is the first release clear of GHSA-p293-qw3h-jr36,
+//   GHSA-2xp9-vwfh-vxw4 and GHSA-vcvr-r3jv-pc5j. 16.x is supported (Active,
+//   then Maintenance LTS) until two years after its 2025-10-21 release.
+// - Electron 43: 43.5.0 is the first release clear of the advisories 43.1.0
+//   had (the last, GHSA-qmv3-fv6v-rmhq, was fixed in 43.5.0). End of life per
+//   the Electron release schedule: 2027-01-05.
 export const ALLOWED_VERSIONS = {
-  next: [{ min: '15.5.24', below: '16.0.0' }],
-  electron: [{ min: '43.5.0' }],
+  next: [{ min: '16.3.6', below: '17.0.0', supportedUntil: '2027-10-21' }],
+  electron: [{ min: '43.5.0', below: '44.0.0', supportedUntil: '2027-01-05' }],
 };
 
 function parse(version) {
@@ -28,12 +32,17 @@ function compare(a, b) {
   return 0;
 }
 
-/** True when `version` is a plain release inside one of the allowed ranges; prereleases are refused. */
-export function isAllowedVersion(version, ranges) {
+/**
+ * True when `version` is a plain release inside one of the allowed ranges
+ * and that line is still supported on `now`. Prereleases are refused.
+ */
+export function isAllowedVersion(version, ranges, now = new Date()) {
   const parsed = parse(version);
   if (!parsed) return false;
-  return ranges.some(({ min, below }) =>
-    compare(parsed, parse(min)) >= 0 && (!below || compare(parsed, parse(below)) < 0));
+  return ranges.some(({ min, below, supportedUntil }) =>
+    compare(parsed, parse(min)) >= 0
+    && (!below || compare(parsed, parse(below)) < 0)
+    && (!supportedUntil || now.getTime() < Date.parse(`${supportedUntil}T23:59:59Z`)));
 }
 
 /** Every `node_modules/<name>/package.json` under `dir`. */
@@ -63,7 +72,7 @@ export function resourcesDir(context) {
   return path.join(context.appOutDir, 'resources');
 }
 
-export default function checkPackagedVersions(context) {
+export default function checkPackagedVersions(context, now = new Date()) {
   const standalone = path.join(resourcesDir(context), 'ui-standalone');
   if (!existsSync(standalone)) throw new Error(`No packaged UI found at ${standalone}`);
   const manifests = findPackageManifests(standalone, 'next');
@@ -71,12 +80,12 @@ export default function checkPackagedVersions(context) {
     throw new Error(`Expected exactly one Next.js package in ${standalone}, found ${manifests.length}: ${manifests.join(', ')}`);
   }
   const nextVersion = JSON.parse(readFileSync(manifests[0], 'utf8')).version;
-  if (!isAllowedVersion(nextVersion, ALLOWED_VERSIONS.next)) {
-    throw new Error(`Packaged Next.js ${nextVersion} is outside the allowed versions (${manifests[0]})`);
+  if (!isAllowedVersion(nextVersion, ALLOWED_VERSIONS.next, now)) {
+    throw new Error(`Packaged Next.js ${nextVersion} is not an allowed, still-supported release (${manifests[0]})`);
   }
   const electronVersion = context.packager.info.framework.version;
-  if (!isAllowedVersion(electronVersion, ALLOWED_VERSIONS.electron)) {
-    throw new Error(`Packaged Electron ${electronVersion} is outside the allowed versions`);
+  if (!isAllowedVersion(electronVersion, ALLOWED_VERSIONS.electron, now)) {
+    throw new Error(`Packaged Electron ${electronVersion} is not an allowed, still-supported release`);
   }
   console.log(`[afterPack] packaged versions OK: next ${nextVersion}, electron ${electronVersion}`);
 }

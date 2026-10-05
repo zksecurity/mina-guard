@@ -153,8 +153,9 @@ runners and uploads to a GitHub Release.
 - **Packaged-version check:** electron-builder's `afterPack` hook
   (`scripts/check-packaged-versions.mjs`) checks the unpacked app before any
   installer is built or published, and fails unless it holds one Next.js copy
-  at `>=15.5.24 <16` and Electron 43.5.0 or later. Local `electron-builder`
-  runs check too.
+  at `>=16.3.6 <17` and Electron at `>=43.5.0 <44`, each only until its vendor
+  support ends (Next 16: 2027-10-21, Electron 43: 2027-01-05). Local
+  `electron-builder` runs check too.
 
 The `owner`/`repo` in the `publish` block must match the GitHub repo the
 release should land on.
