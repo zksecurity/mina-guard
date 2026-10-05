@@ -56,6 +56,7 @@ import {
   type NewProposalInput,
   type Proposal,
   normalizeTxType,
+  requireTxType,
   EMPTY_PUBKEY_B58,
 } from '@/lib/types';
 import {
@@ -630,7 +631,9 @@ function buildProposalStruct(
   >,
   fallbackGuardAddress: string
 ): InstanceType<typeof TransactionProposal> {
-  const txType = normalizeTxType(proposal.txType);
+  // An unknown type must not fall back to a transfer: the hash would still
+  // match a real transfer while the screen described something else.
+  const txType = requireTxType(proposal.txType);
   const destination = proposal.destination === 'remote' ? Destination.REMOTE : Destination.LOCAL;
   const childAccount = proposal.childAccount
     ? safePublicKey(proposal.childAccount)
@@ -639,7 +642,7 @@ function buildProposalStruct(
   return new TransactionProposal({
     receivers: buildTransferReceivers(proposal.receivers),
     tokenId: Field(proposal.tokenId ?? NATIVE_TOKEN_ID.toString()),
-    txType: txType ? uiTxTypeToField(txType) : Field(0),
+    txType: uiTxTypeToField(txType),
     data: Field(proposal.data ?? '0'),
     memoHash: Field(proposal.memoHash),
     nonce: Field(proposal.nonce ?? '0'),
@@ -1485,6 +1488,14 @@ const workerApi = {
     const txHash = await submitTx(tx, sendFn, progressFn, signFeePayerFn, [], childMemo);
     if (!txHash) return null;
     return `SubVault action submitted: ${txHash}`;
+  },
+
+  /**
+   * Hashes memo text the way proposals commit to it, so the page can check a
+   * memo against the signed memo hash itself instead of trusting the server.
+   */
+  computeMemoHash(memo: string): string {
+    return memoToField(memo).toString();
   },
 
   /**

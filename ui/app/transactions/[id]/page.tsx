@@ -11,6 +11,7 @@ import {
   TX_TYPE_LABELS,
   formatMina,
   isDeleteProposal,
+  sumReceiverAmounts,
   truncateAddress,
   type Proposal,
 } from '@/lib/types';
@@ -31,8 +32,10 @@ import {
   executeSetupChildOnchain,
   assertLedgerReady,
   computeCreateChildConfigHash,
+  computeMemoHash,
   validateAddOwnerProposalData,
 } from '@/lib/multisigClient';
+import { memoBadge } from '@/lib/memo-check';
 import { fetchChildConfigFromEvents } from '@/lib/api';
 import {
   PENDING_TXS_CHANGED,
@@ -149,6 +152,21 @@ export default function TransactionDetailPage() {
     })();
     return () => { cancelled = true; };
   }, [multisig, proposal, proposalHash, proposalsAddress]);
+
+  // Check the memo text against the signed memo hash in this browser instead
+  // of trusting the server's match flag. null until the check finishes.
+  const [localMemoMatch, setLocalMemoMatch] = useState<boolean | null>(null);
+  const memoText = proposal?.memo ?? '';
+  const memoHash = proposal?.memoHash ?? null;
+  useEffect(() => {
+    setLocalMemoMatch(null);
+    if (memoHash == null) return;
+    let cancelled = false;
+    computeMemoHash(memoText)
+      .then((hash) => { if (!cancelled) setLocalMemoMatch(hash === memoHash); })
+      .catch(() => { if (!cancelled) setLocalMemoMatch(false); });
+    return () => { cancelled = true; };
+  }, [memoText, memoHash]);
 
   // For pending CREATE_CHILD: recompute the config hash from the owners/threshold the
   // events display and compare it to the signed proposal.data. A mismatch means
@@ -598,17 +616,8 @@ export default function TransactionDetailPage() {
     : proposal.txType ? TX_TYPE_LABELS[proposal.txType] : 'Unknown';
 
   const hasMemo = proposal.memoHash != null;
-  const isExecuted = proposal.status === 'executed';
-  const memoAdornment: ReactNode | undefined = (() => {
-    if (!hasMemo) return undefined;
-    if (isExecuted) {
-      const allMatch = proposal.proposalMemoMatch === true && proposal.memoExecutionMatch === true;
-      if (allMatch) return <MemoWarningTooltip variant="match" />;
-      return <MemoWarningTooltip variant="mismatch" />;
-    }
-    if (proposal.proposalMemoMatch === false) return <MemoWarningTooltip variant="proposalMismatch" />;
-    return undefined;
-  })();
+  const badge = memoBadge(proposal, localMemoMatch);
+  const memoAdornment: ReactNode | undefined = badge ? <MemoWarningTooltip variant={badge} /> : undefined;
 
   const isRemote = proposal.destination === 'remote';
   const isDelete = isDeleteProposal(proposal);
@@ -1241,8 +1250,8 @@ function getSpendingTarget(
 ): { sourceAddress: string; amount: bigint } | null {
   if (isDeleteProposal(proposal)) return null;
   if (proposal.txType === 'transfer' || proposal.txType === 'allocateChild') {
-    if (!proposal.totalAmount) return null;
-    return { sourceAddress: contractAddress, amount: BigInt(proposal.totalAmount) };
+    if (proposal.receivers.length === 0) return null;
+    return { sourceAddress: contractAddress, amount: sumReceiverAmounts(proposal.receivers) };
   }
   if (proposal.txType === 'reclaimChild' && proposal.childAccount && proposal.data) {
     return { sourceAddress: proposal.childAccount, amount: BigInt(proposal.data) };

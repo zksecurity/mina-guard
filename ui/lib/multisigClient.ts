@@ -305,6 +305,11 @@ export async function executeProposalOnchain(params: {
   ));
 }
 
+/** Hashes memo text as proposals commit to it (runs in the worker, after any compile in progress). */
+export async function computeMemoHash(memo: string): Promise<string> {
+  return getWorkerApi().computeMemoHash(memo);
+}
+
 /**
  * Computes the createChild proposal data hash.
  * Returns the ownersCommitment and configHash needed for the CREATE_CHILD proposal.

@@ -7,6 +7,7 @@ import {
   type ProposalReceiver,
   normalizeDestination,
   normalizeTxType,
+  sumReceiverAmounts,
 } from '@/lib/types';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import {
@@ -378,17 +379,21 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
   };
 }
 
-/** Normalizes backend proposal rows and txType encodings for UI components. */
-function toProposal(input: Record<string, unknown>): Proposal {
+/**
+ * Normalizes backend proposal rows and txType encodings for UI components.
+ * The total, recipient count and governance target are worked out here from
+ * the receivers the proposal hash commits to. The server's precomputed copies
+ * of those values are ignored, so a wrong server cannot change what an owner
+ * sees next to Approve.
+ */
+export function toProposal(input: Record<string, unknown>): Proposal {
   const receivers = asReceivers(input.receivers);
-  const totalAmount = asNullableString(input.totalAmount)
-    ?? (receivers.length > 0
-      ? receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n).toString()
-      : null);
+  const totalAmount = receivers.length > 0 ? sumReceiverAmounts(receivers).toString() : null;
   return {
     proposalHash: asString(input.proposalHash) ?? '',
     proposer: asNullableString(input.proposer),
-    toAddress: asNullableString(input.toAddress),
+    // Owner to add or remove, or the delegate: receivers[0] in the signed proposal.
+    toAddress: receivers[0]?.address ?? null,
     tokenId: asNullableString(input.tokenId),
     txType: normalizeTxType(asNullableString(input.txType)),
     data: asNullableString(input.data),
@@ -415,7 +420,7 @@ function toProposal(input: Record<string, unknown>): Proposal {
     createdAt: asString(input.createdAt) ?? new Date(0).toISOString(),
     updatedAt: asString(input.updatedAt) ?? new Date(0).toISOString(),
     receivers,
-    recipientCount: asNullableNumber(input.recipientCount) ?? receivers.length,
+    recipientCount: receivers.length,
     totalAmount,
   };
 }
