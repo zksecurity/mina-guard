@@ -179,6 +179,7 @@ The inner Caddyfiles (`Caddyfile` for `/app/*`, `Caddyfile.trail` for `/trail/*`
 
 - **`/app/archive` and `/trail/archive` rewrite the upstream path to `/`** — archive-node-api serves GraphQL only at its root, so merely stripping the prefix would forward `/archive` and 404.
 - GraphQL/archive routes answer `OPTIONS` preflights themselves and set permissive CORS headers, deleting any duplicates from upstream.
+- `/app/api/*` and `/trail/api/*` pass CORS to the backend, which allows only the origin in its `CORS_ORIGINS` (set in each compose file to the site's own origin, where the UI is served).
 - The main stack's `/app/accounts/*` routes match only the two lightnet account-manager endpoints (`acquire-account`, `release-account`) so the frontend's own `/accounts/*` pages fall through to the Next.js catch-all.
 - The trail inner Caddy also sets COOP/COEP headers itself (redundant behind the outer Caddy, necessary when hitting the inner Caddy directly).
 - `/_next/static/*` is served without the no-cache header (content-hashed filenames); everything else under the frontend catch-all gets `Cache-Control: no-cache`.

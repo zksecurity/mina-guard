@@ -85,7 +85,7 @@ observed to return generic errors mid-block.
 5. **Rescan unready contracts** — any `Contract` with `ready = false` is re-synced from its `discoveredAtBlock` up to `latestHeight`. This is what makes subscribe-before-deploy self-healing.
 6. **Forward sweep** — `syncKnownContracts(indexedHeight + 1, latestHeight)` across every tracked contract.
 7. **Advance cursor** — persist `indexed_height = latestHeight`.
-8. **Poll pending submissions** — `pollPendingSubmissions` checks every in-flight approve/execute tx hash against bestChain and records structured failure reasons on the `Proposal` row. Transactions still `pending` past a 20-minute grace period are additionally checked against the daemon mempool (`pooledZkappCommands`); absent from both, they're marked dropped via `lastApproveError`/`lastExecuteError`, which releases the UI's signer lock. (Successful txs need no handling here — their Approval/Execution events clear them in the apply pipeline.)
+8. **Poll pending submissions** — `pollPendingSubmissions` checks every in-flight approve/execute tx hash (each one checked with the node when it was reported; see focus point 5) against bestChain and records structured failure reasons on the `Proposal` row. Transactions still `pending` past a 20-minute grace period are additionally checked against the daemon mempool (`pooledZkappCommands`); absent from both, they're marked dropped via `lastApproveError`/`lastExecuteError`, which releases the UI's signer lock. (Successful txs need no handling here — their Approval/Execution events clear them in the apply pipeline.)
 
 If any step throws, the cursor is **not** advanced, so the next tick retries the same window.
 Per-contract sync errors re-throw for the same reason.
@@ -212,7 +212,7 @@ do, not preventing compromise:
 
 - **Integrity is enforced downstream.** Clients re-hash the proposal they rebuild from indexer data and sign that hash; the contract re-hashes on-chain. Tampered fields → wrong hash → failed tx. So the backend cannot induce a wrong approval or execution.
 - **The damage ceiling is censorship / DoS / display lies.** Hiding proposals, serving stale state, or lying on a display-only surface (the memo badge). None of these can move funds.
-- **The read API is the only exposed surface.** The write routes are narrow: tx-hash submissions (backend-local polling state), lite-mode subscribe/unsubscribe (indexer scope), and lightnet `POST /api/fund` (test-only, gated on `LIGHTNET_ACCOUNT_MANAGER`).
+- **The read API is the only exposed surface.** The write routes are narrow: tx-hash submissions (backend-local polling state, recorded only after the Mina node confirms them; see focus point 5), lite-mode subscribe/unsubscribe (indexer scope), and lightnet `POST /api/fund` (test-only, gated on `LIGHTNET_ACCOUNT_MANAGER`).
 
 ### Suggested focus points
 
@@ -237,6 +237,8 @@ required archive query filter), then validates the live VK and every permission 
 `GUARD_PERMISSIONS`. Confirm that a canonical VK with even one altered field (especially
 `send: proofOrSignature`) never becomes `permissionsVerified` or `ready`, and that legacy rows are
 re-checked rather than grandfathered.
+
+**5. Submission reports are checked before they are stored.** Anyone can call `POST .../submissions`, and every owner's UI locks the whole vault while a recorded approve/execute hash is in flight. So the route (`routes.ts`, `submission-check.ts`) records a hash only when the Mina node knows it, in its pool or the last 20 blocks, and the transaction carries a proof-authorized update of the vault (or, for a remote execution, the proposal's SubVault) that emits the `approval` or `execution` event for that proposal hash. The proof requirement matters because anyone can attach events to an account without one. The route asks the node up to four times over about 7 seconds, since an honest UI reports right after broadcasting; it runs at most 8 checks at once and refuses the rest with `429`. A refused report stores nothing. Reporting the hash already recorded changes nothing, so a repeat cannot restart the dropped-transaction grace period. An approval whose event the indexer has already applied is cleared right after it is written, because nothing else would clear it. Confirm that no other path writes `lastApproveTxHash` or `lastExecuteTxHash`. Browser access is limited to `CORS_ORIGINS` when it is set; that only stops other sites' pages, not direct callers.
 
 ### Failure semantics
 
@@ -308,6 +310,7 @@ From `backend/`:
 | `ARCHIVE_ENDPOINT` | *(required)* | Primary archive(-node-api) GraphQL endpoint. Must expose `transactionInfo.authorizationKind` on events (Archive-Node-API v0.0.8+), or event syncing fails closed |
 | `MINA_FALLBACK_ENDPOINT` | empty | Optional Mina fallback endpoint |
 | `ARCHIVE_FALLBACK_ENDPOINT` | empty | Optional archive fallback endpoint |
+| `CORS_ORIGINS` | empty | Comma-separated browser origins allowed to call the API. Empty allows every origin and logs a warning at startup; hosted deployments set it to the UI's origin |
 | `LIGHTNET_ACCOUNT_MANAGER` | empty | Lightnet account-manager URL; enables `POST /api/fund` |
 | `INDEX_POLL_INTERVAL_MS` | `15000` | Poll interval for index ticks |
 | `INDEX_START_HEIGHT` | `0` | Initial cursor height when no cursor row exists |
@@ -347,7 +350,7 @@ This branch is test-only and must never be enabled in a deployment that accepts 
 | `GET /api/contracts/:address/owners` | Owners, collapsing `OwnerMembership` history to latest action per address (`active = latest is "added"`). Query: `active=true\|false`. Ordered `index asc, createdAt asc`. `404` if not found. |
 | `GET /api/contracts/:address/proposals` | Proposals; `status` derived at read time (filters other than `executed` applied in memory). Query: `status` (`pending`/`executed`/`expired`/`invalidated`), `limit` (1–200, default 50), `offset` (0–10000). Ordered `createdAtBlock desc, createdAt desc`. `404` if not found. |
 | `GET /api/contracts/:address/proposals/:proposalHash` | Single proposal. `404` if not found. |
-| `POST /api/contracts/:address/proposals/:proposalHash/submissions` | Records a fresh approve/execute tx hash for polling, clearing any prior error. Body: `{ action: "approve"\|"execute", txHash }`. |
+| `POST /api/contracts/:address/proposals/:proposalHash/submissions` | Records a fresh approve/execute tx hash for polling, clearing any prior error, once the Mina node shows it is that action on this proposal (focus point 5). Body: `{ action: "approve"\|"execute", txHash }` with a base58 hash. `400` for a malformed body, `404` for an unknown proposal, `422` when the check fails, `429` when too many checks are running. |
 | `GET /api/contracts/:address/proposals/:proposalHash/approvals` | Approvals for one proposal. Ordered `blockHeight asc, createdAt asc`. `404` if not found. |
 | `GET /api/contracts/:address/events` | Raw `EventRaw` rows (without `applyError`). Query: `fromBlock`, `toBlock`, `limit` (1–500, default 100), `offset` (0–50000). Ordered `blockHeight desc, createdAt desc`. The checkpoint client uses `fromBlock` for incremental reads and rejects ranges exceeding the pagination cap. Cursor pagination is tracked in [#143](https://github.com/zksecurity/mina-guard/issues/143). `404` if not found. |
 | `GET /api/account/:address/balance` | MINA balance via daemon GraphQL. `{ balance: null }` when the account doesn't exist on-chain (distinct from a real `"0"`). |

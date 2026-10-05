@@ -1,6 +1,6 @@
 # MinaGuard Backend
 
-Proposal responses include `executionTxHash` from indexed execution records for confirmed explorer links. This is separate from the unverified `lastExecuteTxHash` submission report.
+Proposal responses include `executionTxHash` from indexed execution records for confirmed explorer links. This is separate from the `lastExecuteTxHash` submission report, which marks an execution still in flight: the backend checks with the Mina node that it executes the proposal, but it may still fail.
 
 Express API + polling indexer for MinaGuard contracts.
 

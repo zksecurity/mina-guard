@@ -357,6 +357,14 @@ proposal-state changes (`useTransactions.ts` `reconcilePendingTxs`), checks
 deploy txs via `/api/tx-status`, and clearing a pending tx fires
 `PENDING_TXS_CHANGED` (`lib/storage.ts`), which the lock listens for. It
 deliberately ignores `kind='deploy'` (`useContractTxLock.ts:60-79`).
+The other owners' signals come from the `lastApproveTxHash` and
+`lastExecuteTxHash` the backend serves. The backend records a reported hash
+only after its Mina node shows that the transaction approves or executes that
+proposal, so a forged report cannot lock the vault (see
+[`backend-audit-guide.md`](./backend-audit-guide.md) focus point 5). The UI
+sends these reports without waiting for the answer: the check can take
+several seconds, and the reporting tab already locks from its own pending
+record.
 
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
