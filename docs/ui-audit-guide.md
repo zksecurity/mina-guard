@@ -362,9 +362,16 @@ The other owners' signals come from the `lastApproveTxHash` and
 only after its Mina node shows that the transaction approves or executes that
 proposal, so a forged report cannot lock the vault (see
 [`backend-audit-guide.md`](./backend-audit-guide.md) focus point 5). The UI
-sends these reports without waiting for the answer: the check can take
-several seconds, and the reporting tab already locks from its own pending
-record.
+sends these reports without waiting for the answer (`reportSubmission` in
+`lib/api.ts`): the check can take several seconds, and the reporting tab
+already locks from its own pending record. If the backend refuses the report
+(its node has not seen the tx yet, the node is down, or too many checks are
+running), the backend never reports that tx's failure. The tab therefore
+marks its pending record `untracked`, and that record expires 20 minutes
+after broadcast instead of 24 hours (`lib/storage.ts`). Each poll deletes
+expired records (`prunePendingTxs`), which lifts the lock without a reload. A
+tx still waiting after 20 minutes would unlock early; a second submission
+then collides and fails on-chain, which costs a retry, not funds.
 
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
