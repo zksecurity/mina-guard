@@ -543,49 +543,72 @@ export interface ZkappCommandUpdate {
   isProved: boolean;
   /** Raw event field lists; each starts with the event type index. */
   events: string[][];
+  /** Required app-state values, one per state slot; null means "any value". */
+  stateConditions: Array<string | null>;
 }
 
-const ZKAPP_COMMAND_UPDATES = `hash
-  zkappCommand { accountUpdates { body { publicKey events authorizationKind { isProved } } } }`;
+/** Bounds each node request made while a client waits on a submission check. */
+const SUBMISSION_LOOKUP_TIMEOUT_MS = 5000;
 
-/** Looks up a zkApp command by hash, first in the daemon's pool and then in the
- *  most recent best-chain blocks, and returns its account updates. Returns null
- *  when the daemon knows no such command or the lookup fails. */
-export async function fetchZkappCommandUpdates(
+/** Looks up a zkApp command waiting in the daemon's pool by hash and returns
+ *  its account updates. Returns null when the pool does not hold the command
+ *  or the lookup fails. */
+export async function fetchPooledZkappCommand(
   config: BackendConfig,
   txHash: string,
 ): Promise<ZkappCommandUpdate[] | null> {
   type Command = {
     hash: string;
     zkappCommand?: { accountUpdates?: Array<{ body?: {
-      publicKey?: string; events?: string[][]; authorizationKind?: { isProved?: boolean };
+      publicKey?: string;
+      events?: string[][];
+      authorizationKind?: { isProved?: boolean };
+      preconditions?: { account?: { state?: Array<string | null> } };
     } }> };
   };
-  const query = `query SubmittedCommand($hashes: [String!], $maxLength: Int!) {
-    pooledZkappCommands(hashes: $hashes) { ${ZKAPP_COMMAND_UPDATES} }
-    bestChain(maxLength: $maxLength) { transactions { zkappCommands { ${ZKAPP_COMMAND_UPDATES} } } }
+  const query = `query PooledCommand($hashes: [String!]) {
+    pooledZkappCommands(hashes: $hashes) {
+      hash
+      zkappCommand { accountUpdates { body {
+        publicKey events authorizationKind { isProved } preconditions { account { state } }
+      } } }
+    }
   }`;
   try {
-    const data = await graphqlRequest<{
-      pooledZkappCommands?: Command[];
-      bestChain?: Array<{ transactions?: { zkappCommands?: Command[] } }>;
-    }>(query, config.minaEndpoint, config.minaFallbackEndpoint, {
-      hashes: [txHash],
-      maxLength: TX_STATUS_SCAN_BLOCKS,
-    });
-    const candidates = [
-      ...(data.pooledZkappCommands ?? []),
-      ...(data.bestChain ?? []).flatMap((block) => block.transactions?.zkappCommands ?? []),
-    ];
-    const command = candidates.find((c) => c.hash === txHash);
+    const data = await graphqlRequest<{ pooledZkappCommands?: Command[] }>(
+      query, config.minaEndpoint, config.minaFallbackEndpoint, { hashes: [txHash] }, SUBMISSION_LOOKUP_TIMEOUT_MS,
+    );
+    const command = (data.pooledZkappCommands ?? []).find((c) => c.hash === txHash);
     if (!command) return null;
     return (command.zkappCommand?.accountUpdates ?? []).map(({ body }) => ({
       publicKey: body?.publicKey ?? '',
       isProved: body?.authorizationKind?.isProved === true,
       events: Array.isArray(body?.events) ? body.events : [],
+      stateConditions: body?.preconditions?.account?.state ?? [],
     }));
   } catch (err) {
-    console.warn('[mina-client] fetchZkappCommandUpdates failed', txHash, err);
+    console.warn('[mina-client] fetchPooledZkappCommand failed', txHash, err);
+    return null;
+  }
+}
+
+/** Fetches the current app state of each address. A missing account maps to
+ *  null. Returns null when the lookup fails. */
+export async function fetchZkappStates(
+  config: BackendConfig,
+  addresses: string[],
+): Promise<Map<string, string[] | null> | null> {
+  const fields = addresses.map((_, i) => `a${i}: account(publicKey: $a${i}) { zkappState }`).join('\n');
+  const params = addresses.map((_, i) => `$a${i}: PublicKey!`).join(', ');
+  const variables = Object.fromEntries(addresses.map((address, i) => [`a${i}`, address]));
+  try {
+    const data = await graphqlRequest<Record<string, { zkappState?: string[] | null } | null>>(
+      `query ZkappStates(${params}) { ${fields} }`,
+      config.minaEndpoint, config.minaFallbackEndpoint, variables, SUBMISSION_LOOKUP_TIMEOUT_MS,
+    );
+    return new Map(addresses.map((address, i) => [address, data[`a${i}`]?.zkappState ?? null]));
+  } catch (err) {
+    console.warn('[mina-client] fetchZkappStates failed', err);
     return null;
   }
 }
@@ -772,12 +795,13 @@ async function graphqlRequest<T>(
   endpoint: string,
   fallbackEndpoint: string | null,
   variables?: Record<string, unknown>,
+  timeoutMs?: number,
 ): Promise<T> {
-  const primary = await runGraphqlQuery<T>(endpoint, query, variables);
+  const primary = await runGraphqlQuery<T>(endpoint, query, variables, timeoutMs);
   if (primary.ok) return primary.data;
 
   if (fallbackEndpoint) {
-    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query, variables);
+    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query, variables, timeoutMs);
     if (fallback.ok) return fallback.data;
   }
 
@@ -789,12 +813,14 @@ async function runGraphqlQuery<T>(
   endpoint: string,
   query: string,
   variables?: Record<string, unknown>,
+  timeoutMs?: number,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(variables ? { query, variables } : { query }),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     if (!response.ok) {
       return { ok: false, error: `${response.status} ${response.statusText}` };

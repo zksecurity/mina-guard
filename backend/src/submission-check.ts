@@ -1,7 +1,7 @@
 import { PublicKey } from 'o1js';
 import { MinaGuard } from 'contracts';
 import type { BackendConfig } from './config.js';
-import { fetchZkappCommandUpdates, type ZkappCommandUpdate } from './mina-client.js';
+import { fetchPooledZkappCommand, fetchZkappStates, type ZkappCommandUpdate } from './mina-client.js';
 
 // o1js prefixes each event with its index in the sorted list of event names.
 const EVENT_NAMES = Object.keys(new MinaGuard(PublicKey.empty()).events).sort();
@@ -28,19 +28,37 @@ export function emitsProposalEvent(
   if (!update.isProved) return false;
   return update.events.some((fields) => {
     if (fields[0] !== EVENT_INDEX[action] || fields.length < 2) return false;
-    try {
-      return BigInt(fields[1]) === BigInt(proposalHash);
-    } catch {
-      return false;
-    }
+    return sameField(fields[1], proposalHash);
   });
 }
 
 /**
- * Checks that a reported transaction is a real approval or execution of the
- * proposal: the node knows it, in its pool or a recent block, and one of the
- * given accounts (the vault, or for a remote execution its SubVault) emits the
- * matching event from a proof-authorized update.
+ * True when every app-state value the update requires equals the account's
+ * current state. A valid proof alone is not enough: anyone can prove a
+ * MinaGuard method against made-up state (say, an owner list that includes
+ * them), and only these conditions, checked when a block applies the
+ * transaction, would reject it. Every approval and execution changes the
+ * state it requires, so a transaction already in a block fails this too.
+ */
+export function matchesCurrentState(update: ZkappCommandUpdate, state: string[] | null): boolean {
+  return update.stateConditions.every((required, i) =>
+    required === null || (state !== null && i < state.length && sameField(required, state[i])));
+}
+
+function sameField(a: string, b: string): boolean {
+  try {
+    return BigInt(a) === BigInt(b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks that a reported transaction is a pending approval or execution of
+ * the proposal: the node's pool holds it, one of the given accounts (the
+ * vault, or for a remote execution also its SubVault) emits the matching
+ * event from a proof-authorized update, and every update of those accounts
+ * requires their current state.
  */
 export async function verifySubmittedTransaction(
   config: BackendConfig,
@@ -49,11 +67,13 @@ export async function verifySubmittedTransaction(
 ): Promise<boolean> {
   for (const delay of delaysMs) {
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
-    const updates = await fetchZkappCommandUpdates(config, params.txHash);
+    const updates = await fetchPooledZkappCommand(config, params.txHash);
     if (!updates) continue;
-    return updates.some((update) =>
-      params.accounts.includes(update.publicKey)
-      && emitsProposalEvent(update, params.action, params.proposalHash));
+    const ours = updates.filter((update) => params.accounts.includes(update.publicKey));
+    if (!ours.some((update) => emitsProposalEvent(update, params.action, params.proposalHash))) return false;
+    const states = await fetchZkappStates(config, params.accounts);
+    if (!states) return false;
+    return ours.every((update) => matchesCurrentState(update, states.get(update.publicKey) ?? null));
   }
   return false;
 }

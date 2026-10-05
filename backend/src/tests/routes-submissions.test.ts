@@ -36,7 +36,11 @@ function encode(type: 'approval' | 'execution', proposalHash: string): string[] 
   return [String(names.indexOf(type)), ...events[type].toFields(value).map(String)];
 }
 const update = (publicKey: string, isProved: boolean, ...evts: string[][]): ZkappCommandUpdate =>
-  ({ publicKey, isProved, events: evts });
+  ({ publicKey, isProved, events: evts, stateConditions: [CURRENT[0], null, CURRENT[2]] });
+const requiring = (u: ZkappCommandUpdate, stateConditions: Array<string | null>): ZkappCommandUpdate =>
+  ({ ...u, stateConditions });
+// Current app state of both the vault and the SubVault in these tests.
+const CURRENT = ['11', '22', '33'];
 
 let server: Server;
 let baseUrl = '';
@@ -45,8 +49,11 @@ const savedDelays = [...LOOKUP_DELAYS_MS];
 
 function stubLookup(...responses: Array<ZkappCommandUpdate[] | null>) {
   let call = 0;
-  lookups = spyOn(minaClient, 'fetchZkappCommandUpdates').mockImplementation(
+  lookups = spyOn(minaClient, 'fetchPooledZkappCommand').mockImplementation(
     async () => responses[Math.min(call++, responses.length - 1)],
+  );
+  spyOn(minaClient, 'fetchZkappStates').mockImplementation(
+    async (_config, addresses) => new Map(addresses.map((a) => [a, CURRENT])),
   );
 }
 
@@ -155,6 +162,42 @@ describe('submission reports', () => {
     expect((await stored()).lastApproveTxHash).toBeNull();
   });
 
+  test('refuses a proof built on state the vault does not have', async () => {
+    // A made-up owner list, or a transaction already in a block: both require
+    // a state the vault no longer (or never) had.
+    stubLookup([requiring(update(VAULT, true, encode('approval', PROPOSAL)), ['99', null, CURRENT[2]])]);
+    expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
+    expect((await stored()).lastApproveTxHash).toBeNull();
+  });
+
+  test('ignores state slots the update leaves open, and decimal formatting', async () => {
+    stubLookup([requiring(update(VAULT, true, encode('approval', PROPOSAL)), [null, '022', null, null])]);
+    expect((await post({ action: 'approve', txHash: TX })).status).toBe(200);
+  });
+
+  test('refuses a required slot beyond the account state, or a missing account', async () => {
+    stubLookup([requiring(update(VAULT, true, encode('approval', PROPOSAL)), [null, null, null, '0'])]);
+    expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
+    mock.restore();
+    stubLookup([update(VAULT, true, encode('approval', PROPOSAL))]);
+    spyOn(minaClient, 'fetchZkappStates').mockResolvedValue(new Map([[VAULT, null]]));
+    expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
+  });
+
+  test('refuses when the state lookup fails', async () => {
+    stubLookup([update(VAULT, true, encode('approval', PROPOSAL))]);
+    spyOn(minaClient, 'fetchZkappStates').mockResolvedValue(null);
+    expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
+  });
+
+  test('a remote execution also needs the vault update to require current state', async () => {
+    stubLookup([
+      requiring(update(VAULT, false), ['99', null, null]),
+      update(CHILD, true, encode('execution', PROPOSAL)),
+    ]);
+    expect((await post({ action: 'execute', txHash: TX })).status).toBe(422);
+  });
+
   test('accepts a remote execution whose event the SubVault emits', async () => {
     stubLookup([update(VAULT, false), update(CHILD, true, encode('execution', PROPOSAL))]);
     expect((await post({ action: 'execute', txHash: TX })).status).toBe(200);
@@ -195,7 +238,7 @@ describe('submission reports', () => {
   test('caps concurrent checks', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    lookups = spyOn(minaClient, 'fetchZkappCommandUpdates').mockImplementation(async () => {
+    lookups = spyOn(minaClient, 'fetchPooledZkappCommand').mockImplementation(async () => {
       await gate;
       return null;
     });
