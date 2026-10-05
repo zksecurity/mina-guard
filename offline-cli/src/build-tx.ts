@@ -269,9 +269,20 @@ export function requireTxType(value: string | null | undefined): TxType {
   return txType;
 }
 
-/** Checks the type the operator is about to confirm, for every bundle action. */
-export function assertBundleTxType(bundle: OfflineBundle): TxType {
-  return requireTxType(bundle.action === 'propose' ? bundle.input?.txType : bundle.proposal?.txType);
+/**
+ * Checks the bundle's transaction type and rewrites it to its name (a numeric
+ * code such as "0" becomes "transfer"). The summary and the builders compare
+ * the type by name, so both must see the same canonical value.
+ */
+export function canonicalizeBundleTxType(bundle: OfflineBundle): TxType {
+  if (bundle.action === 'propose') {
+    const txType = requireTxType(bundle.input?.txType);
+    bundle.input.txType = txType;
+    return txType;
+  }
+  const txType = requireTxType(bundle.proposal?.txType);
+  bundle.proposal.txType = txType;
+  return txType;
 }
 
 function uiTxTypeToField(type: string): InstanceType<typeof Field> {
@@ -554,7 +565,9 @@ function injectAccounts(bundle: BundleBase) {
       }
       addCachedAccount(partial);
     } catch (err) {
-      process.stderr.write(`[offline-cli] Warning: could not inject account ${address}: ${err}\n`);
+      process.stderr.write(
+        `[offline-cli] Warning: could not inject account ${escapeTerminalText(address)}: ${escapeTerminalText(String(err))}\n`,
+      );
     }
   }
 }
@@ -729,7 +742,8 @@ export async function handlePropose(
   log: LogFn,
 ): Promise<SignedTxOutput> {
   assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
-  const input = bundle.input as NewProposalInput;
+  // The helpers below compare the type by name, so use the canonical name.
+  const input: NewProposalInput = { ...bundle.input, txType: requireTxType(bundle.input.txType) };
   const isCreateChild = input.txType === 'createChild';
 
   if (isCreateChild && (!input.childPrivateKey || !input.childOwners || input.childThreshold == null)) {
@@ -754,7 +768,7 @@ export async function handlePropose(
 
   // Build proposal struct
   const receivers = buildReceiversForProposal(input);
-  const txType = uiTxTypeToField(requireTxType(input.txType));
+  const txType = uiTxTypeToField(input.txType);
   const data = buildProposalDataField(input, ownerStore);
 
   const isRemote =

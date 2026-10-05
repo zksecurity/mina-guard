@@ -28,7 +28,7 @@ if (!isMainThread) {
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
-import { handlePropose, handleApprove, handleExecute, assertBundleTxType } from './build-tx.js';
+import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
 import { escapeTerminalLines } from './terminal-safe.js';
@@ -93,10 +93,10 @@ if (!['propose', 'approve', 'execute'].includes(bundle.action)) {
 // -- Dispatch ---------------------------------------------------------------
 
 async function main() {
-  // Refuse an unknown transaction type before showing anything: the builder
-  // would otherwise sign some other type than the one the screen describes.
+  // Refuse an unknown transaction type before showing anything, and turn a
+  // numeric code into its name, so the summary and the builder agree on it.
   try {
-    assertBundleTxType(bundle);
+    canonicalizeBundleTxType(bundle);
   } catch (err) {
     fatal(`${err instanceof Error ? err.message : String(err)}\nAborted. No transaction was signed.`);
   }

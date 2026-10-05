@@ -30,7 +30,7 @@ import {
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType } from '../build-tx.ts';
 import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
@@ -134,6 +134,38 @@ describe('offline-cli', () => {
       expect(() => requireTxType(bad)).toThrow('Unsupported transaction type');
     }
   });
+
+  it('rewrites a numeric type code to its name, so the summary and the builder agree', () => {
+    const propose = { action: 'propose', input: { txType: '1', nonce: 1, newOwner: 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY' } } as any;
+    expect(canonicalizeBundleTxType(propose)).toBe('addOwner');
+    expect(propose.input.txType).toBe('addOwner');
+    // The summary compares the type by name to pick the owner target.
+    expect(renderBundleSummary({ ...propose, version: 1, minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58, feePayerAddress: EMPTY_PUBKEY_B58, accounts: {}, events: [], configNonce: 0 }))
+      .toContain('New owner       B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY');
+
+    const approve = { action: 'approve', proposal: { txType: '0', receivers: [] } } as any;
+    expect(canonicalizeBundleTxType(approve)).toBe('transfer');
+    expect(approve.proposal.txType).toBe('transfer');
+    expect(() => canonicalizeBundleTxType({ action: 'propose', input: { txType: '10' } } as any)).toThrow('Unsupported transaction type');
+  });
+
+  it('escapes bundle text in warnings printed after confirmation', async () => {
+    const bundlePath = join(tmpDir, 'escaped-warning.json');
+    writeFileSync(bundlePath, JSON.stringify({
+      version: 1,
+      action: 'approve',
+      minaNetwork: 'testnet',
+      contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58,
+      accounts: { 'bad\u001b[2Jaccount': { publicKey: 'bad\u001b[2Jaccount' } },
+      events: [],
+      proposal: { proposalHash: '1', txType: 'transfer', receivers: [] },
+    }));
+    const result = await runCLI(bundlePath, PrivateKey.random().toBase58());
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('could not inject account bad\\u{1B}[2Jaccount');
+    expect(result.stderr).not.toContain('\u001b');
+  }, 60_000);
 
   it('escapes control, format and line-separator characters for the terminal', () => {
     expect(escapeTerminalText('a\u001b[2Jb')).toBe('a\\u{1B}[2Jb');
