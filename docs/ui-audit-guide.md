@@ -158,7 +158,8 @@ reclaimable.
   directly to the node.
   The values an owner reads next to Approve are derived in the browser from the receivers the
   proposal hash commits to (`toProposal` in `api.ts`): the recipient count, the total, the
-  amount used for the Vault balance check, and the governance target (`receivers[0]`). The
+  amount used for the Vault balance check, and the governance target (`receivers[0]`). Rows
+  beyond the nine receiver slots are dropped there, since the worker signs only those. The
   indexer's precomputed copies of those values are ignored. The worker refuses a proposal whose
   transaction type it does not recognize (`requireTxType`) instead of building it as a transfer.
   The chainless UI regression checks the child-specific permission alert and verifies that both online

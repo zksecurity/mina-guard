@@ -384,7 +384,9 @@ before any signing (`assertRecomputedProposalHash`, `build-tx.ts:438`, called at
 `924`/`1019`) — propose mints a new proposal, so there is no prior hash to check.
 The Memo line is the bundle's advisory plaintext, not the hash-covered
 `memoHash`; the Memo check line below it recomputes the hash from that text
-and prints `MISMATCH` when they differ. The transaction type is never display
+and prints `MISMATCH` when they differ. The receiver list shows only the first
+`MAX_RECEIVERS` rows, the ones the builder signs, with a warning when the bundle
+lists more. The transaction type is never display
 text: `requireTxType` accepts only the ten known names or their numeric codes,
 and both the summary and the builder use it, so an unknown value cannot be
 built as a transfer while the screen shows something else.
