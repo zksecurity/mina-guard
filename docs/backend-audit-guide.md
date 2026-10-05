@@ -181,11 +181,13 @@ as the Mina transaction memo set by the wallet.
 - **Execution**: the executor's wallet sets the same memo. The indexer decodes `txMemo`, hashes it via `memoToField`, and stores the result as `Proposal.executionMemoHash`. At read time, `computeMemoExecutionMatch` compares `memoHash === executionMemoHash` → `true`/`false`/`null`.
 - **Empty memos**: the memo commitment includes the UTF-8 byte length and bytes under `mina-guard-memo`, including the empty string. Zero is not an absence sentinel; the backend verifies empty memo commitments and the UI shows them. Missing memo data still yields an unknown match. Event and database shapes are unchanged; existing test vaults/proposals are not migrated into the new protocol.
 
-The two memo match flags are computed **by this untrusted indexer**, not the contract. They defend
-against an *honest* indexer that dropped or mismatched a memo; a *lying* indexer can serve a
-self-consistent triple, so the on-screen memo is strictly advisory. The action path (approve/execute)
-is contract-protected regardless — see [`ui-audit-guide.md`](./ui-audit-guide.md) focus point 3 for
-the full analysis.
+The two memo match flags are computed **by this untrusted indexer**, not the contract. The UI and
+the offline CLI no longer rely on the proposal-memo flag: they hash the displayed memo text
+themselves and compare it with `memoHash`. `memoHash` is part of the proposal hash owners sign, so
+an indexer that serves a false `memoHash` to match a false memo only makes the approval fail
+on-chain. The execution-memo flag is still the indexer's, because clients do not have the executed
+transaction's memo. The action path (approve/execute) is contract-protected regardless — see
+[`ui-audit-guide.md`](./ui-audit-guide.md) focus point 3 for the full analysis.
 
 **Cross-contract execution (REMOTE path).** Child-lifecycle methods (`executeSetupChild`,
 `executeReclaimToParent`, `executeDestroy`, `executeEnableChildMultiSig`) emit `ExecutionEvent` on

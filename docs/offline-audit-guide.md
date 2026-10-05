@@ -135,8 +135,10 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 (`index.ts` → `summary.ts` → `build-tx.ts`):
 
 1. **Summary + confirmation first** — after a version gate and a check that
-   the action and transaction type are known (`assertBundleTxType`; anything
-   else aborts before a summary is shown), and *before any
+   the action and transaction type are known (`canonicalizeBundleTxType`;
+   anything else aborts before a summary is shown, and a numeric type code is
+   rewritten to its name so the summary and the builder compare the same
+   value), and *before any
    compile/prove/sign work or key use*, `renderBundleSummary` renders
    everything the proposal hash covers (action, contract, fee payer, fee,
    nonce, memo, expiry, the per-type body, a `*** MAINNET ***` banner when
