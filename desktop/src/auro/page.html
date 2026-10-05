@@ -175,8 +175,10 @@
       try {
         // Re-establish connection before any call — Auro requires an active
         // connection per page session even if the origin is already approved.
+        // The answer is Auro's active account, used to check the signer below.
+        let accounts = [];
         if (method !== 'requestAccounts') {
-          await window.mina.requestAccounts();
+          accounts = await window.mina.requestAccounts();
         }
 
         statusEl.textContent = 'Waiting for approval in Auro...';
@@ -193,7 +195,16 @@
             result = await window.mina.signMessage(payload);
             break;
           case 'sendTransaction':
-            result = await window.mina.sendTransaction(payload);
+            // The app built this transaction, and checked the vault, for one
+            // signer. Refuse if Auro is set to a different account.
+            if (!Array.isArray(accounts) || !accounts.includes(payload.expectedSigner)) {
+              throw new Error(
+                'Auro\'s active account is not ' + payload.expectedSigner + ', the account this '
+                + 'transaction was prepared for. Switch Auro to that account, or reconnect in '
+                + 'MinaGuard and prepare the transaction again.',
+              );
+            }
+            result = await window.mina.sendTransaction(payload.params);
             break;
           default:
             throw new Error('Unknown method: ' + method);

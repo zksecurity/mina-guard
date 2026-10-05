@@ -20,9 +20,9 @@ contextBridge.exposeInMainWorld('mina', {
     return ipcRenderer.invoke('auro:request-accounts');
   },
 
+  // Accounts from this session's last connect; the main process keeps them.
   getAccounts() {
-    console.log('[mina] getAccounts (stub)');
-    return Promise.resolve([]);
+    return ipcRenderer.invoke('auro:get-accounts');
   },
 
   requestNetwork() {
