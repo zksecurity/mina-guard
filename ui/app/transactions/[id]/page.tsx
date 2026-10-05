@@ -434,7 +434,9 @@ export default function TransactionDetailPage() {
       }, onProgress, signer);
       const txHash = extractTxHash(result);
       if (txHash) {
-        await recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'approve', txHash);
+        // Not awaited: the backend checks the hash with its Mina node first,
+        // which can take seconds; this tab locks from its own pending record.
+        void recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'approve', txHash);
         savePendingTx({
           kind: 'approve',
           contractAddress: captured.contractAddress,

@@ -325,7 +325,9 @@ export async function fetchTxStatus(
 }
 
 /** Best-effort: tells the backend about a freshly-submitted approve/execute tx
- *  so its indexer can poll for on-chain failure and surface the reason. */
+ *  so its indexer can poll for on-chain failure and surface the reason, and
+ *  other owners' screens can wait for it. The backend records the hash only
+ *  after its Mina node shows it is that action on this proposal. */
 export async function recordSubmission(
   contractAddress: string,
   proposalHash: string,
