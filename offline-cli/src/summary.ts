@@ -27,6 +27,8 @@ import {
   type OfflineApproveBundle,
   type OfflineExecuteBundle,
 } from './build-tx.js';
+import { memoToField } from 'contracts';
+import { escapeTerminalText } from './terminal-safe.js';
 
 // ---------------------------------------------------------------------------
 // Format helpers (mirrored from ui/lib/types.ts)
@@ -178,10 +180,31 @@ function renderBody(
   }
 }
 
+/**
+ * The memo text travels beside the proposal, but owners sign its hash. This
+ * recomputes the hash here instead of trusting the online side's verdict.
+ */
+function memoCheck(memo: string, memoHash: string | null): string {
+  if (!memoHash) return 'MISSING: the bundle has no memo commitment';
+  try {
+    return memoToField(memo).toString() === memoHash
+      ? 'matches the proposal\'s memo commitment'
+      : 'MISMATCH: the proposal commits to a different memo than the one shown';
+  } catch {
+    return 'MISMATCH: the memo commitment could not be checked';
+  }
+}
+
 function renderHeader(
   bundle: OfflineBundle,
   rawTxType: string | null | undefined,
-  extra: { nonce?: string | number | null; memo?: string | null; proposalHash?: string | null; expirySlot?: string | number | null },
+  extra: {
+    nonce?: string | number | null;
+    memo?: string | null;
+    memoHash?: string | null;
+    proposalHash?: string | null;
+    expirySlot?: string | number | null;
+  },
 ): string[] {
   const out: string[] = [];
   out.push('');
@@ -199,6 +222,7 @@ function renderHeader(
   out.push(line('Fee', `${formatMina(String(ZKAPP_TX_FEE))} MINA`));
   if (extra.nonce != null && extra.nonce !== '') out.push(line('Nonce', extra.nonce));
   out.push(line('Memo', extra.memo && extra.memo.length ? extra.memo : '(none)'));
+  if (extra.memoHash !== undefined) out.push(line('Memo check', memoCheck(extra.memo ?? '', extra.memoHash)));
   if (extra.proposalHash) out.push(line('Proposal hash', extra.proposalHash));
   if (extra.expirySlot != null && String(extra.expirySlot) !== '' && String(extra.expirySlot) !== '0') {
     out.push(line('Expiry slot', extra.expirySlot));
@@ -251,6 +275,7 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
       lines = renderHeader(b, p.txType, {
         nonce: p.nonce,
         memo: p.memo ?? null,
+        memoHash: p.memoHash ?? null,
         proposalHash: p.proposalHash,
         expirySlot: p.expirySlot ?? null,
       }).concat(
@@ -277,7 +302,9 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
     ];
   }
   lines.push('========================================================');
-  return lines.join('\n');
+  // Each entry is one screen line. Escaping each one turns control characters,
+  // including line breaks hidden in bundle values, into visible text.
+  return lines.map(escapeTerminalText).join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +312,8 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
 // ---------------------------------------------------------------------------
 
 type LogFn = (msg: string) => void;
+
+const TERMINAL_RESET = '\u001b[0m';
 
 /** Opens the controlling terminal for reading and writing, or returns null when
  *  the process has none (Windows, detached, or a container with no tty). This
@@ -354,7 +383,8 @@ export function confirmOrExit(
 
   let approved = false;
   try {
-    writeSync(fd, summary + '\n');
+    // Reset colors and styles around the summary so earlier output cannot change how it looks.
+    writeSync(fd, `${TERMINAL_RESET}${summary}${TERMINAL_RESET}\n`);
     writeSync(fd, '\nSign this transaction? [y/N]: ');
     const answer = readLineFromFd(fd);
     // A failed read (null) is not consent — fall through to abort.

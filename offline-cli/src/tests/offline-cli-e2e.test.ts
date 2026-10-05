@@ -525,6 +525,53 @@ describe('offline-cli e2e', () => {
     expect(result.stdout).not.toContain('offline-signed-tx');
   });
 
+  it('refuses a real transfer whose type was relabelled, before showing a summary', async () => {
+    // An unknown type used to rebuild as a transfer (same hash, so it signed)
+    // while the summary printed the label, escape sequences included.
+    const rawEvents = await zkApp.fetchEvents();
+    const bundle = {
+      version: 1,
+      action: 'approve',
+      minaNetwork: 'testnet',
+      contractAddress: zkAppAddress.toBase58(),
+      feePayerAddress: owners[2].pub.toBase58(),
+      accounts: {
+        [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
+        [owners[2].pub.toBase58()]: snapshotAccount(owners[2].pub),
+      },
+      events: rawEvents.map((e) => ({
+        eventType: e.type,
+        payload: JSON.parse(safeStringify(e.event.data)),
+      })),
+      proposal: {
+        proposalHash,
+        proposer: owners[0].pub.toBase58(),
+        toAddress: null,
+        tokenId: '1',
+        txType: 'Change Threshold\u001b[2J\u001b[H',
+        data: '0',
+        nonce: '1',
+        configNonce: '0',
+        expirySlot: '0',
+        guardAddress: zkAppAddress.toBase58(),
+        destination: 'local',
+        childAccount: null,
+        memoHash: memoToField('').toString(),
+        receivers: proposalReceivers,
+      },
+    };
+    const bundlePath = join(tmpDir, 'relabelled-transfer-bundle.json');
+    writeBundle(bundlePath, bundle);
+
+    const result = await runCLI(bundlePath, owners[2].key.toBase58(), 120_000, { SKIP_PROOFS: '1' });
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Unsupported transaction type');
+    expect(result.stderr).toContain('\\u{1B}[2J');
+    expect(result.stderr).not.toContain('\u001b');
+    expect(result.stderr).not.toContain('APPROVE:');
+    expect(result.stdout).not.toContain('offline-signed-tx');
+  });
+
   it('execute transfer', async () => {
     expect(proposalHash).toBeTruthy();
     const executor = owners[2];

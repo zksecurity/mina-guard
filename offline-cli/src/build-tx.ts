@@ -34,6 +34,8 @@ import {
 
 import Client from 'mina-signer';
 
+import { escapeTerminalText } from './terminal-safe.js';
+
 import {
   MinaGuard,
   Receiver,
@@ -254,6 +256,24 @@ export function normalizeTxType(value: string | null | undefined): TxType | null
   }
 }
 
+/**
+ * Returns the bundle's transaction type, or throws when it is not one of the
+ * ten known types. The summary and the transaction builder both rely on this,
+ * so an unknown value is refused before it can be shown or signed.
+ */
+export function requireTxType(value: string | null | undefined): TxType {
+  const txType = normalizeTxType(value);
+  if (txType === null) {
+    throw new Error(`Unsupported transaction type: "${escapeTerminalText(String(value ?? ''))}"`);
+  }
+  return txType;
+}
+
+/** Checks the type the operator is about to confirm, for every bundle action. */
+export function assertBundleTxType(bundle: OfflineBundle): TxType {
+  return requireTxType(bundle.action === 'propose' ? bundle.input?.txType : bundle.proposal?.txType);
+}
+
 function uiTxTypeToField(type: string): InstanceType<typeof Field> {
   if (type === 'transfer') return Field(0);
   if (type === 'addOwner') return Field(1);
@@ -411,7 +431,7 @@ function buildProposalStruct(
   proposal: BundleProposal,
   fallbackGuardAddress: string,
 ): InstanceType<typeof TransactionProposal> {
-  const txType = normalizeTxType(proposal.txType);
+  const txType = requireTxType(proposal.txType);
   const destination = proposal.destination === 'remote' ? Destination.REMOTE : Destination.LOCAL;
   const childAccount = proposal.childAccount
     ? safePublicKey(proposal.childAccount)
@@ -420,7 +440,7 @@ function buildProposalStruct(
   return new TransactionProposal({
     receivers: buildTransferReceivers(proposal.receivers),
     tokenId: Field(proposal.tokenId ?? NATIVE_TOKEN_ID.toString()),
-    txType: txType ? uiTxTypeToField(txType) : Field(0),
+    txType: uiTxTypeToField(txType),
     data: Field(proposal.data ?? '0'),
     nonce: Field(proposal.nonce ?? '0'),
     configNonce: Field(proposal.configNonce ?? '0'),
@@ -734,7 +754,7 @@ export async function handlePropose(
 
   // Build proposal struct
   const receivers = buildReceiversForProposal(input);
-  const txType = uiTxTypeToField(input.txType);
+  const txType = uiTxTypeToField(requireTxType(input.txType));
   const data = buildProposalDataField(input, ownerStore);
 
   const isRemote =
@@ -945,9 +965,9 @@ export async function handleExecute(
   log: LogFn,
 ): Promise<SignedTxOutput> {
   assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
-  const txType = normalizeTxType(bundle.proposal.txType);
+  const txType = requireTxType(bundle.proposal.txType);
   const isCreateChild = txType === 'createChild';
-  const isChildLifecycle = txType != null && CHILD_LIFECYCLE_TYPES.has(txType);
+  const isChildLifecycle = CHILD_LIFECYCLE_TYPES.has(txType);
 
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
@@ -1174,7 +1194,7 @@ export async function handleExecute(
       return;
     }
 
-    throw new Error(`Unsupported proposal type for execution: ${txType ?? 'unknown'}`);
+    throw new Error(`Unsupported proposal type for execution: ${txType}`);
   });
 
   log('Generating zero-knowledge proof (this will take a while)...');

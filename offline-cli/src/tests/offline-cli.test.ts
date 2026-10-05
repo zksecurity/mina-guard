@@ -30,7 +30,8 @@ import {
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType } from '../build-tx.ts';
+import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
 const CLI_PATH = join(import.meta.dirname, '..', 'index.ts');
@@ -106,6 +107,39 @@ describe('offline-cli', () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Unknown bundle action');
   }, 30_000);
+
+  it('refuses an unknown transaction type before rendering a summary or signing', async () => {
+    const bundlePath = join(tmpDir, 'unknown-type.json');
+    writeFileSync(bundlePath, JSON.stringify({
+      version: 1,
+      action: 'approve',
+      minaNetwork: 'testnet',
+      contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58,
+      accounts: {},
+      events: [],
+      proposal: { proposalHash: '1', txType: 'Send\u001b[1A\u202e', receivers: [] },
+    }));
+    const result = await runCLI(bundlePath, PrivateKey.random().toBase58());
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Unsupported transaction type: "Send\\u{1B}[1A\\u{202E}"');
+    expect(result.stderr).not.toContain('====');
+    expect(result.stdout).toBe('');
+  }, 30_000);
+
+  it('accepts only the ten transaction types, by name or number', () => {
+    expect(requireTxType('transfer')).toBe('transfer');
+    expect(requireTxType('9')).toBe('enableChildMultiSig');
+    for (const bad of [null, undefined, '', ' transfer', 'transfer\n', 'Transfer', '10', '-1', '0x0', 'transfer\u001b[2J']) {
+      expect(() => requireTxType(bad)).toThrow('Unsupported transaction type');
+    }
+  });
+
+  it('escapes control, format and line-separator characters for the terminal', () => {
+    expect(escapeTerminalText('a\u001b[2Jb')).toBe('a\\u{1B}[2Jb');
+    expect(escapeTerminalText('x\u009b31m\u202ey\u2028z\r\b\t')).toBe('x\\u{9B}31m\\u{202E}y\\u{2028}z\\u{D}\\u{8}\\u{9}');
+    expect(escapeTerminalText('rent ✓ ünïcode')).toBe('rent ✓ ünïcode');
+  });
 
   it('rejects createChild propose without childPrivateKey', async () => {
     const bundlePath = join(tmpDir, 'create-child.json');
@@ -550,6 +584,50 @@ describe('offline-cli', () => {
       expect(out).toContain('MAINNET');
       expect(out).toContain('Change Threshold');
       expect(out).toContain('2');
+    });
+
+    function memoApprove(memo: string | null, memoHash: string | null) {
+      return {
+        ...base(),
+        action: 'approve' as const,
+        minaNetwork: 'testnet' as const,
+        proposal: {
+          proposalHash: '42',
+          txType: 'transfer',
+          data: '0',
+          nonce: '1',
+          memo,
+          memoHash,
+          receivers: [{ address: REAL_ADDR, amount: '1000000000' }],
+        },
+      };
+    }
+
+    it('prints bundle text with every control character visible, including injected line breaks', () => {
+      const memo = 'rent\u001b[2J\u001b[H\u202e\u009b0m\n  Receivers (0):';
+      const out = renderBundleSummary(memoApprove(memo, memoToField(memo).toString()) as any);
+      expect(out.replace(/\n/g, '')).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      expect(out).toContain('rent\\u{1B}[2J\\u{1B}[H\\u{202E}\\u{9B}0m\\u{A}  Receivers (0):');
+      expect(out.split('\n').some((l) => l.startsWith('  Receivers (0):'))).toBe(false);
+      expect(out).toContain(`${REAL_ADDR}  →  1 MINA`);
+    });
+
+    it('recomputes the memo commitment instead of trusting the bundle text', () => {
+      const matches = renderBundleSummary(memoApprove('rent', memoToField('rent').toString()) as any);
+      expect(matches).toContain("matches the proposal's memo commitment");
+
+      const swapped = renderBundleSummary(memoApprove('refund', memoToField('rent').toString()) as any);
+      expect(swapped).toContain('MISMATCH');
+      expect(swapped).toContain('refund');
+
+      const hidden = renderBundleSummary(memoApprove(null, memoToField('rent').toString()) as any);
+      expect(hidden).toContain('(none)');
+      expect(hidden).toContain('MISMATCH');
+
+      const empty = renderBundleSummary(memoApprove(null, memoToField('').toString()) as any);
+      expect(empty).toContain("matches the proposal's memo commitment");
+
+      expect(renderBundleSummary(memoApprove('rent', null) as any)).toContain('MISSING');
     });
   });
 });
