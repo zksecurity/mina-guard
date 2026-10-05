@@ -150,6 +150,11 @@ runners and uploads to a GitHub Release.
   the build before tagging.
 - **Audit gate:** every leg runs `bun audit --audit-level=critical` right after
   install and stops before packaging if any dependency has a critical advisory.
+- **Packaged-version check:** electron-builder's `afterPack` hook
+  (`scripts/check-packaged-versions.mjs`) checks the unpacked app before any
+  installer is built or published, and fails unless it holds one Next.js copy
+  at `>=15.5.24 <16` and Electron 43.5.0 or later. Local `electron-builder`
+  runs check too.
 
 The `owner`/`repo` in the `publish` block must match the GitHub repo the
 release should land on.

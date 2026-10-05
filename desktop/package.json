@@ -37,7 +37,7 @@
   "build": {
     "appId": "xyz.zksecurity.minaguard",
     "productName": "MinaGuard",
-    "afterPack": "./scripts/adhoc-sign.mjs",
+    "afterPack": "./scripts/after-pack.mjs",
     "directories": {
       "output": "release",
       "buildResources": "build"
