@@ -38,6 +38,7 @@ services:
       - ARCHIVE_DB_PASSWORD=${ARCHIVE_DB_PASSWORD:?}
       - ARCHIVE_DB_NAME=archive
       - DISCOVERY_BACKEND=archive
+      - CORS_ORIGINS=https://mina-trail.duckdns.org
       - PORT=4000
     depends_on:
       db:

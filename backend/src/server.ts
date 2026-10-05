@@ -14,7 +14,9 @@ async function main(): Promise<void> {
   const indexer = new MinaGuardIndexer(config);
 
   const app = express();
-  app.use(cors());
+  // With CORS_ORIGINS set, only those origins' pages can call the API from a browser.
+  if (!config.corsOrigins) console.warn('[backend] CORS_ORIGINS is not set; the API accepts browser requests from any origin');
+  app.use(cors(config.corsOrigins ? { origin: config.corsOrigins } : undefined));
   app.use(express.json({ limit: '1mb' }));
   app.use(createApiRouter(indexer, config));
 
