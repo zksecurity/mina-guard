@@ -371,7 +371,12 @@ marks its pending record `untracked`, and that record expires 20 minutes
 after broadcast instead of 24 hours (`lib/storage.ts`). Each poll deletes
 expired records (`prunePendingTxs`), which lifts the lock without a reload. A
 tx still waiting after 20 minutes would unlock early; a second submission
-then collides and fails on-chain, which costs a retry, not funds.
+then collides and fails on-chain, which costs a retry, not funds. The same
+happens when another report replaced this one: two owners approve one
+proposal at once, the backend keeps only the later hash, and it never
+reports the earlier tx's failure. Reconciliation marks the earlier record
+`untracked` once the backend serves a different hash with no error
+(`backendWatchesAnotherTx`).
 
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
