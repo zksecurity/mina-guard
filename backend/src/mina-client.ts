@@ -536,6 +536,60 @@ export async function fetchMempoolHashes(
   }
 }
 
+/** One account update of a zkApp command, as the daemon reports it. */
+export interface ZkappCommandUpdate {
+  publicKey: string;
+  /** True when the update is authorized by a proof against the account's verification key. */
+  isProved: boolean;
+  /** Raw event field lists; each starts with the event type index. */
+  events: string[][];
+}
+
+const ZKAPP_COMMAND_UPDATES = `hash
+  zkappCommand { accountUpdates { body { publicKey events authorizationKind { isProved } } } }`;
+
+/** Looks up a zkApp command by hash, first in the daemon's pool and then in the
+ *  most recent best-chain blocks, and returns its account updates. Returns null
+ *  when the daemon knows no such command or the lookup fails. */
+export async function fetchZkappCommandUpdates(
+  config: BackendConfig,
+  txHash: string,
+): Promise<ZkappCommandUpdate[] | null> {
+  type Command = {
+    hash: string;
+    zkappCommand?: { accountUpdates?: Array<{ body?: {
+      publicKey?: string; events?: string[][]; authorizationKind?: { isProved?: boolean };
+    } }> };
+  };
+  const query = `query SubmittedCommand($hashes: [String!], $maxLength: Int!) {
+    pooledZkappCommands(hashes: $hashes) { ${ZKAPP_COMMAND_UPDATES} }
+    bestChain(maxLength: $maxLength) { transactions { zkappCommands { ${ZKAPP_COMMAND_UPDATES} } } }
+  }`;
+  try {
+    const data = await graphqlRequest<{
+      pooledZkappCommands?: Command[];
+      bestChain?: Array<{ transactions?: { zkappCommands?: Command[] } }>;
+    }>(query, config.minaEndpoint, config.minaFallbackEndpoint, {
+      hashes: [txHash],
+      maxLength: TX_STATUS_SCAN_BLOCKS,
+    });
+    const candidates = [
+      ...(data.pooledZkappCommands ?? []),
+      ...(data.bestChain ?? []).flatMap((block) => block.transactions?.zkappCommands ?? []),
+    ];
+    const command = candidates.find((c) => c.hash === txHash);
+    if (!command) return null;
+    return (command.zkappCommand?.accountUpdates ?? []).map(({ body }) => ({
+      publicKey: body?.publicKey ?? '',
+      isProved: body?.authorizationKind?.isProved === true,
+      events: Array.isArray(body?.events) ? body.events : [],
+    }));
+  } catch (err) {
+    console.warn('[mina-client] fetchZkappCommandUpdates failed', txHash, err);
+    return null;
+  }
+}
+
 /**
  * False for events of a transaction the chain reports as failed. Its account
  * updates never applied, so its events describe changes that did not happen
