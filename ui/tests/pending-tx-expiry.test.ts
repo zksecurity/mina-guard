@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   PENDING_TXS_CHANGED,
   UNTRACKED_PENDING_TX_TTL_MS,
+  backendWatchesAnotherTx,
   getPendingTxs,
   markPendingTxUntracked,
   prunePendingTxs,
@@ -104,4 +105,27 @@ describe('reportSubmission', () => {
       expect(getPendingTxs()[0].untracked).toBe(untracked);
     });
   }
+});
+
+describe('backendWatchesAnotherTx', () => {
+  const row = (hash: string | null, error: string | null = null) => ({
+    lastApproveTxHash: hash, lastApproveError: error, lastExecuteTxHash: null, lastExecuteError: null,
+  });
+  const mine = record('1', 'tx-mine', 0);
+
+  test('is true only while another live tx replaced this report', () => {
+    expect(backendWatchesAnotherTx(mine, row('tx-other'))).toBe(true);
+    expect(backendWatchesAnotherTx(mine, row('tx-mine'))).toBe(false);
+    expect(backendWatchesAnotherTx(mine, row(null))).toBe(false);
+    // An old failed tx is not being watched any more; nothing replaced ours.
+    expect(backendWatchesAnotherTx(mine, row('tx-old', 'dropped'))).toBe(false);
+  });
+
+  test('compares the field for the record kind', () => {
+    const execute = { ...mine, kind: 'execute' as const };
+    expect(backendWatchesAnotherTx(execute, row('tx-other'))).toBe(false);
+    expect(backendWatchesAnotherTx(execute, {
+      lastApproveTxHash: null, lastApproveError: null, lastExecuteTxHash: 'tx-other', lastExecuteError: null,
+    })).toBe(true);
+  });
 });

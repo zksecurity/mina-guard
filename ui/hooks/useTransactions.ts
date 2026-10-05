@@ -6,7 +6,9 @@ import { Proposal } from '@/lib/types';
 import {
   PENDING_TXS_CHANGED,
   clearPendingTx,
+  backendWatchesAnotherTx,
   getPendingTxsForContract,
+  markPendingTxUntracked,
   prunePendingTxs,
   type PendingTx,
 } from '@/lib/storage';
@@ -96,6 +98,10 @@ export function useTransactions(multisigAddress: string | null) {
         if (indexed.lastExecuteError && indexed.lastExecuteTxHash === pt.txHash) {
           clearPendingTx(pt.contractAddress, pt.proposalHash, 'execute', pt.signerPubkey);
           dirty = true;
+          continue;
+        }
+        if (!pt.untracked && backendWatchesAnotherTx(pt, indexed)) {
+          markPendingTxUntracked(pt.contractAddress, pt.proposalHash, 'execute', pt.txHash);
         }
         continue;
       }
@@ -116,6 +122,9 @@ export function useTransactions(multisigAddress: string | null) {
           clearPendingTx(pt.contractAddress, pt.proposalHash, 'approve', pt.signerPubkey);
           dirty = true;
           continue;
+        }
+        if (!pt.untracked && backendWatchesAnotherTx(pt, indexed)) {
+          markPendingTxUntracked(pt.contractAddress, pt.proposalHash, 'approve', pt.txHash);
         }
         // Only refetch approvals when the count rose since last tick — the
         // freshly-observed approval might be ours.

@@ -200,6 +200,24 @@ export function markPendingTxUntracked(
   notifyPendingTxsChanged();
 }
 
+/** True when the backend watches a different, still-live tx for this record's
+ *  proposal and action (a later report replaced this one), so it will never
+ *  report this record's failure. */
+export function backendWatchesAnotherTx(
+  record: PendingTx,
+  row: {
+    lastApproveTxHash: string | null; lastApproveError: string | null;
+    lastExecuteTxHash: string | null; lastExecuteError: string | null;
+  },
+): boolean {
+  const [hash, error] = record.kind === 'approve'
+    ? [row.lastApproveTxHash, row.lastApproveError]
+    : record.kind === 'execute'
+      ? [row.lastExecuteTxHash, row.lastExecuteError]
+      : [null, null];
+  return hash !== null && hash !== record.txHash && error === null;
+}
+
 /** Deletes expired records and notifies listeners when any went, so a lock held
  *  by an expired record lifts without a page reload. */
 export function prunePendingTxs(): void {
