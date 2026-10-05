@@ -90,11 +90,19 @@ export interface PendingTx {
   signerPubkey: string;
   createdAt: string;
   summary?: PendingTxSummary;
+  /** Set when the backend refused to record this approve/execute. The backend
+   *  then never reports the transaction's failure, so the record expires
+   *  sooner (UNTRACKED_PENDING_TX_TTL_MS). */
+  untracked?: boolean;
 }
 
 const PENDING_TXS_KEY = getKey('pending-txs');
 /** 24h prune window — survives long-lived sessions. */
 const PENDING_TX_TTL_MS = 24 * 60 * 60 * 1000;
+/** Prune window for a record the backend refused to track: without it a failed
+ *  or dropped transaction would lock the vault in this tab for a day. It
+ *  matches the backend's 20-minute wait before it calls a transaction dropped. */
+export const UNTRACKED_PENDING_TX_TTL_MS = 20 * 60 * 1000;
 
 /** Custom event dispatched on save/clear so banners can refresh in the same tab.
  *  The native `storage` event only fires across tabs, so we use a custom event. */
@@ -110,7 +118,7 @@ function pruneStale(records: PendingTx[]): PendingTx[] {
   return records.filter((r) => {
     const ts = new Date(r.createdAt).getTime();
     if (!Number.isFinite(ts)) return false;
-    return now - ts < PENDING_TX_TTL_MS;
+    return now - ts < (r.untracked ? UNTRACKED_PENDING_TX_TTL_MS : PENDING_TX_TTL_MS);
   });
 }
 
@@ -169,6 +177,36 @@ export function savePendingTx(record: PendingTx): void {
   const next = readPendingTxsRaw().filter((r) => pendingTxKey(r) !== pendingTxKey(record));
   next.push(record);
   writePendingTxs(pruneStale(next));
+  notifyPendingTxsChanged();
+}
+
+/** Marks the approve/execute record for this tx hash as untracked by the backend. */
+export function markPendingTxUntracked(
+  contractAddress: string,
+  proposalHash: string,
+  kind: PendingTxKind,
+  txHash: string,
+): void {
+  let changed = false;
+  const next = readPendingTxsRaw().map((r) => {
+    const match = r.contractAddress === contractAddress && r.proposalHash === proposalHash
+      && r.kind === kind && r.txHash === txHash;
+    if (!match || r.untracked) return r;
+    changed = true;
+    return { ...r, untracked: true };
+  });
+  if (!changed) return;
+  writePendingTxs(pruneStale(next));
+  notifyPendingTxsChanged();
+}
+
+/** Deletes expired records and notifies listeners when any went, so a lock held
+ *  by an expired record lifts without a page reload. */
+export function prunePendingTxs(): void {
+  const records = readPendingTxsRaw();
+  const kept = pruneStale(records);
+  if (kept.length === records.length) return;
+  writePendingTxs(kept);
   notifyPendingTxsChanged();
 }
 

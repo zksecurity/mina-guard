@@ -23,7 +23,7 @@ import {
   fetchContract,
   fetchVaultSecurityStatus,
   isCanonicalVaultSecurity,
-  recordSubmission,
+  reportSubmission,
 } from '@/lib/api';
 import {
   approveProposalOnchain,
@@ -434,9 +434,6 @@ export default function TransactionDetailPage() {
       }, onProgress, signer);
       const txHash = extractTxHash(result);
       if (txHash) {
-        // Not awaited: the backend checks the hash with its Mina node first,
-        // which can take seconds; this tab locks from its own pending record.
-        void recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'approve', txHash);
         savePendingTx({
           kind: 'approve',
           contractAddress: captured.contractAddress,
@@ -445,6 +442,7 @@ export default function TransactionDetailPage() {
           signerPubkey: captured.approverAddress,
           createdAt: new Date().toISOString(),
         });
+        reportSubmission(captured.contractAddress, captured.proposal.proposalHash, 'approve', txHash);
       }
       if (result) success = true;
       return result;
@@ -498,7 +496,6 @@ export default function TransactionDetailPage() {
       const finalize = (result: string | null) => {
         const txHash = extractTxHash(result);
         if (txHash) {
-          void recordSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
           savePendingTx({
             kind: 'execute',
             contractAddress: captured.contractAddress,
@@ -507,6 +504,7 @@ export default function TransactionDetailPage() {
             signerPubkey: captured.executorAddress,
             createdAt: new Date().toISOString(),
           });
+          reportSubmission(captured.contractAddress, captured.proposal.proposalHash, 'execute', txHash);
         }
         if (result) success = true;
         return result;
@@ -1113,7 +1111,6 @@ export default function TransactionDetailPage() {
                       }}
                       onComplete={(response, txHash) => {
                         const kind = response.action as 'approve' | 'execute';
-                        void recordSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
                         savePendingTx({
                           kind,
                           contractAddress: multisig!.address,
@@ -1122,6 +1119,7 @@ export default function TransactionDetailPage() {
                           signerPubkey: offlineFeePayerAddress,
                           createdAt: new Date().toISOString(),
                         });
+                        reportSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
                         if (kind === 'execute') {
                           router.push(`/accounts/${multisig!.address}`);
                         } else {

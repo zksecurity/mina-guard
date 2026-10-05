@@ -7,6 +7,7 @@ import {
   PENDING_TXS_CHANGED,
   clearPendingTx,
   getPendingTxsForContract,
+  prunePendingTxs,
   type PendingTx,
 } from '@/lib/storage';
 import { useAdaptivePolling } from '@/hooks/useAdaptivePolling';
@@ -149,6 +150,7 @@ export function useTransactions(multisigAddress: string | null) {
       if (addressRef.current !== multisigAddress) return;
       setProposals(rows);
       setProposalsAddress(multisigAddress);
+      prunePendingTxs();
       const pending = getPendingTxsForContract(multisigAddress);
       void reconcilePendingTxs(multisigAddress, rows, pending);
     } finally {
