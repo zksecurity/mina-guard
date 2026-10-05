@@ -80,3 +80,34 @@ describe('Auro bridge page', () => {
     expect(callback).toEqual({ id: 'req-1', result: { signature: 'sig' } });
   });
 });
+
+/** Loads preload.js with a stub `electron` and returns the `window.mina` it exposes. */
+function loadPreloadMina(invoke: (channel: string, ...args: unknown[]) => Promise<unknown>) {
+  const source = readFileSync(join(import.meta.dir, '..', 'src', 'preload.js'), 'utf8');
+  const exposed: Record<string, any> = {};
+  const electron = {
+    contextBridge: { exposeInMainWorld: (name: string, api: unknown) => { exposed[name] = api; } },
+    ipcRenderer: { sendSync: () => ({ networkId: 'testnet' }), invoke },
+  };
+  new Function('require', source)((name: string) => {
+    if (name !== 'electron') throw new Error(`unexpected require ${name}`);
+    return electron;
+  });
+  return exposed.mina;
+}
+
+describe('desktop window.mina errors', () => {
+  it("shows the bridge's message without Electron's IPC prefix", async () => {
+    const mina = loadPreloadMina(async (channel) => {
+      throw new Error(`Error invoking remote method '${channel}': Error: Auro's active account is not ${A}`);
+    });
+    await expect(mina.sendTransaction({})).rejects.toThrow(new RegExp(`^Auro's active account is not ${A}$`));
+    await expect(mina.signFields({})).rejects.toThrow(new RegExp(`^Auro's active account is not ${A}$`));
+  });
+
+  it('passes results and unprefixed errors through unchanged', async () => {
+    expect(await loadPreloadMina(async () => [A]).getAccounts()).toEqual([A]);
+    await expect(loadPreloadMina(async () => { throw new Error('User rejected'); }).signMessage({}))
+      .rejects.toThrow(/^User rejected$/);
+  });
+});

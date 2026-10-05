@@ -15,14 +15,25 @@ contextBridge.exposeInMainWorld('minaGuardConfig', {
   },
 });
 
+// Electron prefixes an error thrown in the main process with
+// "Error invoking remote method '<channel>': Error: ". Strip it so the UI shows
+// the bridge's own message, such as Auro's reason for refusing.
+function invokeAuro(channel, ...args) {
+  return ipcRenderer.invoke(channel, ...args).catch((err) => {
+    const message = String(err?.message ?? err)
+      .replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '');
+    throw new Error(message);
+  });
+}
+
 contextBridge.exposeInMainWorld('mina', {
   requestAccounts() {
-    return ipcRenderer.invoke('auro:request-accounts');
+    return invokeAuro('auro:request-accounts');
   },
 
   // Accounts from this session's last connect; the main process keeps them.
   getAccounts() {
-    return ipcRenderer.invoke('auro:get-accounts');
+    return invokeAuro('auro:get-accounts');
   },
 
   requestNetwork() {
@@ -31,15 +42,15 @@ contextBridge.exposeInMainWorld('mina', {
   },
 
   sendTransaction(params) {
-    return ipcRenderer.invoke('auro:send-transaction', params);
+    return invokeAuro('auro:send-transaction', params);
   },
 
   signMessage(params) {
-    return ipcRenderer.invoke('auro:sign-message', params);
+    return invokeAuro('auro:sign-message', params);
   },
 
   signFields(params) {
-    return ipcRenderer.invoke('auro:sign-fields', params);
+    return invokeAuro('auro:sign-fields', params);
   },
 
   on(event, handler) {
