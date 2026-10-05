@@ -29,7 +29,7 @@ describe('backend configuration', () => {
     expect(loadConfig().corsOrigins).toBeNull();
     process.env.CORS_ORIGINS = ' , ';
     expect(loadConfig().corsOrigins).toBeNull();
-    process.env.CORS_ORIGINS = ' https://a.example , https://b.example,';
+    process.env.CORS_ORIGINS = ' https://a.example , https://b.example/,';
     expect(loadConfig().corsOrigins).toEqual(['https://a.example', 'https://b.example']);
   });
 });

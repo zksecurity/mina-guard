@@ -54,8 +54,6 @@ services:
       - MINA_NETWORK_DOMAIN=testnet
       - ARCHIVE_ENDPOINT=http://lightnet:8282
       - LIGHTNET_ACCOUNT_MANAGER=http://lightnet:8181
-      # The UI is served from this origin; other sites' pages may not call the API.
-      - CORS_ORIGINS=https://mina-nodes.duckdns.org
       - PORT=4000
     depends_on:
       lightnet:

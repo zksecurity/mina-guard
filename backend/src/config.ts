@@ -120,8 +120,9 @@ export function loadConfig(): BackendConfig {
   };
 }
 
-/** Splits CORS_ORIGINS into origins; unset or blank means no restriction. */
+/** Splits CORS_ORIGINS into origins; unset or blank means no restriction.
+ *  Browsers send origins without a trailing slash, so one is dropped. */
 export function parseCorsOrigins(value: string | undefined): string[] | null {
-  const origins = (value ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
+  const origins = (value ?? '').split(',').map((origin) => origin.trim().replace(/\/+$/, '')).filter(Boolean);
   return origins.length > 0 ? origins : null;
 }
