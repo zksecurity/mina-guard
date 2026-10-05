@@ -127,19 +127,24 @@ Signing inside the shell:
 Loopback binding keeps 5051 off the network, but any local process, and
 potentially a web page in the user's browser, can still send it requests, so the
 Next.js version is part of the attack surface. `ui/package.json` and
-`desktop/package.json` both pin `next` at `^15.5.26`. GHSA-p293-qw3h-jr36
-(unauthenticated RCE on Windows-hosted servers) affects `>=13.4.0 <15.5.24`
-and `>=16.0.0 <16.3.3`, which includes all of 14.x. Keep the two pins equal so
-the standalone tree cannot trace an older copy. Two release checks back this up:
+`desktop/package.json` both pin `next` at `^16.3.8`, the supported Active LTS
+line. GHSA-p293-qw3h-jr36 (unauthenticated RCE on Windows-hosted servers)
+affects `>=13.4.0 <15.5.24` and `>=16.0.0 <16.3.3`, which includes all of 14.x;
+16.3.3 is still affected by GHSA-vcvr-r3jv-pc5j, fixed in 16.3.6. Next 16 builds
+with Turbopack by default, so the UI's `build` and `dev` scripts pass
+`--webpack` to keep the webpack settings in `ui/next.config.mjs`. Keep the two
+pins equal so the standalone tree cannot trace an older copy. Two release checks
+back this up:
 - The release workflow refuses to package while any dependency has a critical
   advisory (`bun audit --audit-level=critical`).
 - electron-builder's `afterPack` hook (`desktop/scripts/check-packaged-versions.mjs`)
   reads the unpacked app on every platform, before installers are built or
   published. It fails unless the app holds exactly one Next.js copy at
-  `>=15.5.24 <16` and Electron is at least 43.5.0, the first releases on those
-  lines with no known advisory. Moving to Next 16 means updating that list:
-  16.3.3, which fixes GHSA-p293-qw3h-jr36, is still affected by
-  GHSA-vcvr-r3jv-pc5j.
+  `>=16.3.6 <17` and Electron at `>=43.5.0 <44`, the first releases on those
+  lines with no known advisory, and only while each line is still supported
+  (Next 16 until 2027-10-21, Electron 43 until 2027-01-05). After either date a
+  release fails until the app moves to a supported line and the list in that
+  script is updated.
 
 The renderer still does all the heavy lifting the web UI does: the o1js worker
 compiles, proves, and broadcasts directly to the configured Mina endpoint. The
