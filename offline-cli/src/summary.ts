@@ -27,7 +27,7 @@ import {
   type OfflineApproveBundle,
   type OfflineExecuteBundle,
 } from './build-tx.js';
-import { memoToField } from 'contracts';
+import { MAX_RECEIVERS, memoToField } from 'contracts';
 import { escapeTerminalText } from './terminal-safe.js';
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,13 @@ function line(label: string, value: string | number | null | undefined): string 
 
 function renderReceivers(receivers: Receiverish[]): string[] {
   const out: string[] = [];
-  const real = realReceivers(receivers);
+  // The builder signs only the first MAX_RECEIVERS rows (the contract's slots),
+  // so show exactly those, and say so when the bundle lists more.
+  const all = Array.isArray(receivers) ? receivers : [];
+  if (all.length > MAX_RECEIVERS) {
+    out.push(line('WARNING', `the bundle lists ${all.length} receivers; only the first ${MAX_RECEIVERS} are signed`));
+  }
+  const real = realReceivers(all.slice(0, MAX_RECEIVERS));
   if (real.length === 0) {
     out.push(line('Receivers', '(none)'));
     return out;

@@ -644,6 +644,17 @@ describe('offline-cli', () => {
       expect(out).toContain(`${REAL_ADDR}  →  1 MINA`);
     });
 
+    it('shows only the receivers that are signed, and warns about extra rows', () => {
+      const rows = Array.from({ length: 10 }, (_, i) => ({ address: i === 9 ? FEEPAYER : REAL_ADDR, amount: '1000000000' }));
+      const out = renderBundleSummary({ ...memoApprove('', memoToField('').toString()), proposal: {
+        ...memoApprove('', memoToField('').toString()).proposal, receivers: rows,
+      } } as any);
+      expect(out).toContain('WARNING         the bundle lists 10 receivers; only the first 9 are signed');
+      expect(out).toContain('Receivers (9):');
+      expect(out).toContain('Total           9 MINA');
+      expect(out).not.toContain(`${FEEPAYER}  →`);
+    });
+
     it('recomputes the memo commitment instead of trusting the bundle text', () => {
       const matches = renderBundleSummary(memoApprove('rent', memoToField('rent').toString()) as any);
       expect(matches).toContain("matches the proposal's memo commitment");

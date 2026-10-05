@@ -22,6 +22,15 @@ describe('proposal display values come from the signed receivers', () => {
     expect(proposal.toAddress).toBe(A);
   });
 
+  test('rows beyond the nine signed slots are dropped from every display value', () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ index: i, address: i === 9 ? B : A, amount: '1000000000' }));
+    const proposal = toProposal({ proposalHash: '4', txType: 'transfer', receivers: rows });
+    expect(proposal.receivers).toHaveLength(9);
+    expect(proposal.receivers.some((r) => r.address === B)).toBe(false);
+    expect(proposal.recipientCount).toBe(9);
+    expect(proposal.totalAmount).toBe('9000000000');
+  });
+
   test('a governance target is receivers[0], and none means no target', () => {
     const add = toProposal({ proposalHash: '2', txType: 'addOwner', receivers: [{ address: A, amount: '0' }], toAddress: B });
     expect(add.toAddress).toBe(A);

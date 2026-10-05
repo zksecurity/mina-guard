@@ -10,6 +10,7 @@ import {
   sumReceiverAmounts,
 } from '@/lib/types';
 import { getMinaGuardConfig } from '@/lib/endpoints';
+import { MAX_RECEIVERS } from '@/lib/constants';
 import {
   GUARD_PERMISSION_KINDS,
   GUARD_PERMISSION_NAMES,
@@ -387,7 +388,9 @@ function toContractSummary(input: Record<string, unknown>): ContractSummary {
  * sees next to Approve.
  */
 export function toProposal(input: Record<string, unknown>): Proposal {
-  const receivers = asReceivers(input.receivers);
+  // A proposal has MAX_RECEIVERS slots and the worker signs only those, so
+  // rows beyond them are dropped here; every list, total and export matches.
+  const receivers = asReceivers(input.receivers).slice(0, MAX_RECEIVERS);
   const totalAmount = receivers.length > 0 ? sumReceiverAmounts(receivers).toString() : null;
   return {
     proposalHash: asString(input.proposalHash) ?? '',
