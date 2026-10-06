@@ -599,6 +599,8 @@ export class MinaGuardIndexer {
       if (await this.isRecorded(fingerprint)) return 'duplicate';
       throw recordError;
     }
+    // TODO: alert maintainers here. Today only the error log and this row show
+    // the failure, and nothing re-applies the event.
     return 'quarantined';
   }
 
