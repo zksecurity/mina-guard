@@ -418,8 +418,11 @@ desktop/
 
 ## Build & packaging pipeline
 
-`bun run --filter desktop test` checks endpoint identity and proof-domain matching
-without launching Electron or changing local state. CI runs the same unit tests.
+`bun run --filter desktop test` checks endpoint identity, proof-domain matching
+and the Auro bridge (the page's signer check, `window.mina` in `preload.js`, and
+the main process remembering the accounts from the latest connect) without
+launching Electron, a browser or Auro, and without changing local state. CI runs
+the same unit tests.
 
 All steps run from `desktop/` (`bun run build` chains them; details in
 `desktop/README.md`):
