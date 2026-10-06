@@ -106,7 +106,10 @@ describe('desktop window.mina errors', () => {
   });
 
   it('passes results and unprefixed errors through unchanged', async () => {
-    expect(await loadPreloadMina(async () => [A]).getAccounts()).toEqual([A]);
+    const channels: string[] = [];
+    expect(await loadPreloadMina(async (channel) => { channels.push(channel); return [A]; }).getAccounts()).toEqual([A]);
+    // Reads the remembered accounts; asking Auro would open the browser each time.
+    expect(channels).toEqual(['auro:get-accounts']);
     await expect(loadPreloadMina(async () => { throw new Error('User rejected'); }).signMessage({}))
       .rejects.toThrow(/^User rejected$/);
   });
