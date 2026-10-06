@@ -177,12 +177,14 @@ the real Auro extension living in the user's normal browser:
 ```
 
 Bridged methods: `requestAccounts`, `signFields`, `signMessage`,
-`sendTransaction` (`src/ipc.ts:88-108`); each handler first rejects IPC from any
+`sendTransaction` (`src/ipc.ts`); each handler first rejects IPC from any
 non-main-window sender (`assertMainWindow`, focus point 1). Two are answered
-locally without ever reaching Auro: `getAccounts` (stub, returns `[]`) and
-`requestNetwork`, which
+locally without ever reaching Auro. `getAccounts` returns the accounts Auro
+gave at the last connect (`requestAccounts`) in this app session, kept in
+memory by the main process and never saved, so after a restart the user
+connects again. `requestNetwork`
 returns `mina:<networkId>` **from the persisted desktop config**, not from
-Auro (`src/preload.js:28-31`) — see focus point 6.
+Auro (`src/preload.js`) — see focus point 6.
 
 Deliberate design details worth knowing before auditing them:
 
@@ -197,6 +199,13 @@ Deliberate design details worth knowing before auditing them:
 - **Wallet identity comes from the external browser.** `requestAccounts`
   returns whatever account the user's Auro selects there; the desktop shell
   itself holds no keys of any kind.
+- **The signer is checked where Auro is.** The UI's pre-broadcast check
+  requires the transaction's prepared signer to be among `getAccounts()`,
+  which on desktop is the remembered connect result. Because the user can
+  switch accounts in the browser's Auro afterwards, the main process also
+  sends the transaction's fee payer to the page as `expectedSigner`
+  (`src/auro/signer.ts`), and the page refuses to call `sendTransaction`
+  unless the account Auro returns at that moment matches it.
 - For `sendTransaction`, the broadcast is performed **by the external Auro**
   against *its* configured node — the desktop's Mina endpoint is not involved
   on that path (the Ledger and offline paths do use the configured endpoint).
@@ -432,8 +441,11 @@ desktop/
 
 ## Build & packaging pipeline
 
-`bun run --filter desktop test` checks endpoint identity and proof-domain matching
-without launching Electron or changing local state. CI runs the same unit tests.
+`bun run --filter desktop test` checks endpoint identity, proof-domain matching
+and the Auro bridge (the page's signer check, `window.mina` in `preload.js`, and
+the main process remembering the accounts from the latest connect) without
+launching Electron, a browser or Auro, and without changing local state. CI runs
+the same unit tests.
 
 All steps run from `desktop/` (`bun run build` chains them; details in
 `desktop/README.md`):

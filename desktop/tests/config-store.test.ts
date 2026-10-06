@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 
-mock.module('electron', () => ({ app: { getPath: () => '/unused' } }));
+// Bun shares one electron mock across test files, so every file's mock must
+// export the same names (see auro-accounts.test.ts).
+mock.module('electron', () => ({ app: { getPath: () => '/unused' }, ipcMain: {}, shell: {} }));
 const { verifyEndpoints } = await import('../src/config-store.js');
 const originalFetch = globalThis.fetch;
 

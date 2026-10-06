@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { ipcMain, shell } from 'electron';
 import { assertMainWindow } from './ipc-security.js';
+import { asAccounts, transactionFeePayer } from './auro/signer.js';
 
 const REQUEST_TIMEOUT_MS = 120_000;
 const PORT = 5050;
@@ -85,10 +86,23 @@ function handleAuroRequest(method: string, payload: unknown): Promise<unknown> {
   return promise;
 }
 
+// Accounts Auro returned when the user last connected in this app session.
+// The app window reads them through window.mina.getAccounts(), which a real
+// Auro answers live. They are not saved: after a restart the user connects
+// again, and the bridge page re-checks Auro's live account before signing.
+let connectedAccounts: string[] = [];
+
 export function registerIpcHandlers(): void {
-  ipcMain.handle('auro:request-accounts', (event) => {
+  ipcMain.handle('auro:request-accounts', async (event) => {
     assertMainWindow(event);
-    return handleAuroRequest('requestAccounts', {});
+    const accounts = await handleAuroRequest('requestAccounts', {});
+    connectedAccounts = asAccounts(accounts);
+    return accounts;
+  });
+
+  ipcMain.handle('auro:get-accounts', (event) => {
+    assertMainWindow(event);
+    return connectedAccounts;
   });
 
   ipcMain.handle('auro:sign-fields', (event, params) => {
@@ -103,6 +117,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('auro:send-transaction', (event, params) => {
     assertMainWindow(event);
-    return handleAuroRequest('sendTransaction', params);
+    // The bridge page refuses to send unless Auro's active account is the
+    // fee payer this transaction was prepared for.
+    return handleAuroRequest('sendTransaction', { params, expectedSigner: transactionFeePayer(params) });
   });
 }
