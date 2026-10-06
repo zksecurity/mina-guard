@@ -34,7 +34,8 @@ Recognized variables:
 Everything else the backend needs (`MINA_ENDPOINT`, `ARCHIVE_ENDPOINT`,
 `DATABASE_URL`, `INDEXER_MODE`, `INDEX_START_HEIGHT`) is injected at runtime
 by `backend-embed.ts` from the persisted user config — no env config needed
-for those.
+for those. The configured archive must expose event authorization kinds
+(Archive-Node-API v0.0.8+); otherwise the embedded indexer refuses to sync.
 
 ## Build pipeline (what each script does)
 

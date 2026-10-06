@@ -172,6 +172,9 @@ model EventRaw {
   eventType   String
   payload     String
   fingerprint String   @unique
+  /// Why applying this event failed deterministically; null when applied. Its
+  /// state changes were rolled back and the indexer moved on.
+  applyError  String?
   createdAt   DateTime @default(now())
 
   contract Contract? @relation(fields: [contractId], references: [id], onDelete: SetNull)

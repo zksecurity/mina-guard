@@ -454,6 +454,8 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         orderBy: [{ blockHeight: 'desc' }, { createdAt: 'desc' }],
         take: limit,
         skip: offset,
+        // Internal diagnostics; clients check rebuilt stores against the chain.
+        omit: { applyError: true },
       });
 
       res.json(events);

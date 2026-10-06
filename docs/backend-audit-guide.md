@@ -141,13 +141,13 @@ events land. First event flips `ready = true` and the contract joins the forward
 
 `syncSingleContract(contractId, address, from, to)`:
 
-1. **Fetch** decoded events via `fetchDecodedContractEvents` (archive GraphQL). Each event carries `txMemo` (the base58-encoded transaction memo from the archive). Events of a transaction the archive reports as `failed` are dropped here (`isFromAppliedTransaction`): its account updates never applied, so indexing them would record changes that did not happen, and the clients' chain-checked store rebuild would then refuse to act on the vault. A missing or unknown status is kept.
-2. **Reverse per-tx groups** (`reverseEventsWithinEachTx`). o1js returns events within a single tx in newest-first order; the contract emits them oldest-first. Cross-tx ordering is preserved. This matters for multi-receiver proposals — reversed `receiver` indices break the off-chain proposal-hash recomputation on approve.
+1. **Fetch** events via `fetchDecodedContractEvents`, which sends its own `events` query to the archive API (`fetchArchiveEventBlocks`) rather than using o1js `fetchEvents`, because it also needs each event's `transactionInfo.authorizationKind`. Each event carries `txMemo` (the base58-encoded transaction memo from the archive). Events of a transaction the archive reports as `failed` are dropped here (`isFromAppliedTransaction`): its account updates never applied, so indexing them would record changes that did not happen, and the clients' chain-checked store rebuild would then refuse to act on the vault. A missing or unknown status is kept. Events are fetched untyped and decoded one by one (`decodeMinaGuardEvent`): the type index must name a declared event, the field count must match it, every field must be a canonical field element, and the value must pass its type's checks. Anyone can attach events to a vault, and o1js's typed decode throws on the first malformed one, which would stall that vault's indexing; here each event is decoded on its own. Only events whose emitting account update is `Proof`-authorized are kept: those come from the vault's own methods, so a well-formed event attached by anyone else (`None_given` or `Signature`) is dropped with a warning. The signature-authorized `deployed` event is dropped silently; nothing reads it. If the archive omits the authorization kind or reports a value other than `Proof`, `Signature` or `None_given` (compared case-insensitively), the sync throws rather than index unauthenticated events or silently drop genuine ones ([accepted risk #8](./security-audit-guide.md#accepted-risks-and-known-limitations)).
+2. **Reverse per-tx groups** (`reverseEventsWithinEachTx`). An account update's events list is newest-first (o1js prepends each emitted event, and the transaction commits to that order), and the archive returns it unchanged; the contract emits them oldest-first. Cross-tx ordering is preserved. This matters for multi-receiver proposals — reversed `receiver` indices break the off-chain proposal-hash recomputation on approve.
 3. **Order for apply** (`orderEventsForApply`). Events are applied in canonical block order: ascending `blockHeight` (primary), then a within-block lifecycle-type rank (secondary: `setup`/`setupOwner`/`proposal`/`approval`/`receiver`/`execution`/...), then the per-tx emission order restored by step 2 (tiebreak, keeping the sort stable). Block height is primary so a later block's low-rank event (e.g. an `execution`) can't be applied before an earlier block's high-rank event (e.g. a `thresholdChange`) and corrupt the copied-forward `ContractConfig` snapshot; the type rank still keeps a `proposal` ahead of its `approval`/`receiver`/`execution` children within a block.
-4. **Dedupe by fingerprint** (`address::type::blockHeight::txHash::payload`). `EventRaw.fingerprint` is unique; second writer is a no-op.
-5. **Upsert BlockHeader** for the event's `(height, blockHash, parentHash)`. First writer wins; mismatches across events at the same height get caught by the next tick's reorg detector.
-6. **Insert EventRaw** and dispatch to the appropriate `apply*` handler.
-7. **Flip `ready`** if any event was ingested, after `permissionsVerified` has passed.
+4. **Dedupe by fingerprint** (`address::type::blockHeight::txHash::payload`). `EventRaw.fingerprint` is unique; an already-recorded event is skipped.
+5. **Read ahead of the transaction.** A `setupOwner` event with no config yet (no preceding `setup`, which genuine setups always emit first) reads threshold and owner count from the node here (`fetchSetupFallback`), so no network call holds a transaction open.
+6. **Record and apply in one transaction** (`ingestEvent`): upsert the event's `BlockHeader` (first writer wins; mismatches at a height are caught by the next tick's reorg detector), insert `EventRaw`, and run the `apply*` handler. The marker and the derived rows commit together or not at all. A transient database error (unreachable, timeout or SQLite busy, closed connection, pool exhausted, aborted transaction, write conflict; `isTransientDbError`) rolls back and propagates, so the tick fails and the next one retries the event. Any other error rolls back and the transaction is retried once at once: Prisma emulates upserts as read-then-insert, so a concurrent sync (e.g. of another vault with an event at the same height, sharing its `BlockHeader`) can make the first attempt fail on a row it just committed. An error that repeats records the event alone with `EventRaw.applyError` set: retrying cannot fix it, and one bad event must not halt indexing for every vault. An overlapping sync that loses the race on the unique fingerprint rolls back and treats the event as done.
+7. **Flip `ready`** if any event was applied, after `permissionsVerified` has passed. Events recorded with `applyError` do not count.
 
 ### Data model
 
@@ -165,7 +165,7 @@ block it became valid at. Current state is the latest row; reorg rollback is a s
 - **`OwnerMembership`** — `{address, action: 'added'|'removed', index?}`. Active owners = reduce memberships per address, keep addresses whose latest action is `added`.
 - **`ProposalExecution`** — unique per proposal (`@@unique([proposalId])`); upserted when an `execution` event is ingested. Its existence is what makes a proposal `executed`.
 - **`Approval`** — unique per `(proposalId, approver)`; upserted so duplicate approval events from reorgs/retries don't inflate counts.
-- **`EventRaw`** — raw per-event record, unique by `fingerprint`. Source of truth for replay/debug; `payload` stored as a JSON string.
+- **`EventRaw`** — raw per-event record, unique by `fingerprint`. Source of truth for replay/debug; `payload` stored as a JSON string. `applyError` is null for applied events; otherwise it holds why applying failed, and the event changed no state. Operators can list these rows to find events that need attention. `GET /api/contracts/:address/events` still serves these events, since clients check rebuilt stores against the chain themselves, but omits the `applyError` column.
 
 **Identity / pointer.**
 
@@ -244,7 +244,10 @@ re-checked rather than grandfathered.
 - **Per-contract sync failure** → re-thrown from `syncKnownContracts` so the cursor stays put. Every tracked contract must sync cleanly before the cursor moves.
 - **Archive postgres unavailability** → the `pg.Pool` is created with 5s connection / 30s statement timeouts and TCP keepalives, so a wedged or firewalled archive DB fails the tick quickly (surfacing in `lastError`) instead of hanging it for the kernel TCP timeout. Idle-client pool errors are logged and swallowed; the pool replaces the dead client on the next checkout.
 - **Dropped-tx classification is fail-safe** → a submission is only marked dropped when both lookups positively succeed (see focus point 3). Either lookup failing leaves the submission untouched for the next tick.
-- **Duplicate events** → idempotent via `EventRaw.fingerprint` unique constraint.
+- **Duplicate events** → idempotent via `EventRaw.fingerprint` unique constraint, including overlapping syncs of the same events (ticks are not serialized; a slow tick can overlap the next).
+- **Crash or error mid-apply** → the event's transaction rolls back, leaving neither the `EventRaw` marker nor partial derived rows. Transient database errors fail the tick and the event is retried; other errors are retried once, and if they repeat the event is recorded with `applyError` and indexing continues.
+- **Malformed event** (unknown type index, wrong field count, non-field data, failed type check) → if it is not proof-authorized it is dropped like any forged event. A proof-authorized one came from the vault's own circuit and should always decode, so failing to means a backend/VK version mismatch or bad archive data: it is logged as an error and recorded as eventType `malformed` with its raw data and `applyError` set, without changing state. The rest of the vault's events are indexed.
+- **Event not from a proof-authorized update** (forged, or the signed `deployed` event) → skipped at fetch time; an archive response without a recognized `authorizationKind` fails the sync, so the tick retries rather than indexing unauthenticated events.
 - **Reorg deeper than 290** → not auto-handled. Logged as `reorg deeper than detection window`; requires operator intervention. This is [accepted risk #4](./security-audit-guide.md#accepted-risks-and-known-limitations) — display-layer only, matches Mina's finality horizon.
 
 ### Surfaces for tests
@@ -255,7 +258,12 @@ Exported beyond the class so tests can drive pipeline stages directly:
 (unsubscribe cascade, lite mode), and `MinaGuardIndexer#syncSingleContract` / `#backfillContract`
 (public for feeding mocked `ChainEvent[]` through the apply pipeline). See
 `backend/src/tests/indexer-reorg.test.ts`, `indexer-autosubscribe.test.ts`, and
-`indexer-archive-discovery.test.ts`.
+`indexer-archive-discovery.test.ts`. `indexer-atomic-apply.test.ts` covers rollback,
+`applyError` recording, the single retry, overlapping syncs, two vaults sharing a block
+height and a concurrent API write, and uses no
+provider-specific SQL so it also runs against the SQLite client. `fetchArchiveEventBlocks`,
+`decodeContractEvents` and `decodeMinaGuardEvent` (in `mina-client.ts`) are exported for
+`mina-client-events.test.ts`.
 
 ---
 
@@ -295,7 +303,7 @@ From `backend/`:
 | `PORT` | `4000` | Express server port |
 | `DATABASE_URL` | *(required)* | PostgreSQL connection URL (see `.env.example`) |
 | `MINA_ENDPOINT` | *(required)* | Primary Mina daemon GraphQL endpoint |
-| `ARCHIVE_ENDPOINT` | *(required)* | Primary archive(-node-api) GraphQL endpoint |
+| `ARCHIVE_ENDPOINT` | *(required)* | Primary archive(-node-api) GraphQL endpoint. Must expose `transactionInfo.authorizationKind` on events (Archive-Node-API v0.0.8+), or event syncing fails closed |
 | `MINA_FALLBACK_ENDPOINT` | empty | Optional Mina fallback endpoint |
 | `ARCHIVE_FALLBACK_ENDPOINT` | empty | Optional archive fallback endpoint |
 | `LIGHTNET_ACCOUNT_MANAGER` | empty | Lightnet account-manager URL; enables `POST /api/fund` |
@@ -339,7 +347,7 @@ This branch is test-only and must never be enabled in a deployment that accepts 
 | `GET /api/contracts/:address/proposals/:proposalHash` | Single proposal. `404` if not found. |
 | `POST /api/contracts/:address/proposals/:proposalHash/submissions` | Records a fresh approve/execute tx hash for polling, clearing any prior error. Body: `{ action: "approve"\|"execute", txHash }`. |
 | `GET /api/contracts/:address/proposals/:proposalHash/approvals` | Approvals for one proposal. Ordered `blockHeight asc, createdAt asc`. `404` if not found. |
-| `GET /api/contracts/:address/events` | Raw `EventRaw` rows. Query: `fromBlock`, `toBlock`, `limit` (1–500, default 100), `offset` (0–50000). Ordered `blockHeight desc, createdAt desc`. The checkpoint client uses `fromBlock` for incremental reads and rejects ranges exceeding the pagination cap. Cursor pagination is tracked in [#143](https://github.com/zksecurity/mina-guard/issues/143). `404` if not found. |
+| `GET /api/contracts/:address/events` | Raw `EventRaw` rows (without `applyError`). Query: `fromBlock`, `toBlock`, `limit` (1–500, default 100), `offset` (0–50000). Ordered `blockHeight desc, createdAt desc`. The checkpoint client uses `fromBlock` for incremental reads and rejects ranges exceeding the pagination cap. Cursor pagination is tracked in [#143](https://github.com/zksecurity/mina-guard/issues/143). `404` if not found. |
 | `GET /api/account/:address/balance` | MINA balance via daemon GraphQL. `{ balance: null }` when the account doesn't exist on-chain (distinct from a real `"0"`). |
 | `POST /api/fund` | Lightnet only (requires `LIGHTNET_ACCOUNT_MANAGER`). Acquires a pre-funded lightnet keypair and transfers MINA. Body: `{ address }`. |
 | `POST /api/subscribe` | Lite mode only (`404` otherwise). Subscribes an address; idempotent. Body: `{ address, fromBlock? }` — supplied `fromBlock` = explicit lower bound (address must resolve to a deployed zkApp); omitted = `latestHeight - 5`, no existence check (subscribe-before-deploy). |

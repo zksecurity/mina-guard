@@ -47,7 +47,8 @@ On launch (`src/main.ts`):
 
 1. **First run:** a setup window asks for a Mina GraphQL endpoint and an
    archive endpoint (pre-filled with minascan mainnet defaults — never used
-   silently). Save probes both endpoints with a real GraphQL query, detects the
+   silently). The archive must expose event authorization kinds
+   (Archive-Node-API v0.0.8+); otherwise the embedded indexer refuses to sync. Save probes both endpoints with a real GraphQL query, detects the
    network id from the node, and persists `config.json`. Unreachable endpoints
    or nodes without an explicit, supported `networkID` are rejected before
    anything is persisted. Saved endpoints are rechecked on every startup.

@@ -1,6 +1,7 @@
 import { inspect } from 'node:util';
 import pg from 'pg';
 import { prisma } from './db.js';
+import { Prisma } from './generated/prisma/index.js';
 import type { BackendConfig } from './config.js';
 import { PublicKey } from 'o1js';
 import { memoToField, decodeTxMemo } from 'contracts';
@@ -30,6 +31,28 @@ const REORG_DETECTION_WINDOW = 290;
 const DROPPED_TX_GRACE_MS = 20 * 60 * 1000;
 
 const EMPTY_PUBLIC_KEY = PublicKey.empty().toBase58();
+
+/** The Prisma client or an open transaction; event-apply helpers take either. */
+type Db = Prisma.TransactionClient;
+
+type OnChainState = NonNullable<Awaited<ReturnType<typeof fetchOnChainState>>>;
+
+/**
+ * Prisma codes for failures a retry can fix: the database was unreachable,
+ * timed out (including SQLite busy), closed the connection, ran out of pool
+ * connections, aborted the transaction, or hit a write conflict.
+ */
+const TRANSIENT_DB_ERROR_CODES = new Set(['P1001', 'P1002', 'P1008', 'P1017', 'P2024', 'P2028', 'P2034']);
+
+/** True for database failures a later retry can succeed on. */
+export function isTransientDbError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return TRANSIENT_DB_ERROR_CODES.has(error.code);
+  }
+  return error instanceof Prisma.PrismaClientInitializationError
+    || error instanceof Prisma.PrismaClientRustPanicError
+    || error instanceof Prisma.PrismaClientUnknownRequestError;
+}
 
 /** Runtime status exposed over API for monitoring indexer health and lag. */
 export interface IndexerStatus {
@@ -472,9 +495,10 @@ export class MinaGuardIndexer {
 
     const rawEvents = await fetchDecodedContractEvents(address, fromHeight, toHeight);
 
-    // o1js fetchEvents returns events within a single tx in *reverse* emission
-    // order (archive GraphQL returns them newest-first per tx). Reverse per-tx
-    // groups so receiver events land in contract-emission slot order —
+    // Each account update stores its events newest-first: o1js prepends every
+    // emitted event and the transaction commits to that list, which the
+    // archive returns as is. Reverse per-tx groups so receiver events land in
+    // contract-emission slot order —
     // otherwise multi-receiver transfer proposals have receivers stored in
     // reversed idx, which breaks the proposal-hash recomputation on the UI
     // side and causes "Proposal not found" errors on approve.
@@ -490,35 +514,14 @@ export class MinaGuardIndexer {
       const existingRaw = await prisma.eventRaw.findUnique({ where: { fingerprint } });
       if (existingRaw) continue;
 
-      // Record the block identity before applying the event. Many events may
-      // share a height — upsert so the first writer wins and subsequent ones
-      // are no-ops. If hashes disagree across events at the same height, the
-      // reorg detector will catch that on the next tick.
-      if (chainEvent.blockHash) {
-        await prisma.blockHeader.upsert({
-          where: { height: chainEvent.blockHeight },
-          create: {
-            height: chainEvent.blockHeight,
-            blockHash: chainEvent.blockHash,
-            parentHash: chainEvent.parentHash,
-          },
-          update: {},
-        });
-      }
+      // Network reads happen before the event's transaction opens: an open
+      // transaction blocks every other writer on SQLite.
+      const setupFallback = chainEvent.type === 'setupOwner'
+        ? await this.fetchSetupFallback(contractId, address)
+        : null;
 
-      const eventRaw = await prisma.eventRaw.create({
-        data: {
-          contractId,
-          blockHeight: chainEvent.blockHeight,
-          txHash: chainEvent.txHash,
-          eventType: chainEvent.type,
-          payload: JSON.stringify(chainEvent.event),
-          fingerprint,
-        },
-      });
-      ingested = true;
-
-      await this.applyEvent(contractId, chainEvent, seq, eventRaw.id);
+      const outcome = await this.ingestEvent(contractId, chainEvent, seq, fingerprint, setupFallback);
+      if (outcome === 'applied') ingested = true;
     }
 
     // Any MinaGuard event other than setup/setupOwner can only fire after
@@ -534,32 +537,150 @@ export class MinaGuardIndexer {
     });
   }
 
+  /**
+   * Records an event and applies its state changes in one transaction, so a
+   * crash or error never leaves an event marked processed but unapplied.
+   *
+   * - A transient database error rolls back and propagates; the next tick
+   *   retries the event.
+   * - Any other error rolls back and is retried once at once: Prisma emulates
+   *   upserts as read-then-insert, so a concurrent sync can make the first
+   *   attempt fail on a row it just committed (e.g. a shared BlockHeader).
+   * - An error that repeats records the event with `applyError` and no state
+   *   changes. Retrying cannot fix it, and one bad event must not halt
+   *   indexing for every vault.
+   * - Losing a race with an overlapping sync of the same event is a no-op.
+   * - An event the decoder could not read ('malformed') is recorded the same
+   *   way without being applied.
+   */
+  private async ingestEvent(
+    contractId: number,
+    chainEvent: ChainEvent,
+    eventOrder: number,
+    fingerprint: string,
+    setupFallback: OnChainState | null,
+  ): Promise<'applied' | 'quarantined' | 'duplicate'> {
+    if (chainEvent.decodeError !== undefined) {
+      return this.recordFailedEvent(contractId, chainEvent, fingerprint, `Malformed event: ${chainEvent.decodeError}`);
+    }
+    let error: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await prisma.$transaction(async (db) => {
+          const eventRaw = await this.recordEvent(db, contractId, chainEvent, fingerprint, null);
+          await this.applyEvent(db, contractId, chainEvent, eventOrder, eventRaw.id, setupFallback);
+        });
+        return 'applied';
+      } catch (attemptError) {
+        if (await this.isRecorded(fingerprint)) return 'duplicate';
+        if (isTransientDbError(attemptError)) throw attemptError;
+        error = attemptError;
+      }
+    }
+
+    console.error(
+      `[indexer] quarantined ${chainEvent.type} event at block ${chainEvent.blockHeight} (tx ${chainEvent.txHash ?? '?'}):`,
+      error,
+    );
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : describeThrown(error);
+    return this.recordFailedEvent(contractId, chainEvent, fingerprint, reason);
+  }
+
+  /** Records an event with `applyError` and no state changes, so it is kept and visible. */
+  private async recordFailedEvent(
+    contractId: number,
+    chainEvent: ChainEvent,
+    fingerprint: string,
+    reason: string,
+  ): Promise<'quarantined' | 'duplicate'> {
+    try {
+      await prisma.$transaction((db) => this.recordEvent(db, contractId, chainEvent, fingerprint, reason));
+    } catch (recordError) {
+      if (await this.isRecorded(fingerprint)) return 'duplicate';
+      throw recordError;
+    }
+    // TODO: alert maintainers here. Today only the error log and this row show
+    // the failure, and nothing re-applies the event.
+    return 'quarantined';
+  }
+
+  /** Writes the event's block header and EventRaw marker. */
+  private async recordEvent(
+    db: Db,
+    contractId: number,
+    chainEvent: ChainEvent,
+    fingerprint: string,
+    applyError: string | null,
+  ) {
+    // Many events share a height, so the first writer wins. If block hashes
+    // disagree at a height, the reorg detector catches it on the next tick.
+    if (chainEvent.blockHash) {
+      await db.blockHeader.upsert({
+        where: { height: chainEvent.blockHeight },
+        create: {
+          height: chainEvent.blockHeight,
+          blockHash: chainEvent.blockHash,
+          parentHash: chainEvent.parentHash,
+        },
+        update: {},
+      });
+    }
+    return db.eventRaw.create({
+      data: {
+        contractId,
+        blockHeight: chainEvent.blockHeight,
+        txHash: chainEvent.txHash,
+        eventType: chainEvent.type,
+        payload: JSON.stringify(chainEvent.event),
+        fingerprint,
+        applyError,
+      },
+    });
+  }
+
+  private async isRecorded(fingerprint: string): Promise<boolean> {
+    return (await prisma.eventRaw.findUnique({ where: { fingerprint }, select: { id: true } })) !== null;
+  }
+
+  /**
+   * On-chain config for a setupOwner event that arrives with no config yet
+   * (no preceding setup event). Genuine setups emit setup first, so this
+   * normally returns null without a network call.
+   */
+  private async fetchSetupFallback(contractId: number, address: string): Promise<OnChainState | null> {
+    const latest = await this.getLatestConfig(prisma, contractId);
+    if (latest && latest.threshold != null) return null;
+    return fetchOnChainState(address);
+  }
+
   /** Applies event-specific state updates to proposal/owner/contract aggregate tables. */
   private async applyEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
     sourceEventId: number,
+    setupFallback: OnChainState | null,
   ): Promise<void> {
     switch (chainEvent.type) {
       case 'setup': {
-        await this.applySetupEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        await this.applySetupEvent(db, contractId, chainEvent, eventOrder, sourceEventId);
         return;
       }
       case 'setupOwner': {
-        await this.applySetupOwnerEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        await this.applySetupOwnerEvent(db, contractId, chainEvent, eventOrder, sourceEventId, setupFallback);
         return;
       }
       case 'proposal': {
-        await this.applyProposalEvent(contractId, chainEvent);
+        await this.applyProposalEvent(db, contractId, chainEvent);
         return;
       }
       case 'approval': {
-        await this.applyApprovalEvent(contractId, chainEvent, eventOrder);
+        await this.applyApprovalEvent(db, contractId, chainEvent, eventOrder);
         return;
       }
       case 'execution': {
-        await this.applyExecutionEvent(contractId, chainEvent, eventOrder);
+        await this.applyExecutionEvent(db, contractId, chainEvent, eventOrder);
         return;
       }
       case 'createChild': {
@@ -573,7 +694,7 @@ export class MinaGuardIndexer {
         return;
       }
       case 'enableChildMultiSig': {
-        await this.applyEnableChildMultiSigEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        await this.applyEnableChildMultiSigEvent(db, contractId, chainEvent, eventOrder, sourceEventId);
         return;
       }
       case 'createChildConfig':
@@ -581,19 +702,19 @@ export class MinaGuardIndexer {
         return;
       }
       case 'receiver': {
-        await this.applyReceiverEvent(contractId, chainEvent.event);
+        await this.applyReceiverEvent(db, contractId, chainEvent.event);
         return;
       }
       case 'ownerChange': {
-        await this.applyOwnerChangeEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        await this.applyOwnerChangeEvent(db, contractId, chainEvent, eventOrder, sourceEventId);
         return;
       }
       case 'thresholdChange': {
-        await this.applyThresholdChangeEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        await this.applyThresholdChangeEvent(db, contractId, chainEvent, eventOrder, sourceEventId);
         return;
       }
       case 'delegate': {
-        await this.applyDelegateEvent(contractId, chainEvent, eventOrder, sourceEventId);
+        await this.applyDelegateEvent(db, contractId, chainEvent, eventOrder, sourceEventId);
         return;
       }
       default:
@@ -602,8 +723,8 @@ export class MinaGuardIndexer {
   }
 
   /** Reads the latest ContractConfig row for a contract, or null if none exists yet. */
-  private async getLatestConfig(contractId: number) {
-    return prisma.contractConfig.findFirst({
+  private async getLatestConfig(db: Db, contractId: number) {
+    return db.contractConfig.findFirst({
       where: { contractId },
       orderBy: [{ validFromBlock: 'desc' }, { eventOrder: 'desc' }],
     });
@@ -615,14 +736,15 @@ export class MinaGuardIndexer {
    * `changes` are copied from the latest row (or null if no prior row exists).
    */
   private async appendContractConfigSnapshot(
+    db: Db,
     contractId: number,
     validFromBlock: number,
     eventOrder: number,
     sourceEventId: number | null,
     changes: ContractConfigChanges,
   ): Promise<void> {
-    const latest = await this.getLatestConfig(contractId);
-    await prisma.contractConfig.create({
+    const latest = await this.getLatestConfig(db, contractId);
+    await db.contractConfig.create({
       data: {
         contractId,
         validFromBlock,
@@ -642,6 +764,7 @@ export class MinaGuardIndexer {
 
   /** Applies setup summary fields: writes parent onto Contract, inserts ContractConfig snapshot. */
   private async applySetupEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
@@ -651,12 +774,13 @@ export class MinaGuardIndexer {
     const parent = asString(event.parent);
     const isRoot = parent === null || parent === EMPTY_PUBLIC_KEY;
 
-    await prisma.contract.update({
+    await db.contract.update({
       where: { id: contractId },
       data: { parent: isRoot ? null : parent },
     });
 
     await this.appendContractConfigSnapshot(
+      db,
       contractId,
       chainEvent.blockHeight,
       eventOrder,
@@ -675,16 +799,18 @@ export class MinaGuardIndexer {
 
   /** Inserts an OwnerMembership row for a setup owner and backfills config from on-chain if needed. */
   private async applySetupOwnerEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
     sourceEventId: number,
+    setupFallback: OnChainState | null,
   ): Promise<void> {
     const event = chainEvent.event;
     const ownerAddress = asString(event.owner);
     if (!ownerAddress || ownerAddress.length < 10 || ownerAddress === EMPTY_PUBLIC_KEY) return;
 
-    await prisma.ownerMembership.create({
+    await db.ownerMembership.create({
       data: {
         contractId,
         address: ownerAddress,
@@ -697,25 +823,22 @@ export class MinaGuardIndexer {
       },
     });
 
-    // Derive threshold/numOwners from on-chain state when no setup event was emitted.
-    const latest = await this.getLatestConfig(contractId);
+    // Derive threshold/numOwners from on-chain state when no setup event was
+    // emitted. The caller fetched it before this transaction opened.
+    const latest = await this.getLatestConfig(db, contractId);
     if (latest && latest.threshold != null) return;
-
-    const contract = await prisma.contract.findUnique({ where: { id: contractId } });
-    if (!contract) return;
-
-    const onChain = await fetchOnChainState(contract.address);
-    if (!onChain) return;
+    if (!setupFallback) return;
 
     await this.appendContractConfigSnapshot(
+      db,
       contractId,
       chainEvent.blockHeight,
       eventOrder,
       sourceEventId,
       {
-        threshold: onChain.threshold,
-        numOwners: onChain.numOwners,
-        ownersCommitment: onChain.ownersCommitment,
+        threshold: setupFallback.threshold,
+        numOwners: setupFallback.numOwners,
+        ownersCommitment: setupFallback.ownersCommitment,
       },
     );
   }
@@ -732,7 +855,7 @@ export class MinaGuardIndexer {
    * REMOTE path in applyExecutionEvent could never walk back to upsert
    * ProposalExecution, and the proposal would stay pending forever.
    */
-  private async applyProposalEvent(contractId: number, chainEvent: ChainEvent): Promise<void> {
+  private async applyProposalEvent(db: Db, contractId: number, chainEvent: ChainEvent): Promise<void> {
     const event = chainEvent.event;
     const proposalHash = asString(event.proposalHash);
     if (!proposalHash) return;
@@ -746,7 +869,7 @@ export class MinaGuardIndexer {
       }
     }
 
-    await prisma.proposal.upsert({
+    await db.proposal.upsert({
       where: {
         contractId_proposalHash: {
           contractId,
@@ -788,16 +911,16 @@ export class MinaGuardIndexer {
     if (this.config.indexerMode === 'lite' && asString(event.txType) === '5') {
       const childAddress = asNullableAddress(asString(event.childAccount));
       if (childAddress) {
-        const parent = await prisma.contract.findUnique({
+        const parent = await db.contract.findUnique({
           where: { id: contractId },
           select: { address: true },
         });
         if (parent) {
-          const existing = await prisma.contract.findUnique({
+          const existing = await db.contract.findUnique({
             where: { address: childAddress },
           });
           if (!existing) {
-            await prisma.contract.create({
+            await db.contract.create({
               data: {
                 address: childAddress,
                 parent: parent.address,
@@ -825,6 +948,7 @@ export class MinaGuardIndexer {
    * not zero amounts.
    */
   private async applyReceiverEvent(
+    db: Db,
     contractId: number,
     event: Record<string, unknown>,
   ): Promise<void> {
@@ -835,7 +959,7 @@ export class MinaGuardIndexer {
     const amount = asString(event.amount);
     if (!address || !amount || address === EMPTY_PUBLIC_KEY) return;
 
-    const proposal = await prisma.proposal.findUnique({
+    const proposal = await db.proposal.findUnique({
       where: {
         contractId_proposalHash: {
           contractId,
@@ -846,11 +970,11 @@ export class MinaGuardIndexer {
     });
     if (!proposal) return;
 
-    const nextIndex = await prisma.proposalReceiver.count({
+    const nextIndex = await db.proposalReceiver.count({
       where: { proposalId: proposal.id },
     });
 
-    await prisma.proposalReceiver.create({
+    await db.proposalReceiver.create({
       data: {
         proposalId: proposal.id,
         idx: nextIndex,
@@ -866,7 +990,7 @@ export class MinaGuardIndexer {
     const isGovernanceWithTarget =
       proposal.txType === '1' || proposal.txType === '2' || proposal.txType === '4';
     if (nextIndex === 0 && isGovernanceWithTarget) {
-      await prisma.proposal.update({
+      await db.proposal.update({
         where: { id: proposal.id },
         data: { toAddress: address },
       });
@@ -875,6 +999,7 @@ export class MinaGuardIndexer {
 
   /** Upserts per-approver approval rows. Approval count is derived at read time. */
   private async applyApprovalEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
@@ -885,7 +1010,7 @@ export class MinaGuardIndexer {
 
     if (!proposalHash || !approver) return;
 
-    const proposal = await prisma.proposal.findUnique({
+    const proposal = await db.proposal.findUnique({
       where: {
         contractId_proposalHash: {
           contractId,
@@ -896,7 +1021,7 @@ export class MinaGuardIndexer {
 
     if (!proposal) return;
 
-    await prisma.approval.upsert({
+    await db.approval.upsert({
       where: {
         proposalId_approver: {
           proposalId: proposal.id,
@@ -920,7 +1045,7 @@ export class MinaGuardIndexer {
     // Clear in-flight approve tracking when the arriving event matches the
     // hash the frontend last submitted for this proposal.
     if (chainEvent.txHash !== null && proposal.lastApproveTxHash === chainEvent.txHash) {
-      await prisma.proposal.update({
+      await db.proposal.update({
         where: { id: proposal.id },
         data: { lastApproveTxHash: null, lastApproveError: null },
       });
@@ -939,6 +1064,7 @@ export class MinaGuardIndexer {
    * On a local miss, walk to the child's `parent` and retry.
    */
   private async applyExecutionEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
@@ -959,13 +1085,13 @@ export class MinaGuardIndexer {
     const blockHeight = chainEvent.blockHeight;
     const txHash = chainEvent.txHash;
 
-    const local = await prisma.proposal.findUnique({
+    const local = await db.proposal.findUnique({
       where: { contractId_proposalHash: { contractId, proposalHash } },
       select: { id: true, nonce: true, lastExecuteTxHash: true },
     });
     if (local) {
-      await this.upsertProposalExecution(local.id, blockHeight, txHash, eventOrder);
-      await prisma.proposal.update({
+      await this.upsertProposalExecution(db, local.id, blockHeight, txHash, eventOrder);
+      await db.proposal.update({
         where: { id: local.id },
         data: {
           executionMemoHash,
@@ -977,6 +1103,7 @@ export class MinaGuardIndexer {
       const localNonce = local.nonce === null ? null : Number(local.nonce);
       if (localNonce !== null && Number.isFinite(localNonce)) {
         await this.appendContractConfigSnapshot(
+          db,
           contractId,
           blockHeight,
           eventOrder,
@@ -987,26 +1114,26 @@ export class MinaGuardIndexer {
       return;
     }
 
-    const child = await prisma.contract.findUnique({
+    const child = await db.contract.findUnique({
       where: { id: contractId },
       select: { parent: true },
     });
     if (!child?.parent) return;
 
-    const parent = await prisma.contract.findUnique({
+    const parent = await db.contract.findUnique({
       where: { address: child.parent },
       select: { id: true },
     });
     if (!parent) return;
 
-    const remote = await prisma.proposal.findUnique({
+    const remote = await db.proposal.findUnique({
       where: { contractId_proposalHash: { contractId: parent.id, proposalHash } },
       select: { id: true, nonce: true, lastExecuteTxHash: true },
     });
     if (!remote) return;
 
-    await this.upsertProposalExecution(remote.id, blockHeight, txHash, eventOrder);
-    await prisma.proposal.update({
+    await this.upsertProposalExecution(db, remote.id, blockHeight, txHash, eventOrder);
+    await db.proposal.update({
       where: { id: remote.id },
       data: {
         executionMemoHash,
@@ -1018,6 +1145,7 @@ export class MinaGuardIndexer {
     const remoteNonce = remote.nonce === null ? null : Number(remote.nonce);
     if (remoteNonce !== null && Number.isFinite(remoteNonce)) {
       await this.appendContractConfigSnapshot(
+        db,
         contractId,
         blockHeight,
         eventOrder,
@@ -1028,12 +1156,13 @@ export class MinaGuardIndexer {
   }
 
   private async upsertProposalExecution(
+    db: Db,
     proposalId: number,
     blockHeight: number,
     txHash: string | null,
     eventOrder: number,
   ): Promise<void> {
-    await prisma.proposalExecution.upsert({
+    await db.proposalExecution.upsert({
       where: { proposalId },
       create: { proposalId, blockHeight, txHash, eventOrder },
       update: { blockHeight, txHash, eventOrder },
@@ -1042,6 +1171,7 @@ export class MinaGuardIndexer {
 
   /** Records an owner add/remove governance result and appends a ContractConfig snapshot. */
   private async applyOwnerChangeEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
@@ -1053,7 +1183,7 @@ export class MinaGuardIndexer {
 
     const added = asString(event.added) === '1';
 
-    await prisma.ownerMembership.create({
+    await db.ownerMembership.create({
       data: {
         contractId,
         address: owner,
@@ -1079,6 +1209,7 @@ export class MinaGuardIndexer {
 
     if (Object.keys(changes).length > 0) {
       await this.appendContractConfigSnapshot(
+        db,
         contractId,
         chainEvent.blockHeight,
         eventOrder,
@@ -1090,6 +1221,7 @@ export class MinaGuardIndexer {
 
   /** Applies threshold change governance results to a ContractConfig snapshot. */
   private async applyThresholdChangeEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
@@ -1104,6 +1236,7 @@ export class MinaGuardIndexer {
     if (configNonce !== null) changes.configNonce = configNonce;
 
     await this.appendContractConfigSnapshot(
+      db,
       contractId,
       chainEvent.blockHeight,
       eventOrder,
@@ -1114,6 +1247,7 @@ export class MinaGuardIndexer {
 
   /** Appends a ContractConfig snapshot updating the delegate address. */
   private async applyDelegateEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
@@ -1123,6 +1257,7 @@ export class MinaGuardIndexer {
     if (delegate === null) return;
 
     await this.appendContractConfigSnapshot(
+      db,
       contractId,
       chainEvent.blockHeight,
       eventOrder,
@@ -1137,6 +1272,7 @@ export class MinaGuardIndexer {
    * event with enabled=0.
    */
   private async applyEnableChildMultiSigEvent(
+    db: Db,
     contractId: number,
     chainEvent: ChainEvent,
     eventOrder: number,
@@ -1151,6 +1287,7 @@ export class MinaGuardIndexer {
     if (configNonce !== null) changes.configNonce = configNonce;
 
     await this.appendContractConfigSnapshot(
+      db,
       contractId,
       chainEvent.blockHeight,
       eventOrder,
@@ -1300,9 +1437,10 @@ export class MinaGuardIndexer {
 
 /**
  * Reverses per-tx event groups to restore contract emission order.
- * o1js fetchEvents returns events within a single tx in newest-first order
- * (reverse of the contract's `this.emitEvent` sequence). Cross-tx ordering
- * (block height, tx index) is preserved; only within-tx groups are reversed.
+ * An account update's events list is newest-first (o1js prepends each
+ * `this.emitEvent`, and the transaction commits to that order), and the
+ * archive returns it unchanged. Cross-tx ordering (block height, tx index) is
+ * preserved; only within-tx groups are reversed.
  */
 function reverseEventsWithinEachTx(events: ChainEvent[]): ChainEvent[] {
   const groups = new Map<string, ChainEvent[]>();
