@@ -148,6 +148,14 @@ runners and uploads to a GitHub Release.
   tag. It builds all three platforms and uploads the installers as CI
   artifacts (7-day retention) instead of publishing — use this to smoke-test
   the build before tagging.
+- **Audit gate:** every leg runs `bun audit --audit-level=critical` right after
+  install and stops before packaging if any dependency has a critical advisory.
+- **Packaged-version check:** electron-builder's `afterPack` hook
+  (`scripts/check-packaged-versions.mjs`) checks the unpacked app before any
+  installer is built or published, and fails unless it holds one Next.js copy
+  at `>=16.3.6 <17` and Electron at `>=43.5.0 <44`, each only until its vendor
+  support ends (Next 16: 2027-10-21, Electron 43: 2027-01-05). Local
+  `electron-builder` runs check too.
 
 The `owner`/`repo` in the `publish` block must match the GitHub repo the
 release should land on.

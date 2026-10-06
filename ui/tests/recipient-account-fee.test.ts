@@ -34,7 +34,7 @@ test('fails closed when recipient status cannot be checked', async () => {
   globalThis.window = {
     __minaGuardConfig: { networkId: 'testnet', minaEndpoint: 'https://node.example/graphql' },
   } as unknown as Window & typeof globalThis;
-  globalThis.fetch = (async () => Response.json({ errors: [{ message: 'node unavailable' }] })) as typeof fetch;
+  globalThis.fetch = (async () => Response.json({ errors: [{ message: 'node unavailable' }] })) as unknown as typeof fetch;
   await expect(countNewRecipientSlots([{ address: 'new' }])).rejects.toThrow('Could not check recipient accounts');
 });
 

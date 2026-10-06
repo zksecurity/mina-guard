@@ -52,7 +52,7 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      command: `cd ../ui && bunx next dev -p ${UI_PORT}`,
+      command: `cd ../ui && bunx next dev --webpack -p ${UI_PORT}`,
       url: `http://localhost:${UI_PORT}`,
       env: {
         NEXT_PUBLIC_API_BASE_URL: BACKEND_URL,
