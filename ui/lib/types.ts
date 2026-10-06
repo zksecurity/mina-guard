@@ -31,6 +31,11 @@ export interface ProposalReceiver {
   amount: string;
 }
 
+/** Sums receiver amounts in nanomina. */
+export function sumReceiverAmounts(receivers: ReadonlyArray<{ amount: string }>): bigint {
+  return receivers.reduce((sum, receiver) => sum + BigInt(receiver.amount), 0n);
+}
+
 /** Proposal record returned by the backend indexer API. */
 export interface Proposal {
   proposalHash: string;
@@ -254,6 +259,16 @@ export function normalizeTxType(value: string | null): TxType | null {
   if (!value) return null;
   if (TX_TYPE_NAME_SET.has(value as TxType)) return value as TxType;
   return parseTxType(value);
+}
+
+/**
+ * Returns a known transaction type or throws. Signing paths use this so an
+ * unknown value is refused instead of being built as some default type.
+ */
+export function requireTxType(value: string | null): TxType {
+  const txType = normalizeTxType(value);
+  if (txType === null) throw new Error('Unsupported transaction type; refusing to sign');
+  return txType;
 }
 
 /** Parses Destination enum values from either numeric Field form or humanized string form. */

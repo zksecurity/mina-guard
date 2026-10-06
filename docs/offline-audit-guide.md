@@ -134,11 +134,18 @@ imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
 (`index.ts` → `summary.ts` → `build-tx.ts`):
 
-1. **Summary + confirmation first** — after a version gate, and *before any
+1. **Summary + confirmation first** — after a version gate and a check that
+   the action and transaction type are known (`canonicalizeBundleTxType`;
+   anything else aborts before a summary is shown, and a numeric type code is
+   rewritten to its name so the summary and the builder compare the same
+   value), and *before any
    compile/prove/sign work or key use*, `renderBundleSummary` renders
    everything the proposal hash covers (action, contract, fee payer, fee,
    nonce, memo, expiry, the per-type body, a `*** MAINNET ***` banner when
-   applicable) and asks for `y` on the controlling terminal (`/dev/tty`, so
+   applicable). Every summary line goes through `escapeTerminalText`, so
+   control, format (bidi) and line-separator characters from the bundle print
+   as visible `\u{XX}` text instead of acting on the terminal; error and log
+   messages are escaped the same way. It then asks for `y` on the controlling terminal (`/dev/tty`, so
    redirecting stdout/stderr cannot hide it); only `--yes` /
    `MINA_GUARD_ASSUME_YES=1` skips the prompt, and with no terminal at all the
    CLI aborts (see focus point 7).
@@ -329,8 +336,9 @@ action differs, and the distinction is the heart of this design:
   fields and recomputes it, and the contract requires that hash to match a
   proposal that exists on-chain (`Proposal not found` otherwise). The summary
   renders the rebuilt proposal's fields for out-of-band comparison; its Memo
-  line is the bundle's advisory plaintext, not the hash-covered `memoHash`
-  (see focus point 2).
+  line is the bundle's advisory plaintext, not the hash-covered `memoHash`,
+  so a Memo check line recomputes `memoToField` from that text and says
+  whether it matches `memoHash` (see focus point 2).
 - **Execute bundles.** Execution is permissionless on-chain: anyone can
   submit a fully-approved proposal. The `receiverAccountExists` map drives the
   executor-signed account-creation fee (1 MINA per new receiver slot), counted
@@ -375,7 +383,13 @@ the fields is **verified against that claimed hash (hard failure on mismatch)**
 before any signing (`assertRecomputedProposalHash`, `build-tx.ts:438`, called at
 `924`/`1019`) — propose mints a new proposal, so there is no prior hash to check.
 The Memo line is the bundle's advisory plaintext, not the hash-covered
-`memoHash`.
+`memoHash`; the Memo check line below it recomputes the hash from that text
+and prints `MISMATCH` when they differ. The receiver list shows only the first
+`MAX_RECEIVERS` rows, the ones the builder signs, with a warning when the bundle
+lists more. The transaction type is never display
+text: `requireTxType` accepts only the ten known names or their numeric codes,
+and both the summary and the builder use it, so an unknown value cannot be
+built as a transfer while the screen shows something else.
 
 **3. Signature-domain split.** In-circuit proposal-hash signatures use
 mina-signer's `signFields` with its fixed devnet domain (the code comments say
@@ -443,6 +457,7 @@ offline-cli/
 │   │                   #   web worker 1:1)
 │   ├── summary.ts      # Human-readable bundle summary + y/N confirmation
 │   │                   #   (the operator's tamper check — duplicated formatters)
+│   ├── terminal-safe.ts # Escapes control/format characters in bundle text
 │   ├── wasm-shim.ts    # Embeds Kimchi WASM into the compiled binary
 │   │                   #   (patches fs.readFileSync; redirects kimchi_wasm.cjs
 │   │                   #   resolution inside Bun-compiled binaries via a temp-dir

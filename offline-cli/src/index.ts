@@ -28,16 +28,18 @@ if (!isMainThread) {
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
-import { handlePropose, handleApprove, handleExecute } from './build-tx.js';
+import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
+import { escapeTerminalLines } from './terminal-safe.js';
 
+// Messages can quote bundle values, so they are escaped like the summary.
 function log(msg: string) {
-  process.stderr.write(`[offline-cli] ${msg}\n`);
+  process.stderr.write(`[offline-cli] ${escapeTerminalLines(msg)}\n`);
 }
 
 function fatal(msg: string): never {
-  process.stderr.write(msg + '\n');
+  process.stderr.write(escapeTerminalLines(msg) + '\n');
   process.exit(1);
 }
 
@@ -84,9 +86,21 @@ if (bundle.version !== 1) {
   fatal(`Unsupported bundle version: ${bundle.version} (expected 1; export a new request with the current UI)`);
 }
 
+if (!['propose', 'approve', 'execute'].includes(bundle.action)) {
+  fatal(`Unknown bundle action: ${JSON.stringify((bundle as { action?: unknown }).action ?? null)}`);
+}
+
 // -- Dispatch ---------------------------------------------------------------
 
 async function main() {
+  // Refuse an unknown transaction type before showing anything, and turn a
+  // numeric code into its name, so the summary and the builder agree on it.
+  try {
+    canonicalizeBundleTxType(bundle);
+  } catch (err) {
+    fatal(`${err instanceof Error ? err.message : String(err)}\nAborted. No transaction was signed.`);
+  }
+
   // Show the operator exactly what they are about to sign, and (on a real
   // terminal) require explicit confirmation — before any expensive
   // compile/prove/sign work and before touching the private key.

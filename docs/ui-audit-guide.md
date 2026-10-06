@@ -102,8 +102,9 @@ the signing worker/CLI still performs its own validation.
 to a proposal shows up as (1) a **hashed** `memoHash` bound into the proposal (the only value
 owners' signatures cover), (2) an unconstrained **broadcast** fee-payer memo on the outer
 transaction, and (3) the **displayed** plaintext the indexer decodes from that transaction.
-Nothing in the circuit ties (2)/(3) to (1), so they can diverge; the indexer compares them and
-the UI flags match/mismatch via `MemoWarningTooltip`. Takeaway: **only a memo whose displayed
+Nothing in the circuit ties (2)/(3) to (1), so they can diverge. The browser hashes the displayed
+text itself and compares it with (1); the indexer compares the broadcast memo of the execution;
+`MemoWarningTooltip` shows the result. Takeaway: **only a memo whose displayed
 value matches the on-chain hash was actually approved by the multisig** — the plaintext shown or
 broadcast is advisory. (Mechanics in focus point 3.)
 
@@ -155,6 +156,12 @@ reclaimable.
   against a proposed child before CREATE_CHILD approval or execution. Security-critical operations, such as
   proposal creation, approval, and execution, are performed on-chain. Transactions are also submitted
   directly to the node.
+  The values an owner reads next to Approve are derived in the browser from the receivers the
+  proposal hash commits to (`toProposal` in `api.ts`): the recipient count, the total, the
+  amount used for the Vault balance check, and the governance target (`receivers[0]`). Rows
+  beyond the nine receiver slots are dropped there, since the worker signs only those. The
+  indexer's precomputed copies of those values are ignored. The worker refuses a proposal whose
+  transaction type it does not recognize (`requireTxType`) instead of building it as a transfer.
   The chainless UI regression checks the child-specific permission alert and verifies that both online
   approval and offline bundle creation/broadcast remain unavailable for an unsafe CREATE_CHILD target.
 - **Interactions with the chain.** Interactions with the chain, like transactions submitted, reach the node
@@ -329,14 +336,14 @@ The **broadcast** plaintext rides the outer tx as protocol metadata
 (`978-979`), the indexer-supplied `proposal.memo` at execute (`1156-1157`);
 nothing in the circuit ties it to `memoHash`. The **displayed** plaintext is
 decoded from the broadcast tx by the indexer (`indexer.ts:716`), which also
-computes both match flags (`proposal-record.ts:123-130`, `132-139`;
-execute-side hash at `indexer.ts:925-930`) that `MemoWarningTooltip` renders.
-On the display path, `memo`, `memoHash`, and the flags all come from the same
-indexer JSON (`api.ts:245-246`; rendered at `page.tsx:687`, tooltip logic
-`496-505`), and the UI deliberately does not re-derive `memoHash` from the
-node — reading chain events is the indexer's role, and the UI's only events
-source is `fetchAllEvents` (`api.ts:345`). Net: action paths are
-contract-anchored; the displayed memo and its match badge are advisory.
+computes both match flags (`proposal-record.ts`; execute-side hash in
+`indexer.ts`). The proposal page does not use the indexer's proposal-memo
+flag: it hashes the displayed text with `memoToField` in the worker
+(`computeMemoHash`) and compares that with `memoHash`, and `lib/memo-check.ts`
+shows no badge until that check finishes. The execution-memo flag still comes
+from the indexer, because the browser does not have the executed transaction's
+memo. Net: action paths are contract-anchored; the displayed memo text is
+advisory, and its match against the signed `memoHash` is checked locally.
 
 **4. Concurrency / signer-lock correctness (`hooks/useContractTxLock.ts`,
 `useTransactions.ts`, `lib/storage.ts`).**
@@ -409,9 +416,10 @@ ui/
 │   │                            #   (NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL) + SHA256SUMS
 │   ├── ProposalForm.tsx         # Builds NewProposalInput (what the user intends to
 │   │                            #   propose)
-│   ├── MemoWarningTooltip.tsx   # Surfaces memo match/mismatch (renders the
-│   │                            #   backend-provided memo flags)
-│   ├── TransactionCard.tsx      # Renders proposal data from the indexer
+│   ├── MemoWarningTooltip.tsx   # Surfaces memo match/mismatch (lib/memo-check.ts
+│   │                            #   picks the badge from a locally recomputed hash)
+│   ├── TransactionCard.tsx      # Renders proposal data from the indexer (totals
+│   │                            #   derived from the signed receivers)
 │   ├── TransactionList.tsx
 │   ├── ApprovalProgress.tsx     # Threshold progress from indexed approvals
 │   ├── OwnerList.tsx            # Owner set (rendered from backend data)
