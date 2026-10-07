@@ -543,8 +543,9 @@ export interface ZkappCommandUpdate {
   isProved: boolean;
   /** Raw event field lists; each starts with the event type index. */
   events: string[][];
-  /** Required app-state values, one per state slot; null means "any value". */
-  stateConditions: Array<string | null>;
+  /** Required app-state values, one per state slot, null for "any value".
+   *  Null as a whole when the node did not report them. */
+  stateConditions: Array<string | null> | null;
 }
 
 /** Bounds each node request made while a client waits on a submission check. */
@@ -580,12 +581,16 @@ export async function fetchPooledZkappCommand(
     );
     const command = (data.pooledZkappCommands ?? []).find((c) => c.hash === txHash);
     if (!command) return null;
-    return (command.zkappCommand?.accountUpdates ?? []).map(({ body }) => ({
-      publicKey: body?.publicKey ?? '',
-      isProved: body?.authorizationKind?.isProved === true,
-      events: Array.isArray(body?.events) ? body.events : [],
-      stateConditions: body?.preconditions?.account?.state ?? [],
-    }));
+    return (command.zkappCommand?.accountUpdates ?? []).map(({ body }) => {
+      const state = body?.preconditions?.account?.state;
+      return {
+        publicKey: body?.publicKey ?? '',
+        isProved: body?.authorizationKind?.isProved === true,
+        events: Array.isArray(body?.events) ? body.events : [],
+        // Null when the node did not report them, so the check fails closed.
+        stateConditions: Array.isArray(state) ? state : null,
+      };
+    });
   } catch (err) {
     console.warn('[mina-client] fetchPooledZkappCommand failed', txHash, err);
     return null;

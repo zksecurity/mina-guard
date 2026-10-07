@@ -32,6 +32,7 @@ const command = (hash: string) => ({
       preconditions: { account: { state: [null, null] } } } },
     { body: { publicKey: VAULT, events: [['13', '0', '0']], authorizationKind: { isProved: true },
       preconditions: { account: { state: ['7', null] } } } },
+    { body: { publicKey: OTHER, events: [], authorizationKind: { isProved: true } } },
   ] },
 });
 
@@ -47,6 +48,8 @@ describe('fetchPooledZkappCommand', () => {
     expect(await fetchPooledZkappCommand(config, TX)).toEqual([
       { publicKey: 'B62qfeepayer', isProved: false, events: [], stateConditions: [null, null] },
       { publicKey: VAULT, isProved: true, events: [['13', '0', '0']], stateConditions: ['7', null] },
+      // No reported conditions is not the same as no conditions.
+      { publicKey: OTHER, isProved: true, events: [], stateConditions: null },
     ]);
     expect(requestBody(fetchSpy).variables).toEqual({ hashes: [TX] });
     // Bounded, so a hung node cannot hold a check slot.

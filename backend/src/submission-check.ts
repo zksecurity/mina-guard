@@ -26,10 +26,8 @@ export function emitsProposalEvent(
   proposalHash: string,
 ): boolean {
   if (!update.isProved) return false;
-  return update.events.some((fields) => {
-    if (fields[0] !== EVENT_INDEX[action] || fields.length < 2) return false;
-    return sameField(fields[1], proposalHash);
-  });
+  return update.events.some((fields) =>
+    fields.length >= 2 && sameField(fields[0], EVENT_INDEX[action]) && sameField(fields[1], proposalHash));
 }
 
 /**
@@ -39,18 +37,19 @@ export function emitsProposalEvent(
  * them), and only these conditions, checked when a block applies the
  * transaction, would reject it. Every approval and execution changes the
  * state it requires, so a transaction already in a block fails this too.
+ * An update whose conditions the node did not report fails as well.
  */
 export function matchesCurrentState(update: ZkappCommandUpdate, state: string[] | null): boolean {
+  if (update.stateConditions === null) return false;
   return update.stateConditions.every((required, i) =>
     required === null || (state !== null && i < state.length && sameField(required, state[i])));
 }
 
+const DECIMAL = /^\d+$/;
+
+/** Equal field values. Only decimal strings count, so a blank value never matches. */
 function sameField(a: string, b: string): boolean {
-  try {
-    return BigInt(a) === BigInt(b);
-  } catch {
-    return false;
-  }
+  return DECIMAL.test(a) && DECIMAL.test(b) && BigInt(a) === BigInt(b);
 }
 
 /**
@@ -71,8 +70,9 @@ export async function verifySubmittedTransaction(
     if (!updates) continue;
     const ours = updates.filter((update) => params.accounts.includes(update.publicKey));
     if (!ours.some((update) => emitsProposalEvent(update, params.action, params.proposalHash))) return false;
+    // A failed state lookup is retried like a transaction the pool lacks.
     const states = await fetchZkappStates(config, params.accounts);
-    if (!states) return false;
+    if (!states) continue;
     return ours.every((update) => matchesCurrentState(update, states.get(update.publicKey) ?? null));
   }
   return false;

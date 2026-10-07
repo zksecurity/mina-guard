@@ -184,10 +184,22 @@ describe('submission reports', () => {
     expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
   });
 
-  test('refuses when the state lookup fails', async () => {
+  test('refuses when the state lookup fails, after retrying it', async () => {
     stubLookup([update(VAULT, true, encode('approval', PROPOSAL))]);
-    spyOn(minaClient, 'fetchZkappStates').mockResolvedValue(null);
+    const states = spyOn(minaClient, 'fetchZkappStates').mockResolvedValue(null);
     expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
+    expect(states).toHaveBeenCalledTimes(1);
+
+    LOOKUP_DELAYS_MS.splice(0, LOOKUP_DELAYS_MS.length, 0, 0);
+    states.mockResolvedValueOnce(null).mockResolvedValue(new Map([[VAULT, CURRENT]]));
+    expect((await post({ action: 'approve', txHash: TX })).status).toBe(200);
+    expect(states).toHaveBeenCalledTimes(3);
+  });
+
+  test('refuses an update whose state conditions the node did not report', async () => {
+    stubLookup([{ ...update(VAULT, true, encode('approval', PROPOSAL)), stateConditions: null }]);
+    expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
+    expect((await stored()).lastApproveTxHash).toBeNull();
   });
 
   test('a remote execution also needs the vault update to require current state', async () => {
