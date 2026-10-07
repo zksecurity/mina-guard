@@ -355,6 +355,23 @@ export function buildTransferReceivers(
  * `accountExists(addr)` returns true if the account already exists on-chain
  * (existing accounts don't incur the account-creation fee).
  */
+/**
+ * Decides how to deploy a child to an address from the bundle's snapshot of
+ * it. Anyone can create the bare Mina account first by paying into the
+ * address, and a deployment that declares a new account then fails. With a
+ * snapshot of a bare account the child is deployed into it without the
+ * creation fee. A snapshot that carries a verification key or app state is
+ * refused: only the address's own key could have put them there.
+ */
+export function deployTargetFromSnapshot(snapshot: BundleAccount | undefined): 'new' | 'existing' {
+  if (!snapshot) return 'new';
+  const hasState = (snapshot.zkappState ?? []).some((value) => String(value) !== '0');
+  if (snapshot.verificationKey || hasState) {
+    throw new Error('The child address already holds a zkApp. Create the SubVault with a fresh address.');
+  }
+  return 'existing';
+}
+
 export function countNewReceiverAccounts(
   receivers: InstanceType<typeof Receiver>[],
   accountExists: (addr: string) => boolean,
@@ -817,6 +834,9 @@ export async function handlePropose(
   let childKey: InstanceType<typeof PrivateKey> | null = null;
   let childOwnerStore: InstanceType<typeof OwnerStore> | null = null;
   let childPaddedOwners: InstanceType<typeof PublicKey>[] | null = null;
+  // A snapshot of the child address means someone created its bare account
+  // already; the deploy then must not fund it again.
+  const childTarget = isCreateChild ? deployTargetFromSnapshot(bundle.accounts[input.childAccount!]) : null;
   if (isCreateChild) {
     childKey = PrivateKey.fromBase58(input.childPrivateKey!);
     childOwnerStore = new OwnerStore();
@@ -835,7 +855,7 @@ export async function handlePropose(
     if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
       const childAddress = childKey.toPublicKey();
       const childZkApp = new MinaGuard(childAddress);
-      AccountUpdate.fundNewAccount(proposer);
+      if (childTarget === 'new') AccountUpdate.fundNewAccount(proposer);
       await childZkApp.deploy();
       await childZkApp.reserveForParent(
         contractAddress,

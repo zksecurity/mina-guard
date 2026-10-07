@@ -1353,6 +1353,89 @@ describe('offline-cli e2e', () => {
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('config mismatch');
     }, 120_000);
+
+    it('propose createChild into an account someone created first, without funding it again', async () => {
+      const proposer = owners[0];
+      const preKey = PrivateKey.random();
+      const preAddr = preKey.toPublicKey();
+      // Anyone can create the bare account by paying into the address.
+      const payer = owners[1];
+      const pay = await Mina.transaction(payer.pub, async () => {
+        AccountUpdate.fundNewAccount(payer.pub);
+        AccountUpdate.createSigned(payer.pub).send({ to: preAddr, amount: 1_000_000_000 });
+      });
+      await pay.sign([payer.key]).send();
+      expect(Mina.hasAccount(preAddr)).toBe(true);
+
+      const bundle = {
+        version: 1,
+        action: 'propose',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(),
+        accounts: { ...accountsSnapshotForCreate(), [preAddr.toBase58()]: snapshotAccount(preAddr) },
+        events: await parentEvents(),
+        input: {
+          txType: 'createChild',
+          nonce: 0,
+          childAccount: preAddr.toBase58(),
+          createChildConfigHash: configHash(),
+          childPrivateKey: preKey.toBase58(),
+          childOwners: childOwnerAddrs(),
+          childThreshold: 2,
+        },
+        configNonce: 0,
+        networkId: '1',
+      };
+      const bundlePath = join(tmpDir, 'create-child-existing-account.json');
+      writeBundle(bundlePath, bundle);
+
+      const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
+      if (result.code !== 0) console.log('[e2e] CLI stderr:', result.stderr, '\nstdout:', result.stdout);
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      // No account-creation update for the proposer: the account already exists.
+      const proposerUpdates = output.transaction.accountUpdates.filter(
+        (au: any) => au.body.publicKey === proposer.pub.toBase58(),
+      );
+      expect(proposerUpdates).toHaveLength(0);
+      // The ledger accepts the deployment into the existing account.
+      await Mina.Transaction.fromJSON(output.transaction).send();
+      expect(Mina.getAccount(preAddr).zkapp?.verificationKey).toBeDefined();
+    }, 120_000);
+
+    it('refuses to propose createChild into an address that already holds a zkApp', async () => {
+      const proposer = owners[0];
+      const bundle = {
+        version: 1,
+        action: 'propose',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(),
+        accounts: accountsSnapshotForCreate(),
+        events: await parentEvents(),
+        input: {
+          txType: 'createChild',
+          nonce: 0,
+          // The parent vault itself: an address with a verification key.
+          childAccount: zkAppAddress.toBase58(),
+          createChildConfigHash: configHash(),
+          childPrivateKey: PrivateKey.random().toBase58(),
+          childOwners: childOwnerAddrs(),
+          childThreshold: 2,
+        },
+        configNonce: 0,
+        networkId: '1',
+      };
+      const bundlePath = join(tmpDir, 'create-child-taken-address.json');
+      writeBundle(bundlePath, bundle);
+
+      const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('already holds a zkApp');
+      expect(result.stdout).toBe('');
+    }, 120_000);
   });
 });
 

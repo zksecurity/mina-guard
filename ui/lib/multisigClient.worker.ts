@@ -3,6 +3,7 @@
 
 import './disable-wasm-finalizers';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
+import { classifyDeployTarget } from './deploy-target';
 import { requireUnregisteredProposal } from './proposal-preparation';
 import * as Comlink from 'comlink';
 
@@ -915,10 +916,15 @@ const workerApi = {
       paddedOwners.push(PublicKey.empty());
     }
 
-    await fetchAccount({ publicKey: feePayer });
+    const [, vaultAccount] = await Promise.all([
+      fetchAccount({ publicKey: feePayer }),
+      fetchAccount({ publicKey: zkAppAddress }),
+    ]);
+    // Someone may have created the bare account first; deploy into it then.
+    const vaultTarget = classifyDeployTarget(vaultAccount.account);
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
-      AccountUpdate.fundNewAccount(feePayer);
+      if (vaultTarget === 'new') AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
       await zkApp.setup(
         Field(params.threshold),
@@ -1020,14 +1026,18 @@ const workerApi = {
       fetchAccount({ publicKey: proposer }),
     ];
     // REMOTE non-create proposals read child state (parentNonce, ownersCommitment,
-    // parent) via getAndRequireEquals() inside propose(). For createChild, the
-    // child doesn't exist yet, but assertFreshProposalNonce reads the parent's
-    // own state instead (isRemoteCreate branch).
+    // parent) via getAndRequireEquals() inside propose(). For createChild,
+    // assertFreshProposalNonce reads the parent's own state instead
+    // (isRemoteCreate branch), but the child address is still fetched: someone
+    // may have created its bare account first, and the deploy must not fund
+    // it again.
     const childAccount = proposal.childAccount;
-    if (!childAccount.equals(PublicKey.empty()).toBoolean() && !isCreateChild) {
-      fetches.push(fetchAccount({ publicKey: childAccount }));
-    }
+    const childFetch = childAccount.equals(PublicKey.empty()).toBoolean()
+      ? null
+      : fetchAccount({ publicKey: childAccount });
+    if (childFetch) fetches.push(childFetch);
     await Promise.all(fetches);
+    const childTarget = isCreateChild && childFetch ? classifyDeployTarget((await childFetch).account) : null;
     assertStoresMatchChain(stores, await requireContractState(params.contractAddress));
 
     logProposeDiagnostics({
@@ -1049,7 +1059,7 @@ const workerApi = {
       if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
         const childAddress = childKey.toPublicKey();
         const childZkApp = new MinaGuard(childAddress);
-        AccountUpdate.fundNewAccount(proposer);
+        if (childTarget === 'new') AccountUpdate.fundNewAccount(proposer);
         await childZkApp.deploy();
         await childZkApp.reserveForParent(
           contractAddress,
