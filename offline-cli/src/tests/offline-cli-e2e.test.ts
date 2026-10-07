@@ -1400,8 +1400,13 @@ describe('offline-cli e2e', () => {
         (au: any) => au.body.publicKey === proposer.pub.toBase58(),
       );
       expect(proposerUpdates).toHaveLength(0);
-      // The ledger accepts the deployment into the existing account.
-      await Mina.Transaction.fromJSON(output.transaction).send();
+      // The ledger accepts a deployment into the existing bare account: no
+      // creation fee, and the address's own key signs the deploy update.
+      const childZkApp = new MinaGuard(preAddr);
+      const deployTx = await Mina.transaction(proposer.pub, async () => {
+        await childZkApp.deploy();
+      });
+      await deployTx.sign([proposer.key, preKey]).send();
       expect(Mina.getAccount(preAddr).zkapp?.verificationKey).toBeDefined();
     }, 120_000);
 
@@ -1432,6 +1437,7 @@ describe('offline-cli e2e', () => {
       writeBundle(bundlePath, bundle);
 
       const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
+      console.log('[e2e] CLI stderr:', result.stderr);
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('already holds a zkApp');
       expect(result.stdout).toBe('');
