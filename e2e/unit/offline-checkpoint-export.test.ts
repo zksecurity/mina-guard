@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it, mock } from 'bun:test';
+import { OFFLINE_REQUEST_VERSION, STORE_CHECKPOINT_VERSION } from 'contracts/offline-format';
 
 const calls: string[] = [];
-const checkpoint = { version: 1, network: 'testnet', address: 'vault', throughBlock: null,
+const checkpoint = { version: STORE_CHECKPOINT_VERSION, network: 'testnet', address: 'vault', throughBlock: null,
   owners: '{"owners":[]}', approvals: '{"entries":{"entries":{}}}', nullifiers: '{"keys":[]}',
   roots: { ownersCommitment: '1', approvalRoot: '2', voteNullifierRoot: '3' } };
 mock.module('../../ui/lib/multisigClient', () => ({
@@ -30,7 +31,7 @@ const proposal = {
 };
 
 describe('offline checkpoint export', () => {
-  it('exports v1 snapshots for propose, approve and execute without a second vault history fetch', async () => {
+  it('exports current-version requests with v1 checkpoints for propose, approve and execute without a second vault history fetch', async () => {
     process.env.NEXT_PUBLIC_MINA_NETWORK = 'testnet';
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       if (String(input).includes('/events')) throw new Error('Unexpected full history request');
@@ -47,7 +48,7 @@ describe('offline checkpoint export', () => {
     for (const build of builders) {
       calls.length = 0;
       const bundle = await build();
-      expect(bundle.version).toBe(1);
+      expect(bundle.version).toBe(OFFLINE_REQUEST_VERSION);
       expect(bundle.events).toEqual([]);
       expect(bundle.storeCheckpoint).toEqual(checkpoint);
       expect(bundle.contractAddress).toBe('vault');
