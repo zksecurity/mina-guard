@@ -17,7 +17,8 @@ Quick orientation (see the full doc for the state layout, flow, and invariant ma
   cross-child) plus cross-network via the compile-time `NETWORK_DOMAIN`.
 - Permissions set in `deploy()` (`setPermissions: impossible()`,
   `setVerificationKey: impossibleDuringCurrentVersion()`) make the deploy key
-  powerless after deploy.
+  powerless after deploy for as long as the network's transaction version is
+  the one stamped at deploy (security guide, accepted risk 9).
 
 The invariant → enforcement → test map is in
 [`docs/security-audit-guide.md`](../docs/security-audit-guide.md).
