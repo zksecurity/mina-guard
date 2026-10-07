@@ -71,3 +71,4 @@ export {
   type StoreCheckpoint,
   type StoreScope,
 } from './store-checkpoint.js';
+export { OFFLINE_REQUEST_VERSION, STORE_CHECKPOINT_VERSION } from './offline-format.js';

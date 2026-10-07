@@ -271,7 +271,9 @@ Version 2 adds `childAddress`, `childOwners` and `childThreshold` to CREATE_CHIL
 approve bundles, so the air-gapped signer sees and checks the SubVault
 configuration an approval authorizes. The CLI rejects version 1 requests;
 re-export pending requests with a matching UI. Signed responses stay at
-version 1.
+version 1. `OFFLINE_REQUEST_VERSION` in `contracts/offline-format` is the one
+source for the UI's `OFFLINE_BUNDLE_VERSION`, the CLI's version gate and
+`storesFromOfflineRequest`; `STORE_CHECKPOINT_VERSION` (1) is the checkpoint's own.
 
 ### Common fields (`BundleBase`)
 

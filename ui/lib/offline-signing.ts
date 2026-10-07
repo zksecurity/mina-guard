@@ -3,9 +3,10 @@ import { computeCreateChildConfigHash, exportStoreCheckpoint } from './multisigC
 import type { StoreCheckpoint } from 'contracts';
 import { OFFLINE_RESPONSE_VERSION } from './offline-format';
 import { getMinaGuardConfig } from './endpoints';
+import { OFFLINE_REQUEST_VERSION } from 'contracts/offline-format';
 
-/** Version 2 adds the SubVault owners and threshold to CREATE_CHILD approve bundles. */
-export const OFFLINE_BUNDLE_VERSION = 2;
+/** The request format the CLI accepts; one constant for the UI, the CLI and the store restorer. */
+export const OFFLINE_BUNDLE_VERSION = OFFLINE_REQUEST_VERSION;
 
 interface BundleReceiver {
   address: string;

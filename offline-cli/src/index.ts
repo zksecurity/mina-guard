@@ -30,6 +30,7 @@ if (!isMainThread) {
 import { readFileSync } from 'fs';
 import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildApprovalConfig } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
+import { OFFLINE_REQUEST_VERSION } from 'contracts';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
 import { escapeTerminalLines } from './terminal-safe.js';
 
@@ -82,8 +83,8 @@ function readBundle(path: string): OfflineBundle {
 
 const bundle = readBundle(bundlePath);
 
-if (bundle.version !== 2) {
-  fatal(`Unsupported bundle version: ${bundle.version} (expected 2; export a new request with the current UI)`);
+if (bundle.version !== OFFLINE_REQUEST_VERSION) {
+  fatal(`Unsupported bundle version: ${bundle.version} (expected ${OFFLINE_REQUEST_VERSION}; export a new request with the current UI)`);
 }
 
 if (!['propose', 'approve', 'execute'].includes(bundle.action)) {

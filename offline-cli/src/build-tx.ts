@@ -53,6 +53,7 @@ import {
   childConfigHash,
   NETWORK_DOMAIN_NAME,
   storesFromOfflineRequest,
+  OFFLINE_REQUEST_VERSION,
   type StoreCheckpoint,
   rebuildChildExecutionMap,
   assertChildExecutionMapMatchesChain,
@@ -104,7 +105,7 @@ interface BundleAccount {
 /** Fields common to all bundle actions. Version 2 adds the SubVault
  *  configuration to CREATE_CHILD approve bundles. */
 interface BundleBase {
-  version: 2;
+  version: typeof OFFLINE_REQUEST_VERSION;
   storeCheckpoint: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
