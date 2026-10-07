@@ -539,6 +539,8 @@ export async function fetchMempoolHashes(
 /** One account update of a zkApp command, as the daemon reports it. */
 export interface ZkappCommandUpdate {
   publicKey: string;
+  /** Base58 token of the account the update targets; null when the node did not report it. */
+  tokenId: string | null;
   /** True when the update is authorized by a proof against the account's verification key. */
   isProved: boolean;
   /** Raw event field lists; each starts with the event type index. */
@@ -562,6 +564,7 @@ export async function fetchPooledZkappCommand(
     hash: string;
     zkappCommand?: { accountUpdates?: Array<{ body?: {
       publicKey?: string;
+      tokenId?: string;
       events?: string[][];
       authorizationKind?: { isProved?: boolean };
       preconditions?: { account?: { state?: Array<string | null> } };
@@ -571,7 +574,7 @@ export async function fetchPooledZkappCommand(
     pooledZkappCommands(hashes: $hashes) {
       hash
       zkappCommand { accountUpdates { body {
-        publicKey events authorizationKind { isProved } preconditions { account { state } }
+        publicKey tokenId events authorizationKind { isProved } preconditions { account { state } }
       } } }
     }
   }`;
@@ -585,6 +588,7 @@ export async function fetchPooledZkappCommand(
       const state = body?.preconditions?.account?.state;
       return {
         publicKey: body?.publicKey ?? '',
+        tokenId: typeof body?.tokenId === 'string' ? body.tokenId : null,
         isProved: body?.authorizationKind?.isProved === true,
         events: Array.isArray(body?.events) ? body.events : [],
         // Null when the node did not report them, so the check fails closed.

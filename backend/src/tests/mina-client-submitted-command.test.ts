@@ -10,6 +10,7 @@ const config = {
 const TX = '5JtszX5pwB9SMZvwE16ZUxyWJAKLDfgGVzpAgpRHeFC3NDUC8FwQ';
 const VAULT = 'B62qqFKVtPsNJZsGx5Bv1Bc4cyMnK3t9BMqQoahqHoJErp6bMhAmFPp';
 const OTHER = 'B62qoG5Yk4iVxpyczUrBNpwtx2xunhL48dydN53A2VjoRwF8NUjtL3';
+const NATIVE_TOKEN = 'wSHV2S4qX9jFsLjQo8r1BsMLH2ZRKsZx6EJd1sbozGPieEC4Jf';
 
 /** Minimal Response-shaped stub for the global fetch mock. */
 function jsonResponse(body: unknown, status = 200): Response {
@@ -30,7 +31,7 @@ const command = (hash: string) => ({
   zkappCommand: { accountUpdates: [
     { body: { publicKey: 'B62qfeepayer', events: [], authorizationKind: { isProved: false },
       preconditions: { account: { state: [null, null] } } } },
-    { body: { publicKey: VAULT, events: [['13', '0', '0']], authorizationKind: { isProved: true },
+    { body: { publicKey: VAULT, tokenId: NATIVE_TOKEN, events: [['13', '0', '0']], authorizationKind: { isProved: true },
       preconditions: { account: { state: ['7', null] } } } },
     { body: { publicKey: OTHER, events: [], authorizationKind: { isProved: true } } },
   ] },
@@ -46,10 +47,10 @@ describe('fetchPooledZkappCommand', () => {
       jsonResponse({ data: { pooledZkappCommands: [command('5Jother'), command(TX)] } }),
     );
     expect(await fetchPooledZkappCommand(config, TX)).toEqual([
-      { publicKey: 'B62qfeepayer', isProved: false, events: [], stateConditions: [null, null] },
-      { publicKey: VAULT, isProved: true, events: [['13', '0', '0']], stateConditions: ['7', null] },
+      { publicKey: 'B62qfeepayer', tokenId: null, isProved: false, events: [], stateConditions: [null, null] },
+      { publicKey: VAULT, tokenId: NATIVE_TOKEN, isProved: true, events: [['13', '0', '0']], stateConditions: ['7', null] },
       // No reported conditions is not the same as no conditions.
-      { publicKey: OTHER, isProved: true, events: [], stateConditions: null },
+      { publicKey: OTHER, tokenId: null, isProved: true, events: [], stateConditions: null },
     ]);
     expect(requestBody(fetchSpy).variables).toEqual({ hashes: [TX] });
     // Bounded, so a hung node cannot hold a check slot.

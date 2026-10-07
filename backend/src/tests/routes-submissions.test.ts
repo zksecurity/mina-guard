@@ -7,7 +7,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import express from 'express';
 import type { Server } from 'http';
-import { Field, PrivateKey, PublicKey } from 'o1js';
+import { Field, PrivateKey, PublicKey, TokenId } from 'o1js';
 import { MinaGuard } from 'contracts';
 import type { BackendConfig } from '../config.js';
 import { prisma } from '../db.js';
@@ -35,8 +35,9 @@ function encode(type: 'approval' | 'execution', proposalHash: string): string[] 
     : { proposalHash: Field(proposalHash), txType: Field(0), root: Field(0) };
   return [String(names.indexOf(type)), ...events[type].toFields(value).map(String)];
 }
+const NATIVE_TOKEN = TokenId.toBase58(TokenId.default);
 const update = (publicKey: string, isProved: boolean, ...evts: string[][]): ZkappCommandUpdate =>
-  ({ publicKey, isProved, events: evts, stateConditions: [CURRENT[0], null, CURRENT[2]] });
+  ({ publicKey, tokenId: NATIVE_TOKEN, isProved, events: evts, stateConditions: [CURRENT[0], null, CURRENT[2]] });
 const requiring = (u: ZkappCommandUpdate, stateConditions: Array<string | null>): ZkappCommandUpdate =>
   ({ ...u, stateConditions });
 // Current app state of both the vault and the SubVault in these tests.
@@ -146,6 +147,17 @@ describe('submission reports', () => {
     ];
     for (const updates of cases) {
       stubLookup(updates);
+      expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
+      mock.restore();
+    }
+    expect((await stored()).lastApproveTxHash).toBeNull();
+  });
+
+  test("refuses the vault's address under another token, or with no token reported", async () => {
+    // An account is a public key and a token: the same address under a custom
+    // token is a different account, whatever it emits.
+    for (const tokenId of ['wSHV2S4qX9jFsLjQo8r1BsMLH2ZRKsZx6EJd1sbozGPieEC4Je', null]) {
+      stubLookup([{ ...update(VAULT, true, encode('approval', PROPOSAL)), tokenId }]);
       expect((await post({ action: 'approve', txHash: TX })).status).toBe(422);
       mock.restore();
     }
