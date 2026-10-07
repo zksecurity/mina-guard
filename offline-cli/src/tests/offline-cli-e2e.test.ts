@@ -1032,6 +1032,12 @@ describe('offline-cli e2e', () => {
       receivers: [{ address: emptyKey, amount: '0' }],
     });
 
+    function sortedChildOwnerAddrs(): string[] {
+      const childOS = new OwnerStore();
+      for (const addr of childOwnerAddrs()) childOS.addSorted(PublicKey.fromBase58(addr));
+      return childOS.owners.map((owner) => owner.toBase58());
+    }
+
     function configHash(): string {
       const childOS = new OwnerStore();
       for (const addr of childOwnerAddrs()) childOS.addSorted(PublicKey.fromBase58(addr));
@@ -1201,6 +1207,12 @@ describe('offline-cli e2e', () => {
         accounts: accountsSnapshotForCreate(),
         events: await parentEvents(),
         proposal: createChildProposalBundle(),
+        // The approval authorizes this configuration; the CLI checks it
+        // against proposal.data before the summary, in the reserved slot
+        // order, which the propose above sorted.
+        childAddress: childAddr.toBase58(),
+        childOwners: sortedChildOwnerAddrs(),
+        childThreshold: 2,
       };
 
       const bundlePath = join(tmpDir, 'create-child-approve.json');
