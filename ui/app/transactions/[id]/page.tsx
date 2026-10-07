@@ -729,7 +729,7 @@ export default function TransactionDetailPage() {
             <p className="opacity-90">
               This proposal targets a SubVault the backend has not indexed and verified yet, so whether it is
               initialized and belongs to this Vault cannot be checked. Approval, execution and offline export
-              wait until it is.
+              wait until it is. If the SubVault was created outside this app, track it here first.
             </p>
           </div>
         )}
@@ -743,8 +743,8 @@ export default function TransactionDetailPage() {
             </p>
             <p className="opacity-90">
               {invalidTargetReason === 'child_uninitialized'
-                ? 'The SubVault this proposal targets has not been set up, so the contract would reject it. ' +
-                  'Set the SubVault up first, then create a new proposal.'
+                ? 'The SubVault this proposal targets is not initialized, so the contract would reject it. ' +
+                  'Create a new proposal once its setup is indexed.'
                 : 'The SubVault this proposal targets names a different parent Vault, so the contract would ' +
                   'reject it. Check the target address and create a new proposal.'}
             </p>
@@ -1045,7 +1045,7 @@ export default function TransactionDetailPage() {
                     <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                   </div>
                   <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
-                  {permissionsSafe && childPermissionsSafe ? (
+                  {permissionsSafe && childPermissionsSafe && !targetUnindexed ? (
                     <div className="flex flex-wrap gap-3">
                       {proposal.approvalCount < owners.length && (
                         <OfflineSigningFlow
@@ -1122,11 +1122,13 @@ export default function TransactionDetailPage() {
                     </div>
                   ) : (
                     <p className="text-sm text-red-400">
-                      Offline bundle creation and broadcast are blocked until
-                      the Vault and target SubVault pass their live permission checks.
+                      {targetUnindexed
+                        ? 'Offline bundle creation and broadcast wait until the backend has indexed the target SubVault.'
+                        : 'Offline bundle creation and broadcast are blocked until ' +
+                          'the Vault and target SubVault pass their live permission checks.'}
                     </p>
                   )}
-                  {permissionsSafe && childPermissionsSafe && (
+                  {permissionsSafe && childPermissionsSafe && !targetUnindexed && (
                     <UploadSignedResponse
                       acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
                       expectedContractAddress={multisig!.address}

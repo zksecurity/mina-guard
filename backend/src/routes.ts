@@ -224,7 +224,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, parent: true, ready: true, permissionsVerified: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -370,7 +370,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, parent: true, ready: true, permissionsVerified: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
       if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
@@ -460,7 +460,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, parent: true, ready: true, permissionsVerified: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -503,7 +503,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, parent: true, ready: true, permissionsVerified: true },
+        select: { id: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -881,15 +881,16 @@ function toContractState(
   };
 }
 
-/** The state of a child the backend has indexed and verified. A child with
- *  events applied but no config snapshot has only been reserved: `setup`
- *  writes the first snapshot, so it is not initialized. */
+/** The state of a child the backend has indexed and verified, or null while
+ *  it has no config snapshot yet. `setup` writes the first snapshot, and the
+ *  contract only records a REMOTE proposal for an initialized child, so a
+ *  missing snapshot means the backend has not caught up, not that the child
+ *  is unset; the record then says the target is not indexed. */
 function childTargetState(
   config: Awaited<ReturnType<typeof latestContractConfig>>,
   parent: string | null,
-): ContractState {
-  return toContractState(config, parent)
-    ?? { nonce: null, parentNonce: null, configNonce: null, parent, initialized: false };
+): ContractState | null {
+  return toContractState(config, parent);
 }
 
 /** One-shot lookup of the child a REMOTE proposal targets, used by the
@@ -941,7 +942,8 @@ async function buildChildStateMap(
 
   const result = new Map<string, ContractState>();
   for (const child of childContracts) {
-    result.set(child.address, childTargetState(latestByContractId.get(child.id) ?? null, child.parent));
+    const state = childTargetState(latestByContractId.get(child.id) ?? null, child.parent);
+    if (state) result.set(child.address, state);
   }
   return result;
 }

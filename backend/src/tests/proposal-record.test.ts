@@ -306,8 +306,9 @@ describe('REMOTE target validity', () => {
   test('a target bound to another vault invalidates the proposal', () => {
     expect(deriveInvalidReason(remote, parent(), child({ parent: 'B62qanotherVault' }), VAULT))
       .toBe('child_parent_mismatch');
-    // Without the vault address the binding cannot be checked.
+    // Without the vault address, or without the child's parent, the binding cannot be checked.
     expect(deriveInvalidReason(remote, parent(), child({ parent: 'B62qanotherVault' }))).toBeNull();
+    expect(deriveInvalidReason(remote, parent(), child({ parent: null }), VAULT)).toBeNull();
   });
 
   test('config staleness still wins, and a valid target falls through to the nonce rule', () => {

@@ -517,7 +517,6 @@ function asMemoMatch(value: unknown): boolean | null {
   return null;
 }
 
-
 function asReceivers(value: unknown): ProposalReceiver[] {
   if (!Array.isArray(value)) return [];
   return value.map((item, index) => {

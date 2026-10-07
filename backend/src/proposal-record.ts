@@ -100,7 +100,11 @@ export function deriveInvalidReason(
 
   if (proposal.destination === 'remote' && child) {
     if (!child.initialized) return 'child_uninitialized';
-    if (vaultAddress !== null && child.parent !== vaultAddress) return 'child_parent_mismatch';
+    // A null parent is not known to be wrong: the setup-owner fallback path
+    // can snapshot a child without recording its parent.
+    if (vaultAddress !== null && child.parent !== null && child.parent !== vaultAddress) {
+      return 'child_parent_mismatch';
+    }
   }
 
   if (proposal.nonce == null) return null;

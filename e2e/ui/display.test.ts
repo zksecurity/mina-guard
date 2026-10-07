@@ -309,6 +309,10 @@ test('a REMOTE proposal waits while its SubVault target is not indexed', async (
   await openProposal(page, PROPOSALS.pendingTransfer);
   await expect(page.getByText('SubVault not indexed yet', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expectNoActionButtons(page, [/approve proposal/i, /execute proposal/i]);
+
+  await page.getByRole('button', { name: 'Offline', exact: true }).click();
+  await expect(page.getByText(/wait until the backend has indexed the target SubVault/i)).toBeVisible();
+  await expectNoActionButtons(page, [/export approve bundle/i, /export execute bundle/i]);
 });
 
 test('a REMOTE proposal whose target belongs to another Vault is invalidated with a reason', async ({ page }) => {

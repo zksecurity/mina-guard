@@ -58,7 +58,8 @@ Where it lives in the UI: proposal creation (`app/transactions/new`) has an
 (`app/transactions/[id]`) has the same toggle for *approve* and *execute*.
 In offline mode the user types the **fee-payer address** (the air-gapped
 owner's public key — no wallet connection is needed); the UI checks it is an
-active owner (and, for approve, has not already approved) before exporting.
+active owner (and, for approve, has not already approved) before exporting, and
+for a REMOTE proposal that the backend has indexed the target SubVault.
 One asymmetry to know: **CREATE_CHILD proposals cannot currently be exported**
 — sub-vault creation is wizard-only in the online flow — although the bundle
 format and the CLI fully support them (relevant for hand-built bundles);
