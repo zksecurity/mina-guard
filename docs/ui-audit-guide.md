@@ -372,11 +372,14 @@ after broadcast instead of 24 hours (`lib/storage.ts`). Each poll deletes
 expired records (`prunePendingTxs`), which lifts the lock without a reload. A
 tx still waiting after 20 minutes would unlock early; a second submission
 then collides and fails on-chain, which costs a retry, not funds. The same
-happens when another report replaced this one: two owners approve one
-proposal at once, the backend keeps only the later hash, and it never
-reports the earlier tx's failure. Reconciliation marks the earlier record
-`untracked` once the backend serves a different hash with no error
-(`backendWatchesAnotherTx`).
+happens when the backend stops tracking a report it accepted: another owner's
+report replaced this one, whether that transaction is still live, already
+failed, or was applied and cleared before this tab polled, and the backend
+never reports the earlier tx's failure. An accepted report marks its record
+`recorded`; reconciliation then marks it `untracked` as soon as the backend's
+hash for that action is not this record's (`backendNoLongerTracks`). A report
+the backend never answered within two minutes, say after a reload mid-report,
+is marked the same way (`reportUnanswered`).
 
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key

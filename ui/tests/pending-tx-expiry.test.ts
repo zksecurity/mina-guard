@@ -6,11 +6,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   PENDING_TXS_CHANGED,
+  REPORT_ANSWER_GRACE_MS,
   UNTRACKED_PENDING_TX_TTL_MS,
-  backendWatchesAnotherTx,
+  backendNoLongerTracks,
   getPendingTxs,
+  markPendingTxRecorded,
   markPendingTxUntracked,
   prunePendingTxs,
+  reportUnanswered,
   savePendingTx,
   type PendingTx,
 } from '../lib/storage';
@@ -91,7 +94,7 @@ describe('pending records the backend refused to track', () => {
 
 describe('reportSubmission', () => {
   for (const [label, respond, untracked] of [
-    ['a recorded report leaves the record tracked', async () => new Response('{}', { status: 200 }), undefined],
+    ['an accepted report marks the record recorded', async () => new Response('{}', { status: 200 }), undefined],
     ['a refused report marks the record untracked', async () => new Response('{}', { status: 422 }), true],
     ['a busy backend marks the record untracked', async () => new Response('{}', { status: 429 }), true],
     ['an unreachable backend marks the record untracked', async () => { throw new Error('offline'); }, true],
@@ -103,29 +106,51 @@ describe('reportSubmission', () => {
       await settle();
       await settle();
       expect(getPendingTxs()[0].untracked).toBe(untracked);
+      expect(getPendingTxs()[0].recorded).toBe(untracked ? undefined : true);
     });
   }
+
+  test('marking a report recorded touches only that transaction', () => {
+    savePendingTx(record('1', 'tx-a', 0));
+    savePendingTx(record('2', 'tx-b', 0));
+    markPendingTxRecorded(VAULT, '1', 'approve', 'tx-a');
+    expect(getPendingTxs().map((r) => r.recorded)).toEqual([true, undefined]);
+  });
 });
 
-describe('backendWatchesAnotherTx', () => {
-  const row = (hash: string | null, error: string | null = null) => ({
-    lastApproveTxHash: hash, lastApproveError: error, lastExecuteTxHash: null, lastExecuteError: null,
-  });
-  const mine = record('1', 'tx-mine', 0);
+describe('backendNoLongerTracks', () => {
+  const row = (hash: string | null) => ({ lastApproveTxHash: hash, lastExecuteTxHash: null });
+  const mine = { ...record('1', 'tx-mine', 0), recorded: true };
 
-  test('is true only while another live tx replaced this report', () => {
-    expect(backendWatchesAnotherTx(mine, row('tx-other'))).toBe(true);
-    expect(backendWatchesAnotherTx(mine, row('tx-mine'))).toBe(false);
-    expect(backendWatchesAnotherTx(mine, row(null))).toBe(false);
-    // An old failed tx is not being watched any more; nothing replaced ours.
-    expect(backendWatchesAnotherTx(mine, row('tx-old', 'dropped'))).toBe(false);
+  test('is true once a recorded report is not the hash the backend tracks', () => {
+    expect(backendNoLongerTracks(mine, row('tx-other'))).toBe(true); // replaced, still live
+    // The replacement already failed, or was applied and cleared before this
+    // poll: the backend will never report tx-mine's failure either way.
+    expect(backendNoLongerTracks(mine, row(null))).toBe(true);
+    expect(backendNoLongerTracks(mine, row('tx-mine'))).toBe(false);
+  });
+
+  test('does not judge a report the backend has not answered', () => {
+    const unanswered = record('1', 'tx-mine', 0);
+    expect(backendNoLongerTracks(unanswered, row(null))).toBe(false);
+    expect(backendNoLongerTracks(unanswered, row('tx-other'))).toBe(false);
   });
 
   test('compares the field for the record kind', () => {
     const execute = { ...mine, kind: 'execute' as const };
-    expect(backendWatchesAnotherTx(execute, row('tx-other'))).toBe(false);
-    expect(backendWatchesAnotherTx(execute, {
-      lastApproveTxHash: null, lastApproveError: null, lastExecuteTxHash: 'tx-other', lastExecuteError: null,
-    })).toBe(true);
+    expect(backendNoLongerTracks(execute, { lastApproveTxHash: 'tx-other', lastExecuteTxHash: 'tx-mine' })).toBe(false);
+    expect(backendNoLongerTracks(execute, { lastApproveTxHash: 'tx-mine', lastExecuteTxHash: null })).toBe(true);
+  });
+});
+
+describe('reportUnanswered', () => {
+  test('flags a report with no answer after the grace, and nothing else', () => {
+    const fresh = record('1', 'tx-a', MINUTE);
+    const stale = record('1', 'tx-a', REPORT_ANSWER_GRACE_MS + MINUTE);
+    expect(reportUnanswered(fresh)).toBe(false);
+    expect(reportUnanswered(stale)).toBe(true);
+    expect(reportUnanswered({ ...stale, recorded: true })).toBe(false);
+    expect(reportUnanswered({ ...stale, untracked: true })).toBe(false);
+    expect(reportUnanswered({ ...stale, kind: 'create' })).toBe(false);
   });
 });

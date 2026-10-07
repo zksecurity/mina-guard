@@ -90,10 +90,13 @@ export interface PendingTx {
   signerPubkey: string;
   createdAt: string;
   summary?: PendingTxSummary;
-  /** Set when the backend refused to record this approve/execute. The backend
-   *  then never reports the transaction's failure, so the record expires
-   *  sooner (UNTRACKED_PENDING_TX_TTL_MS). */
+  /** Set when the backend refused to record this approve/execute, or stopped
+   *  tracking it. The backend then never reports the transaction's failure,
+   *  so the record expires sooner (UNTRACKED_PENDING_TX_TTL_MS). */
   untracked?: boolean;
+  /** Set when the backend accepted the report for this approve/execute, so
+   *  later polls can tell whether it still tracks this hash. */
+  recorded?: boolean;
 }
 
 const PENDING_TXS_KEY = getKey('pending-txs');
@@ -180,6 +183,27 @@ export function savePendingTx(record: PendingTx): void {
   notifyPendingTxsChanged();
 }
 
+/** Sets a flag on the approve/execute record for this tx hash, if it lacks it. */
+function flagPendingTx(
+  contractAddress: string,
+  proposalHash: string,
+  kind: PendingTxKind,
+  txHash: string,
+  flag: 'untracked' | 'recorded',
+): void {
+  let changed = false;
+  const next = readPendingTxsRaw().map((r) => {
+    const match = r.contractAddress === contractAddress && r.proposalHash === proposalHash
+      && r.kind === kind && r.txHash === txHash;
+    if (!match || r[flag]) return r;
+    changed = true;
+    return { ...r, [flag]: true };
+  });
+  if (!changed) return;
+  writePendingTxs(pruneStale(next));
+  notifyPendingTxsChanged();
+}
+
 /** Marks the approve/execute record for this tx hash as untracked by the backend. */
 export function markPendingTxUntracked(
   contractAddress: string,
@@ -187,35 +211,49 @@ export function markPendingTxUntracked(
   kind: PendingTxKind,
   txHash: string,
 ): void {
-  let changed = false;
-  const next = readPendingTxsRaw().map((r) => {
-    const match = r.contractAddress === contractAddress && r.proposalHash === proposalHash
-      && r.kind === kind && r.txHash === txHash;
-    if (!match || r.untracked) return r;
-    changed = true;
-    return { ...r, untracked: true };
-  });
-  if (!changed) return;
-  writePendingTxs(pruneStale(next));
-  notifyPendingTxsChanged();
+  flagPendingTx(contractAddress, proposalHash, kind, txHash, 'untracked');
 }
 
-/** True when the backend watches a different, still-live tx for this record's
- *  proposal and action (a later report replaced this one), so it will never
- *  report this record's failure. */
-export function backendWatchesAnotherTx(
+/** Marks the approve/execute record for this tx hash as recorded by the backend. */
+export function markPendingTxRecorded(
+  contractAddress: string,
+  proposalHash: string,
+  kind: PendingTxKind,
+  txHash: string,
+): void {
+  flagPendingTx(contractAddress, proposalHash, kind, txHash, 'recorded');
+}
+
+/** How long a report may go unanswered before the record is treated as
+ *  untracked: the backend answers within seconds, so a longer silence means
+ *  the answer was lost (a reload mid-report) and nothing will set `recorded`. */
+export const REPORT_ANSWER_GRACE_MS = 2 * 60 * 1000;
+
+/** True when the backend never answered this record's report within the grace. */
+export function reportUnanswered(record: PendingTx, now = Date.now()): boolean {
+  if (record.recorded || record.untracked) return false;
+  if (record.kind !== 'approve' && record.kind !== 'execute') return false;
+  const createdAt = new Date(record.createdAt).getTime();
+  return Number.isFinite(createdAt) && now - createdAt > REPORT_ANSWER_GRACE_MS;
+}
+
+/** True when the backend accepted this record's report but no longer tracks
+ *  its hash: a later report replaced it (whether that transaction is still
+ *  live or already failed), or the replacement was applied and cleared before
+ *  this tab polled. The backend will then never report this record's failure.
+ *  False while the report is unanswered, so an in-flight report is not judged;
+ *  a failure of this record's own hash is for the caller's normal cleanup. */
+export function backendNoLongerTracks(
   record: PendingTx,
-  row: {
-    lastApproveTxHash: string | null; lastApproveError: string | null;
-    lastExecuteTxHash: string | null; lastExecuteError: string | null;
-  },
+  row: { lastApproveTxHash: string | null; lastExecuteTxHash: string | null },
 ): boolean {
-  const [hash, error] = record.kind === 'approve'
-    ? [row.lastApproveTxHash, row.lastApproveError]
+  if (!record.recorded) return false;
+  const hash = record.kind === 'approve'
+    ? row.lastApproveTxHash
     : record.kind === 'execute'
-      ? [row.lastExecuteTxHash, row.lastExecuteError]
-      : [null, null];
-  return hash !== null && hash !== record.txHash && error === null;
+      ? row.lastExecuteTxHash
+      : record.txHash;
+  return hash !== record.txHash;
 }
 
 /** Deletes expired records and notifies listeners when any went, so a lock held

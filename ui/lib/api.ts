@@ -11,7 +11,7 @@ import {
 } from '@/lib/types';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { MAX_RECEIVERS } from '@/lib/constants';
-import { markPendingTxUntracked } from '@/lib/storage';
+import { markPendingTxRecorded, markPendingTxUntracked } from '@/lib/storage';
 import {
   GUARD_PERMISSION_KINDS,
   GUARD_PERMISSION_NAMES,
@@ -353,9 +353,11 @@ export async function recordSubmission(
 }
 
 /** Reports a broadcast approve/execute without waiting: the backend's check can
- *  take seconds, and this tab already locks from its own pending record. If the
- *  backend refuses, it will never report the transaction's failure, so the
- *  pending record is marked to expire sooner. Call after savePendingTx. */
+ *  take seconds, and this tab already locks from its own pending record. An
+ *  accepted report marks the record `recorded`, so later polls can tell when
+ *  the backend stops tracking it. If the backend refuses, it will never report
+ *  the transaction's failure, so the record is marked to expire sooner. Call
+ *  after savePendingTx. */
 export function reportSubmission(
   contractAddress: string,
   proposalHash: string,
@@ -363,7 +365,8 @@ export function reportSubmission(
   txHash: string,
 ): void {
   void recordSubmission(contractAddress, proposalHash, action, txHash).then((recorded) => {
-    if (!recorded) markPendingTxUntracked(contractAddress, proposalHash, action, txHash);
+    if (recorded) markPendingTxRecorded(contractAddress, proposalHash, action, txHash);
+    else markPendingTxUntracked(contractAddress, proposalHash, action, txHash);
   });
 }
 
