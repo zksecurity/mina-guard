@@ -1,5 +1,7 @@
-/** Offline requests and signed responses both use format v1 after the pre-release reset. */
-export const OFFLINE_RESPONSE_VERSION = 1;
+import { OFFLINE_RESPONSE_VERSION } from 'contracts/offline-format';
+
+/** Requests are version 2 (`OFFLINE_BUNDLE_VERSION`); signed responses stay at version 1. */
+export { OFFLINE_RESPONSE_VERSION };
 
 export function assertOfflineResponseVersion(version: unknown): void {
   if (version !== OFFLINE_RESPONSE_VERSION) {

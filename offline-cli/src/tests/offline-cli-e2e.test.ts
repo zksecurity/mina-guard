@@ -1040,7 +1040,7 @@ describe('offline-cli e2e', () => {
 
     function configHash(): string {
       const childOS = new OwnerStore();
-      for (const addr of childOwnerAddrs()) childOS.addSorted(PublicKey.fromBase58(addr));
+      childOS.owners = sortedChildOwnerAddrs().map((addr) => PublicKey.fromBase58(addr));
       return childConfigHash(childOS.getCommitment(), Field(2), Field(owners.length)).toString();
     }
 

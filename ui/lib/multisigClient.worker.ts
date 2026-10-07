@@ -851,7 +851,7 @@ const workerApi = {
     }
     return { status: 'eligible' };
   },
-  /** Complete, verified public snapshot for a version 1 offline request. */
+  /** Complete, verified public snapshot for an offline request (its checkpoint format is version 1). */
   async exportStoreCheckpoint(contractAddress: string) {
     const cfg = runtimeConfig ?? (await configReady);
     const stores = await rebuildStoresFromBackend(contractAddress);

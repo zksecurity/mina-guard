@@ -31,7 +31,7 @@ import {
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildApprovalConfig } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig } from '../build-tx.ts';
 import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
@@ -174,6 +174,25 @@ describe('offline-cli', () => {
     expect(result.stdout).toBe('');
   }, 30_000);
 
+  it('refuses a createChild execute bundle without its SubVault config before rendering a summary', async () => {
+    const bundlePath = join(tmpDir, 'create-child-execute-no-config.json');
+    writeFileSync(bundlePath, JSON.stringify({
+      version: 2,
+      action: 'execute',
+      minaNetwork: 'testnet',
+      contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58,
+      accounts: {},
+      events: [],
+      receiverAccountExists: {},
+      proposal: { proposalHash: '1', txType: 'createChild', data: '5', childAccount: EMPTY_PUBKEY_B58, receivers: [] },
+    }));
+    const result = await runCLI(bundlePath, PrivateKey.random().toBase58());
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('missing the SubVault owner list');
+    expect(result.stderr).not.toContain('====');
+  }, 30_000);
+
   describe('createChild approval config', () => {
     const ownerA = PrivateKey.random().toPublicKey();
     const ownerB = PrivateKey.random().toPublicKey();
@@ -189,13 +208,13 @@ describe('offline-cli', () => {
     }) as any;
 
     it('accepts the reserved owners and threshold that hash to the signed data', () => {
-      expect(assertCreateChildApprovalConfig(bundle())).toEqual({ owners, threshold: 1 });
+      expect(assertCreateChildBundleConfig(bundle())).toEqual({ owners, threshold: 1 });
       const transfer = bundle({ proposal: { ...bundle().proposal, txType: 'transfer' } });
-      expect(assertCreateChildApprovalConfig(transfer)).toBeNull();
+      expect(assertCreateChildBundleConfig(transfer)).toBeNull();
     });
 
     it('rejects a missing, malformed or swapped config', () => {
-      const check = (overrides: Record<string, unknown>) => () => assertCreateChildApprovalConfig(bundle(overrides));
+      const check = (overrides: Record<string, unknown>) => () => assertCreateChildBundleConfig(bundle(overrides));
       expect(check({ childOwners: undefined })).toThrow('missing the SubVault owner list');
       expect(check({ childOwners: [] })).toThrow('missing the SubVault owner list');
       expect(check({ childThreshold: 0 })).toThrow('invalid SubVault threshold');
@@ -206,6 +225,18 @@ describe('offline-cli', () => {
       expect(check({ childThreshold: 2 })).toThrow('SubVault config mismatch');
       expect(check({ childOwners: [owners[1], owners[0]] })).toThrow('SubVault config mismatch');
       expect(check({ childOwners: [owners[0]] })).toThrow('SubVault config mismatch');
+    });
+
+    it('checks a numeric createChild type and an execute bundle the same way', () => {
+      expect(() => assertCreateChildBundleConfig(bundle({ childOwners: undefined, proposal: { ...bundle().proposal, txType: '5' } })))
+        .toThrow('missing the SubVault owner list');
+      expect(assertCreateChildBundleConfig(bundle({ action: 'execute', receiverAccountExists: {} }))).toEqual({ owners, threshold: 1 });
+    });
+
+    it("refuses a bundled SubVault address other than the proposal's", () => {
+      expect(assertCreateChildBundleConfig(bundle({ childAddress: EMPTY_PUBKEY_B58 }))).toEqual({ owners, threshold: 1 });
+      expect(() => assertCreateChildBundleConfig(bundle({ childAddress: owners[0] })))
+        .toThrow("names a SubVault address other than the proposal's");
     });
 
     it('prints the checked owners and threshold in the summary', () => {

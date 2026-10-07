@@ -6,3 +6,6 @@ export const OFFLINE_REQUEST_VERSION = 2;
 
 /** Store checkpoint carried inside a request; its leaf encoding has not changed. */
 export const STORE_CHECKPOINT_VERSION = 1;
+
+/** Signed response the CLI writes and the UI broadcasts; unchanged by version 2 requests. */
+export const OFFLINE_RESPONSE_VERSION = 1;
