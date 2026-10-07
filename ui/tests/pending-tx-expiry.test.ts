@@ -68,6 +68,15 @@ describe('pending records the backend refused to track', () => {
     expect(getPendingTxs().map((r) => r.txHash)).toEqual(['tracked-old', 'untracked-new']);
   });
 
+  test('a SubVault creation expires after 20 minutes too: a failed one is never reported', () => {
+    const create = (proposalHash: string, txHash: string, ageMs: number): PendingTx => ({
+      ...record(proposalHash, txHash, ageMs), kind: 'create',
+    });
+    savePendingTx(create('8', 'create-new', 5 * MINUTE));
+    savePendingTx(create('9', 'create-old', 25 * MINUTE));
+    expect(getPendingTxs().map((r) => r.txHash)).toEqual(['create-new']);
+  });
+
   test('marking touches only the record for that transaction', () => {
     savePendingTx(record('1', 'tx-a', 0));
     changes = 0;
