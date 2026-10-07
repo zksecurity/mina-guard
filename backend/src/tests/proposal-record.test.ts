@@ -19,7 +19,14 @@ function proposal(fields: Partial<ProposalFixture> = {}): ProposalFixture {
 }
 
 function parent(fields: Partial<ContractState> = {}): ContractState {
-  return { nonce: null, parentNonce: null, configNonce: null, ...fields };
+  return { nonce: null, parentNonce: null, configNonce: null, parent: null, initialized: true, ...fields };
+}
+
+const VAULT = 'B62qvaultAddressForTargetChecks';
+
+/** An initialized child of VAULT, as the backend indexes one after setup. */
+function child(fields: Partial<ContractState> = {}): ContractState {
+  return { nonce: null, parentNonce: null, configNonce: null, parent: VAULT, initialized: true, ...fields };
 }
 
 describe('deriveInvalidReason', () => {
@@ -117,7 +124,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '2', destination: 'remote', txType: '7' }),
           parent(),
-          { nonce: null, parentNonce: 5, configNonce: null },
+          child({ parentNonce: 5 }),
         ),
       ).toBe('proposal_nonce_stale');
     });
@@ -130,7 +137,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '5', destination: 'remote', txType: '7' }),
           parent({ nonce: 100 }),
-          { nonce: null, parentNonce: 0, configNonce: null },
+          child({ parentNonce: 0 }),
         ),
       ).toBeNull();
     });
@@ -140,7 +147,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '1', destination: 'remote', txType: '7' }),
           parent(),
-          { nonce: null, parentNonce: null, configNonce: null },
+          child({ parentNonce: null }),
         ),
       ).toBeNull();
     });
@@ -160,7 +167,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '10', destination: 'remote', txType: '7' }),
           parent(),
-          { nonce: null, parentNonce: 5, configNonce: null },
+          child({ parentNonce: 5 }),
         ),
       ).toBeNull();
     });
@@ -172,7 +179,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '0', destination: 'remote', txType: '5' }),
           parent({ nonce: 10 }),
-          { nonce: null, parentNonce: 10, configNonce: null },
+          child({ parentNonce: 10 }),
         ),
       ).toBeNull();
     });
@@ -287,6 +294,38 @@ describe('deriveStatus', () => {
 // Replaces e2e steps 25a-25c (memo lifecycle incl. the stripped-memo mismatch);
 // the happy path still runs end-to-end on the main transfer (steps 7-9).
 // ---------------------------------------------------------------------------
+
+describe('REMOTE target validity', () => {
+  const remote = proposal({ nonce: '9', destination: 'remote', txType: '7' });
+
+  test('an uninitialized target invalidates the proposal before any nonce check', () => {
+    expect(deriveInvalidReason(remote, parent(), child({ initialized: false, parentNonce: 99 }), VAULT))
+      .toBe('child_uninitialized');
+  });
+
+  test('a target bound to another vault invalidates the proposal', () => {
+    expect(deriveInvalidReason(remote, parent(), child({ parent: 'B62qanotherVault' }), VAULT))
+      .toBe('child_parent_mismatch');
+    // Without the vault address the binding cannot be checked.
+    expect(deriveInvalidReason(remote, parent(), child({ parent: 'B62qanotherVault' }))).toBeNull();
+  });
+
+  test('config staleness still wins, and a valid target falls through to the nonce rule', () => {
+    const configStale = proposal({ configNonce: '0', nonce: '9', destination: 'remote', txType: '7' });
+    expect(deriveInvalidReason(configStale, parent({ configNonce: 1 }), child({ initialized: false }), VAULT))
+      .toBe('config_nonce_stale');
+    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 9 }), VAULT)).toBe('proposal_nonce_stale');
+    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 8 }), VAULT)).toBeNull();
+  });
+
+  test('an unknown target decides nothing, and LOCAL or CREATE_CHILD proposals ignore it', () => {
+    expect(deriveInvalidReason(remote, parent(), null, VAULT)).toBeNull();
+    const local = proposal({ nonce: '9', destination: 'local' });
+    expect(deriveInvalidReason(local, parent({ nonce: 1 }), child({ initialized: false, parent: 'B62qanotherVault' }), VAULT)).toBeNull();
+    const create = proposal({ nonce: '0', destination: 'remote', txType: '5' });
+    expect(deriveInvalidReason(create, parent(), child({ initialized: false }), VAULT)).toBeNull();
+  });
+});
 
 describe('memo match derivation', () => {
   const memo = 'e2e-test-memo';

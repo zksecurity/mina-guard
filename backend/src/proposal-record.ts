@@ -9,7 +9,11 @@ export interface ProposalReceiverRecord {
 
 export type MemoMatch = boolean | null;
 
-export type InvalidReason = 'config_nonce_stale' | 'proposal_nonce_stale';
+export type InvalidReason =
+  | 'config_nonce_stale'
+  | 'proposal_nonce_stale'
+  | 'child_uninitialized'
+  | 'child_parent_mismatch';
 
 /** Snapshot of a contract's current on-chain counters, derived from the latest
  *  ContractConfig row. Used to compute per-proposal `invalidReason` at read
@@ -18,6 +22,10 @@ export type ContractState = {
   nonce: number | null;
   parentNonce: number | null;
   configNonce: number | null;
+  /** The vault's parent as indexed; null for a root vault. */
+  parent: string | null;
+  /** True once setup applied: the owners commitment is set and non-zero. */
+  initialized: boolean;
 };
 
 export interface SerializedProposalRecord {
@@ -39,6 +47,9 @@ export interface SerializedProposalRecord {
   childAccount: string | null;
   status: string;
   invalidReason: InvalidReason | null;
+  /** For a REMOTE proposal, whether the backend has indexed and verified its
+   *  SubVault target, so the checks above could run; null for other proposals. */
+  childTargetIndexed: boolean | null;
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
@@ -68,11 +79,15 @@ type ProposalInvalidInput = Pick<Proposal, 'nonce' | 'configNonce' | 'destinatio
  * Config-stale takes precedence over nonce-stale (matches on-chain assert
  * ordering and prior indexer logic). CREATE_CHILD (txType='5') bypasses
  * nonce-stale entirely — its nonce is structural (always 0), not sequential.
+ * A REMOTE proposal's target must be an initialized child of `vaultAddress`,
+ * checked before its nonce, as the contract does; an unknown target (null
+ * child) decides nothing here and is reported as not indexed instead.
  */
 export function deriveInvalidReason(
   proposal: ProposalInvalidInput,
   parent: ContractState | null,
   child: ContractState | null,
+  vaultAddress: string | null = null,
 ): InvalidReason | null {
   if (parent?.configNonce != null && proposal.configNonce != null) {
     const parsedConfig = Number(proposal.configNonce);
@@ -82,6 +97,11 @@ export function deriveInvalidReason(
   }
 
   if (proposal.txType === '5') return null;
+
+  if (proposal.destination === 'remote' && child) {
+    if (!child.initialized) return 'child_uninitialized';
+    if (vaultAddress !== null && child.parent !== vaultAddress) return 'child_parent_mismatch';
+  }
 
   if (proposal.nonce == null) return null;
   const parsedNonce = Number(proposal.nonce);
@@ -144,6 +164,7 @@ export function serializeProposalRecord(
   latestSlot: number,
   parentState: ContractState | null = null,
   childState: ContractState | null = null,
+  vaultAddress: string | null = null,
 ): SerializedProposalRecord {
   const receivers = proposal.receivers
     .slice()
@@ -159,8 +180,9 @@ export function serializeProposalRecord(
     : null;
 
   const execution = proposal.executions[0] ?? null;
-  const invalidReason = deriveInvalidReason(proposal, parentState, childState);
+  const invalidReason = deriveInvalidReason(proposal, parentState, childState, vaultAddress);
   const status = deriveStatus(proposal, execution !== null, latestSlot, invalidReason);
+  const targetsChild = proposal.destination === 'remote' && proposal.txType !== '5' && proposal.childAccount !== null;
 
   return {
     proposalHash: proposal.proposalHash,
@@ -181,6 +203,7 @@ export function serializeProposalRecord(
     childAccount: proposal.childAccount,
     status,
     invalidReason,
+    childTargetIndexed: targetsChild ? childState !== null : null,
     approvalCount: proposal._count.approvals,
     createdAtBlock: proposal.createdAtBlock,
     executedAtBlock: execution?.blockHeight ?? null,

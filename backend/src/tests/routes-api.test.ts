@@ -19,6 +19,10 @@ const childTwoAddress = PrivateKey.random().toPublicKey().toBase58();
 const invalidStateContractAddress = PrivateKey.random().toPublicKey().toBase58();
 const invalidStateChildAddress = PrivateKey.random().toPublicKey().toBase58();
 const unverifiedChildAddress = PrivateKey.random().toPublicKey().toBase58();
+const reservedChildAddress = PrivateKey.random().toPublicKey().toBase58();
+const foreignChildAddress = PrivateKey.random().toPublicKey().toBase58();
+// A vault the backend never indexed; the foreign child names it as parent.
+const foreignParentAddress = PrivateKey.random().toPublicKey().toBase58();
 const ownerA = PrivateKey.random().toPublicKey().toBase58();
 const ownerB = PrivateKey.random().toPublicKey().toBase58();
 const ownerC = PrivateKey.random().toPublicKey().toBase58();
@@ -41,6 +45,9 @@ const remoteStaleHash = '603';
 const createChildHash = '604';
 const freshHash = '605';
 const unverifiedChildHash = '606';
+// REMOTE proposals whose target the backend can judge: reserved only, or bound elsewhere.
+const reservedChildHash = '607';
+const foreignChildHash = '608';
 
 function get(path: string) {
   return fetch(`${baseUrl}${path}`);
@@ -79,6 +86,10 @@ async function seedDatabase() {
         ready: false,
         permissionsVerified: false,
       },
+      // Reserved for invalidStateContract but never set up: no config snapshot.
+      { address: reservedChildAddress, parent: invalidStateContractAddress, ready: true, permissionsVerified: true },
+      // An initialized child of another vault.
+      { address: foreignChildAddress, parent: foreignParentAddress, ready: true, permissionsVerified: true },
     ],
   });
 
@@ -104,8 +115,8 @@ async function seedDatabase() {
     data: [
       { contractId: contract.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true, nonce: 0, parentNonce: 0, configNonce: 0 },
       { contractId: otherContract.id, validFromBlock: 25, networkId: '1', childMultiSigEnabled: true, nonce: 0, parentNonce: 0, configNonce: 0 },
-      { contractId: childOne.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true, nonce: 0, parentNonce: 0, configNonce: 0 },
-      { contractId: childTwo.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: false, nonce: 0, parentNonce: 0, configNonce: 0 },
+      { contractId: childOne.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: true, nonce: 0, parentNonce: 0, configNonce: 0, ownersCommitment: '1234' },
+      { contractId: childTwo.id, validFromBlock: 5, networkId: '1', childMultiSigEnabled: false, nonce: 0, parentNonce: 0, configNonce: 0, ownersCommitment: '1234' },
     ],
   });
 
@@ -175,6 +186,9 @@ async function seedDatabase() {
   const unverifiedChild = await prisma.contract.findUniqueOrThrow({
     where: { address: unverifiedChildAddress },
   });
+  const foreignChild = await prisma.contract.findUniqueOrThrow({
+    where: { address: foreignChildAddress },
+  });
 
   await prisma.contractConfig.createMany({
     data: [
@@ -195,6 +209,17 @@ async function seedDatabase() {
         nonce: 0,
         parentNonce: 4,
         configNonce: 0,
+        ownersCommitment: '1234',
+      },
+      {
+        contractId: foreignChild.id,
+        validFromBlock: 100,
+        networkId: '1',
+        childMultiSigEnabled: true,
+        nonce: 0,
+        parentNonce: 0,
+        configNonce: 0,
+        ownersCommitment: '1234',
       },
       {
         // This state must never influence proposal status because the child
@@ -206,6 +231,7 @@ async function seedDatabase() {
         nonce: 0,
         parentNonce: 99,
         configNonce: 0,
+        ownersCommitment: '1234',
       },
     ],
   });
@@ -269,6 +295,26 @@ async function seedDatabase() {
         nonce: '6',
         destination: 'remote',
         childAccount: unverifiedChildAddress,
+        txType: '7',
+      },
+      {
+        contractId: invalidContract.id,
+        proposalHash: reservedChildHash,
+        createdAtBlock: 116,
+        configNonce: '3',
+        nonce: '6',
+        destination: 'remote',
+        childAccount: reservedChildAddress,
+        txType: '7',
+      },
+      {
+        contractId: invalidContract.id,
+        proposalHash: foreignChildHash,
+        createdAtBlock: 117,
+        configNonce: '3',
+        nonce: '6',
+        destination: 'remote',
+        childAccount: foreignChildAddress,
         txType: '7',
       },
     ],
@@ -604,12 +650,13 @@ describe('proposal invalidation derivation', () => {
     expect(fresh?.invalidReason).toBeNull();
   });
 
-  test('unverified child state cannot invalidate a REMOTE proposal', async () => {
+  test('unverified child state cannot invalidate a REMOTE proposal, and is reported as not indexed', async () => {
     const fromList = (await getProposalsByContract(
       invalidStateContractAddress,
     )).find((p) => p.proposalHash === unverifiedChildHash);
     expect(fromList?.status).toBe('pending');
     expect(fromList?.invalidReason).toBeNull();
+    expect(fromList?.childTargetIndexed).toBe(false);
 
     const fromDetail = await getProposalByHash(
       invalidStateContractAddress,
@@ -617,6 +664,34 @@ describe('proposal invalidation derivation', () => {
     );
     expect(fromDetail.status).toBe('pending');
     expect(fromDetail.invalidReason).toBeNull();
+    expect(fromDetail.childTargetIndexed).toBe(false);
+  });
+
+  test('reports whether a REMOTE target is indexed, and nothing for LOCAL proposals', async () => {
+    const list = await getProposalsByContract(invalidStateContractAddress);
+    expect(list.find((p) => p.proposalHash === remoteStaleHash)?.childTargetIndexed).toBe(true);
+    expect(list.find((p) => p.proposalHash === freshHash)?.childTargetIndexed).toBeNull();
+    expect(list.find((p) => p.proposalHash === createChildHash)?.childTargetIndexed).toBeNull();
+  });
+
+  test('a REMOTE proposal for a reserved but unset SubVault is invalidated', async () => {
+    const fromList = (await getProposalsByContract(invalidStateContractAddress))
+      .find((p) => p.proposalHash === reservedChildHash);
+    expect(fromList?.status).toBe('invalidated');
+    expect(fromList?.invalidReason).toBe('child_uninitialized');
+    const fromDetail = await getProposalByHash(invalidStateContractAddress, reservedChildHash);
+    expect(fromDetail.status).toBe('invalidated');
+    expect(fromDetail.invalidReason).toBe('child_uninitialized');
+    expect(fromDetail.childTargetIndexed).toBe(true);
+  });
+
+  test("a REMOTE proposal for another vault's SubVault is invalidated", async () => {
+    const fromList = (await getProposalsByContract(invalidStateContractAddress))
+      .find((p) => p.proposalHash === foreignChildHash);
+    expect(fromList?.status).toBe('invalidated');
+    expect(fromList?.invalidReason).toBe('child_parent_mismatch');
+    const fromDetail = await getProposalByHash(invalidStateContractAddress, foreignChildHash);
+    expect(fromDetail.invalidReason).toBe('child_parent_mismatch');
   });
 
   test('single-proposal endpoint reports invalidated status + reason', async () => {
@@ -632,7 +707,7 @@ describe('proposal invalidation derivation', () => {
     expect(res.status).toBe(200);
     const body: ProposalRow[] = await res.json();
     const hashes = body.map((p) => p.proposalHash).sort();
-    expect(hashes).toEqual([configStaleHash, localStaleHash, remoteStaleHash].sort());
+    expect(hashes).toEqual([configStaleHash, localStaleHash, remoteStaleHash, reservedChildHash, foreignChildHash].sort());
     expect(body.every((p) => p.status === 'invalidated')).toBe(true);
   });
 });

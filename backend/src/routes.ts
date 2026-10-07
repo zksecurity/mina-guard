@@ -224,7 +224,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -248,7 +248,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -279,7 +279,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         skip: needsInMemoryStatusFilter(status) ? undefined : offset,
       });
 
-      const parentState = toContractState(await latestContractConfig(contract.id));
+      const parentState = toContractState(await latestContractConfig(contract.id), contract.parent);
       const childStateByAddress = await buildChildStateMap(proposals);
 
       const serialized = proposals.map((p) =>
@@ -288,6 +288,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
           latestSlot,
           parentState,
           p.childAccount ? childStateByAddress.get(p.childAccount) ?? null : null,
+          address,
         ),
       );
       const filtered = status
@@ -310,7 +311,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -338,13 +339,13 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       }
 
       const latestSlot = indexer.getStatus().latestSlot;
-      const parentState = toContractState(await latestContractConfig(contract.id));
+      const parentState = toContractState(await latestContractConfig(contract.id), contract.parent);
       const childState =
         proposal.destination === 'remote' && proposal.txType !== '5' && proposal.childAccount
           ? await resolveChildState(proposal.childAccount)
           : null;
 
-      res.json(serializeProposalRecord(proposal, latestSlot, parentState, childState));
+      res.json(serializeProposalRecord(proposal, latestSlot, parentState, childState, address));
     })
   );
 
@@ -369,7 +370,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
       if (!contract || !contract.ready || !contract.permissionsVerified) {
         res.status(404).json({ error: 'Contract not found' });
@@ -459,7 +460,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -502,7 +503,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -864,27 +865,43 @@ async function latestContractConfig(contractId: number) {
 }
 
 /** Projects a ContractConfig row (or null) to the slim shape the proposal
- *  invalidation check consumes. */
+ *  invalidation check consumes. The first snapshot comes from `setup`, so a
+ *  non-zero owners commitment means the vault is initialized. */
 function toContractState(
   config: Awaited<ReturnType<typeof latestContractConfig>>,
+  parent: string | null,
 ): ContractState | null {
   if (!config) return null;
   return {
     nonce: config.nonce,
     parentNonce: config.parentNonce,
     configNonce: config.configNonce,
+    parent,
+    initialized: config.ownersCommitment != null && config.ownersCommitment !== '0',
   };
 }
 
-/** One-shot lookup of a child's current state by address, used by the
- *  single-proposal route. */
+/** The state of a child the backend has indexed and verified. A child with
+ *  events applied but no config snapshot has only been reserved: `setup`
+ *  writes the first snapshot, so it is not initialized. */
+function childTargetState(
+  config: Awaited<ReturnType<typeof latestContractConfig>>,
+  parent: string | null,
+): ContractState {
+  return toContractState(config, parent)
+    ?? { nonce: null, parentNonce: null, configNonce: null, parent, initialized: false };
+}
+
+/** One-shot lookup of the child a REMOTE proposal targets, used by the
+ *  single-proposal route. Null while the backend has not indexed and verified
+ *  the child, so nothing about it is known yet. */
 async function resolveChildState(address: string): Promise<ContractState | null> {
   const child = await prisma.contract.findUnique({
     where: { address },
-    select: { id: true, ready: true, permissionsVerified: true },
+    select: { id: true, parent: true, ready: true, permissionsVerified: true },
   });
   if (!child?.ready || !child.permissionsVerified) return null;
-  return toContractState(await latestContractConfig(child.id));
+  return childTargetState(await latestContractConfig(child.id), child.parent);
 }
 
 /** Batches child-state lookups for a list of proposals. Only REMOTE
@@ -907,7 +924,7 @@ async function buildChildStateMap(
       ready: true,
       permissionsVerified: true,
     },
-    select: { id: true, address: true },
+    select: { id: true, address: true, parent: true },
   });
   if (childContracts.length === 0) return new Map();
 
@@ -924,8 +941,7 @@ async function buildChildStateMap(
 
   const result = new Map<string, ContractState>();
   for (const child of childContracts) {
-    const state = toContractState(latestByContractId.get(child.id) ?? null);
-    if (state) result.set(child.address, state);
+    result.set(child.address, childTargetState(latestByContractId.get(child.id) ?? null, child.parent));
   }
   return result;
 }
