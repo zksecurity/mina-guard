@@ -268,7 +268,12 @@ A guard that is deployed but not yet configured could be controlled by whoever
 calls `setup()` first.
   - Top-level vaults use the atomic `deployAndSetupContract` — one tx doing
     `fundNewAccount` + `deploy` + `setup`; the worker exposes no separate
-    deploy-only or setup-only API.
+    deploy-only or setup-only API. The creation fee is paid only when the node
+    has no account at the address (`classifyDeployTarget`, `lib/deploy-target.ts`):
+    anyone can create the bare account first by paying into it, which fails a
+    deployment that declares a new account, so a bare account is deployed into
+    as it is, and an address that already carries a verification key or app
+    state is refused. The same rule applies to the child in CREATE_CHILD.
   - CREATE_CHILD spans two transactions by design: the propose tx does
     `deploy(child)` + `reserveForParent(child)` + `propose(parent)` atomically
     (`worker.ts:979-1003`); the later `executeSetupChild` is bound on-chain to
@@ -383,7 +388,10 @@ never reports the earlier tx's failure. An accepted report marks its record
 `recorded`; reconciliation then marks it `untracked` as soon as the backend's
 hash for that action is not this record's (`backendNoLongerTracks`). A report
 the backend never answered within two minutes, say after a reload mid-report,
-is marked the same way (`reportUnanswered`).
+is marked the same way (`reportUnanswered`). SubVault creation records (`kind: 'create'`) use
+the same 20-minute window: a failed creation emits no proposal, and the
+best-chain probe covers only recent blocks, so nothing else would ever clear
+them.
 
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key

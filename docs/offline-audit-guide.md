@@ -293,6 +293,7 @@ the offline CLI restores the resulting leaves without replaying events.
 | `input.childMultiSigEnable` | `boolean` | enableChildMultiSig |
 | `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners) |
 | `input.childPrivateKey` | `string` | createChild only — signs the child's deploy update (see threat model) |
+| `accounts[input.childAccount]` | `FetchedAccount?` | createChild: present when the child's bare account already exists; the CLI then deploys into it without `fundNewAccount` (`deployTargetFromSnapshot`). A snapshot with a verification key or app state is refused |
 | `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config |
 | `input.expirySlot` | `number` | UInt32 inclusion deadline for propose, approve, and execute; 0 = no expiry |
 | `input.memo` | `string` | Plaintext memo — hashed into the proposal **and** attached as the broadcast memo |
