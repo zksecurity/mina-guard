@@ -120,9 +120,12 @@ export function loadConfig(): BackendConfig {
   };
 }
 
-/** Splits CORS_ORIGINS into origins; unset or blank means no restriction.
- *  Browsers send origins without a trailing slash, so one is dropped. */
+/** Splits CORS_ORIGINS into origins; unset, blank or `*` means no restriction.
+ *  The allowlist is matched exactly against the browser's Origin header, which
+ *  is lower case with no trailing slash, so entries are normalized the same way. */
 export function parseCorsOrigins(value: string | undefined): string[] | null {
-  const origins = (value ?? '').split(',').map((origin) => origin.trim().replace(/\/+$/, '')).filter(Boolean);
-  return origins.length > 0 ? origins : null;
+  const origins = (value ?? '').split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, '').toLowerCase())
+    .filter(Boolean);
+  return origins.length > 0 && !origins.includes('*') ? origins : null;
 }

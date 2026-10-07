@@ -29,7 +29,10 @@ describe('backend configuration', () => {
     expect(loadConfig().corsOrigins).toBeNull();
     process.env.CORS_ORIGINS = ' , ';
     expect(loadConfig().corsOrigins).toBeNull();
-    process.env.CORS_ORIGINS = ' https://a.example , https://b.example/,';
+    process.env.CORS_ORIGINS = ' https://a.example , HTTPS://B.Example/,';
     expect(loadConfig().corsOrigins).toEqual(['https://a.example', 'https://b.example']);
+    // A wildcard would never match an Origin header exactly; it means open.
+    process.env.CORS_ORIGINS = '*';
+    expect(loadConfig().corsOrigins).toBeNull();
   });
 });
