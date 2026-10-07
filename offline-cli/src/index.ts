@@ -28,7 +28,7 @@ if (!isMainThread) {
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
-import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType } from './build-tx.js';
+import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildApprovalConfig } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
 import { escapeTerminalLines } from './terminal-safe.js';
@@ -82,8 +82,8 @@ function readBundle(path: string): OfflineBundle {
 
 const bundle = readBundle(bundlePath);
 
-if (bundle.version !== 1) {
-  fatal(`Unsupported bundle version: ${bundle.version} (expected 1; export a new request with the current UI)`);
+if (bundle.version !== 2) {
+  fatal(`Unsupported bundle version: ${bundle.version} (expected 2; export a new request with the current UI)`);
 }
 
 if (!['propose', 'approve', 'execute'].includes(bundle.action)) {
@@ -95,8 +95,11 @@ if (!['propose', 'approve', 'execute'].includes(bundle.action)) {
 async function main() {
   // Refuse an unknown transaction type before showing anything, and turn a
   // numeric code into its name, so the summary and the builder agree on it.
+  // A CREATE_CHILD approval also needs the SubVault owners and threshold it
+  // authorizes, checked against the signed data, before they are shown.
   try {
     canonicalizeBundleTxType(bundle);
+    if (bundle.action === 'approve') assertCreateChildApprovalConfig(bundle);
   } catch (err) {
     fatal(`${err instanceof Error ? err.message : String(err)}\nAborted. No transaction was signed.`);
   }

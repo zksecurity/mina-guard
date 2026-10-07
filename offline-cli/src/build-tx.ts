@@ -101,9 +101,10 @@ interface BundleAccount {
   zkappUri: string | null;
 }
 
-/** Fields common to all bundle actions. */
+/** Fields common to all bundle actions. Version 2 adds the SubVault
+ *  configuration to CREATE_CHILD approve bundles. */
 interface BundleBase {
-  version: 1;
+  version: 2;
   storeCheckpoint: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
@@ -139,6 +140,11 @@ export interface OfflineProposeBundle extends BundleBase {
 export interface OfflineApproveBundle extends BundleBase {
   action: 'approve';
   proposal: BundleProposal;
+  /** CREATE_CHILD only: the reserved SubVault configuration this approval
+   *  authorizes; checked against `proposal.data` before the summary. */
+  childAddress?: string;
+  childOwners?: string[];
+  childThreshold?: number;
 }
 
 export interface OfflineExecuteBundle extends BundleBase {
@@ -283,6 +289,46 @@ export function canonicalizeBundleTxType(bundle: OfflineBundle): TxType {
   const txType = requireTxType(bundle.proposal?.txType);
   bundle.proposal.txType = txType;
   return txType;
+}
+
+/**
+ * Checks a CREATE_CHILD approve bundle's SubVault configuration before the
+ * summary shows it. The owner list and threshold must be well formed and, in
+ * the reserved slot order, hash to the proposal data this approval signs; the
+ * summary then prints exactly what was checked. Other approvals return null.
+ */
+export function assertCreateChildApprovalConfig(
+  bundle: OfflineApproveBundle,
+): { owners: string[]; threshold: number } | null {
+  if (bundle.proposal?.txType !== 'createChild') return null;
+  const { childOwners, childThreshold } = bundle;
+  if (!Array.isArray(childOwners) || childOwners.length === 0 || childOwners.length > MAX_OWNERS) {
+    throw new Error('createChild approve bundle is missing the SubVault owner list');
+  }
+  if (!Number.isInteger(childThreshold) || childThreshold! < 1 || childThreshold! > childOwners.length) {
+    throw new Error('createChild approve bundle has an invalid SubVault threshold');
+  }
+  let owners: PublicKey[];
+  try {
+    owners = childOwners.map((owner) => {
+      if (typeof owner !== 'string' || owner === EMPTY_PUBKEY_B58) throw new Error('empty');
+      return PublicKey.fromBase58(owner);
+    });
+  } catch {
+    throw new Error('createChild approve bundle has an invalid SubVault owner address');
+  }
+  // Keep the order reserveForParent committed (its slot index), not base58
+  // order: the reserved config hash binds that exact order.
+  const store = new OwnerStore();
+  store.owners = owners;
+  const expected = childConfigHash(store.getCommitment(), Field(childThreshold!), Field(childOwners.length));
+  if (expected.toString() !== (bundle.proposal.data ?? '')) {
+    throw new Error(
+      'SubVault config mismatch: the bundle\'s owners/threshold do not hash to the proposal data ' +
+      'this approval would sign. The bundle may contain a tampered SubVault config.',
+    );
+  }
+  return { owners: childOwners, threshold: childThreshold! };
 }
 
 function uiTxTypeToField(type: string): InstanceType<typeof Field> {
@@ -934,6 +980,8 @@ export async function handleApprove(
 
   // refuse to co-sign an addOwner that can never execute
   assertExecutableAddOwnerData(proposalStruct, ownerStore);
+  // and a SubVault whose announced configuration is not the one signed
+  assertCreateChildApprovalConfig(bundle);
 
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
