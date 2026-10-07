@@ -11,6 +11,7 @@ import {
   OPS_CHILD,
   PERSONAL,
   OWNER_2,
+  OWNER_3,
   RECIPIENT,
   TREASURY_STATE,
   PROPOSALS,
@@ -313,4 +314,94 @@ test('a REMOTE proposal waits while its SubVault target is not indexed', async (
   await page.getByRole('button', { name: 'Offline', exact: true }).click();
   await expect(page.getByText(/wait until the backend has indexed the target SubVault/i)).toBeVisible();
   await expectNoActionButtons(page, [/export approve bundle/i, /export execute bundle/i]);
+});
+
+
+// --- CREATE_CHILD approval shows what it authorizes --------------------------
+
+const CANONICAL_PERMISSIONS = {
+  editState: 'Proof', send: 'Proof', receive: 'None', setDelegate: 'Proof',
+  setPermissions: 'Impossible', setVerificationKey: 'Impossible', setZkappUri: 'Impossible',
+  editActionState: 'Proof', setTokenSymbol: 'Impossible', incrementNonce: 'Impossible',
+  setVotingFor: 'Impossible', setTiming: 'Impossible', access: 'None',
+};
+/** `childConfigHash` over [OWNER_2, OWNER_3] in that slot order with threshold 1. */
+const OPS_CHILD_CONFIG_HASH = '23105164216412012809451901057559969068001464395591450709626794513210236238504';
+const OPS_CHILD_RESERVATION = [
+  { eventType: 'createChildConfig', payload: { proposalHash: '0', childAccount: OPS_CHILD, threshold: '1', numOwners: '2' }, blockHeight: 5 },
+  { eventType: 'createChildOwner', payload: { proposalHash: '0', owner: OWNER_2, index: '0' }, blockHeight: 5 },
+  { eventType: 'createChildOwner', payload: { proposalHash: '0', owner: OWNER_3, index: '1' }, blockHeight: 5 },
+];
+
+/** Re-shapes the pending fixture as a CREATE_CHILD proposal for OPS_CHILD whose
+ *  signed data commits to the reservation above, with a canonical parent and
+ *  child, so only the configuration check decides whether Approve is offered. */
+async function mockPendingCreateChild(page: Page, childEvents: unknown[]): Promise<void> {
+  await page.route(
+    new RegExp(`/api/contracts/${TREASURY}/proposals(?:\\?.*)?$`),
+    async (route) => {
+      const response = await route.fetch();
+      const proposals = (await response.json()) as Array<Record<string, unknown>>;
+      await route.fulfill({
+        response,
+        json: proposals.map((proposal) =>
+          proposal.proposalHash === PROPOSALS.pendingTransfer
+            ? {
+                ...proposal,
+                txType: 'createChild',
+                destination: 'remote',
+                childAccount: OPS_CHILD,
+                data: OPS_CHILD_CONFIG_HASH,
+                receivers: [],
+              }
+            : proposal,
+        ),
+      });
+    },
+  );
+  await page.route(
+    `**/api/contracts/${TREASURY}/proposals/${PROPOSALS.pendingTransfer}/approvals`,
+    (route) => route.fulfill({ json: [] }),
+  );
+  for (const address of [TREASURY, OPS_CHILD]) {
+    await page.route(`**/api/accounts/${address}/security`, (route) =>
+      route.fulfill({
+        json: {
+          accountFound: true,
+          verificationKeyHash: 'canonical-vk',
+          verificationKeyMatches: true,
+          permissionKinds: CANONICAL_PERMISSIONS,
+          expectedPermissionKinds: CANONICAL_PERMISSIONS,
+          permissionMismatches: [],
+          safe: true,
+        },
+      }),
+    );
+  }
+  await page.route(
+    new RegExp(`/api/contracts/${OPS_CHILD}/events(?:\\?.*)?$`),
+    (route) => route.fulfill({ json: childEvents }),
+  );
+}
+
+test('CREATE_CHILD approval shows the SubVault owners and threshold, then offers Approve', async ({ page }) => {
+  await mockPendingCreateChild(page, OPS_CHILD_RESERVATION);
+  await openProposal(page, PROPOSALS.pendingTransfer);
+
+  const owners = page.getByTestId('subvault-owners');
+  await expect(owners).toBeVisible({ timeout: 10_000 });
+  await expect(owners).toContainText(OWNER_2);
+  await expect(owners).toContainText(OWNER_3);
+  await expect(page.getByText('SubVault Threshold', { exact: true }).locator('..')).toContainText('1 of 2');
+  await expect(page.getByRole('button', { name: /^approve proposal$/i })).toBeEnabled();
+});
+
+test('CREATE_CHILD approval waits while the SubVault reservation is not indexed', async ({ page }) => {
+  await mockPendingCreateChild(page, []);
+  await openProposal(page, PROPOSALS.pendingTransfer);
+
+  await expect(page.getByText('SubVault config could not be verified')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: /approve waits for the subvault config/i })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /^approve proposal$/i })).not.toBeVisible();
+  await expect(page.getByTestId('subvault-owners')).not.toBeVisible();
 });

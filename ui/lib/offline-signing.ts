@@ -4,7 +4,8 @@ import type { StoreCheckpoint } from 'contracts';
 import { OFFLINE_RESPONSE_VERSION } from './offline-format';
 import { getMinaGuardConfig } from './endpoints';
 
-export const OFFLINE_BUNDLE_VERSION = 1;
+/** Version 2 adds the SubVault owners and threshold to CREATE_CHILD approve bundles. */
+export const OFFLINE_BUNDLE_VERSION = 2;
 
 interface BundleReceiver {
   address: string;
@@ -88,6 +89,11 @@ export interface OfflineApproveBundle extends BundleBase {
     receivers: BundleReceiver[];
     [key: string]: unknown;
   };
+  /** CREATE_CHILD only: the reserved SubVault configuration, checked against
+   *  `proposal.data` before export, for the CLI to check and show again. */
+  childAddress?: string;
+  childOwners?: string[];
+  childThreshold?: number;
 }
 
 export interface OfflineExecuteBundle extends BundleBase {
@@ -225,6 +231,33 @@ export async function buildOfflineProposeBundle(params: {
   };
 }
 
+/**
+ * Fetches the SubVault's reserved owners and threshold from its own events and
+ * checks that they hash to the parent-approved proposal data. Throws when the
+ * reservation is not indexed yet or does not match: an approver must see the
+ * configuration the proposal commits to, or not sign.
+ */
+async function fetchVerifiedChildConfig(childAddress: string, proposalData: string | null) {
+  const events = await fetchAllEvents(childAddress);
+  const config = parseChildConfigFromEvents(events, childAddress);
+  if (!config) {
+    throw new Error(
+      'SubVault config events not found for this proposal. ' +
+      'The createChildConfig events may not have been indexed yet — try again shortly.',
+    );
+  }
+  const { configHash } = await computeCreateChildConfigHash({
+    childOwners: config.owners,
+    childThreshold: config.threshold,
+    // The reserved slot order is what the signed data binds.
+    preserveOrder: true,
+  });
+  if (configHash !== proposalData) {
+    throw new Error('SubVault reservation does not match the parent-approved proposal data');
+  }
+  return { events, owners: config.owners, threshold: config.threshold };
+}
+
 export async function buildOfflineApproveBundle(params: {
   contractAddress: string;
   feePayerAddress: string;
@@ -246,6 +279,12 @@ export async function buildOfflineApproveBundle(params: {
   };
   if (childAddr && childAccount) accounts[childAddr] = childAccount;
 
+  // A CREATE_CHILD approval authorizes the SubVault's owners and threshold, so
+  // the bundle carries them for the CLI to check and show before signing.
+  const childConfig = params.proposal.txType === 'createChild' && childAddr
+    ? { childAddress: childAddr, ...(await fetchVerifiedChildConfig(childAddr, params.proposal.data)) }
+    : null;
+
   return {
     version: OFFLINE_BUNDLE_VERSION,
     action: 'approve',
@@ -256,6 +295,9 @@ export async function buildOfflineApproveBundle(params: {
     events: [],
     storeCheckpoint,
     proposal: params.proposal,
+    ...(childConfig
+      ? { childAddress: childConfig.childAddress, childOwners: childConfig.owners, childThreshold: childConfig.threshold }
+      : {}),
   };
 }
 
@@ -316,22 +358,8 @@ export async function buildOfflineExecuteBundle(params: {
 
   if (isCreateChild && childAddr) {
     childAddress = childAddr;
-    childEvents = await fetchAllEvents(childAddress);
-    const config = parseChildConfigFromEvents(childEvents, childAddr);
-    if (!config) {
-      throw new Error(
-        'SubVault config events not found for this proposal. ' +
-        'The createChildConfig events may not have been indexed yet — try again shortly.',
-      );
-    }
-    const { configHash } = await computeCreateChildConfigHash({
-      childOwners: config.owners,
-      childThreshold: config.threshold,
-      preserveOrder: true,
-    });
-    if (configHash !== params.proposal.data) {
-      throw new Error('SubVault reservation does not match the parent-approved proposal data');
-    }
+    const config = await fetchVerifiedChildConfig(childAddr, params.proposal.data);
+    childEvents = config.events;
     childOwners = config.owners;
     childThreshold = config.threshold;
   }
