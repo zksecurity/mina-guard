@@ -251,6 +251,7 @@ function synthesizePendingProposal(pt: PendingTx): Proposal {
     childAccount: summary?.childAccount ?? null,
     status: 'pending',
     invalidReason: null,
+    childTargetIndexed: null,
     approvalCount: 0,
     createdAtBlock: null,
     executedAtBlock: null,

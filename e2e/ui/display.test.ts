@@ -277,3 +277,44 @@ test('offline bundle export rechecks permissions instead of trusting page state'
     page.getByText(/vault permissions have not passed the canonical security check/i),
   ).toBeVisible();
 });
+
+// --- REMOTE proposals whose SubVault target the backend judged ---------------
+
+/** Re-shapes the pending fixture as a REMOTE reclaim of OPS_CHILD with the
+ *  given backend verdict, and hides approvals so the wallet could approve. */
+async function mockRemoteReclaim(page: Page, verdict: Record<string, unknown>): Promise<void> {
+  await page.route(
+    new RegExp(`/api/contracts/${TREASURY}/proposals(?:\\?.*)?$`),
+    async (route) => {
+      const response = await route.fetch();
+      const proposals = (await response.json()) as Array<Record<string, unknown>>;
+      await route.fulfill({
+        response,
+        json: proposals.map((proposal) =>
+          proposal.proposalHash === PROPOSALS.pendingTransfer
+            ? { ...proposal, txType: 'reclaimChild', destination: 'remote', childAccount: OPS_CHILD, receivers: [], ...verdict }
+            : proposal,
+        ),
+      });
+    },
+  );
+  await page.route(
+    `**/api/contracts/${TREASURY}/proposals/${PROPOSALS.pendingTransfer}/approvals`,
+    (route) => route.fulfill({ json: [] }),
+  );
+}
+
+test('a REMOTE proposal waits while its SubVault target is not indexed', async ({ page }) => {
+  await mockRemoteReclaim(page, { childTargetIndexed: false });
+  await openProposal(page, PROPOSALS.pendingTransfer);
+  await expect(page.getByText('SubVault not indexed yet', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expectNoActionButtons(page, [/approve proposal/i, /execute proposal/i]);
+});
+
+test('a REMOTE proposal whose target belongs to another Vault is invalidated with a reason', async ({ page }) => {
+  await mockRemoteReclaim(page, { status: 'invalidated', invalidReason: 'child_parent_mismatch', childTargetIndexed: true });
+  await openProposal(page, PROPOSALS.pendingTransfer);
+  await expect(page.getByText('Proposal invalidated: the SubVault belongs to another Vault')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('invalidated', { exact: true }).first()).toBeVisible();
+  await expectNoActionButtons(page, [/approve proposal/i, /execute proposal/i]);
+});

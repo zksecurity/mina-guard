@@ -361,6 +361,13 @@ export default function TransactionDetailPage() {
     multisig?.permissionsVerified === true && parentPermissionCheck === 'safe';
   const childPermissionsSafe =
     !proposal?.childAccount || childPermissionCheck === 'match';
+  // A REMOTE proposal needs an initialized SubVault bound to this vault. The
+  // backend reports a target it has not indexed yet, which blocks actions but
+  // invalidates nothing, and the two conditions it could prove false.
+  const targetUnindexed = proposal?.status === 'pending' && proposal.childTargetIndexed === false;
+  const invalidTargetReason = proposal?.status === 'invalidated' &&
+    (proposal.invalidReason === 'child_uninitialized' || proposal.invalidReason === 'child_parent_mismatch')
+    ? proposal.invalidReason : null;
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -370,6 +377,7 @@ export default function TransactionDetailPage() {
     !isConfigStale &&
     permissionsSafe &&
     childPermissionsSafe &&
+    !targetUnindexed &&
     // Block approval when the displayed SubVault config provably does not hash
     // to the signed proposal.data (config-swap). Only a computed mismatch
     // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
@@ -387,6 +395,7 @@ export default function TransactionDetailPage() {
     !isConfigStale &&
     permissionsSafe &&
     childPermissionsSafe &&
+    !targetUnindexed &&
     !executeInFlight &&
     !contractLock.locked &&
     !insufficientBalance;
@@ -714,6 +723,34 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {targetUnindexed && (
+          <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
+            <p className="font-semibold mb-1">SubVault not indexed yet</p>
+            <p className="opacity-90">
+              This proposal targets a SubVault the backend has not indexed and verified yet, so whether it is
+              initialized and belongs to this Vault cannot be checked. Approval, execution and offline export
+              wait until it is.
+            </p>
+          </div>
+        )}
+
+        {invalidTargetReason && (
+          <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
+            <p className="font-semibold mb-1">
+              {invalidTargetReason === 'child_uninitialized'
+                ? 'Proposal invalidated: the SubVault is not initialized'
+                : 'Proposal invalidated: the SubVault belongs to another Vault'}
+            </p>
+            <p className="opacity-90">
+              {invalidTargetReason === 'child_uninitialized'
+                ? 'The SubVault this proposal targets has not been set up, so the contract would reject it. ' +
+                  'Set the SubVault up first, then create a new proposal.'
+                : 'The SubVault this proposal targets names a different parent Vault, so the contract would ' +
+                  'reject it. Check the target address and create a new proposal.'}
+            </p>
+          </div>
+        )}
+
         {isNonceStale && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">Proposal invalidated by a later nonce</p>
@@ -1028,6 +1065,12 @@ export default function TransactionDetailPage() {
                               throw new Error(
                                 'SubVault config mismatch: the displayed owners/threshold do not match the ' +
                                 'signed proposal data. Do not approve this proposal.',
+                              );
+                            }
+                            if (targetUnindexed) {
+                              throw new Error(
+                                'The SubVault this proposal targets is not indexed yet, so it cannot be ' +
+                                'checked. Wait for it before exporting an approval.',
                               );
                             }
                             if (addOwnerDataCheck === 'unexecutable') {
