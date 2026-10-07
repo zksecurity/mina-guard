@@ -168,7 +168,12 @@ async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
     body: JSON.stringify({ query, variables: { publicKey: address } }),
   });
   const json = await res.json();
-  return json.data?.account ?? null;
+  // A node error is not "no such account": guessing would make the CLI fund
+  // an account that exists, or skip funding one that does not.
+  if (!res.ok || json.errors || !json.data) {
+    throw new Error(`Could not fetch account ${address} from the Mina node`);
+  }
+  return json.data.account ?? null;
 }
 
 async function checkAccountExists(address: string): Promise<boolean> {

@@ -143,6 +143,17 @@ describe('offline-cli', () => {
     });
   });
 
+  it('tells the signer whether a createChild propose pays the child creation fee', () => {
+    const CHILD = 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY';
+    const propose = (accounts: Record<string, unknown>) => ({
+      version: 1, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, accounts, events: [], configNonce: 0,
+      input: { txType: 'createChild', nonce: 0, childAccount: CHILD, childOwners: [CHILD], childThreshold: 1 },
+    }) as any;
+    expect(renderBundleSummary(propose({}))).toContain('new, 1 MINA creation fee');
+    expect(renderBundleSummary(propose({ [CHILD]: { publicKey: CHILD } }))).toContain('exists, no creation fee');
+  });
+
   it('accepts only the ten transaction types, by name or number', () => {
     expect(requireTxType('transfer')).toBe('transfer');
     expect(requireTxType('9')).toBe('enableChildMultiSig');

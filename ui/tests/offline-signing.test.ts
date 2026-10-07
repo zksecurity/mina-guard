@@ -121,3 +121,14 @@ describe('offline allocation snapshots', () => {
     expect(bundle.receiverAccountExists).toEqual({ 'child-a': true, 'child-b': true });
   });
 });
+
+describe('account snapshots', () => {
+  it('fails the export when the node answers with an error instead of an account', async () => {
+    configure('testnet');
+    globalThis.fetch = (async (url, init) => {
+      if (init?.method === 'POST') return Response.json({ errors: [{ message: 'node busy' }] });
+      return Response.json([]);
+    }) as typeof fetch;
+    await expect(buildOfflineApproveBundle({ ...common, proposal })).rejects.toThrow('Could not fetch account');
+  });
+});

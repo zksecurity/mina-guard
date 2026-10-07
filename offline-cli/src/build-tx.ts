@@ -355,6 +355,18 @@ export function buildTransferReceivers(
  * `accountExists(addr)` returns true if the account already exists on-chain
  * (existing accounts don't incur the account-creation fee).
  */
+export function countNewReceiverAccounts(
+  receivers: InstanceType<typeof Receiver>[],
+  accountExists: (addr: string) => boolean,
+): number {
+  let count = 0;
+  for (const r of receivers) {
+    if (r.address.isEmpty().toBoolean()) continue;
+    if (!accountExists(r.address.toBase58())) count += 1;
+  }
+  return count;
+}
+
 /**
  * Decides how to deploy a child to an address from the bundle's snapshot of
  * it. Anyone can create the bare Mina account first by paying into the
@@ -370,18 +382,6 @@ export function deployTargetFromSnapshot(snapshot: BundleAccount | undefined): '
     throw new Error('The child address already holds a zkApp. Create the SubVault with a fresh address.');
   }
   return 'existing';
-}
-
-export function countNewReceiverAccounts(
-  receivers: InstanceType<typeof Receiver>[],
-  accountExists: (addr: string) => boolean,
-): number {
-  let count = 0;
-  for (const r of receivers) {
-    if (r.address.isEmpty().toBoolean()) continue;
-    if (!accountExists(r.address.toBase58())) count += 1;
-  }
-  return count;
 }
 
 function buildReceiversForProposal(input: NewProposalInput): InstanceType<typeof Receiver>[] {
@@ -835,10 +835,16 @@ export async function handlePropose(
   let childOwnerStore: InstanceType<typeof OwnerStore> | null = null;
   let childPaddedOwners: InstanceType<typeof PublicKey>[] | null = null;
   // A snapshot of the child address means someone created its bare account
-  // already; the deploy then must not fund it again.
-  const childTarget = isCreateChild ? deployTargetFromSnapshot(bundle.accounts[input.childAccount!]) : null;
+  // already; the deploy then must not fund it again. The address comes from
+  // the key that signs the deploy, and must be the one the proposal names.
+  let childTarget: 'new' | 'existing' | null = null;
   if (isCreateChild) {
     childKey = PrivateKey.fromBase58(input.childPrivateKey!);
+    const childAddress = childKey.toPublicKey().toBase58();
+    if (childAddress !== input.childAccount) {
+      throw new Error('The createChild key does not match input.childAccount');
+    }
+    childTarget = deployTargetFromSnapshot(bundle.accounts[childAddress]);
     childOwnerStore = new OwnerStore();
     for (const addr of input.childOwners!) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
     childPaddedOwners = [...childOwnerStore.owners];

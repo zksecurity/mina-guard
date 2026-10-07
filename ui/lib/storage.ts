@@ -124,7 +124,7 @@ function pruneStale(records: PendingTx[]): PendingTx[] {
   return records.filter((r) => {
     const ts = new Date(r.createdAt).getTime();
     if (!Number.isFinite(ts)) return false;
-    const shortLived = r.untracked || r.kind === 'create';
+    const shortLived = r.untracked || (r.kind === 'create' && r.summary?.txType === 'createChild');
     return now - ts < (shortLived ? UNTRACKED_PENDING_TX_TTL_MS : PENDING_TX_TTL_MS);
   });
 }

@@ -162,6 +162,8 @@ function snapshotAccount(addr: PublicKey): unknown {
 
 let owners: Array<{ key: PrivateKey; pub: PublicKey }>;
 let zkAppAddress: PublicKey;
+// Kept for the test that deploys into the parent's own address.
+let zkAppKey: InstanceType<typeof PrivateKey>;
 let zkApp: MinaGuard;
 let deployer: { key: PrivateKey; pub: PublicKey };
 
@@ -188,7 +190,7 @@ describe('offline-cli e2e', () => {
     }));
     owners.sort((a, b) => (a.pub.toBase58() > b.pub.toBase58() ? 1 : -1));
 
-    const zkAppKey = PrivateKey.random();
+    zkAppKey = PrivateKey.random();
     zkAppAddress = zkAppKey.toPublicKey();
     zkApp = new MinaGuard(zkAppAddress);
 
@@ -1410,9 +1412,9 @@ describe('offline-cli e2e', () => {
       expect(Mina.getAccount(preAddr).zkapp?.verificationKey).toBeDefined();
     }, 120_000);
 
-    it('refuses to propose createChild into an address that already holds a zkApp', async () => {
+    it('refuses to propose createChild into an address that already holds a zkApp, or with a key for another address', async () => {
       const proposer = owners[0];
-      const bundle = {
+      const bundleWithKey = async (childPrivateKey: string) => ({
         version: 1,
         action: 'propose',
         minaNetwork: 'testnet',
@@ -1426,22 +1428,31 @@ describe('offline-cli e2e', () => {
           // The parent vault itself: an address with a verification key.
           childAccount: zkAppAddress.toBase58(),
           createChildConfigHash: configHash(),
-          childPrivateKey: PrivateKey.random().toBase58(),
+          childPrivateKey,
           childOwners: childOwnerAddrs(),
           childThreshold: 2,
         },
         configNonce: 0,
         networkId: '1',
-      };
-      const bundlePath = join(tmpDir, 'create-child-taken-address.json');
-      writeBundle(bundlePath, bundle);
+      });
 
-      const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
-      console.log('[e2e] CLI stderr:', result.stderr);
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('already holds a zkApp');
-      expect(result.stdout).toBe('');
-    }, 120_000);
+      // A key for some other address is refused before anything else.
+      const mismatchPath = join(tmpDir, 'create-child-key-mismatch.json');
+      writeBundle(mismatchPath, await bundleWithKey(PrivateKey.random().toBase58()));
+      const mismatch = await runCLI(mismatchPath, proposer.key.toBase58(), 600_000, skipEnv);
+      expect(mismatch.code).not.toBe(0);
+      expect(mismatch.stderr).toContain('does not match input.childAccount');
+      expect(mismatch.stdout).toBe('');
+
+      // With the address's own key, the snapshot shows it already holds a zkApp.
+      const takenPath = join(tmpDir, 'create-child-taken-address.json');
+      writeBundle(takenPath, await bundleWithKey(zkAppKey.toBase58()));
+      const taken = await runCLI(takenPath, proposer.key.toBase58(), 600_000, skipEnv);
+      console.log('[e2e] CLI stderr:', taken.stderr);
+      expect(taken.code).not.toBe(0);
+      expect(taken.stderr).toContain('already holds a zkApp');
+      expect(taken.stdout).toBe('');
+    }, 240_000);
   });
 });
 

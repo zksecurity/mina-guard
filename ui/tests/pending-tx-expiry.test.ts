@@ -68,13 +68,15 @@ describe('pending records the backend refused to track', () => {
     expect(getPendingTxs().map((r) => r.txHash)).toEqual(['tracked-old', 'untracked-new']);
   });
 
-  test('a SubVault creation expires after 20 minutes too: a failed one is never reported', () => {
-    const create = (proposalHash: string, txHash: string, ageMs: number): PendingTx => ({
+  test('a SubVault creation expires after 20 minutes too; other creations keep the day', () => {
+    const create = (proposalHash: string, txHash: string, ageMs: number, txType: string): PendingTx => ({
       ...record(proposalHash, txHash, ageMs), kind: 'create',
+      summary: { txType } as PendingTx['summary'],
     });
-    savePendingTx(create('8', 'create-new', 5 * MINUTE));
-    savePendingTx(create('9', 'create-old', 25 * MINUTE));
-    expect(getPendingTxs().map((r) => r.txHash)).toEqual(['create-new']);
+    savePendingTx(create('7', 'transfer-old', 25 * MINUTE, 'transfer'));
+    savePendingTx(create('8', 'create-new', 5 * MINUTE, 'createChild'));
+    savePendingTx(create('9', 'create-old', 25 * MINUTE, 'createChild'));
+    expect(getPendingTxs().map((r) => r.txHash)).toEqual(['transfer-old', 'create-new']);
   });
 
   test('marking touches only the record for that transaction', () => {

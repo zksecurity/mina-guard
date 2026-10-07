@@ -388,7 +388,7 @@ never reports the earlier tx's failure. An accepted report marks its record
 `recorded`; reconciliation then marks it `untracked` as soon as the backend's
 hash for that action is not this record's (`backendNoLongerTracks`). A report
 the backend never answered within two minutes, say after a reload mid-report,
-is marked the same way (`reportUnanswered`). SubVault creation records (`kind: 'create'`) use
+is marked the same way (`reportUnanswered`). SubVault creation records (`kind: 'create'` with a `createChild` summary) use
 the same 20-minute window: a failed creation emits no proposal, and the
 best-chain probe covers only recent blocks, so nothing else would ever clear
 them.

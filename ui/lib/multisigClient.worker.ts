@@ -299,6 +299,7 @@ async function fetchContractState(
   }
 }
 
+
 async function signProposalAuthorization(
   hashAsFieldString: string,
   action: 'propose' | 'approve',
@@ -896,15 +897,21 @@ const workerApi = {
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     console.log('[MultisigWorker] deployAndSetupContract entered');
+    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
+    const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
+    const zkAppAddress = zkAppKey.toPublicKey();
+
+    // Check the address before the compile: someone may have created the
+    // bare account first, or the address may already be in use.
+    await configureNetwork();
+    progressFn('Checking the vault address...');
+    const vaultTarget = classifyDeployTarget(await fetchAccount({ publicKey: zkAppAddress }));
+
     progressFn('Compiling contract...');
     const ok = await compileContract();
     if (!ok) return null;
 
-    await configureNetwork();
     progressFn('Building transaction...');
-    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
-    const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
-    const zkAppAddress = zkAppKey.toPublicKey();
     const zkApp = new MinaGuard(zkAppAddress);
 
     const ownerStore = new OwnerStore();
@@ -916,12 +923,7 @@ const workerApi = {
       paddedOwners.push(PublicKey.empty());
     }
 
-    const [, vaultAccount] = await Promise.all([
-      fetchAccount({ publicKey: feePayer }),
-      fetchAccount({ publicKey: zkAppAddress }),
-    ]);
-    // Someone may have created the bare account first; deploy into it then.
-    const vaultTarget = classifyDeployTarget(vaultAccount.account);
+    await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
       if (vaultTarget === 'new') AccountUpdate.fundNewAccount(feePayer);
@@ -996,6 +998,17 @@ const workerApi = {
     requireUnregisteredProposal(hashStr, approvalStore.getCount(proposalHash).toBigInt());
 
     progressFn(testPrivateKey ? 'Signing proposal authorization...' : 'Awaiting wallet signature...');
+    // Check the child address before asking for a signature: someone may have
+    // created its bare account first, or the address may already be in use.
+    let childTarget: 'new' | 'existing' | null = null;
+    if (isCreateChild) {
+      if (!params.childPrivateKey) throw new Error('createChild proposal requires childPrivateKey');
+      const childAddress = PrivateKey.fromBase58(params.childPrivateKey).toPublicKey();
+      if (!childAddress.equals(proposal.childAccount).toBoolean()) {
+        throw new Error('The createChild key does not match the proposal child address');
+      }
+      childTarget = classifyDeployTarget(await fetchAccount({ publicKey: childAddress }));
+    }
     const signature = await signProposalAuthorization(hashStr, 'propose', signFn);
     if (!signature) return null;
 
@@ -1026,18 +1039,14 @@ const workerApi = {
       fetchAccount({ publicKey: proposer }),
     ];
     // REMOTE non-create proposals read child state (parentNonce, ownersCommitment,
-    // parent) via getAndRequireEquals() inside propose(). For createChild,
-    // assertFreshProposalNonce reads the parent's own state instead
-    // (isRemoteCreate branch), but the child address is still fetched: someone
-    // may have created its bare account first, and the deploy must not fund
-    // it again.
+    // parent) via getAndRequireEquals() inside propose(). For createChild, the
+    // child doesn't exist yet, but assertFreshProposalNonce reads the parent's
+    // own state instead (isRemoteCreate branch).
     const childAccount = proposal.childAccount;
-    const childFetch = childAccount.equals(PublicKey.empty()).toBoolean()
-      ? null
-      : fetchAccount({ publicKey: childAccount });
-    if (childFetch) fetches.push(childFetch);
+    if (!childAccount.equals(PublicKey.empty()).toBoolean() && !isCreateChild) {
+      fetches.push(fetchAccount({ publicKey: childAccount }));
+    }
     await Promise.all(fetches);
-    const childTarget = isCreateChild && childFetch ? classifyDeployTarget((await childFetch).account) : null;
     assertStoresMatchChain(stores, await requireContractState(params.contractAddress));
 
     logProposeDiagnostics({
