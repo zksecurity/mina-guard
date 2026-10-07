@@ -164,7 +164,7 @@ owner selected. (Propose mints a fresh proposal with no prior identity, so it ha
 against and skips the check.) The worker updates cached owner, approval and nullifier
 stores with later indexed events using `contracts/src/store-checkpoint.ts` and the
 shared, order-independent `contracts/src/event-rebuild.ts`. The CLI reconstructs
-version 1 checkpoint leaves from version 1 requests; requests without checkpoints are rejected. Both clients
+version 1 checkpoint leaves from version 2 requests; requests without checkpoints are rejected. Both clients
 refuse to prove unless the result reproduces on-chain state (the worker reads the Mina node, the
 CLI the bundle's account snapshot); events are unauthenticated, so the per-event roots the
 contract emits only locate a divergence and are never trusted on their own. Covered by

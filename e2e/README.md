@@ -203,7 +203,7 @@ API sanity, vault list/dashboard/settings rendering, per-status detail pages
 filtering and tab counts, per-tx-type form payload capture, and all
 client-side form validation. Proposal signing coverage includes the committed empty-memo
 display and rejecting unsupported signed-response versions before broadcast. Offline request
-export tests cover v1 snapshots; signed responses use v1.
+export tests cover v2 requests with v1 checkpoints; signed responses use v1.
 
 Run heavy validation sequentially with the limits in
 [AGENTS.md](../AGENTS.md#memory-safe-validation). The chainless suite still needs
