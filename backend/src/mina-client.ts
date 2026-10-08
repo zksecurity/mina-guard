@@ -3,6 +3,7 @@ import { GUARD_PERMISSION_KINDS, MinaGuard } from 'contracts';
 import type { Pool } from 'pg';
 import type { BackendConfig } from './config.js';
 import {
+  allowsProofActionsWithOlderVersion,
   matchesExpectedVerificationKey,
   validatePermissionVector,
   type PermissionKindVector,
@@ -326,6 +327,7 @@ export async function fetchVerificationKeyHash(address: string): Promise<string 
 export interface VaultSecurityStatus {
   accountFound: boolean;
   verificationKeyHash: string | null;
+  setVerificationKeyTxnVersion?: string | null;
   verificationKeyMatches: boolean;
   permissionKinds: PermissionKindVector;
   expectedPermissionKinds: typeof GUARD_PERMISSION_KINDS;
@@ -376,6 +378,7 @@ export async function fetchVaultSecurityStatus(
     return {
       accountFound: false,
       verificationKeyHash: null,
+      setVerificationKeyTxnVersion: null,
       verificationKeyMatches: false,
       permissionKinds: {},
       expectedPermissionKinds: GUARD_PERMISSION_KINDS,
@@ -392,15 +395,21 @@ export async function fetchVaultSecurityStatus(
   const { permissionKinds, mismatches } = validatePermissionVector(
     account.permissions
   );
+  const storedVersion = (account.permissions?.setVerificationKey as { txnVersion?: unknown } | undefined)?.txnVersion;
+  const setVerificationKeyTxnVersion = storedVersion == null ? null : String(storedVersion);
+  const matchingOlderVersion = allowsProofActionsWithOlderVersion(
+    verificationKeyMatches, permissionKinds, mismatches, storedVersion,
+  );
 
   return {
     accountFound: true,
     verificationKeyHash,
+    setVerificationKeyTxnVersion,
     verificationKeyMatches,
     permissionKinds,
     expectedPermissionKinds: GUARD_PERMISSION_KINDS,
     permissionMismatches: mismatches,
-    safe: verificationKeyMatches && mismatches.length === 0,
+    safe: verificationKeyMatches && (mismatches.length === 0 || matchingOlderVersion),
   };
 }
 

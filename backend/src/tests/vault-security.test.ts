@@ -7,6 +7,7 @@ import {
   GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
 } from 'contracts';
 import {
+  allowsProofActionsWithOlderVersion,
   matchesExpectedVerificationKey,
   permissionKindVector,
   permissionMismatches,
@@ -89,5 +90,21 @@ describe('canonical MinaGuard permissions', () => {
     expect(validatePermissionVector(altered).mismatches).toEqual([
       'setVerificationKey',
     ]);
+  });
+
+  it('allows proof actions only for a matching VK with an older stored version', () => {
+    const older = (BigInt(GUARD_SET_VERIFICATION_KEY_TXN_VERSION) - 1n).toString();
+    const raw = {
+      ...GUARD_PERMISSION_KINDS,
+      setVerificationKey: { auth: 'Impossible', txnVersion: older },
+    };
+    const { permissionKinds, mismatches } = validatePermissionVector(raw);
+    expect(mismatches).toEqual(['setVerificationKey']);
+    expect(allowsProofActionsWithOlderVersion(true, permissionKinds, mismatches, older)).toBe(true);
+    expect(allowsProofActionsWithOlderVersion(false, permissionKinds, mismatches, older)).toBe(false);
+    expect(allowsProofActionsWithOlderVersion(true, permissionKinds, mismatches, GUARD_SET_VERIFICATION_KEY_TXN_VERSION)).toBe(false);
+    expect(allowsProofActionsWithOlderVersion(true, permissionKinds, mismatches, '999')).toBe(false);
+    expect(allowsProofActionsWithOlderVersion(true, { ...permissionKinds, send: 'Signature' }, ['send', ...mismatches], older)).toBe(false);
+    expect(allowsProofActionsWithOlderVersion(true, { ...permissionKinds, setVerificationKey: 'Signature' }, mismatches, older)).toBe(false);
   });
 });

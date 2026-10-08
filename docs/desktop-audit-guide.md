@@ -20,12 +20,13 @@ air-gapped path is documented in [`offline-audit-guide.md`](./offline-audit-guid
 The shared creation wizard offers the deploy key as a local plaintext download
 and warns about its signature fallback after a Mina transaction-version upgrade.
 The desktop shell does not separately store, encrypt, or recover that file.
-The shared Vault detail page also exposes the version 2 offline VK migration
-request when the node reports an older stored transaction version. The shell
-does not handle the saved deploy key: the matching offline CLI signs the
-request, and the packaged UI verifies the signed command and later reads the
-on-chain result. Package the UI and CLI from the same reviewed release and
-VK hash for a future fork.
+For an older stored transaction version with an unchanged reviewed VK, the
+shared Vault detail page guides an ordinary proved action and an on-chain
+version check. If the VK differs, it exposes the version 2 offline VK migration
+request. The shell does not handle the saved deploy key: the matching MinaGuard
+offline CLI signs the request, and the packaged UI verifies the signed command
+and later reads the on-chain result. Package the UI and CLI from the same
+reviewed release and VK hash for a future fork.
 
 ---
 

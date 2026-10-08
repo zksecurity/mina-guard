@@ -400,19 +400,28 @@ deploy key was not backed up. It also explains the option to evacuate before
 a version upgrade. `lib/storage.ts` holds
 non-secret prefs + pending-tx metadata.
 
-When the node reports an older `setVerificationKey.txnVersion` with the other
-permissions still canonical, the Vault detail page offers the deploy-key
-migration flow. It displays the installed and release-pinned replacement VK
-hashes, exports a version 2 request, and imports the offline CLI's signed
-response. The import checks the response binding and command shape, then
-rechecks the installed VK, version, and permissions against the Mina node
-before broadcast. After inclusion, the user can check the on-chain VK hash,
-stored version, and complete permission vector. The saved deploy key is used
-only in the offline CLI; a separate offline fee payer key is needed unless
-the deploy key also funds the fee. The UI does not infer proof compatibility
-from the version number. A release for a future fork must first review the
-replacement circuit, its VK hash, and that fork's signing rules. Normal owner
-actions remain blocked until the full security check passes.
+When the node reports an older `setVerificationKey.txnVersion` and the installed
+VK still matches this reviewed release, the Vault detail page shows a
+transaction-version update panel. An ordinary owner-authorized proved action
+can refresh the stored version if Mina accepts its proof. The UI and backend
+allow this narrow case when every permission kind is canonical and the only
+permission mismatch is the older version. They continue to report that mismatch
+because the deploy-key signature fallback remains active until an account
+update succeeds. The panel links to proposal creation and can recheck the
+on-chain version; it does not submit a key-signed no-op.
+
+If the installed VK differs from the release-pinned replacement VK, the detail
+page instead offers deploy-key migration. It displays both hashes, exports a
+version 2 request, and imports the MinaGuard offline CLI's signed response.
+The import checks the response binding and command shape, then rechecks the
+installed VK, version, and permissions against the Mina node before broadcast.
+After inclusion, the user can check the on-chain VK hash, stored version, and
+complete permission vector. The saved deploy key is used only in the offline
+CLI; a separate offline fee payer key is needed unless the deploy key also
+funds the fee. The UI does not infer proof compatibility from the version
+number. A release for a future fork must first review the replacement circuit,
+its VK hash, and that fork's signing rules. Other non-canonical permissions or
+a mismatching VK still block normal owner actions.
 
 **6. Test-only escape hatches.**
 `setTestKey` / `setSkipProofs` enable direct signing and dummy proofs, gated

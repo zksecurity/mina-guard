@@ -264,7 +264,10 @@ to the checkpoint's leaves; it no longer processes the full event history.
 Verification-key migration uses a separate **version 2** request and response.
 It is never parsed as a version 1 owner proposal. The UI offers it only when
 the vault's stored `setVerificationKey.txnVersion` is older than this release's
-version and the rest of its permissions are canonical. The request binds the
+version, the installed VK differs from the reviewed replacement VK, and the
+rest of its permissions are canonical. When the VK already matches, the UI
+instead guides an ordinary owner-authorized proved action, which refreshes the
+version only if Mina accepts the proof. The request binds the
 vault and fee payer addresses, node account snapshots, installed VK hash and
 version, and the release-pinned replacement VK hash and version. It contains
 no private keys or governance proposal. The offline CLI independently checks
