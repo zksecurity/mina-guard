@@ -87,7 +87,7 @@ export default function VaultVerificationKeyMigration({ address, walletAddress }
         <div>Installed VK: {status?.verificationKeyHash ?? '?'}</div>
         <div>Replacement VK: {targetHash}</div>
       </dl>
-      <p>Use a verified release of the MinaGuard offline CLI (<code>mina-guard-cli</code>) whose compiled VK hash matches the replacement above. Its verification-key hash file and SHA256SUMS must match that release. The saved deploy key stays on the offline machine.</p>
+      <p><strong>A MinaGuard maintainer must publish a fork-compatible offline CLI release before you can migrate.</strong> This page cannot confirm that such a release exists or that the CLI binary you run is authentic. Independently verify the MinaGuard CLI (<code>mina-guard-cli</code>), its SHA256SUMS, and its per-network VK hash before using the saved deploy key. The CLI checks its compiled VK against the replacement hash above, but that hash check does not authenticate the binary. Keep the deploy key on the offline machine.</p>
       {!txHash && <>
         <label className="block">Offline fee payer address
           <input className="block mt-1 w-full rounded border border-safe-border bg-safe-dark p-2 font-mono text-xs" value={feePayer} onChange={(event) => setFeePayer(event.target.value.trim())} />

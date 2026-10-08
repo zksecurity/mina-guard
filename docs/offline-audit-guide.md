@@ -276,6 +276,12 @@ mismatch. `MINA_PRIVATE_KEY` is the saved deploy key; if the fee payer differs,
 `MINA_FEE_PAYER_PRIVATE_KEY` supplies its key. Both remain offline. The CLI
 shows the installed and replacement hashes, network, and vault before signing.
 Its output is a version 2 signed transaction; stdout still contains JSON only.
+The UI cannot establish that a compatible CLI release has been published or
+authenticate the binary run offline. A maintainer must publish a reviewed
+fork-compatible CLI release, and the user must independently verify its
+checksums and per-network VK hash before entering the deploy key. The CLI's
+compiled-VK hash check enforces compatibility with the requested hash when
+run as intended; it does not authenticate the CLI binary.
 The UI checks the command has exactly one signed vault update that changes
 only the VK, rechecks the old VK and version directly with the node, broadcasts,
 then offers a node check for the target VK, current version, and permissions.

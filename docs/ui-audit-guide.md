@@ -413,6 +413,10 @@ on-chain version; it does not submit a key-signed no-op.
 If the installed VK differs from the release-pinned replacement VK, the detail
 page instead offers deploy-key migration. It displays both hashes, exports a
 version 2 request, and imports the MinaGuard offline CLI's signed response.
+The panel warns that a maintainer must publish a fork-compatible CLI release
+first. The browser does not check release availability or authenticate the
+offline binary; users must independently verify the release, checksums, and
+per-network VK hash before entering the saved deploy key.
 The import checks the response binding and command shape, then rechecks the
 installed VK, version, and permissions against the Mina node before broadcast.
 After inclusion, the user can check the on-chain VK hash, stored version, and
