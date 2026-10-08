@@ -97,7 +97,10 @@ Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
 `configNonce`; execute bundles add per-receiver existence
 (`receiverAccountExists`) and, for child actions, the child's address and
 event history. Field-by-field details are in the bundle format reference
-below.
+below. The export fails when the node answers an account query with an error,
+or with an account that lacks `nonce`, `balance` or `zkappState`: the CLI
+decides funding and deploy targets from these snapshots, so a guess here would
+produce a transaction that fails on chain.
 
 After building, the UI surfaces **pre-transfer warnings** from data already in
 the bundle (missing fee-payer account, balance under 1 MINA, account-creation

@@ -173,7 +173,12 @@ async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
   if (!res.ok || json.errors || !json.data) {
     throw new Error(`Could not fetch account ${address} from the Mina node`);
   }
-  return json.data.account ?? null;
+  const account = json.data.account ?? null;
+  // The CLI decides from the snapshot's fields; an answer without them is no snapshot.
+  if (account !== null && !['nonce', 'balance', 'zkappState'].every((field) => typeof account === 'object' && field in account)) {
+    throw new Error(`Incomplete account snapshot for ${address} from the Mina node`);
+  }
+  return account;
 }
 
 async function checkAccountExists(address: string): Promise<boolean> {

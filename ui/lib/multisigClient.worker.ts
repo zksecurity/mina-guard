@@ -3,7 +3,7 @@
 
 import './disable-wasm-finalizers';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
-import { classifyDeployTarget } from './deploy-target';
+import { classifyDeployTarget, receiverExists } from './deploy-target';
 import { requireUnregisteredProposal } from './proposal-preparation';
 import * as Comlink from 'comlink';
 
@@ -1257,11 +1257,11 @@ const workerApi = {
     if (txType === 'transfer' || txType === 'allocateChild') {
       for (const r of proposalStruct.receivers) {
         if (r.address.isEmpty().toBoolean()) continue;
-        const { account } = await fetchAccount({ publicKey: r.address });
-        if (!account && txType === 'allocateChild') {
+        const exists = receiverExists(await fetchAccount({ publicKey: r.address }));
+        if (!exists && txType === 'allocateChild') {
           throw new Error('Allocation recipients must be initialized children of this vault');
         }
-        if (!account) newAccountCount += 1;
+        if (!exists) newAccountCount += 1;
       }
     }
 

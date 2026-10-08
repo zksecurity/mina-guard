@@ -36,7 +36,7 @@ describe('offline checkpoint export', () => {
       if (String(input).includes('/events')) throw new Error('Unexpected full history request');
       const address = JSON.parse(String(init?.body)).variables.publicKey;
       calls.push(`account:${address}`);
-      return Response.json({ data: { account: { publicKey: address, zkappState: [] } } });
+      return Response.json({ data: { account: { publicKey: address, nonce: '0', balance: { total: '1000000000' }, zkappState: [] } } });
     }) as typeof fetch;
     const params = { contractAddress: 'vault', feePayerAddress: 'owner' };
     const builders = [

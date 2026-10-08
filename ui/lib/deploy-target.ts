@@ -32,3 +32,17 @@ export function classifyDeployTarget(fetched: DeployTargetFetch): 'new' | 'exist
   }
   return 'existing';
 }
+
+/**
+ * Whether a receiver already has an account, from the same fetch. Only "no such
+ * account" means no. Any other node error is refused: a wrong guess either funds
+ * an account that exists or leaves a new one unfunded, and the transaction fails
+ * either way after proving.
+ */
+export function receiverExists(fetched: DeployTargetFetch): boolean {
+  if (fetched.error) {
+    if (fetched.error.statusCode === 404) return false;
+    throw new Error(`Could not check a receiver address: ${fetched.error.statusText ?? 'node request failed'}`);
+  }
+  return !!fetched.account;
+}

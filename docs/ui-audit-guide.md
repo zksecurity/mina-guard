@@ -284,7 +284,9 @@ calls `setup()` first.
   - Account-creation fees on execute are counted from the hash-bound
     `proposalStruct.receivers`, never the raw backend array
     (`worker.ts:1142-1153`), so indexer rows beyond `MAX_RECEIVERS` can't
-    inflate the executor-signed fee.
+    inflate the executor-signed fee. A receiver counts as new only when the
+    node answers "no such account" (`receiverExists`); any other node error
+    stops the build, since a wrong guess fails the transaction after proving.
 
 **3. Indexer-supplied data feeding into signed transactions.**
 The backend is untrusted (see threat model), yet its data rebuilds the Merkle

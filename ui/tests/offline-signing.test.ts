@@ -50,7 +50,7 @@ function configure(networkId: string | undefined) {
     fetchedUrls.push(String(url));
     if (init?.method === 'POST') {
       const { variables } = JSON.parse(String(init.body));
-      return Response.json({ data: { account: { publicKey: variables.publicKey } } });
+      return Response.json({ data: { account: { publicKey: variables.publicKey, nonce: '0', balance: { total: '1000000000' }, zkappState: null } } });
     }
     return Response.json([]);
   }) as typeof fetch;
@@ -130,5 +130,14 @@ describe('account snapshots', () => {
       return Response.json([]);
     }) as typeof fetch;
     await expect(buildOfflineApproveBundle({ ...common, proposal })).rejects.toThrow('Could not fetch account');
+  });
+
+  it('fails the export when an account answer lacks the fields the CLI decides from', async () => {
+    configure('testnet');
+    globalThis.fetch = (async (url, init) => {
+      if (init?.method === 'POST') return Response.json({ data: { account: { publicKey: 'vault' } } });
+      return Response.json([]);
+    }) as typeof fetch;
+    await expect(buildOfflineApproveBundle({ ...common, proposal })).rejects.toThrow('Incomplete account snapshot');
   });
 });

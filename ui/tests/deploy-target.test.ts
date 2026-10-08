@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { classifyDeployTarget } from '../lib/deploy-target';
+import { classifyDeployTarget, receiverExists } from '../lib/deploy-target';
 
 describe('classifyDeployTarget', () => {
   it('funds an account the node does not have', () => {
@@ -24,5 +24,20 @@ describe('classifyDeployTarget', () => {
     expect(() => classifyDeployTarget({ error: { statusCode: 500, statusText: 'upstream timeout' } }))
       .toThrow('Could not check the vault address: upstream timeout');
     expect(() => classifyDeployTarget({ error: {} })).toThrow('Could not check the vault address');
+  });
+});
+
+describe('receiverExists', () => {
+  it('treats only "no such account" as a new receiver', () => {
+    expect(receiverExists({ error: { statusCode: 404, statusText: 'does not exist' } })).toBe(false);
+    expect(receiverExists({ account: {} })).toBe(true);
+    expect(receiverExists({ account: { zkapp: null } })).toBe(true);
+    expect(receiverExists({ account: { zkapp: { appState: ['1'], verificationKey: { hash: 'vk' } } } })).toBe(true);
+  });
+
+  it('refuses to guess when the node fails for any other reason', () => {
+    expect(() => receiverExists({ error: { statusCode: 500, statusText: 'upstream timeout' } }))
+      .toThrow('Could not check a receiver address: upstream timeout');
+    expect(() => receiverExists({ error: {} })).toThrow('Could not check a receiver address');
   });
 });
