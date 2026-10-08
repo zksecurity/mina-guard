@@ -20,9 +20,6 @@ const invalidStateContractAddress = PrivateKey.random().toPublicKey().toBase58()
 const invalidStateChildAddress = PrivateKey.random().toPublicKey().toBase58();
 const unverifiedChildAddress = PrivateKey.random().toPublicKey().toBase58();
 const reservedChildAddress = PrivateKey.random().toPublicKey().toBase58();
-const foreignChildAddress = PrivateKey.random().toPublicKey().toBase58();
-// A vault the backend never indexed; the foreign child names it as parent.
-const foreignParentAddress = PrivateKey.random().toPublicKey().toBase58();
 const ownerA = PrivateKey.random().toPublicKey().toBase58();
 const ownerB = PrivateKey.random().toPublicKey().toBase58();
 const ownerC = PrivateKey.random().toPublicKey().toBase58();
@@ -45,9 +42,8 @@ const remoteStaleHash = '603';
 const createChildHash = '604';
 const freshHash = '605';
 const unverifiedChildHash = '606';
-// REMOTE proposals whose target the backend can judge: reserved only, or bound elsewhere.
+// REMOTE proposal whose target is reserved only, with no config snapshot yet.
 const reservedChildHash = '607';
-const foreignChildHash = '608';
 
 function get(path: string) {
   return fetch(`${baseUrl}${path}`);
@@ -88,8 +84,6 @@ async function seedDatabase() {
       },
       // Reserved for invalidStateContract, no config snapshot yet: not judged.
       { address: reservedChildAddress, parent: invalidStateContractAddress, ready: true, permissionsVerified: true },
-      // An initialized child of another vault.
-      { address: foreignChildAddress, parent: foreignParentAddress, ready: true, permissionsVerified: true },
     ],
   });
 
@@ -186,9 +180,6 @@ async function seedDatabase() {
   const unverifiedChild = await prisma.contract.findUniqueOrThrow({
     where: { address: unverifiedChildAddress },
   });
-  const foreignChild = await prisma.contract.findUniqueOrThrow({
-    where: { address: foreignChildAddress },
-  });
 
   await prisma.contractConfig.createMany({
     data: [
@@ -208,16 +199,6 @@ async function seedDatabase() {
         childMultiSigEnabled: true,
         nonce: 0,
         parentNonce: 4,
-        configNonce: 0,
-        ownersCommitment: '1234',
-      },
-      {
-        contractId: foreignChild.id,
-        validFromBlock: 100,
-        networkId: '1',
-        childMultiSigEnabled: true,
-        nonce: 0,
-        parentNonce: 0,
         configNonce: 0,
         ownersCommitment: '1234',
       },
@@ -305,16 +286,6 @@ async function seedDatabase() {
         nonce: '6',
         destination: 'remote',
         childAccount: reservedChildAddress,
-        txType: '7',
-      },
-      {
-        contractId: invalidContract.id,
-        proposalHash: foreignChildHash,
-        createdAtBlock: 117,
-        configNonce: '3',
-        nonce: '6',
-        destination: 'remote',
-        childAccount: foreignChildAddress,
         txType: '7',
       },
     ],
@@ -685,15 +656,6 @@ describe('proposal invalidation derivation', () => {
     expect(fromDetail.childTargetIndexed).toBe(false);
   });
 
-  test("a REMOTE proposal for another vault's SubVault is invalidated", async () => {
-    const fromList = (await getProposalsByContract(invalidStateContractAddress))
-      .find((p) => p.proposalHash === foreignChildHash);
-    expect(fromList?.status).toBe('invalidated');
-    expect(fromList?.invalidReason).toBe('child_parent_mismatch');
-    const fromDetail = await getProposalByHash(invalidStateContractAddress, foreignChildHash);
-    expect(fromDetail.invalidReason).toBe('child_parent_mismatch');
-  });
-
   test('single-proposal endpoint reports invalidated status + reason', async () => {
     const body = await getProposalByHash(invalidStateContractAddress, configStaleHash);
     expect(body.status).toBe('invalidated');
@@ -707,7 +669,7 @@ describe('proposal invalidation derivation', () => {
     expect(res.status).toBe(200);
     const body: ProposalRow[] = await res.json();
     const hashes = body.map((p) => p.proposalHash).sort();
-    expect(hashes).toEqual([configStaleHash, localStaleHash, remoteStaleHash, foreignChildHash].sort());
+    expect(hashes).toEqual([configStaleHash, localStaleHash, remoteStaleHash].sort());
     expect(body.every((p) => p.status === 'invalidated')).toBe(true);
   });
 });

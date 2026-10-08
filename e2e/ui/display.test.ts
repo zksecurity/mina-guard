@@ -278,7 +278,7 @@ test('offline bundle export rechecks permissions instead of trusting page state'
   ).toBeVisible();
 });
 
-// --- REMOTE proposals whose SubVault target the backend judged ---------------
+// --- REMOTE proposals whose SubVault target the backend has not indexed ------
 
 /** Re-shapes the pending fixture as a REMOTE reclaim of OPS_CHILD with the
  *  given backend verdict, and hides approvals so the wallet could approve. */
@@ -313,12 +313,4 @@ test('a REMOTE proposal waits while its SubVault target is not indexed', async (
   await page.getByRole('button', { name: 'Offline', exact: true }).click();
   await expect(page.getByText(/wait until the backend has indexed the target SubVault/i)).toBeVisible();
   await expectNoActionButtons(page, [/export approve bundle/i, /export execute bundle/i]);
-});
-
-test('a REMOTE proposal whose target belongs to another Vault is invalidated with a reason', async ({ page }) => {
-  await mockRemoteReclaim(page, { status: 'invalidated', invalidReason: 'child_parent_mismatch', childTargetIndexed: true });
-  await openProposal(page, PROPOSALS.pendingTransfer);
-  await expect(page.getByText('Proposal invalidated: the SubVault belongs to another Vault')).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText('invalidated', { exact: true }).first()).toBeVisible();
-  await expectNoActionButtons(page, [/approve proposal/i, /execute proposal/i]);
 });

@@ -19,14 +19,13 @@ function proposal(fields: Partial<ProposalFixture> = {}): ProposalFixture {
 }
 
 function parent(fields: Partial<ContractState> = {}): ContractState {
-  return { nonce: null, parentNonce: null, configNonce: null, parent: null, initialized: true, ...fields };
+  return { nonce: null, parentNonce: null, configNonce: null, ...fields };
 }
 
-const VAULT = 'B62qvaultAddressForTargetChecks';
 
-/** An initialized child of VAULT, as the backend indexes one after setup. */
+/** A child the backend has indexed, with its config snapshot. */
 function child(fields: Partial<ContractState> = {}): ContractState {
-  return { nonce: null, parentNonce: null, configNonce: null, parent: VAULT, initialized: true, ...fields };
+  return { nonce: null, parentNonce: null, configNonce: null, ...fields };
 }
 
 describe('deriveInvalidReason', () => {
@@ -295,36 +294,22 @@ describe('deriveStatus', () => {
 // the happy path still runs end-to-end on the main transfer (steps 7-9).
 // ---------------------------------------------------------------------------
 
-describe('REMOTE target validity', () => {
+describe('REMOTE proposals and the child the backend knows', () => {
   const remote = proposal({ nonce: '9', destination: 'remote', txType: '7' });
 
-  test('an uninitialized target invalidates the proposal before any nonce check', () => {
-    expect(deriveInvalidReason(remote, parent(), child({ initialized: false, parentNonce: 99 }), VAULT))
-      .toBe('child_uninitialized');
-  });
-
-  test('a target bound to another vault invalidates the proposal', () => {
-    expect(deriveInvalidReason(remote, parent(), child({ parent: 'B62qanotherVault' }), VAULT))
-      .toBe('child_parent_mismatch');
-    // Without the vault address, or without the child's parent, the binding cannot be checked.
-    expect(deriveInvalidReason(remote, parent(), child({ parent: 'B62qanotherVault' }))).toBeNull();
-    expect(deriveInvalidReason(remote, parent(), child({ parent: null }), VAULT)).toBeNull();
-  });
-
-  test('config staleness still wins, and a valid target falls through to the nonce rule', () => {
+  test('config staleness wins, then the nonce rule judges against the child', () => {
     const configStale = proposal({ configNonce: '0', nonce: '9', destination: 'remote', txType: '7' });
-    expect(deriveInvalidReason(configStale, parent({ configNonce: 1 }), child({ initialized: false }), VAULT))
-      .toBe('config_nonce_stale');
-    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 9 }), VAULT)).toBe('proposal_nonce_stale');
-    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 8 }), VAULT)).toBeNull();
+    expect(deriveInvalidReason(configStale, parent({ configNonce: 1 }), child({ parentNonce: 99 }))).toBe('config_nonce_stale');
+    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 9 }))).toBe('proposal_nonce_stale');
+    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 8 }))).toBeNull();
   });
 
-  test('an unknown target decides nothing, and LOCAL or CREATE_CHILD proposals ignore it', () => {
-    expect(deriveInvalidReason(remote, parent(), null, VAULT)).toBeNull();
+  test('an unknown child decides nothing, and LOCAL or CREATE_CHILD proposals ignore it', () => {
+    expect(deriveInvalidReason(remote, parent(), null)).toBeNull();
     const local = proposal({ nonce: '9', destination: 'local' });
-    expect(deriveInvalidReason(local, parent({ nonce: 1 }), child({ initialized: false, parent: 'B62qanotherVault' }), VAULT)).toBeNull();
+    expect(deriveInvalidReason(local, parent({ nonce: 1 }), child({ parentNonce: 99 }))).toBeNull();
     const create = proposal({ nonce: '0', destination: 'remote', txType: '5' });
-    expect(deriveInvalidReason(create, parent(), child({ initialized: false }), VAULT)).toBeNull();
+    expect(deriveInvalidReason(create, parent(), child({ parentNonce: 99 }))).toBeNull();
   });
 });
 

@@ -305,10 +305,10 @@ Reservation `proposalHash` values are caller-supplied labels. The UI fetches a
 reservation by child address and checks its recomputed configuration hash against
 the parent-approved `CREATE_CHILD` proposal data before approval, execution, or
 offline export. For the other REMOTE proposals the backend reports whether it
-has indexed the target SubVault (`childTargetIndexed`) and invalidates a
-proposal whose target is uninitialized or bound to another Vault; the detail
-page explains each case, and an unindexed target blocks approval, execution and
-offline export until the backend catches up. The rebuild does not depend on delivery order: approval
+has indexed the target SubVault (`childTargetIndexed`); an unindexed target
+blocks approval, execution and offline export on the detail page until the
+backend catches up, since the proposal's freshness cannot be judged without
+the SubVault's state. The rebuild does not depend on delivery order: approval
 leaves keep the largest value seen, owners come from the emitted setup slot index,
 and owner changes replay in `configNonce` order with each insert placed where the
 emitted post-change commitment says. Before any proof the worker compares the

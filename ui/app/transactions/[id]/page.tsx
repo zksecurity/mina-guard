@@ -361,13 +361,9 @@ export default function TransactionDetailPage() {
     multisig?.permissionsVerified === true && parentPermissionCheck === 'safe';
   const childPermissionsSafe =
     !proposal?.childAccount || childPermissionCheck === 'match';
-  // A REMOTE proposal needs an initialized SubVault bound to this vault. The
-  // backend reports a target it has not indexed yet, which blocks actions but
-  // invalidates nothing, and the two conditions it could prove false.
+  // A REMOTE proposal needs the backend's view of its SubVault to judge
+  // its nonce. A target not indexed yet blocks actions but invalidates nothing.
   const targetUnindexed = proposal?.status === 'pending' && proposal.childTargetIndexed === false;
-  const invalidTargetReason = proposal?.status === 'invalidated' &&
-    (proposal.invalidReason === 'child_uninitialized' || proposal.invalidReason === 'child_parent_mismatch')
-    ? proposal.invalidReason : null;
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -727,26 +723,9 @@ export default function TransactionDetailPage() {
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">SubVault not indexed yet</p>
             <p className="opacity-90">
-              This proposal targets a SubVault the backend has not indexed and verified yet, so whether it is
-              initialized and belongs to this Vault cannot be checked. Approval, execution and offline export
-              wait until it is. If the SubVault was created outside this app, track it here first.
-            </p>
-          </div>
-        )}
-
-        {invalidTargetReason && (
-          <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
-            <p className="font-semibold mb-1">
-              {invalidTargetReason === 'child_uninitialized'
-                ? 'Proposal invalidated: the SubVault is not initialized'
-                : 'Proposal invalidated: the SubVault belongs to another Vault'}
-            </p>
-            <p className="opacity-90">
-              {invalidTargetReason === 'child_uninitialized'
-                ? 'The SubVault this proposal targets is not initialized, so the contract would reject it. ' +
-                  'Create a new proposal once its setup is indexed.'
-                : 'The SubVault this proposal targets names a different parent Vault, so the contract would ' +
-                  'reject it. Check the target address and create a new proposal.'}
+              This proposal targets a SubVault the backend has not indexed and verified yet, so whether the
+              proposal is still current cannot be checked. Approval, execution and offline export wait until
+              it is. If the SubVault was created outside this app, track it here first.
             </p>
           </div>
         )}
