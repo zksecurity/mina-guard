@@ -1043,8 +1043,11 @@ export class MinaGuardIndexer {
     });
 
     // Clear in-flight approve tracking when the arriving event matches the
-    // hash the frontend last submitted for this proposal.
-    if (chainEvent.txHash !== null && proposal.lastApproveTxHash === chainEvent.txHash) {
+    // hash the frontend last submitted for this proposal, or when that hash
+    // already failed: a failed transaction never applies, so this approval is
+    // a retry, one the submissions route may have refused to record.
+    const recorded = proposal.lastApproveTxHash;
+    if ((chainEvent.txHash !== null && recorded === chainEvent.txHash) || proposal.lastApproveError !== null) {
       await db.proposal.update({
         where: { id: proposal.id },
         data: { lastApproveTxHash: null, lastApproveError: null },

@@ -34,6 +34,7 @@ import {
   validateQuery,
 } from './request-validation.js';
 import { wrapAsyncRoute } from './route-utils.js';
+import { verifySubmittedTransaction } from './submission-check.js';
 
 const ownersQuerySchema = z.object({
   active: optionalBooleanQuerySchema,
@@ -54,8 +55,13 @@ const eventsQuerySchema = z.object({
 
 const submissionBodySchema = z.object({
   action: z.enum(['approve', 'execute']),
-  txHash: z.string().min(1).max(200),
+  // Mina transaction hashes are base58 (52 characters for zkApp commands).
+  txHash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{40,64}$/),
 });
+
+// Each submission check queries the Mina node up to four times, so cap how
+// many run at once; an over-cap report is refused and the UI simply skips it.
+const MAX_CONCURRENT_SUBMISSION_CHECKS = 8;
 
 type OwnersQuery = z.infer<typeof ownersQuerySchema>;
 type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
@@ -63,6 +69,7 @@ type EventsQuery = z.infer<typeof eventsQuerySchema>;
 
 /** Creates the read-only API router bound to shared indexer status and Prisma data. */
 export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfig): Router {
+  let submissionChecksInFlight = 0;
   const router = Router();
   const safe = wrapAsyncRoute();
   router.use(requestLoggerMiddleware());
@@ -342,7 +349,12 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   );
 
   /** Records a freshly-submitted approve/execute tx hash for later status polling.
-   *  Clears any prior error for that action so the UI banner disappears on retry. */
+   *  Clears any prior error for that action so the UI banner disappears on retry.
+   *
+   *  Every owner's UI locks the vault while a recorded hash is in flight, and
+   *  anyone can call this route. So a hash is recorded only after the Mina node
+   *  shows it is a real approval or execution of this proposal (see
+   *  submission-check.ts); anything else is refused and recorded nowhere. */
   router.post(
     '/api/contracts/:address/proposals/:proposalHash/submissions',
     proposalParamsMiddleware,
@@ -364,18 +376,75 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         return;
       }
 
-      const update = action === 'approve'
-        ? { lastApproveTxHash: txHash, lastApproveError: null }
-        : { lastExecuteTxHash: txHash, lastExecuteError: null };
-
-      const result = await prisma.proposal.updateMany({
-        where: { contractId: contract.id, proposalHash },
-        data: update,
+      const proposal = await prisma.proposal.findUnique({
+        where: { contractId_proposalHash: { contractId: contract.id, proposalHash } },
+        select: {
+          id: true, childAccount: true,
+          lastApproveTxHash: true, lastApproveError: true,
+          lastExecuteTxHash: true, lastExecuteError: true,
+        },
       });
-
-      if (result.count === 0) {
+      if (!proposal) {
         res.status(404).json({ error: 'Proposal not found' });
         return;
+      }
+
+      // Reporting the hash already recorded changes nothing, so a repeat
+      // cannot restart the dropped-transaction grace period.
+      const recorded = action === 'approve'
+        ? { hash: proposal.lastApproveTxHash, error: proposal.lastApproveError }
+        : { hash: proposal.lastExecuteTxHash, error: proposal.lastExecuteError };
+      if (recorded.hash === txHash && recorded.error === null) {
+        res.json({ ok: true });
+        return;
+      }
+
+      if (!config) {
+        res.status(503).json({ error: 'Submission checks are unavailable' });
+        return;
+      }
+      if (submissionChecksInFlight >= MAX_CONCURRENT_SUBMISSION_CHECKS) {
+        res.status(429).json({ error: 'Too many submission checks in progress' });
+        return;
+      }
+      submissionChecksInFlight++;
+      let verified: boolean;
+      try {
+        // A remote execution emits its event on the SubVault, not the vault.
+        const accounts = action === 'execute' && proposal.childAccount
+          ? [address, proposal.childAccount]
+          : [address];
+        verified = await verifySubmittedTransaction(config, { txHash, action, proposalHash, accounts });
+      } finally {
+        submissionChecksInFlight--;
+      }
+      if (!verified) {
+        res.status(422).json({ error: `Transaction is not a known ${action} of this proposal` });
+        return;
+      }
+
+      await prisma.proposal.update({
+        where: { id: proposal.id },
+        data: action === 'approve'
+          ? { lastApproveTxHash: txHash, lastApproveError: null }
+          : { lastExecuteTxHash: txHash, lastExecuteError: null },
+      });
+      // The indexer clears a recorded approval when it applies the approval's
+      // event. If it applied that event before this write, nothing would clear
+      // the hash, so clear it here. Checking after the write leaves no gap: an
+      // event stored later is applied later, and that clears the hash itself.
+      // (Executed proposals no longer lock, so executions need no such check.)
+      if (action === 'approve') {
+        const applied = await prisma.eventRaw.findFirst({
+          where: { contractId: contract.id, txHash, eventType: 'approval' },
+          select: { id: true },
+        });
+        if (applied) {
+          await prisma.proposal.updateMany({
+            where: { id: proposal.id, lastApproveTxHash: txHash },
+            data: { lastApproveTxHash: null, lastApproveError: null },
+          });
+        }
       }
       res.json({ ok: true });
     })

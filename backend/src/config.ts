@@ -22,6 +22,9 @@ export interface BackendConfig {
    *  - 'daemon': scan daemon's bestChain — capped at 290 blocks back.
    *  - 'archive': query Mina archive postgres directly — unbounded history. */
   discoveryBackend: 'daemon' | 'archive';
+  /** Browser origins allowed to call the API (CORS_ORIGINS, comma-separated).
+   *  null keeps the API open to every origin. */
+  corsOrigins: string[] | null;
   /** Read-only Mina archive postgres connection (required when discoveryBackend='archive').
    *  Discrete parts so reserved characters in the password don't need URL-encoding. */
   archiveDb: ArchiveDbConfig | null;
@@ -112,6 +115,17 @@ export function loadConfig(): BackendConfig {
         ? null
         : numericEnv('INDEXER_FIXED_LATEST_SLOT', 0),
     discoveryBackend,
+    corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS),
     archiveDb,
   };
+}
+
+/** Splits CORS_ORIGINS into origins; unset, blank or `*` means no restriction.
+ *  The allowlist is matched exactly against the browser's Origin header, which
+ *  is lower case with no trailing slash, so entries are normalized the same way. */
+export function parseCorsOrigins(value: string | undefined): string[] | null {
+  const origins = (value ?? '').split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, '').toLowerCase())
+    .filter(Boolean);
+  return origins.length > 0 && !origins.includes('*') ? origins : null;
 }

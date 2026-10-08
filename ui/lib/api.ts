@@ -11,6 +11,7 @@ import {
 } from '@/lib/types';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { MAX_RECEIVERS } from '@/lib/constants';
+import { markPendingTxRecorded, markPendingTxUntracked } from '@/lib/storage';
 import {
   GUARD_PERMISSION_KINDS,
   GUARD_PERMISSION_NAMES,
@@ -325,15 +326,18 @@ export async function fetchTxStatus(
 }
 
 /** Best-effort: tells the backend about a freshly-submitted approve/execute tx
- *  so its indexer can poll for on-chain failure and surface the reason. */
+ *  so its indexer can poll for on-chain failure and surface the reason, and
+ *  other owners' screens can wait for it. The backend records the hash only
+ *  after its Mina node shows it is that action on this proposal. Returns
+ *  whether the backend recorded it. */
 export async function recordSubmission(
   contractAddress: string,
   proposalHash: string,
   action: 'approve' | 'execute',
   txHash: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await fetch(
+    const res = await fetch(
       `${API_BASE}/api/contracts/${contractAddress}/proposals/${proposalHash}/submissions`,
       {
         method: 'POST',
@@ -341,9 +345,29 @@ export async function recordSubmission(
         body: JSON.stringify({ action, txHash }),
       },
     );
+    return res.ok;
   } catch (err) {
     console.warn('[api] recordSubmission failed', err);
+    return false;
   }
+}
+
+/** Reports a broadcast approve/execute without waiting: the backend's check can
+ *  take seconds, and this tab already locks from its own pending record. An
+ *  accepted report marks the record `recorded`, so later polls can tell when
+ *  the backend stops tracking it. If the backend refuses, it will never report
+ *  the transaction's failure, so the record is marked to expire sooner. Call
+ *  after savePendingTx. */
+export function reportSubmission(
+  contractAddress: string,
+  proposalHash: string,
+  action: 'approve' | 'execute',
+  txHash: string,
+): void {
+  void recordSubmission(contractAddress, proposalHash, action, txHash).then((recorded) => {
+    if (recorded) markPendingTxRecorded(contractAddress, proposalHash, action, txHash);
+    else markPendingTxUntracked(contractAddress, proposalHash, action, txHash);
+  });
 }
 
 /** Generic JSON fetch helper with null-on-error semantics for resilient polling. */

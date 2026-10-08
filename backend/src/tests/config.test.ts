@@ -19,4 +19,20 @@ describe('backend configuration', () => {
 
     expect(loadConfig().minaguardVkHash).toBeNull();
   });
+
+  it('reads the CORS allowlist, treating unset or blank as unrestricted', () => {
+    process.env.DATABASE_URL = 'postgresql://localhost/minaguard';
+    process.env.MINA_ENDPOINT = 'http://localhost:8080/graphql';
+    process.env.ARCHIVE_ENDPOINT = 'http://localhost:8282';
+
+    delete process.env.CORS_ORIGINS;
+    expect(loadConfig().corsOrigins).toBeNull();
+    process.env.CORS_ORIGINS = ' , ';
+    expect(loadConfig().corsOrigins).toBeNull();
+    process.env.CORS_ORIGINS = ' https://a.example , HTTPS://B.Example/,';
+    expect(loadConfig().corsOrigins).toEqual(['https://a.example', 'https://b.example']);
+    // A wildcard would never match an Origin header exactly; it means open.
+    process.env.CORS_ORIGINS = '*';
+    expect(loadConfig().corsOrigins).toBeNull();
+  });
 });

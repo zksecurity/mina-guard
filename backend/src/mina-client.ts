@@ -536,6 +536,92 @@ export async function fetchMempoolHashes(
   }
 }
 
+/** One account update of a zkApp command, as the daemon reports it. */
+export interface ZkappCommandUpdate {
+  publicKey: string;
+  /** Base58 token of the account the update targets; null when the node did not report it. */
+  tokenId: string | null;
+  /** True when the update is authorized by a proof against the account's verification key. */
+  isProved: boolean;
+  /** Raw event field lists; each starts with the event type index. */
+  events: string[][];
+  /** Required app-state values, one per state slot, null for "any value".
+   *  Null as a whole when the node did not report them. */
+  stateConditions: Array<string | null> | null;
+}
+
+/** Bounds each node request made while a client waits on a submission check. */
+const SUBMISSION_LOOKUP_TIMEOUT_MS = 5000;
+
+/** Looks up a zkApp command waiting in the daemon's pool by hash and returns
+ *  its account updates. Returns null when the pool does not hold the command
+ *  or the lookup fails. */
+export async function fetchPooledZkappCommand(
+  config: BackendConfig,
+  txHash: string,
+): Promise<ZkappCommandUpdate[] | null> {
+  type Command = {
+    hash: string;
+    zkappCommand?: { accountUpdates?: Array<{ body?: {
+      publicKey?: string;
+      tokenId?: string;
+      events?: string[][];
+      authorizationKind?: { isProved?: boolean };
+      preconditions?: { account?: { state?: Array<string | null> } };
+    } }> };
+  };
+  const query = `query PooledCommand($hashes: [String!]) {
+    pooledZkappCommands(hashes: $hashes) {
+      hash
+      zkappCommand { accountUpdates { body {
+        publicKey tokenId events authorizationKind { isProved } preconditions { account { state } }
+      } } }
+    }
+  }`;
+  try {
+    const data = await graphqlRequest<{ pooledZkappCommands?: Command[] }>(
+      query, config.minaEndpoint, config.minaFallbackEndpoint, { hashes: [txHash] }, SUBMISSION_LOOKUP_TIMEOUT_MS,
+    );
+    const command = (data.pooledZkappCommands ?? []).find((c) => c.hash === txHash);
+    if (!command) return null;
+    return (command.zkappCommand?.accountUpdates ?? []).map(({ body }) => {
+      const state = body?.preconditions?.account?.state;
+      return {
+        publicKey: body?.publicKey ?? '',
+        tokenId: typeof body?.tokenId === 'string' ? body.tokenId : null,
+        isProved: body?.authorizationKind?.isProved === true,
+        events: Array.isArray(body?.events) ? body.events : [],
+        // Null when the node did not report them, so the check fails closed.
+        stateConditions: Array.isArray(state) ? state : null,
+      };
+    });
+  } catch (err) {
+    console.warn('[mina-client] fetchPooledZkappCommand failed', txHash, err);
+    return null;
+  }
+}
+
+/** Fetches the current app state of each address. A missing account maps to
+ *  null. Returns null when the lookup fails. */
+export async function fetchZkappStates(
+  config: BackendConfig,
+  addresses: string[],
+): Promise<Map<string, string[] | null> | null> {
+  const fields = addresses.map((_, i) => `a${i}: account(publicKey: $a${i}) { zkappState }`).join('\n');
+  const params = addresses.map((_, i) => `$a${i}: PublicKey!`).join(', ');
+  const variables = Object.fromEntries(addresses.map((address, i) => [`a${i}`, address]));
+  try {
+    const data = await graphqlRequest<Record<string, { zkappState?: string[] | null } | null>>(
+      `query ZkappStates(${params}) { ${fields} }`,
+      config.minaEndpoint, config.minaFallbackEndpoint, variables, SUBMISSION_LOOKUP_TIMEOUT_MS,
+    );
+    return new Map(addresses.map((address, i) => [address, data[`a${i}`]?.zkappState ?? null]));
+  } catch (err) {
+    console.warn('[mina-client] fetchZkappStates failed', err);
+    return null;
+  }
+}
+
 /**
  * False for events of a transaction the chain reports as failed. Its account
  * updates never applied, so its events describe changes that did not happen
@@ -718,12 +804,13 @@ async function graphqlRequest<T>(
   endpoint: string,
   fallbackEndpoint: string | null,
   variables?: Record<string, unknown>,
+  timeoutMs?: number,
 ): Promise<T> {
-  const primary = await runGraphqlQuery<T>(endpoint, query, variables);
+  const primary = await runGraphqlQuery<T>(endpoint, query, variables, timeoutMs);
   if (primary.ok) return primary.data;
 
   if (fallbackEndpoint) {
-    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query, variables);
+    const fallback = await runGraphqlQuery<T>(fallbackEndpoint, query, variables, timeoutMs);
     if (fallback.ok) return fallback.data;
   }
 
@@ -735,12 +822,14 @@ async function runGraphqlQuery<T>(
   endpoint: string,
   query: string,
   variables?: Record<string, unknown>,
+  timeoutMs?: number,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(variables ? { query, variables } : { query }),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     if (!response.ok) {
       return { ok: false, error: `${response.status} ${response.statusText}` };

@@ -6,7 +6,11 @@ import { Proposal } from '@/lib/types';
 import {
   PENDING_TXS_CHANGED,
   clearPendingTx,
+  backendNoLongerTracks,
   getPendingTxsForContract,
+  markPendingTxUntracked,
+  prunePendingTxs,
+  reportUnanswered,
   type PendingTx,
 } from '@/lib/storage';
 import { useAdaptivePolling } from '@/hooks/useAdaptivePolling';
@@ -95,6 +99,10 @@ export function useTransactions(multisigAddress: string | null) {
         if (indexed.lastExecuteError && indexed.lastExecuteTxHash === pt.txHash) {
           clearPendingTx(pt.contractAddress, pt.proposalHash, 'execute', pt.signerPubkey);
           dirty = true;
+          continue;
+        }
+        if (!pt.untracked && (backendNoLongerTracks(pt, indexed) || reportUnanswered(pt))) {
+          markPendingTxUntracked(pt.contractAddress, pt.proposalHash, 'execute', pt.txHash);
         }
         continue;
       }
@@ -115,6 +123,9 @@ export function useTransactions(multisigAddress: string | null) {
           clearPendingTx(pt.contractAddress, pt.proposalHash, 'approve', pt.signerPubkey);
           dirty = true;
           continue;
+        }
+        if (!pt.untracked && (backendNoLongerTracks(pt, indexed) || reportUnanswered(pt))) {
+          markPendingTxUntracked(pt.contractAddress, pt.proposalHash, 'approve', pt.txHash);
         }
         // Only refetch approvals when the count rose since last tick — the
         // freshly-observed approval might be ours.
@@ -149,6 +160,7 @@ export function useTransactions(multisigAddress: string | null) {
       if (addressRef.current !== multisigAddress) return;
       setProposals(rows);
       setProposalsAddress(multisigAddress);
+      prunePendingTxs();
       const pending = getPendingTxsForContract(multisigAddress);
       void reconcilePendingTxs(multisigAddress, rows, pending);
     } finally {
