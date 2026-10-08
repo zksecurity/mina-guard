@@ -42,6 +42,7 @@ export async function fetchContract(address: string): Promise<ContractSummary | 
 export interface VaultSecurityStatus {
   accountFound: boolean;
   verificationKeyHash: string | null;
+  setVerificationKeyTxnVersion: string | null;
   verificationKeyMatches: boolean;
   permissionKinds: Partial<Record<PermissionFieldName, string>>;
   expectedPermissionKinds: Partial<Record<PermissionFieldName, string>>;
@@ -117,6 +118,7 @@ export async function fetchVaultSecurityStatus(
       return {
         accountFound: false,
         verificationKeyHash: null,
+        setVerificationKeyTxnVersion: null,
         verificationKeyMatches: false,
         permissionKinds: {},
         expectedPermissionKinds: EXPECTED_PERMISSION_KINDS,
@@ -159,6 +161,7 @@ export async function fetchVaultSecurityStatus(
     return {
       accountFound: true,
       verificationKeyHash,
+      setVerificationKeyTxnVersion: setVerificationKey?.txnVersion == null ? null : String(setVerificationKey.txnVersion),
       verificationKeyMatches,
       permissionKinds,
       expectedPermissionKinds: EXPECTED_PERMISSION_KINDS,

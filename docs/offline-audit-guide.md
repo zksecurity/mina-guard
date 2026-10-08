@@ -261,6 +261,25 @@ to the checkpoint's leaves; it no longer processes the full event history.
 
 ### Common fields (`BundleBase`)
 
+Verification-key migration uses a separate **version 2** request and response.
+It is never parsed as a version 1 owner proposal. The UI offers it only when
+the vault's stored `setVerificationKey.txnVersion` is older than this release's
+version and the rest of its permissions are canonical. The request binds the
+vault and fee payer addresses, node account snapshots, installed VK hash and
+version, and the release-pinned replacement VK hash and version. It contains
+no private keys or governance proposal. The offline CLI independently checks
+these fields, compiles the release's `MinaGuard` VK, and refuses a target-hash
+mismatch. `MINA_PRIVATE_KEY` is the saved deploy key; if the fee payer differs,
+`MINA_FEE_PAYER_PRIVATE_KEY` supplies its key. Both remain offline. The CLI
+shows the installed and replacement hashes, network, and vault before signing.
+Its output is a version 2 signed transaction; stdout still contains JSON only.
+The UI checks the command has exactly one signed vault update that changes
+only the VK, rechecks the old VK and version directly with the node, broadcasts,
+then offers a node check for the target VK, current version, and permissions.
+The request snapshot and UI release are not independent proof that a future
+Mina fork accepts the transaction; review the fork and release first. A signed
+request can become stale before broadcast, and the node remains authoritative.
+
 | Field | Type | Purpose |
 |-------|------|---------|
 | `version` | `1` | Request and signed-response format version after the pre-release reset |

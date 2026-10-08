@@ -22,7 +22,8 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Transfer, add/remove owner, threshold change, and delegate execution support.
 - For transfers to new recipient accounts, the executor pays the account-creation cost and transaction fee; see the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
-- Deploy + setup UI flow with session-only zkApp private key usage.
+- Deploy + setup UI flow with a creation-time local deploy-key download. The browser does not persist the key; the creator may retain the downloaded copy. A Mina transaction-version upgrade can make that key sufficient to replace the vault verification key without owner approval. If a fork breaks old proofs and no backup exists, funds may become inaccessible. See the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
+- For an older-version vault, the detail page can export a version 2 VK migration request. A matching reviewed offline CLI release compiles and checks the replacement VK, signs with the saved deploy key and an offline fee payer key, and returns a transaction for the UI to validate and broadcast. The UI verifies the resulting on-chain VK and permissions. A future fork still needs a reviewed compatible release and per-network VK hash before migration is attempted.
 - Child reservations validate governance bounds and initialized root-parent state; successful child setup clears the consumed reservation hash.
 - Child allocations require initialized recipients bound to the sending parent. Complete child setup before funding; ordinary transfers and external deposits to uninitialized children remain unrecoverable until setup succeeds. See [safe child funding](docs/contracts-audit-guide.md#safe-child-funding).
 

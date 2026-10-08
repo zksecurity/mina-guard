@@ -44,7 +44,7 @@ In the supported creation flow, the signed `deploy()` update installs a temporar
 vector whose `setPermissions` field is `proof()`. In the same atomic transaction, the proved
 `setup()` (root) or `reserveForParent()` (child) update overwrites the complete vector with
 `GUARD_PERMISSIONS`, including `setPermissions: impossible()`. This prevents the supported client
-from producing a vault with creator-retained signature authority. Stored-permission checks remain
+from producing a vault with creator-retained signature authority during the stored transaction version. A later version upgrade can make `setVerificationKey` signature-authorized, so the creator-retained deploy key becomes an upgrade authority. Stored-permission checks remain
 mandatory because a creator can bypass the supported flow and deploy a lookalike directly.
 
 ### Trusted computing base
@@ -90,6 +90,9 @@ requires explicit confirmation before anything is signed). Owners with material 
 should treat the offline path as the reference signing flow. The self-contained
 [desktop build](./desktop-audit-guide.md) shrinks the remote-frontend dependency from "the hosting
 operator, continuously" to "the installer you obtained, once."
+At creation, a compromised frontend could also retain the generated deploy key;
+the owner threshold does not protect against that key's post-upgrade signature
+fallback (accepted risk 9).
 
 **Deploy/infra.** Operational security (servers, firewalls, CI, secrets) is documented in the
 private ops repo (`mina-guard-ops/architecture.md`, available to auditors on request) and, for the
@@ -151,7 +154,7 @@ This table maps each claim to its enforcement point and primary test coverage (a
 | Parent state drift and forged prover views void REMOTE approvals | child attaches a RootVault AccountUpdate beneath its proof update and pins parent state via account preconditions | `child.test.ts` (all four lifecycle methods plus an opt-in genuine-proof regression) |
 | REMOTE proposal freshness is bound to the target child | parent attaches the nonce-authority AccountUpdate beneath its propose/approve proof and pins child `ownersCommitment`, `parent`, and `parentNonce` | `child.test.ts` (forged child state during propose and approve) |
 | Governance preserves `0 < threshold ≤ numOwners ≤ MAX_OWNERS` | `setup()`, `executeOwnerChange()`, `executeThresholdChange()` all assert the bounds — the vault can be neither locked (threshold unreachable) nor unbounded | `setup.test.ts`, `governance.test.ts` |
-| No hidden signature authority / later permission downgrade | In the supported atomic flow, proof-authorized `setup()`/`reserveForParent()` overwrite the creator-controlled deployment vector with `GUARD_PERMISSIONS` and seal `setPermissions: impossible()`; backend and online UI reject externally deployed accounts whose stored vector differs | `setup.test.ts`, `child.test.ts`, `vault-security.test.ts`, `routes-subscribe.test.ts`, `indexer-archive-discovery.test.ts`, `indexer-autosubscribe.test.ts` |
+| No hidden signature authority during the stored transaction version | In the supported atomic flow, proof-authorized `setup()`/`reserveForParent()` overwrite the creator-controlled deployment vector with `GUARD_PERMISSIONS` and seal `setPermissions: impossible()`; backend and online UI reject externally deployed accounts whose stored vector differs. `setVerificationKey` has a version-dependent signature fallback; see accepted risk 9 | `setup.test.ts`, `child.test.ts`, `vault-security.test.ts`, `routes-subscribe.test.ts`, `indexer-archive-discovery.test.ts`, `indexer-autosubscribe.test.ts` |
 
 Off-chain, one invariant matters for the trust argument above: **clients recompute the hash they
 sign from the fields they display and verify it equals the selected proposal's identity** —
@@ -187,6 +190,18 @@ attest an independently built deployment artifact.
 | 6 | **F-2026-19130: executors fund new transfer recipients.** The vault sends only approved transfer amounts. The executor pays the account-creation cost (currently 1 MINA per new recipient slot) and the transaction fee, without vault reimbursement. Account existence can change between proposal and execution. If no one pays, an approved transfer can delay higher-nonce proposals because execution requires the next nonce. Owners can execute it themselves or approve and execute a same-nonce replacement. The UI warns at proposal and approval, and estimates the creation cost again before online execution or offline signing. | Accepted residual liveness and executor-cost risk; no contract funding or nonce-ordering change; audit retest is not claimed |
 | 7 | **F-2026-19133: a root vault has no key-loss recovery path.** If fewer independently held owner keys remain available than the threshold, no proposal can lower the threshold, replace an owner, or move funds. Operators must choose an owner count above the threshold by a redundancy margin they accept, keep those keys independently controlled and recoverable, and understand that losing too many keys can permanently strand the root vault's funds. A child vault has parent-authorized reclaim/destroy paths; a root vault does not. | Accepted product design; no emergency recovery key or timelocked bypass is provided |
 | 8 | **Vault events are unauthenticated.** Events need no permission, so any account update can attach events to a vault. The indexer keeps only events whose emitting account update is `Proof`-authorized (the archive API's `authorizationKind`): those come from the vault's own methods, proved against its verification key, which admission already checks is canonical. Undecodable events from its own updates, and events that fail to apply, are recorded with `applyError` and no state change, so none of these can halt indexing or vanish silently. The signature-authorized `deployed` event is not indexed; nothing reads it. Residual: the filter relies on the network verifying proofs (a dev chain with proof verification disabled would accept a dummy proof), and an archive without `authorizationKind` (older than Archive-Node-API v0.0.8) makes indexing fail closed. Clients still check rebuilt stores against the chain before proving. | Mitigated; residual accepted |
+| 9 | **F-2026-19216 / F-2026-19225: transaction-version upgrades expose the deploy key; recovery uses that same trusted key.** Mina reinterprets `setVerificationKey: impossibleDuringCurrentVersion()` as signature-authorized once the stored version is older than the network version. A creator who kept the deploy key, or anyone who obtains it, may replace the vault circuit without owner approval. The creation flow offers an optional creation-time local key download and warns the creator; every vault detail page warns other owners. If a fork breaks the existing proofs and the deploy key was not backed up, the vault may become unusable with funds stuck. Owners who do not accept the key-holder trust must coordinate evacuation before a version upgrade, moving SubVault balances before the root balance. For an older-version vault, the UI exports a separate v2 migration request; the offline CLI checks the pinned replacement VK by compiling the release, signs with the saved deploy and fee payer keys, and the UI checks the signed command and fresh node state before broadcast. The UI can check the on-chain VK, version, and permissions after inclusion. This does not grant the owners a quorum-approved upgrade or guarantee a future fork will support this transaction. There is no proactive upgrade alert, automatic migration, or emergency evacuation workflow. | Disclosed and key-backed migration path; underlying governance bypass remains an accepted creator-trust risk. Fork-specific compatibility and release hashes require review before use. |
+
+Mina's [verification-key permission RFC](https://github.com/MinaProtocol/mina/blob/4.0.0-mainnet/rfcs/0052-verification-key-permissions.md)
+specifies the signature fallback for an older stored transaction version. The
+exact migration behavior is determined for each protocol upgrade, so owners
+must check the announced fork plan before relying on either key recovery or
+pre-upgrade evacuation. The first successful account update on an older-version
+vault refreshes its stored transaction version, even if the verification key is
+unchanged. A key-signed no-op account update can therefore refresh the stored
+version while leaving a broken proof circuit installed. Do not use it as a recovery step
+without establishing post-fork proof compatibility; otherwise replace the
+verification key with a verified compatible key before that window closes.
 
 Operational and UI-level quirks (state staleness windows, preview-cache behavior) are tracked in
 [`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md). Infrastructure risks and their mitigations live in the

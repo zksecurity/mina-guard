@@ -92,12 +92,20 @@ describe('offline-cli', () => {
     expect(result.code).not.toBe(0);
   }, 30_000);
 
-  it.each([2, 3, 99])('rejects incompatible bundle version %i', async (version) => {
+  it.each([3, 99])('rejects incompatible bundle version %i', async (version) => {
     const bundlePath = join(tmpDir, 'bad-version.json');
     writeFileSync(bundlePath, JSON.stringify({ version, action: 'propose' }));
     const result = await runCLI(bundlePath, 'EKtest');
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Unsupported bundle version');
+  }, 30_000);
+
+  it('rejects a version 2 owner action', async () => {
+    const bundlePath = join(tmpDir, 'wrong-v2-action.json');
+    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'propose' }));
+    const result = await runCLI(bundlePath, 'EKtest');
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Owner actions require request format version 1');
   }, 30_000);
 
   it('rejects unknown action', async () => {

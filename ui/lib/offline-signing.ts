@@ -3,6 +3,8 @@ import { computeCreateChildConfigHash, exportStoreCheckpoint } from './multisigC
 import type { StoreCheckpoint } from 'contracts';
 import { OFFLINE_RESPONSE_VERSION } from './offline-format';
 import { getMinaGuardConfig } from './endpoints';
+import { fetchVaultSecurityStatus } from './api';
+import { GUARD_SET_VERIFICATION_KEY_TXN_VERSION } from 'contracts/guard-permission-policy';
 
 export const OFFLINE_BUNDLE_VERSION = 1;
 
@@ -105,6 +107,31 @@ export type OfflineRequestBundle =
   | OfflineApproveBundle
   | OfflineExecuteBundle;
 
+/** Separate format because migration uses the deploy key, not an owner proposal. */
+export interface OfflineMigrationBundle {
+  version: 2;
+  action: 'migrate-verification-key';
+  minaNetwork: 'testnet' | 'mainnet';
+  contractAddress: string;
+  feePayerAddress: string;
+  accounts: Record<string, BundleAccount>;
+  sourceVerificationKeyHash: string;
+  sourceTxnVersion: string;
+  targetVerificationKeyHash: string;
+  targetTxnVersion: string;
+}
+
+export interface OfflineMigrationResponse {
+  version: 2;
+  type: 'offline-signed-tx';
+  action: 'migrate-verification-key';
+  contractAddress: string;
+  feePayerAddress: string;
+  sourceVerificationKeyHash: string;
+  targetVerificationKeyHash: string;
+  transaction: unknown;
+}
+
 export interface OfflineSignedTxResponse {
   version: typeof OFFLINE_RESPONSE_VERSION;
   type: 'offline-signed-tx';
@@ -152,7 +179,7 @@ async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
       tokenSymbol
       receiptChainHash
       timing { initialMinimumBalance cliffTime cliffAmount vestingPeriod vestingIncrement }
-      permissions { editState send receive setDelegate setPermissions setVerificationKey setZkappUri editActionState setTokenSymbol incrementNonce setVotingFor setTiming }
+      permissions { editState send receive setDelegate setPermissions setVerificationKey setZkappUri editActionState setTokenSymbol incrementNonce setVotingFor setTiming access }
       delegateAccount { publicKey }
       votingFor
       zkappState
@@ -174,6 +201,39 @@ async function fetchGraphQLAccount(address: string): Promise<BundleAccount> {
 async function checkAccountExists(address: string): Promise<boolean> {
   const account = await fetchGraphQLAccount(address);
   return !!account;
+}
+
+export async function buildOfflineMigrationBundle(contractAddress: string, feePayerAddress: string): Promise<OfflineMigrationBundle> {
+  const targetVerificationKeyHash = process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH?.trim();
+  if (!targetVerificationKeyHash) throw new Error('This release has no pinned, reviewed verification-key hash.');
+  const status = await fetchVaultSecurityStatus(contractAddress);
+  if (!status?.accountFound || !status.verificationKeyHash || !status.setVerificationKeyTxnVersion ||
+      status.permissionKinds.setVerificationKey !== 'Impossible' ||
+      status.setVerificationKeyTxnVersion === GUARD_SET_VERIFICATION_KEY_TXN_VERSION ||
+      status.permissionMismatches.some((name) => name !== 'setVerificationKey')) {
+    throw new Error('This vault is not eligible for the release-guided verification-key migration.');
+  }
+  if (!/^\d+$/.test(status.setVerificationKeyTxnVersion) ||
+      Number(status.setVerificationKeyTxnVersion) >= Number(GUARD_SET_VERIFICATION_KEY_TXN_VERSION)) {
+    throw new Error('The vault transaction version is not older than this release.');
+  }
+  const [contract, feePayer] = await Promise.all([
+    fetchGraphQLAccount(contractAddress), fetchGraphQLAccount(feePayerAddress),
+  ]);
+  const permission = contract?.permissions?.setVerificationKey as { auth?: string; txnVersion?: string } | undefined;
+  if (!contract || !feePayer || contract.verificationKey?.hash !== status.verificationKeyHash ||
+      permission?.auth !== 'Impossible' || String(permission.txnVersion) !== status.setVerificationKeyTxnVersion) {
+    throw new Error('Vault state changed while preparing the request. Refresh and retry.');
+  }
+  return {
+    version: 2, action: 'migrate-verification-key', minaNetwork: minaNetwork(),
+    contractAddress, feePayerAddress,
+    accounts: { [contractAddress]: contract, [feePayerAddress]: feePayer },
+    sourceVerificationKeyHash: status.verificationKeyHash,
+    sourceTxnVersion: status.setVerificationKeyTxnVersion,
+    targetVerificationKeyHash,
+    targetTxnVersion: GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
+  };
 }
 
 export async function buildOfflineProposeBundle(params: {

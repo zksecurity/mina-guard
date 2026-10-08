@@ -25,6 +25,7 @@ import {
 import { resolveIndexerMode } from '@/lib/indexer-mode';
 import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
+import VaultHardForkNotice from '@/components/VaultHardForkNotice';
 
 const NETWORKS = [
   { label: 'Testnet', value: 'testnet', enabled: true },
@@ -82,6 +83,7 @@ function CreateAccountWizard() {
   // the state when allContractOwners arrives later and the user hasn't typed
   // anything yet.
   const [keypair, setKeypair] = useState<{ privateKey: string; publicKey: string } | null>(null);
+  const [riskAccepted, setRiskAccepted] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [ownerFields, setOwnerFields] = useState<string[]>(() =>
     isSubaccount && parentOwners.length > 0 ? parentOwners : [''],
@@ -96,10 +98,33 @@ function CreateAccountWizard() {
     try {
       const kp = await generateKeypair();
       setKeypair(kp);
+      setRiskAccepted(false);
     } finally {
       setGenerating(false);
     }
   }, []);
+
+  const downloadDeployKey = () => {
+    if (!keypair) return;
+    const contents = [
+      'MinaGuard deploy key — keep this file private',
+      `Vault address: ${keypair.publicKey}`,
+      `Deploy private key: ${keypair.privateKey}`,
+      '',
+      'Anyone with this key may replace the vault verification key after a Mina',
+      'transaction-version upgrade. Store offline and securely. Do not share it',
+      'with the app, other websites, or support staff.',
+      '',
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([contents], { type: 'text/plain' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `minaguard-deploy-key-${keypair.publicKey}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   useEffect(() => {
     if (wallet.connected && !keypair && !generating && step === 2) {
@@ -148,6 +173,10 @@ function CreateAccountWizard() {
     const error = validateStep2();
     if (error) { setFormError(error); return; }
     if (!wallet.address || !keypair) return;
+    if (!riskAccepted) {
+      setFormError('Confirm that you understand the deploy-key and hard fork risk.');
+      return;
+    }
 
     setFormError(null);
     const captured = {
@@ -200,6 +229,10 @@ function CreateAccountWizard() {
     const error = validateStep2();
     if (error) { setFormError(error); return; }
     if (!wallet.address || !parentAddress || !parentContract || !keypair) return;
+    if (!riskAccepted) {
+      setFormError('Confirm that you understand the deploy-key and hard fork risk.');
+      return;
+    }
     if (parentContract.configNonce == null) {
       setFormError('The Vault is not fully indexed yet, try again in a moment.');
       return;
@@ -401,11 +434,30 @@ function CreateAccountWizard() {
                         <p className="text-sm font-mono break-all bg-safe-dark border border-safe-border rounded-lg px-3 py-2">
                           {keypair.publicKey}
                         </p>
-                        <button onClick={generate} className="text-xs text-safe-green hover:underline">
+                        <button onClick={generate} disabled={isOperating || generating} className="text-xs text-safe-green hover:underline disabled:opacity-50">
                           Regenerate
                         </button>
                       </div>
                     ) : null}
+
+                    {keypair && (
+                      <div className="space-y-3">
+                        <VaultHardForkNotice creating />
+                        <button type="button" onClick={downloadDeployKey} disabled={isOperating}
+                          className="rounded-lg border border-amber-500/50 px-3 py-2 text-sm text-amber-100 hover:bg-amber-500/10">
+                          Download deploy key for recovery
+                        </button>
+                        <p className="text-xs text-safe-text">
+                          The file contains a private key. Move it to secure offline storage and remove
+                          unprotected copies from Downloads or cloud sync. If you regenerate the address,
+                          download the new key. MinaGuard cannot recover it.
+                        </p>
+                        <label className="flex gap-2 text-sm text-safe-text">
+                          <input type="checkbox" checked={riskAccepted} onChange={(e) => setRiskAccepted(e.target.checked)} />
+                          <span>I understand that keeping this key may enable recovery but anyone who obtains it could bypass owner approval after a transaction-version upgrade. If I do not keep it, I may need to move funds before the upgrade.</span>
+                        </label>
+                      </div>
+                    )}
 
                     {/* Owners */}
                     <div className="space-y-2">
@@ -499,7 +551,7 @@ function CreateAccountWizard() {
                 ) : isSubaccount ? (
                   <button
                     disabled={
-                      isOperating || !parentContract || !parentPermissionsSafe
+                      isOperating || !parentContract || !parentPermissionsSafe || !riskAccepted
                     }
                     onClick={handleProposeSubaccount}
                     className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
@@ -515,7 +567,7 @@ function CreateAccountWizard() {
                   </button>
                 ) : (
                   <button
-                    disabled={!keypair || isOperating}
+                    disabled={!keypair || isOperating || !riskAccepted}
                     onClick={handleDeploy}
                     className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
                   >

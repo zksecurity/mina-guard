@@ -560,8 +560,8 @@ proof-authorized `setup()` or `reserveForParent()` update overwrites the complet
 
 Both vectors are defined in `contracts/src/guard-permissions.ts`, with the temporary vector derived
 from the canonical one by overriding only `setPermissions`. If the atomic initialization succeeds,
-the one-shot deploy key is powerless afterward: every state/fund knob requires a proof and every
-permission knob is `impossible`. If a creator weakens `send` in the deployment update, the proved
+the deploy key cannot change the verification key during the stored transaction version: every state/fund knob requires a proof and `setPermissions` is `impossible`.
+After a transaction-version upgrade, Mina can reinterpret the versioned `setVerificationKey` permission as `Signature`; a retained key could replace the proof circuit. If a creator weakens `send` in the deployment update, the proved
 initialization overwrites it. If the creator makes `setPermissions` impossible early, the proved
 write cannot execute and the entire atomic creation transaction fails.
 
@@ -660,7 +660,7 @@ match, and compiles both distinct domains on a cache miss).
 | MINA receivable | `receive: Permissions.none()` allows deposits without proof |
 | State changes proof-only | `editState: Permissions.proof()` — no signature fallback |
 | Permission downgrade prevented after canonical deployment | `setPermissions: Permissions.impossible()`; online consumers first verify the complete stored vector against `GUARD_PERMISSIONS` |
-| Verification key immutable | `setVerificationKey: impossibleDuringCurrentVersion` |
+| Verification key pinned during the stored transaction version | `setVerificationKey: impossibleDuringCurrentVersion`; after a transaction-version upgrade, signature fallback exposes the retained deploy key |
 | Bounded circuit size | `MAX_OWNERS = 20`, `MAX_RECEIVERS = 9` |
 
 ## UI model

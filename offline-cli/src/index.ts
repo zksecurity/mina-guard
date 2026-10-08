@@ -32,6 +32,7 @@ import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType }
 import type { OfflineBundle } from './build-tx.js';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
 import { escapeTerminalLines } from './terminal-safe.js';
+import { handleMigration, renderMigrationSummary, type MigrationBundle } from './migrate-vk.js';
 
 // Messages can quote bundle values, so they are escaped like the summary.
 function log(msg: string) {
@@ -58,7 +59,8 @@ if (!bundlePath || !rawKey) {
     'Usage: MINA_PRIVATE_KEY=EKE... mina-guard-cli <bundle.json> [--yes] [> signed.json]\n' +
     '\n' +
     '  bundle.json        Path to the request bundle exported from the Mina Guard UI\n' +
-    '  MINA_PRIVATE_KEY   Mina private key (base58, starts with EKE...)\n' +
+    '  MINA_PRIVATE_KEY   Mina private key (base58, starts with EKE...); deploy key for migration\n' +
+    '  MINA_FEE_PAYER_PRIVATE_KEY  Optional second fee payer key for migration\n' +
     '  --yes, -y          Skip the interactive sign confirmation; required when\n' +
     '                     running without a terminal (also MINA_GUARD_ASSUME_YES=1)\n' +
     '\n' +
@@ -71,10 +73,10 @@ const privateKey: string = rawKey;
 
 // -- Read bundle ------------------------------------------------------------
 
-function readBundle(path: string): OfflineBundle {
+function readBundle(path: string): OfflineBundle | MigrationBundle {
   try {
     const raw = readFileSync(path, 'utf-8');
-    return JSON.parse(raw) as OfflineBundle;
+    return JSON.parse(raw) as OfflineBundle | MigrationBundle;
   } catch (err) {
     fatal(`Error reading bundle: ${err}`);
   }
@@ -82,17 +84,30 @@ function readBundle(path: string): OfflineBundle {
 
 const bundle = readBundle(bundlePath);
 
-if (bundle.version !== 1) {
-  fatal(`Unsupported bundle version: ${bundle.version} (expected 1; export a new request with the current UI)`);
+if (bundle.version !== 1 && bundle.version !== 2) {
+  fatal(`Unsupported bundle version: ${(bundle as { version: unknown }).version} (expected 1 or migration version 2)`);
 }
 
-if (!['propose', 'approve', 'execute'].includes(bundle.action)) {
+if (!['propose', 'approve', 'execute', 'migrate-verification-key'].includes(bundle.action)) {
   fatal(`Unknown bundle action: ${JSON.stringify((bundle as { action?: unknown }).action ?? null)}`);
 }
 
 // -- Dispatch ---------------------------------------------------------------
 
 async function main() {
+  if (bundle.action === 'migrate-verification-key') {
+    if (bundle.version !== 2) fatal('Migration requires request format version 2.');
+    let summary: string;
+    try { summary = renderMigrationSummary(bundle); }
+    catch (error) { fatal(`Invalid migration request: ${error instanceof Error ? error.message : String(error)}`); }
+    confirmOrExit(summary, { assumeYes }, log);
+    const feeKey = process.env.MINA_FEE_PAYER_PRIVATE_KEY ?? privateKey;
+    const result = await handleMigration(bundle, privateKey, feeKey, log);
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    log('Signed migration transaction written to stdout. Import it into the Vault migration screen.');
+    return;
+  }
+  if (bundle.version !== 1) fatal('Owner actions require request format version 1.');
   // Refuse an unknown transaction type before showing anything, and turn a
   // numeric code into its name, so the summary and the builder agree on it.
   try {

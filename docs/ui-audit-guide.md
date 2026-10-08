@@ -135,9 +135,10 @@ reclaimable.
   └──────────────┘                     └──────────────┘
 ```
 
-- **The UI never holds long-lived signing keys.** Owner keys live in Auro or on the
-  Ledger. The only private key the UI ever handles is the *ephemeral zkApp deploy
-  key*, which is generated in-browser and used for a single transaction.
+- **The UI does not persist signing keys.** Owner keys live in Auro or on the
+  Ledger. The UI generates a zkApp deploy key in-browser and offers a creation-time
+  local download before creation. The creator may retain that key for recovery;
+  it remains a latent verification-key authority after a transaction-version upgrade.
 - **Heavy crypto runs in a Web Worker.** The worker compiles the contract and
   generates proofs. It calls *back* to the main thread for anything requiring a
   signer or network egress, via Comlink-proxied callbacks.
@@ -381,15 +382,37 @@ hash for that action is not this record's (`backendNoLongerTracks`). A report
 the backend never answered within two minutes, say after a reload mid-report,
 is marked the same way (`reportUnanswered`).
 
-**5. Ephemeral zkApp key lifecycle & local storage.**
+**5. zkApp deploy key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
-(`generateKeypair`), generated for a single tx and not persisted. It is
-powerless after a successful atomic creation: proof-authorized `setup()` (root)
-or `reserveForParent()` (child) overwrites the signed deployment update with
-the canonical proof-only permission vector and permanently seals it in the
-same transaction. The UI must never broadcast `deploy()` alone. The same
-applies to the child key inside the CREATE_CHILD propose tx. `lib/storage.ts`
-holds non-secret prefs + pending-tx metadata.
+(`generateKeypair`). It is not persisted by the app. Before root creation or
+CREATE_CHILD submission, the creator can optionally download it locally and must
+acknowledge the trust risk. Regenerating the key resets the acknowledgement.
+The file contains plaintext secret material, so a creator who downloads it must
+move it to secure offline storage and remove unprotected Downloads copies.
+Proof-authorized `setup()` (root) or `reserveForParent()` (child) overwrites
+the signed deployment update with the canonical permission vector and seals
+`setPermissions` in the same transaction. The UI must never broadcast
+`deploy()` alone. During the stored transaction version the deploy key cannot
+replace the verification key; a later version upgrade can make that permission
+signature-authorized. Every vault detail page warns owners about this boundary
+and that a fork which breaks old proofs can leave funds inaccessible if the
+deploy key was not backed up. It also explains the option to evacuate before
+a version upgrade. `lib/storage.ts` holds
+non-secret prefs + pending-tx metadata.
+
+When the node reports an older `setVerificationKey.txnVersion` with the other
+permissions still canonical, the Vault detail page offers the deploy-key
+migration flow. It displays the installed and release-pinned replacement VK
+hashes, exports a version 2 request, and imports the offline CLI's signed
+response. The import checks the response binding and command shape, then
+rechecks the installed VK, version, and permissions against the Mina node
+before broadcast. After inclusion, the user can check the on-chain VK hash,
+stored version, and complete permission vector. The saved deploy key is used
+only in the offline CLI; a separate offline fee payer key is needed unless
+the deploy key also funds the fee. The UI does not infer proof compatibility
+from the version number. A release for a future fork must first review the
+replacement circuit, its VK hash, and that fork's signing rules. Normal owner
+actions remain blocked until the full security check passes.
 
 **6. Test-only escape hatches.**
 `setTestKey` / `setSkipProofs` enable direct signing and dummy proofs, gated
