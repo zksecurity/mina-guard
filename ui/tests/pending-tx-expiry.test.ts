@@ -130,15 +130,19 @@ describe('reportSubmission', () => {
 });
 
 describe('backendNoLongerTracks', () => {
-  const row = (hash: string | null) => ({ lastApproveTxHash: hash, lastExecuteTxHash: null });
+  const row = (hash: string | null, error: string | null = null) => ({
+    lastApproveTxHash: hash, lastApproveError: error, lastExecuteTxHash: null, lastExecuteError: null,
+  });
   const mine = { ...record('1', 'tx-mine', 0), recorded: true };
 
   test('is true once a recorded report is not the hash the backend tracks', () => {
     expect(backendNoLongerTracks(mine, row('tx-other'))).toBe(true); // replaced, still live
-    // The replacement already failed, or was applied and cleared before this
-    // poll: the backend will never report tx-mine's failure either way.
+    expect(backendNoLongerTracks(mine, row('tx-other', 'dropped'))).toBe(true); // replaced, already failed
+    // The replacement was applied and cleared before this poll.
     expect(backendNoLongerTracks(mine, row(null))).toBe(true);
     expect(backendNoLongerTracks(mine, row('tx-mine'))).toBe(false);
+    // Our own failure is the caller's normal cleanup, not a lost report.
+    expect(backendNoLongerTracks(mine, row('tx-mine', 'dropped'))).toBe(false);
   });
 
   test('does not judge a report the backend has not answered', () => {
