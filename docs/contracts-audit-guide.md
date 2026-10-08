@@ -560,8 +560,10 @@ proof-authorized `setup()` or `reserveForParent()` update overwrites the complet
 
 Both vectors are defined in `contracts/src/guard-permissions.ts`, with the temporary vector derived
 from the canonical one by overriding only `setPermissions`. If the atomic initialization succeeds,
-the one-shot deploy key is powerless afterward: every state/fund knob requires a proof and every
-permission knob is `impossible`. If a creator weakens `send` in the deployment update, the proved
+the one-shot deploy key is powerless while the network remains on the transaction version stamped
+at deployment ([security guide, accepted risk 9](./security-audit-guide.md#accepted-risks-and-known-limitations)):
+every state/fund knob requires a proof and every permission knob is `impossible`. If a creator
+weakens `send` in the deployment update, the proved
 initialization overwrites it. If the creator makes `setPermissions` impossible early, the proved
 write cannot execute and the entire atomic creation transaction fails.
 
