@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { checkTransactionState, nodeAccountReader } from '../lib/transaction-preflight';
-import { AccountUpdate, Bool, Field, PrivateKey, TokenId } from 'o1js';
+import { classifyDeployTarget } from '../lib/deploy-target';
+import { AccountUpdate, Bool, Field, PrivateKey, TokenId, fetchAccount } from 'o1js';
 function update(publicKey: string, state: Array<string | null>, appState = state.map(() => null) as Array<string | null>, tokenId = '1') {
   return { body: { publicKey, tokenId, preconditions: { account: { state, isNew: null as boolean | null } }, update: { appState } } };
 }
@@ -49,13 +50,55 @@ describe('pre-broadcast state check', () => {
     });
     expect(result.status).toBe('current'); expect(json).toBe(tx(AccountUpdate.toJSON(au)));
   });
-  test('node reader bypasses caches and rejects incomplete/error responses', async () => {
+  test('reads a bare account as zeros; only an isNew precondition on it is stale', async () => {
+    const bare = async () => 'bare' as const;
+    expect((await checkTransactionState(tx(update('vault', [null, null], ['0', '7']), update('vault', ['0', '7'], ['1', '8'])), bare)).status).toBe('current');
+    expect((await checkTransactionState(tx(update('vault', ['0'], ['1'])), bare)).status).toBe('current');
+    expect((await checkTransactionState(tx(update('vault', ['5'])), bare)).status).toBe('stale');
+    const item = update('vault', [null], ['1']);
+    item.body.preconditions.account.isNew = true;
+    expect((await checkTransactionState(tx(item), bare)).status).toBe('stale');
+  });
+  test('node reader bypasses caches, tells absent from bare, and rejects incomplete/error responses', async () => {
     const original = globalThis.fetch;
+    const serve = (payload: unknown) => {
+      globalThis.fetch = (async (_url, init) => { expect(init?.cache).toBe('no-store'); return new Response(JSON.stringify(payload)); }) as typeof fetch;
+    };
     try {
-      for (const payload of [{ errors: [{ message: 'unavailable' }] }, { data: {} }, { data: { account: { zkappState: null } } }]) {
-        globalThis.fetch = (async (_url, init) => { expect(init?.cache).toBe('no-store'); return new Response(JSON.stringify(payload)); }) as typeof fetch;
+      for (const payload of [{ errors: [{ message: 'unavailable' }] }, { data: {} }, { data: { account: {} } }, { data: { account: { zkappState: '7' } } }]) {
+        serve(payload);
         await expect(nodeAccountReader('http://node')('vault', '1')).rejects.toThrow();
       }
+      serve({ data: { account: null } });
+      expect(await nodeAccountReader('http://node')('vault', '1')).toBeNull();
+      serve({ data: { account: { zkappState: null } } });
+      expect(await nodeAccountReader('http://node')('vault', '1')).toBe('bare');
+      serve({ data: { account: { zkappState: ['1', '2'] } } });
+      expect(await nodeAccountReader('http://node')('vault', '1')).toEqual(['1', '2']);
+    } finally { globalThis.fetch = original; }
+  });
+  test('a deployment into a bare account passes the target check and the state check from one node answer', async () => {
+    const address = PrivateKey.random().toPublicKey();
+    // What the node answers for an account a plain payment created: every zkApp field is null.
+    const bareAccount = {
+      publicKey: address.toBase58(), token: TokenId.toBase58(TokenId.default), nonce: '0', balance: { total: '1000000000' },
+      tokenSymbol: '', receiptChainHash: null, delegateAccount: null, votingFor: null, permissions: null,
+      timing: { initialMinimumBalance: null, cliffTime: null, cliffAmount: null, vestingPeriod: null, vestingIncrement: null },
+      zkappState: null, verificationKey: null, actionState: null, provedState: null, zkappUri: null,
+    };
+    const deploy = AccountUpdate.create(address);
+    deploy.body.update.appState[0] = { isSome: Bool(true), value: Field(7) };
+    const setup = AccountUpdate.create(address);
+    setup.body.preconditions.account.state[0] = { isSome: Bool(true), value: Field(7) };
+    setup.body.update.appState[0] = { isSome: Bool(true), value: Field(8) };
+    const json = tx(AccountUpdate.toJSON(deploy), AccountUpdate.toJSON(setup));
+    const original = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response(JSON.stringify({ data: { account: bareAccount } }))) as unknown as typeof fetch;
+      expect(classifyDeployTarget(await fetchAccount({ publicKey: address }, 'http://node'))).toBe('existing');
+      expect((await checkTransactionState(json, nodeAccountReader('http://node'))).status).toBe('current');
+      globalThis.fetch = (async () => new Response(JSON.stringify({ data: { account: {} } }))) as unknown as typeof fetch;
+      expect((await checkTransactionState(json, nodeAccountReader('http://node'))).status).toBe('unavailable');
     } finally { globalThis.fetch = original; }
   });
 });
