@@ -50,7 +50,7 @@ function configure(networkId: string | undefined) {
     fetchedUrls.push(String(url));
     if (init?.method === 'POST') {
       const { variables } = JSON.parse(String(init.body));
-      return Response.json({ data: { account: { publicKey: variables.publicKey } } });
+      return Response.json({ data: { account: { publicKey: variables.publicKey, nonce: '0', balance: { total: '1000000000' }, zkappState: null } } });
     }
     return Response.json([]);
   }) as typeof fetch;
@@ -119,5 +119,25 @@ describe('offline allocation snapshots', () => {
     expect(Object.keys(bundle.accounts).sort()).toEqual(['child-a', 'child-b', 'payer', 'vault']);
     expect(bundle.accounts['child-a'].publicKey).toBe('child-a');
     expect(bundle.receiverAccountExists).toEqual({ 'child-a': true, 'child-b': true });
+  });
+});
+
+describe('account snapshots', () => {
+  it('fails the export when the node answers with an error instead of an account', async () => {
+    configure('testnet');
+    globalThis.fetch = (async (url, init) => {
+      if (init?.method === 'POST') return Response.json({ errors: [{ message: 'node busy' }] });
+      return Response.json([]);
+    }) as typeof fetch;
+    await expect(buildOfflineApproveBundle({ ...common, proposal })).rejects.toThrow('Could not fetch account');
+  });
+
+  it('fails the export when an account answer lacks the fields the CLI decides from', async () => {
+    configure('testnet');
+    globalThis.fetch = (async (url, init) => {
+      if (init?.method === 'POST') return Response.json({ data: { account: { publicKey: 'vault' } } });
+      return Response.json([]);
+    }) as typeof fetch;
+    await expect(buildOfflineApproveBundle({ ...common, proposal })).rejects.toThrow('Incomplete account snapshot');
   });
 });

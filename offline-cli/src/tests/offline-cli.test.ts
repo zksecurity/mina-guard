@@ -30,7 +30,7 @@ import {
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot } from '../build-tx.ts';
 import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
@@ -126,6 +126,33 @@ describe('offline-cli', () => {
     expect(result.stderr).not.toContain('====');
     expect(result.stdout).toBe('');
   }, 30_000);
+
+  describe('deployTargetFromSnapshot', () => {
+    const bare = { publicKey: 'B62qchild', nonce: '0', verificationKey: null, zkappState: null } as any;
+
+    it('funds a child the bundle has no snapshot for, and deploys into a bare account without funding', () => {
+      expect(deployTargetFromSnapshot(undefined)).toBe('new');
+      expect(deployTargetFromSnapshot(bare)).toBe('existing');
+      expect(deployTargetFromSnapshot({ ...bare, zkappState: ['0', '0', '0'] })).toBe('existing');
+    });
+
+    it('refuses a child address that already holds a zkApp', () => {
+      expect(() => deployTargetFromSnapshot({ ...bare, verificationKey: { verificationKey: 'vk', hash: '1' } }))
+        .toThrow('already holds a zkApp');
+      expect(() => deployTargetFromSnapshot({ ...bare, zkappState: ['0', '5'] })).toThrow('already holds a zkApp');
+    });
+  });
+
+  it('tells the signer whether a createChild propose pays the child creation fee', () => {
+    const CHILD = 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY';
+    const propose = (accounts: Record<string, unknown>) => ({
+      version: 1, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, accounts, events: [], configNonce: 0,
+      input: { txType: 'createChild', nonce: 0, childAccount: CHILD, childOwners: [CHILD], childThreshold: 1 },
+    }) as any;
+    expect(renderBundleSummary(propose({}))).toContain('new, 1 MINA creation fee');
+    expect(renderBundleSummary(propose({ [CHILD]: { publicKey: CHILD } }))).toContain('exists, no creation fee');
+  });
 
   it('accepts only the ten transaction types, by name or number', () => {
     expect(requireTxType('transfer')).toBe('transfer');

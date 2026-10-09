@@ -5,7 +5,7 @@ Online creation checks whether the exact proposal already exists before requesti
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** the actual transaction app-state preconditions are compared with fresh node state before sending (before Auro wallet handoff). Stale transactions require explicit, eligibility-checked recovery. Node failures block broadcast; a successful check does not guarantee inclusion. See [design and boundaries](transaction-coordination-design.md). Permission-loading notices on vault and proposal pages are delayed and neutral; action gates remain fail-closed.
+**Pre-broadcast state checks:** the actual transaction app-state preconditions are compared with fresh node state before sending (before Auro wallet handoff). Stale transactions require explicit, eligibility-checked recovery. A deploy target that exists without zkApp state (the node answers `zkappState: null` for an account a payment created) is read as all zeros, as the chain reads it, so a deployment into it is checked like any other; an answer that omits the field blocks the broadcast. Node failures block broadcast; a successful check does not guarantee inclusion. See [design and boundaries](transaction-coordination-design.md). Permission-loading notices on vault and proposal pages are delayed and neutral; action gates remain fail-closed.
 
 Online progress follows the submission boundary: Auro shows “Checking latest vault state…” after proving, then “Waiting for wallet confirmation…” only after the check passes. Ledger requests wallet confirmation first, checks the signed transaction, then shows “Broadcasting transaction…”. Early store/root mismatches offer explicit Retry / Cancel; the post-proof check uses the recovery panel.
 
@@ -268,7 +268,12 @@ A guard that is deployed but not yet configured could be controlled by whoever
 calls `setup()` first.
   - Top-level vaults use the atomic `deployAndSetupContract` — one tx doing
     `fundNewAccount` + `deploy` + `setup`; the worker exposes no separate
-    deploy-only or setup-only API.
+    deploy-only or setup-only API. The creation fee is paid only when the node
+    has no account at the address (`classifyDeployTarget`, `lib/deploy-target.ts`):
+    anyone can create the bare account first by paying into it, which fails a
+    deployment that declares a new account, so a bare account is deployed into
+    as it is, and an address that already carries a verification key or app
+    state is refused. The same rule applies to the child in CREATE_CHILD.
   - CREATE_CHILD spans two transactions by design: the propose tx does
     `deploy(child)` + `reserveForParent(child)` + `propose(parent)` atomically
     (`worker.ts:979-1003`); the later `executeSetupChild` is bound on-chain to
@@ -279,7 +284,9 @@ calls `setup()` first.
   - Account-creation fees on execute are counted from the hash-bound
     `proposalStruct.receivers`, never the raw backend array
     (`worker.ts:1142-1153`), so indexer rows beyond `MAX_RECEIVERS` can't
-    inflate the executor-signed fee.
+    inflate the executor-signed fee. A receiver counts as new only when the
+    node answers "no such account" (`receiverExists`); any other node error
+    stops the build, since a wrong guess fails the transaction after proving.
 
 **3. Indexer-supplied data feeding into signed transactions.**
 The backend is untrusted (see threat model), yet its data rebuilds the Merkle
@@ -383,7 +390,10 @@ never reports the earlier tx's failure. An accepted report marks its record
 `recorded`; reconciliation then marks it `untracked` as soon as the backend's
 hash for that action is not this record's (`backendNoLongerTracks`). A report
 the backend never answered within two minutes, say after a reload mid-report,
-is marked the same way (`reportUnanswered`).
+is marked the same way (`reportUnanswered`). SubVault creation records (`kind: 'create'` with a `createChild` summary) use
+the same 20-minute window: a failed creation emits no proposal, and the
+best-chain probe covers only recent blocks, so nothing else would ever clear
+them.
 
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key

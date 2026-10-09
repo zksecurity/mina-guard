@@ -1,6 +1,8 @@
 /** Public transaction data only. This check never edits or signs the transaction. */
 export type PreflightResult = { status: 'current' | 'stale' | 'unavailable'; message?: string };
-export type AccountState = string[] | null;
+/** The node's view of one account: its app state, `'bare'` for an account that
+ * exists without zkApp state (a plain payment created it), or `null` for none. */
+export type AccountState = string[] | 'bare' | null;
 export type ReadAccount = (publicKey: string, tokenId: string) => Promise<AccountState>;
 
 const decimal = (x: unknown): x is string => typeof x === 'string' && /^(0|[1-9][0-9]*)$/.test(x);
@@ -9,6 +11,8 @@ const decimal = (x: unknown): x is string => typeof x === 'string' && /^(0|[1-9]
  * Repeated updates are evaluated in transaction order, including in-tx writes.
  * An absent account can be initialized by an unconstrained deployment update;
  * otherwise a missing account requires an explicit isNew precondition.
+ * A bare account reads as all-zero state, which is what a deployment into it
+ * initializes; an isNew precondition on it is stale, since the account exists.
  */
 export async function checkTransactionState(txJson: string, read: ReadAccount): Promise<PreflightResult> {
   try {
@@ -27,8 +31,9 @@ export async function checkTransactionState(txJson: string, read: ReadAccount): 
       const key = JSON.stringify([body.publicKey, body.tokenId]);
       if (!states.has(key)) states.set(key, await read(body.publicKey, body.tokenId));
       let actual = states.get(key)!;
-      if (actual === null) {
-        if (body.preconditions.account.isNew !== true && expected.some((value: unknown) => value !== null)) return { status: 'stale' };
+      if (actual === null || actual === 'bare') {
+        const isNew = body.preconditions.account.isNew === true;
+        if (actual === null ? !isNew && expected.some((value: unknown) => value !== null) : isNew) return { status: 'stale' };
         actual = Array(expected.length).fill('0');
       }
       if (actual.length !== expected.length || !actual.every(decimal)) throw new Error('Incomplete account state');
@@ -57,8 +62,12 @@ export function nodeAccountReader(endpoint: string): ReadAccount {
     if (!response.ok) throw new Error('Node unavailable');
     const json = await response.json();
     if (json.errors?.length || !json.data || !('account' in json.data)) throw new Error('Incomplete node response');
-    if (json.data.account === null) return null;
-    const state = json.data.account.zkappState;
+    const account = json.data.account;
+    if (account === null) return null;
+    // The field must be answered: `null` is a bare account, an array its state.
+    if (typeof account !== 'object' || !('zkappState' in account)) throw new Error('Missing app state');
+    const state = account.zkappState;
+    if (state === null) return 'bare';
     if (!Array.isArray(state)) throw new Error('Missing app state');
     return state;
   };

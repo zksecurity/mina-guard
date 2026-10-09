@@ -68,6 +68,17 @@ describe('pending records the backend refused to track', () => {
     expect(getPendingTxs().map((r) => r.txHash)).toEqual(['tracked-old', 'untracked-new']);
   });
 
+  test('a SubVault creation expires after 20 minutes too; other creations keep the day', () => {
+    const create = (proposalHash: string, txHash: string, ageMs: number, txType: string): PendingTx => ({
+      ...record(proposalHash, txHash, ageMs), kind: 'create',
+      summary: { txType } as PendingTx['summary'],
+    });
+    savePendingTx(create('7', 'transfer-old', 25 * MINUTE, 'transfer'));
+    savePendingTx(create('8', 'create-new', 5 * MINUTE, 'createChild'));
+    savePendingTx(create('9', 'create-old', 25 * MINUTE, 'createChild'));
+    expect(getPendingTxs().map((r) => r.txHash)).toEqual(['transfer-old', 'create-new']);
+  });
+
   test('marking touches only the record for that transaction', () => {
     savePendingTx(record('1', 'tx-a', 0));
     changes = 0;
@@ -119,15 +130,19 @@ describe('reportSubmission', () => {
 });
 
 describe('backendNoLongerTracks', () => {
-  const row = (hash: string | null) => ({ lastApproveTxHash: hash, lastExecuteTxHash: null });
+  const row = (hash: string | null, error: string | null = null) => ({
+    lastApproveTxHash: hash, lastApproveError: error, lastExecuteTxHash: null, lastExecuteError: null,
+  });
   const mine = { ...record('1', 'tx-mine', 0), recorded: true };
 
   test('is true once a recorded report is not the hash the backend tracks', () => {
     expect(backendNoLongerTracks(mine, row('tx-other'))).toBe(true); // replaced, still live
-    // The replacement already failed, or was applied and cleared before this
-    // poll: the backend will never report tx-mine's failure either way.
+    expect(backendNoLongerTracks(mine, row('tx-other', 'dropped'))).toBe(true); // replaced, already failed
+    // The replacement was applied and cleared before this poll.
     expect(backendNoLongerTracks(mine, row(null))).toBe(true);
     expect(backendNoLongerTracks(mine, row('tx-mine'))).toBe(false);
+    // Our own failure is the caller's normal cleanup, not a lost report.
+    expect(backendNoLongerTracks(mine, row('tx-mine', 'dropped'))).toBe(false);
   });
 
   test('does not judge a report the backend has not answered', () => {

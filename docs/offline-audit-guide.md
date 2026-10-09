@@ -5,7 +5,7 @@ The online creation flow also detects proposals another owner already created an
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests and signed responses remain version 1. See [design and boundaries](transaction-coordination-design.md).
+**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. A CREATE_CHILD response that deploys into a bare child account (one a payment created, which the node reports with `zkappState: null`) is checked against all-zero state, as the chain checks it; an answer that omits the field blocks the broadcast. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests and signed responses remain version 1. See [design and boundaries](transaction-coordination-design.md).
 
 This document describes the **air-gapped signing path**: the bundle
 export/import UI inside the web app (`ui/lib/offline-signing.ts`,
@@ -97,7 +97,10 @@ Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
 `configNonce`; execute bundles add per-receiver existence
 (`receiverAccountExists`) and, for child actions, the child's address and
 event history. Field-by-field details are in the bundle format reference
-below.
+below. The export fails when the node answers an account query with an error,
+or with an account that lacks `nonce`, `balance` or `zkappState`: the CLI
+decides funding and deploy targets from these snapshots, so a guess here would
+produce a transaction that fails on chain.
 
 After building, the UI surfaces **pre-transfer warnings** from data already in
 the bundle (missing fee-payer account, balance under 1 MINA, account-creation
@@ -293,6 +296,7 @@ the offline CLI restores the resulting leaves without replaying events.
 | `input.childMultiSigEnable` | `boolean` | enableChildMultiSig |
 | `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners) |
 | `input.childPrivateKey` | `string` | createChild only — signs the child's deploy update (see threat model) |
+| `accounts[input.childAccount]` | `FetchedAccount?` | createChild: present when the child's bare account already exists; the CLI then deploys into it without `fundNewAccount` (`deployTargetFromSnapshot`). A snapshot with a verification key or app state is refused |
 | `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config |
 | `input.expirySlot` | `number` | UInt32 inclusion deadline for propose, approve, and execute; 0 = no expiry |
 | `input.memo` | `string` | Plaintext memo — hashed into the proposal **and** attached as the broadcast memo |

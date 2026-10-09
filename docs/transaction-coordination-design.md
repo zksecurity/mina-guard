@@ -20,7 +20,11 @@ state fields actually constrained by the transaction, including parent/child
 accounts and token IDs. Null preconditions are ignored. Repeated account updates
 are processed in order, applying their known state writes before checking later
 updates. An unconstrained deployment update can initialize a missing account before
-setup in the same transaction.
+setup in the same transaction. The node reports an account that exists without
+zkApp state (a plain payment created it) with `zkappState: null`; the check reads
+it as all zeros, as the chain does, so a deployment into it is checked like any
+other, and only an `isNew` precondition on it is stale. An answer that omits the
+field is treated as unavailable.
 
 - Current: continue sending, without an extra confirmation.
 - Stale: do not send. Refresh eligibility and offer an explicit recovery action.

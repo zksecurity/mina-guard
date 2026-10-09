@@ -134,6 +134,8 @@ function renderBody(
     childAddress?: string | null;
     childOwners?: string[] | null;
     childThreshold?: string | number | null;
+    /** createChild propose: whether the bundle snapshots the child account, so the CLI skips the creation fee. */
+    childAccountExists?: boolean | null;
     reclaimAmount?: string | null;
     enableMultiSig?: boolean | null;
   },
@@ -159,6 +161,9 @@ function renderBody(
         for (const o of src.childOwners) out.push(`    ${o}`);
       }
       out.push(line('Threshold', src.childThreshold ?? '(unknown)'));
+      if (src.childAccountExists != null) {
+        out.push(line('Child account', src.childAccountExists ? 'exists, no creation fee' : 'new, 1 MINA creation fee'));
+      }
       return out;
     }
     case 'reclaimChild':
@@ -265,6 +270,9 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
           childAddress: input.childAccount ?? null,
           childOwners: input.childOwners ?? null,
           childThreshold: input.childThreshold ?? null,
+          childAccountExists: input.txType === 'createChild' && input.childAccount
+            ? Boolean(b.accounts?.[input.childAccount])
+            : null,
           reclaimAmount: input.reclaimAmount ?? null,
           enableMultiSig: input.childMultiSigEnable ?? null,
         }),

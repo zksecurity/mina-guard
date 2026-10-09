@@ -3,6 +3,7 @@
 
 import './disable-wasm-finalizers';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
+import { classifyDeployTarget, receiverExists } from './deploy-target';
 import { requireUnregisteredProposal } from './proposal-preparation';
 import * as Comlink from 'comlink';
 
@@ -297,6 +298,7 @@ async function fetchContractState(
     return null;
   }
 }
+
 
 async function signProposalAuthorization(
   hashAsFieldString: string,
@@ -895,15 +897,21 @@ const workerApi = {
     signFeePayerFn?: SignFeePayerFn
   ): Promise<string | null> {
     console.log('[MultisigWorker] deployAndSetupContract entered');
+    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
+    const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
+    const zkAppAddress = zkAppKey.toPublicKey();
+
+    // Check the address before the compile: someone may have created the
+    // bare account first, or the address may already be in use.
+    await configureNetwork();
+    progressFn('Checking the vault address...');
+    const vaultTarget = classifyDeployTarget(await fetchAccount({ publicKey: zkAppAddress }));
+
     progressFn('Compiling contract...');
     const ok = await compileContract();
     if (!ok) return null;
 
-    await configureNetwork();
     progressFn('Building transaction...');
-    const feePayer = PublicKey.fromBase58(params.feePayerAddress);
-    const zkAppKey = PrivateKey.fromBase58(params.zkAppPrivateKeyBase58);
-    const zkAppAddress = zkAppKey.toPublicKey();
     const zkApp = new MinaGuard(zkAppAddress);
 
     const ownerStore = new OwnerStore();
@@ -918,7 +926,7 @@ const workerApi = {
     await fetchAccount({ publicKey: feePayer });
     clearStaleTransaction();
     const tx = await Mina.transaction(txSender(feePayer), async () => {
-      AccountUpdate.fundNewAccount(feePayer);
+      if (vaultTarget === 'new') AccountUpdate.fundNewAccount(feePayer);
       await zkApp.deploy();
       await zkApp.setup(
         Field(params.threshold),
@@ -990,6 +998,17 @@ const workerApi = {
     requireUnregisteredProposal(hashStr, approvalStore.getCount(proposalHash).toBigInt());
 
     progressFn(testPrivateKey ? 'Signing proposal authorization...' : 'Awaiting wallet signature...');
+    // Check the child address before asking for a signature: someone may have
+    // created its bare account first, or the address may already be in use.
+    let childTarget: 'new' | 'existing' | null = null;
+    if (isCreateChild) {
+      if (!params.childPrivateKey) throw new Error('createChild proposal requires childPrivateKey');
+      const childAddress = PrivateKey.fromBase58(params.childPrivateKey).toPublicKey();
+      if (!childAddress.equals(proposal.childAccount).toBoolean()) {
+        throw new Error('The createChild key does not match the proposal child address');
+      }
+      childTarget = classifyDeployTarget(await fetchAccount({ publicKey: childAddress }));
+    }
     const signature = await signProposalAuthorization(hashStr, 'propose', signFn);
     if (!signature) return null;
 
@@ -1049,7 +1068,7 @@ const workerApi = {
       if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
         const childAddress = childKey.toPublicKey();
         const childZkApp = new MinaGuard(childAddress);
-        AccountUpdate.fundNewAccount(proposer);
+        if (childTarget === 'new') AccountUpdate.fundNewAccount(proposer);
         await childZkApp.deploy();
         await childZkApp.reserveForParent(
           contractAddress,
@@ -1238,11 +1257,11 @@ const workerApi = {
     if (txType === 'transfer' || txType === 'allocateChild') {
       for (const r of proposalStruct.receivers) {
         if (r.address.isEmpty().toBoolean()) continue;
-        const { account } = await fetchAccount({ publicKey: r.address });
-        if (!account && txType === 'allocateChild') {
+        const exists = receiverExists(await fetchAccount({ publicKey: r.address }));
+        if (!exists && txType === 'allocateChild') {
           throw new Error('Allocation recipients must be initialized children of this vault');
         }
-        if (!account) newAccountCount += 1;
+        if (!exists) newAccountCount += 1;
       }
     }
 

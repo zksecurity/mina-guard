@@ -367,6 +367,23 @@ export function countNewReceiverAccounts(
   return count;
 }
 
+/**
+ * Decides how to deploy a child to an address from the bundle's snapshot of
+ * it. Anyone can create the bare Mina account first by paying into the
+ * address, and a deployment that declares a new account then fails. With a
+ * snapshot of a bare account the child is deployed into it without the
+ * creation fee. A snapshot that carries a verification key or app state is
+ * refused: only the address's own key could have put them there.
+ */
+export function deployTargetFromSnapshot(snapshot: BundleAccount | undefined): 'new' | 'existing' {
+  if (!snapshot) return 'new';
+  const hasState = (snapshot.zkappState ?? []).some((value) => String(value) !== '0');
+  if (snapshot.verificationKey || hasState) {
+    throw new Error('The child address already holds a zkApp. Create the SubVault with a fresh address.');
+  }
+  return 'existing';
+}
+
 function buildReceiversForProposal(input: NewProposalInput): InstanceType<typeof Receiver>[] {
   if (input.txType === 'transfer' || input.txType === 'allocateChild') {
     return buildTransferReceivers(input.receivers ?? []);
@@ -817,8 +834,17 @@ export async function handlePropose(
   let childKey: InstanceType<typeof PrivateKey> | null = null;
   let childOwnerStore: InstanceType<typeof OwnerStore> | null = null;
   let childPaddedOwners: InstanceType<typeof PublicKey>[] | null = null;
+  // A snapshot of the child address means someone created its bare account
+  // already; the deploy then must not fund it again. The address comes from
+  // the key that signs the deploy, and must be the one the proposal names.
+  let childTarget: 'new' | 'existing' | null = null;
   if (isCreateChild) {
     childKey = PrivateKey.fromBase58(input.childPrivateKey!);
+    const childAddress = childKey.toPublicKey().toBase58();
+    if (childAddress !== input.childAccount) {
+      throw new Error('The createChild key does not match input.childAccount');
+    }
+    childTarget = deployTargetFromSnapshot(bundle.accounts[childAddress]);
     childOwnerStore = new OwnerStore();
     for (const addr of input.childOwners!) childOwnerStore.addSorted(PublicKey.fromBase58(addr));
     childPaddedOwners = [...childOwnerStore.owners];
@@ -835,7 +861,7 @@ export async function handlePropose(
     if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
       const childAddress = childKey.toPublicKey();
       const childZkApp = new MinaGuard(childAddress);
-      AccountUpdate.fundNewAccount(proposer);
+      if (childTarget === 'new') AccountUpdate.fundNewAccount(proposer);
       await childZkApp.deploy();
       await childZkApp.reserveForParent(
         contractAddress,
