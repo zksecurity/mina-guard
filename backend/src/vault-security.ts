@@ -2,6 +2,7 @@ import {
   GUARD_PERMISSION_KINDS,
   GUARD_PERMISSION_NAMES,
   GUARD_PERMISSIONS,
+  GUARD_SET_VERIFICATION_KEY_TXN_VERSION,
   type GuardPermissionKind,
   type GuardPermissionName,
 } from 'contracts';
@@ -122,4 +123,22 @@ export function validatePermissionVector(permissions: unknown): {
   }
 
   return { permissionKinds, mismatches };
+}
+
+/** A matching circuit may still submit ordinary proved actions after a version upgrade.
+ * Keep the older stored version visible as a mismatch: its deploy-key signature
+ * fallback remains active until an accepted account update refreshes it.
+ */
+export function allowsProofActionsWithOlderVersion(
+  verificationKeyMatches: boolean,
+  permissionKinds: PermissionKindVector,
+  mismatches: GuardPermissionName[],
+  storedVersion: unknown,
+): boolean {
+  const version = transactionVersion(storedVersion);
+  return verificationKeyMatches &&
+    permissionKinds.setVerificationKey === GUARD_PERMISSION_KINDS.setVerificationKey &&
+    mismatches.length === 1 && mismatches[0] === 'setVerificationKey' &&
+    version !== null && /^(0|[1-9][0-9]*)$/.test(version) &&
+    BigInt(version) < BigInt(GUARD_SET_VERIFICATION_KEY_TXN_VERSION);
 }

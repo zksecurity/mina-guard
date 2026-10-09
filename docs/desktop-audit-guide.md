@@ -17,6 +17,17 @@ applies unchanged inside the desktop shell, because the desktop app runs the
 *same built UI*. This document covers only what the shell adds or changes. The
 air-gapped path is documented in [`offline-audit-guide.md`](./offline-audit-guide.md).
 
+The shared creation wizard offers the deploy key as a local plaintext download
+and warns about its signature fallback after a Mina transaction-version upgrade.
+The desktop shell does not separately store, encrypt, or recover that file.
+For an older stored transaction version with an unchanged reviewed VK, the
+shared Vault detail page guides an ordinary proved action and an on-chain
+version check. If the VK differs, it exposes the version 2 offline VK migration
+request. The shell does not handle the saved deploy key: the matching MinaGuard
+offline CLI signs the request, and the packaged UI verifies the signed command
+and later reads the on-chain result. Package the UI and CLI from the same
+reviewed release and VK hash for a future fork.
+
 ---
 
 ## Why it exists

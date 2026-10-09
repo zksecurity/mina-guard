@@ -391,6 +391,9 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   // Threshold defaults to blank — fill 1 (single owner = 1/1).
   log('Filling threshold...');
   await page.locator('input[type="number"]').first().fill('1');
+  await expect(page.getByText('Hard fork recovery and deploy key risk')).toBeVisible();
+  await expect(page.getByRole('button', { name: /deploy vault/i })).toBeDisabled();
+  await page.getByRole('checkbox', { name: /I understand that keeping this key/ }).check();
 
   log('Clicking Deploy account...');
   await page.getByRole('button', { name: /deploy vault/i }).click();
@@ -486,6 +489,9 @@ test('3. Propose CREATE_CHILD on parent', async () => { const page = sharedPage;
 
   log('Filling threshold...');
   await page.locator('input[type="number"]').first().fill('1');
+  await expect(page.getByText('Hard fork recovery and deploy key risk')).toBeVisible();
+  await expect(page.getByRole('button', { name: /propose subvault/i })).toBeDisabled();
+  await page.getByRole('checkbox', { name: /I understand that keeping this key/ }).check();
 
   log('Clicking Propose subaccount...');
   await page.getByRole('button', { name: /propose subvault/i }).click();

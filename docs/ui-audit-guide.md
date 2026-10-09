@@ -135,9 +135,10 @@ reclaimable.
   └──────────────┘                     └──────────────┘
 ```
 
-- **The UI never holds long-lived signing keys.** Owner keys live in Auro or on the
-  Ledger. The only private key the UI ever handles is the *ephemeral zkApp deploy
-  key*, which is generated in-browser and used for a single transaction.
+- **The UI does not persist signing keys.** Owner keys live in Auro or on the
+  Ledger. The UI generates a zkApp deploy key in-browser and offers a creation-time
+  local download before creation. The creator may retain that key for recovery;
+  it remains a latent verification-key authority after a transaction-version upgrade.
 - **Heavy crypto runs in a Web Worker.** The worker compiles the contract and
   generates proofs. It calls *back* to the main thread for anything requiring a
   signer or network egress, via Comlink-proxied callbacks.
@@ -399,17 +400,60 @@ the same 20-minute window: a failed creation emits no proposal, and the
 best-chain probe covers only recent blocks, so nothing else would ever clear
 them.
 
-**5. Ephemeral zkApp key lifecycle & local storage.**
+**5. zkApp deploy key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
-(`generateKeypair`), generated for a single tx and not persisted. It is
-powerless after a successful atomic creation while the network's transaction version
-stays the one stamped at deploy (see the security guide's accepted risk 9 for what a
-hard fork changes): proof-authorized `setup()` (root)
-or `reserveForParent()` (child) overwrites the signed deployment update with
-the canonical proof-only permission vector and permanently seals it in the
-same transaction. The UI must never broadcast `deploy()` alone. The same
-applies to the child key inside the CREATE_CHILD propose tx. `lib/storage.ts`
-holds non-secret prefs + pending-tx metadata.
+(`generateKeypair`). It is not persisted by the app. Before root creation or
+CREATE_CHILD submission, the creator can optionally download it locally and must
+acknowledge the trust risk. Regenerating the key resets the acknowledgement.
+The file contains plaintext secret material, so a creator who downloads it must
+move it to secure offline storage and remove unprotected Downloads copies.
+Proof-authorized `setup()` (root) or `reserveForParent()` (child) overwrites
+the signed deployment update with the canonical permission vector and seals
+`setPermissions` in the same transaction. The UI must never broadcast
+`deploy()` alone. During the stored transaction version the deploy key cannot
+replace the verification key; a later version upgrade can make that permission
+signature-authorized. Every vault detail page warns owners about this boundary
+and that a fork which breaks old proofs can leave funds inaccessible if the
+deploy key was not backed up. It also explains the option to evacuate before
+a version upgrade. `lib/storage.ts` holds
+non-secret prefs + pending-tx metadata.
+
+When the node reports an older `setVerificationKey.txnVersion` and the installed
+VK still matches this reviewed release, the Vault detail page shows a
+transaction-version update panel. An ordinary owner-authorized proved action
+can refresh the stored version if Mina accepts its proof. The UI and backend
+allow this narrow case when every permission kind is canonical and the only
+permission mismatch is the older version. They continue to report that mismatch
+because the deploy-key signature fallback remains active until an account
+update succeeds. The panel links to proposal creation and can recheck the
+on-chain version; it does not submit a no-op. Because vault `access` is `none`,
+any fee payer can submit an authorization-free no-op update. The first applied
+vault update refreshes the version and ends the deploy-key fallback even if the
+VK is unchanged; the proved action is advised because it confirms the installed
+circuit still works after the fork.
+
+If the installed VK differs from the release-pinned replacement VK, the detail
+page instead offers deploy-key migration. It displays both hashes, exports a
+version 2 request, and imports the MinaGuard offline CLI's signed response.
+The panel warns that a maintainer must publish a fork-compatible CLI release
+first. The browser does not check release availability or authenticate the
+offline binary; users must independently verify the release, checksums, and
+per-network VK hash before entering the saved deploy key.
+If old proofs fail, the signed VK migration must land before any other vault
+account update. A third party can pay for a no-op update that refreshes the
+stored version first, leaving the broken VK installed and ending this saved-key
+migration path.
+The import checks the response binding and command shape, then rechecks the
+installed VK, version, and permissions against the Mina node before broadcast.
+After inclusion, the user can check the on-chain VK hash, stored version, and
+complete permission vector. The saved deploy key is used only in the offline
+CLI; a separate offline fee payer key is needed unless the deploy key also
+funds the fee. The migration request shares version 2 with owner requests but
+has a distinct action and schema; its signed response is version 2, while
+owner signed responses remain version 1. The UI does not infer proof compatibility from the version
+number. A release for a future fork must first review the replacement circuit,
+its VK hash, and that fork's signing rules. Other non-canonical permissions or
+a mismatching VK still block normal owner actions.
 
 **6. Test-only escape hatches.**
 `setTestKey` / `setSkipProofs` enable direct signing and dummy proofs, gated
@@ -585,7 +629,7 @@ cannot receive an allocation; account-creation fees apply only to ordinary
 transfers. Empty padding is exempt, but non-empty zero-value recipients are checked.
 
 Offline allocation export includes each recipient's full snapshot in `accounts`,
-so the air-gapped CLI can prove the same checks. This uses the existing v1 format;
+so the air-gapped CLI can prove the same checks. Owner requests use version 2;
 old allocation bundles lacking snapshots must be exported again. Desktop uses
 these same worker/exporter paths. Rebuild UI, offline CLI, and desktop together
 with the changed circuit and CI-generated verification-key hashes.

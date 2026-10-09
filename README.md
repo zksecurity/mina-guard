@@ -22,7 +22,8 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - Transfer, add/remove owner, threshold change, and delegate execution support.
 - For transfers to new recipient accounts, the executor pays the account-creation cost and transaction fee; see the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
-- Deploy + setup UI flow with session-only zkApp private key usage.
+- Deploy + setup UI flow with a creation-time local deploy-key download. The browser does not persist the key; the creator may retain the downloaded copy. A Mina transaction-version upgrade can make that key sufficient to replace the vault verification key without owner approval. If a fork breaks old proofs and no backup exists, funds may become inaccessible. See the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
+- For an older-version vault whose VK still matches this release, the detail page guides owners to submit an ordinary proved action and check that Mina refreshed the stored version. This works only if Mina accepts the existing proof. Any fee payer can instead submit a no-op vault update that ends the deploy-key fallback, so a proved action is the safer compatibility check. If the installed VK differs from the reviewed replacement, the detail page can export a version 2 VK migration request. The MinaGuard offline CLI compiles and checks the replacement VK, signs with the saved deploy key and an offline fee payer key, and returns a transaction for the UI to validate and broadcast. If proofs break, that migration must land before any other vault update, including a third-party no-op. A future fork still needs a reviewed compatible release and per-network VK hash before migration is attempted.
 - Child reservations validate governance bounds and initialized root-parent state; successful child setup clears the consumed reservation hash.
 - Child allocations require initialized recipients bound to the sending parent. Complete child setup before funding; ordinary transfers and external deposits to uninitialized children remain unrecoverable until setup succeeds. See [safe child funding](docs/contracts-audit-guide.md#safe-child-funding).
 
@@ -299,8 +300,9 @@ propose/approve signing messages, and length-prefixed memo commitments (includin
 empty memos). Owner-chain links, vote-nullifier keys, and child configuration
 hashes also have separate tags. Use matching CLI/UI/backend/desktop builds and
 new network VKs.
-Requests and signed responses both use v1. Discard older files: the version
-number alone does not distinguish them from current files, and proposals now
+Owner requests use v2 and their signed responses use v1. Discard older files:
+the signed-response version alone does not distinguish old files from current
+ones, and proposals now
 sign the native MINA token ID `Field(1)`.
 This breaking change requires fresh vaults and recreated proposals.
 See [the offline audit guide](docs/offline-audit-guide.md) for migration and trust

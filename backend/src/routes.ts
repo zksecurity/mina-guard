@@ -711,7 +711,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         });
         return;
       }
-      if (security.permissionMismatches.length > 0) {
+      if (!security.safe) {
         res.status(400).json({
           error: `Contract has non-canonical MinaGuard permissions: ${security.permissionMismatches.join(
             ', '

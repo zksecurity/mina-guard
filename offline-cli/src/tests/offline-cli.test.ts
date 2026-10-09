@@ -101,6 +101,23 @@ describe('offline-cli', () => {
     expect(result.stderr).toContain('Unsupported bundle version');
   }, 30_000);
 
+  it('rejects a version 1 migration request', async () => {
+    const bundlePath = join(tmpDir, 'wrong-v1-migration.json');
+    writeFileSync(bundlePath, JSON.stringify({ version: 1, action: 'migrate-verification-key' }));
+    const result = await runCLI(bundlePath, 'EKtest');
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Unsupported bundle version');
+  }, 30_000);
+
+  it('routes a version 2 migration request to migration validation', async () => {
+    const bundlePath = join(tmpDir, 'invalid-v2-migration.json');
+    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'migrate-verification-key' }));
+    const result = await runCLI(bundlePath, 'EKtest');
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Invalid migration request');
+    expect(result.stdout).toBe('');
+  }, 30_000);
+
   it('rejects unknown action', async () => {
     const bundlePath = join(tmpDir, 'bad-action.json');
     writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'unknown' }));

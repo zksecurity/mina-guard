@@ -66,7 +66,9 @@ jobs:
         run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e down -v --remove-orphans 2>/dev/null || true
 
       - name: Install Playwright browsers
-        run: cd e2e && npx playwright install chromium --with-deps
+        # The self-hosted runner already has Chromium's OS libraries. Avoid
+        # apt here: an unrelated third-party source can break the install.
+        run: cd e2e && npx playwright install chromium
 
       - name: Start compose stack
         run: docker compose -f preview-env/docker-compose.e2e-ci.yml -p mina-guard-e2e up -d --build --wait --wait-timeout 600

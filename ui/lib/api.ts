@@ -42,6 +42,7 @@ export async function fetchContract(address: string): Promise<ContractSummary | 
 export interface VaultSecurityStatus {
   accountFound: boolean;
   verificationKeyHash: string | null;
+  setVerificationKeyTxnVersion: string | null;
   verificationKeyMatches: boolean;
   permissionKinds: Partial<Record<PermissionFieldName, string>>;
   expectedPermissionKinds: Partial<Record<PermissionFieldName, string>>;
@@ -117,6 +118,7 @@ export async function fetchVaultSecurityStatus(
       return {
         accountFound: false,
         verificationKeyHash: null,
+        setVerificationKeyTxnVersion: null,
         verificationKeyMatches: false,
         permissionKinds: {},
         expectedPermissionKinds: EXPECTED_PERMISSION_KINDS,
@@ -156,14 +158,26 @@ export async function fetchVaultSecurityStatus(
       verificationKeyHash !== null &&
       expectedVkHash !== null &&
       verificationKeyHash === expectedVkHash;
+    const setVerificationKeyTxnVersion = setVerificationKey?.txnVersion == null
+      ? null : String(setVerificationKey.txnVersion);
+    // The same reviewed VK can still prove an ordinary action after a version
+    // upgrade. A successful proved account update refreshes the stored version;
+    // the deploy-key fallback remains visible in permissionMismatches meanwhile.
+    const matchingOlderVersion = verificationKeyMatches &&
+      permissionKinds.setVerificationKey === EXPECTED_PERMISSION_KINDS.setVerificationKey &&
+      permissionMismatches.length === 1 && permissionMismatches[0] === 'setVerificationKey' &&
+      setVerificationKeyTxnVersion !== null &&
+      /^(0|[1-9][0-9]*)$/.test(setVerificationKeyTxnVersion) &&
+      BigInt(setVerificationKeyTxnVersion) < BigInt(GUARD_SET_VERIFICATION_KEY_TXN_VERSION);
     return {
       accountFound: true,
       verificationKeyHash,
+      setVerificationKeyTxnVersion,
       verificationKeyMatches,
       permissionKinds,
       expectedPermissionKinds: EXPECTED_PERMISSION_KINDS,
       permissionMismatches,
-      safe: verificationKeyMatches && permissionMismatches.length === 0,
+      safe: verificationKeyMatches && (permissionMismatches.length === 0 || matchingOlderVersion),
     };
   } catch {
     return null;

@@ -15,10 +15,11 @@ Quick orientation (see the full doc for the state layout, flow, and invariant ma
   on a parent, executed on a child); the hierarchy is capped at two levels.
 - Replay is blocked across four domains (LOCAL, REMOTE, cross-contract,
   cross-child) plus cross-network via the compile-time `NETWORK_DOMAIN`.
-- Permissions set in `deploy()` (`setPermissions: impossible()`,
-  `setVerificationKey: impossibleDuringCurrentVersion()`) make the deploy key
-  powerless after deploy for as long as the network's transaction version is
-  the one stamped at deploy (security guide, accepted risk 9).
+- Atomic setup seals `setPermissions: impossible()` and installs
+  `setVerificationKey: impossibleDuringCurrentVersion()`. The deploy key cannot
+  change the verification key during that transaction version. A later Mina
+  transaction-version upgrade can make that permission signature-authorized;
+  see the accepted risk in `docs/security-audit-guide.md`.
 
 The invariant → enforcement → test map is in
 [`docs/security-audit-guide.md`](../docs/security-audit-guide.md).

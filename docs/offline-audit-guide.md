@@ -1,11 +1,11 @@
 # Offline Signing (Air-Gapped CLI) — Architecture & Security Notes
 
-The online creation flow also detects proposals another owner already created and links to the existing proposal. Offline requests and signed responses keep their existing formats; imported propose responses still require review of the original form when stale.
+The online creation flow also detects proposals another owner already created and links to the existing proposal. That flow does not change the offline request and response schemas; imported propose responses still require review of the original form when stale.
 
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. A CREATE_CHILD response that deploys into a bare child account (one a payment created, which the node reports with `zkappState: null`) is checked against all-zero state, as the chain checks it; an answer that omits the field blocks the broadcast. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests and signed responses remain version 1. See [design and boundaries](transaction-coordination-design.md).
+**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. A CREATE_CHILD response that deploys into a bare child account (one a payment created, which the node reports with `zkappState: null`) is checked against all-zero state, as the chain checks it; an answer that omits the field blocks the broadcast. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Owner requests use version 2 and owner signed responses use version 1. See [design and boundaries](transaction-coordination-design.md).
 
 This document describes the **air-gapped signing path**: the bundle
 export/import UI inside the web app (`ui/lib/offline-signing.ts`,
@@ -276,6 +276,43 @@ source for the UI's `OFFLINE_BUNDLE_VERSION`, the CLI's version gate and
 `storesFromOfflineRequest`; `STORE_CHECKPOINT_VERSION` (1) is the checkpoint's own.
 
 ### Common fields (`BundleBase`)
+
+Verification-key migration uses a separate **version 2** request and response.
+It is never parsed as an owner proposal despite sharing the version 2 request number. The UI offers it only when
+the vault's stored `setVerificationKey.txnVersion` is older than this release's
+version, the installed VK differs from the reviewed replacement VK, and the
+rest of its permissions are canonical. When the VK already matches, the UI
+instead guides an ordinary owner-authorized proved action, which refreshes the
+version only if Mina accepts the proof. Migration shares request version 2 with
+owner actions but has a distinct `migrate-verification-key` action and schema;
+its signed response is version 2, while owner signed responses remain version 1.
+Because vault `access` is `none`, any fee payer can submit a no-op vault account
+update after a fork. The first applied update refreshes the stored version.
+If existing proofs fail, a compatible signed VK migration must land before any
+other vault update; a third-party no-op can otherwise end the saved-key
+migration path with the broken VK still installed. For a proof-preserving fork,
+use a real proved action to confirm compatibility rather than a no-op.
+The request binds the
+vault and fee payer addresses, node account snapshots, installed VK hash and
+version, and the release-pinned replacement VK hash and version. It contains
+no private keys or governance proposal. The offline CLI independently checks
+these fields, compiles the release's `MinaGuard` VK, and refuses a target-hash
+mismatch. `MINA_PRIVATE_KEY` is the saved deploy key; if the fee payer differs,
+`MINA_FEE_PAYER_PRIVATE_KEY` supplies its key. Both remain offline. The CLI
+shows the installed and replacement hashes, network, and vault before signing.
+Its output is a version 2 signed transaction; stdout still contains JSON only.
+The UI cannot establish that a compatible CLI release has been published or
+authenticate the binary run offline. A maintainer must publish a reviewed
+fork-compatible CLI release, and the user must independently verify its
+checksums and per-network VK hash before entering the deploy key. The CLI's
+compiled-VK hash check enforces compatibility with the requested hash when
+run as intended; it does not authenticate the CLI binary.
+The UI checks the command has exactly one signed vault update that changes
+only the VK, rechecks the old VK and version directly with the node, broadcasts,
+then offers a node check for the target VK, current version, and permissions.
+The request snapshot and UI release are not independent proof that a future
+Mina fork accepts the transaction; review the fork and release first. A signed
+request can become stale before broadcast, and the node remains authoritative.
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -578,7 +615,7 @@ recipient is initialized and bound to the sending parent. These state reads are
 ledger-enforced. Allocation never charges for creating recipient accounts, even
 if `receiverAccountExists` is missing an entry or marks it false.
 
-The request format remains v1 and signed responses are unchanged; older allocation
+Owner requests use version 2 and signed responses remain version 1; older allocation
 bundles without recipient snapshots fail closed. Allocation adds no fields to
 proposals or signed responses. This branch also changes proposal hashing and
 owner-signing messages as described above. Rebuild the CLI, UI, and desktop
