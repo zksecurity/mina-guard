@@ -24,13 +24,14 @@ import {
   VoteNullifierStore,
   SetupOwnersInput,
   computeOwnerChain,
+  childConfigHash,
   PROPOSED_MARKER,
   MAX_OWNERS,
   MAX_RECEIVERS,
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig } from '../build-tx.ts';
 import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
@@ -92,7 +93,7 @@ describe('offline-cli', () => {
     expect(result.code).not.toBe(0);
   }, 30_000);
 
-  it.each([3, 99])('rejects incompatible bundle version %i', async (version) => {
+  it.each([1, 3, 99])('rejects incompatible bundle version %i', async (version) => {
     const bundlePath = join(tmpDir, 'bad-version.json');
     writeFileSync(bundlePath, JSON.stringify({ version, action: 'propose' }));
     const result = await runCLI(bundlePath, 'EKtest');
@@ -100,17 +101,26 @@ describe('offline-cli', () => {
     expect(result.stderr).toContain('Unsupported bundle version');
   }, 30_000);
 
-  it('rejects a version 2 owner action', async () => {
-    const bundlePath = join(tmpDir, 'wrong-v2-action.json');
-    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'propose' }));
+  it('rejects a version 1 migration request', async () => {
+    const bundlePath = join(tmpDir, 'wrong-v1-migration.json');
+    writeFileSync(bundlePath, JSON.stringify({ version: 1, action: 'migrate-verification-key' }));
     const result = await runCLI(bundlePath, 'EKtest');
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain('Owner actions require request format version 1');
+    expect(result.stderr).toContain('Unsupported bundle version');
+  }, 30_000);
+
+  it('routes a version 2 migration request to migration validation', async () => {
+    const bundlePath = join(tmpDir, 'invalid-v2-migration.json');
+    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'migrate-verification-key' }));
+    const result = await runCLI(bundlePath, 'EKtest');
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Invalid migration request');
+    expect(result.stdout).toBe('');
   }, 30_000);
 
   it('rejects unknown action', async () => {
     const bundlePath = join(tmpDir, 'bad-action.json');
-    writeFileSync(bundlePath, JSON.stringify({ version: 1, action: 'unknown' }));
+    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'unknown' }));
     const result = await runCLI(bundlePath, 'EKtest');
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Unknown bundle action');
@@ -119,7 +129,7 @@ describe('offline-cli', () => {
   it('refuses an unknown transaction type before rendering a summary or signing', async () => {
     const bundlePath = join(tmpDir, 'unknown-type.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 1,
+      version: 2,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: EMPTY_PUBKEY_B58,
@@ -135,6 +145,128 @@ describe('offline-cli', () => {
     expect(result.stdout).toBe('');
   }, 30_000);
 
+  describe('deployTargetFromSnapshot', () => {
+    const bare = { publicKey: 'B62qchild', nonce: '0', verificationKey: null, zkappState: null } as any;
+
+    it('funds a child the bundle has no snapshot for, and deploys into a bare account without funding', () => {
+      expect(deployTargetFromSnapshot(undefined)).toBe('new');
+      expect(deployTargetFromSnapshot(bare)).toBe('existing');
+      expect(deployTargetFromSnapshot({ ...bare, zkappState: ['0', '0', '0'] })).toBe('existing');
+    });
+
+    it('refuses a child address that already holds a zkApp', () => {
+      expect(() => deployTargetFromSnapshot({ ...bare, verificationKey: { verificationKey: 'vk', hash: '1' } }))
+        .toThrow('already holds a zkApp');
+      expect(() => deployTargetFromSnapshot({ ...bare, zkappState: ['0', '5'] })).toThrow('already holds a zkApp');
+    });
+  });
+
+  it('tells the signer whether a createChild propose pays the child creation fee', () => {
+    const CHILD = 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY';
+    const propose = (accounts: Record<string, unknown>) => ({
+      version: 2, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, accounts, events: [], configNonce: 0,
+      input: { txType: 'createChild', nonce: 0, childAccount: CHILD, childOwners: [CHILD], childThreshold: 1 },
+    }) as any;
+    expect(renderBundleSummary(propose({}))).toContain('new, 1 MINA creation fee');
+    expect(renderBundleSummary(propose({ [CHILD]: { publicKey: CHILD } }))).toContain('exists, no creation fee');
+  });
+
+  it('refuses a createChild approve bundle without its SubVault config before rendering a summary', async () => {
+    const bundlePath = join(tmpDir, 'create-child-no-config.json');
+    writeFileSync(bundlePath, JSON.stringify({
+      version: 2,
+      action: 'approve',
+      minaNetwork: 'testnet',
+      contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58,
+      accounts: {},
+      events: [],
+      proposal: { proposalHash: '1', txType: 'createChild', data: '5', childAccount: EMPTY_PUBKEY_B58, receivers: [] },
+    }));
+    const result = await runCLI(bundlePath, PrivateKey.random().toBase58());
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('missing the SubVault owner list');
+    expect(result.stderr).not.toContain('====');
+    expect(result.stdout).toBe('');
+  }, 30_000);
+
+  it('refuses a createChild execute bundle without its SubVault config before rendering a summary', async () => {
+    const bundlePath = join(tmpDir, 'create-child-execute-no-config.json');
+    writeFileSync(bundlePath, JSON.stringify({
+      version: 2,
+      action: 'execute',
+      minaNetwork: 'testnet',
+      contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58,
+      accounts: {},
+      events: [],
+      receiverAccountExists: {},
+      proposal: { proposalHash: '1', txType: 'createChild', data: '5', childAccount: EMPTY_PUBKEY_B58, receivers: [] },
+    }));
+    const result = await runCLI(bundlePath, PrivateKey.random().toBase58());
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('missing the SubVault owner list');
+    expect(result.stderr).not.toContain('====');
+  }, 30_000);
+
+  describe('createChild approval config', () => {
+    const ownerA = PrivateKey.random().toPublicKey();
+    const ownerB = PrivateKey.random().toPublicKey();
+    const owners = [ownerA.toBase58(), ownerB.toBase58()];
+    const store = new OwnerStore();
+    store.owners = [ownerA, ownerB];
+    const data = childConfigHash(store.getCommitment(), Field(1), Field(2)).toString();
+    const bundle = (overrides: Record<string, unknown> = {}) => ({
+      version: 2, action: 'approve', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, accounts: {}, events: [],
+      proposal: { proposalHash: '1', txType: 'createChild', data, childAccount: EMPTY_PUBKEY_B58, receivers: [] },
+      childOwners: owners, childThreshold: 1, ...overrides,
+    }) as any;
+
+    it('accepts the reserved owners and threshold that hash to the signed data', () => {
+      expect(assertCreateChildBundleConfig(bundle())).toEqual({ owners, threshold: 1 });
+      const transfer = bundle({ proposal: { ...bundle().proposal, txType: 'transfer' } });
+      expect(assertCreateChildBundleConfig(transfer)).toBeNull();
+    });
+
+    it('rejects a missing, malformed or swapped config', () => {
+      const check = (overrides: Record<string, unknown>) => () => assertCreateChildBundleConfig(bundle(overrides));
+      expect(check({ childOwners: undefined })).toThrow('missing the SubVault owner list');
+      expect(check({ childOwners: [] })).toThrow('missing the SubVault owner list');
+      expect(check({ childThreshold: 0 })).toThrow('invalid SubVault threshold');
+      expect(check({ childThreshold: 3 })).toThrow('invalid SubVault threshold');
+      expect(check({ childOwners: [owners[0], 'not-a-key'] })).toThrow('invalid SubVault owner address');
+      expect(check({ childOwners: [owners[0], EMPTY_PUBKEY_B58] })).toThrow('invalid SubVault owner address');
+      // The signed data commits to threshold 1 over these two owners in this order.
+      expect(check({ childThreshold: 2 })).toThrow('SubVault config mismatch');
+      expect(check({ childOwners: [owners[1], owners[0]] })).toThrow('SubVault config mismatch');
+      expect(check({ childOwners: [owners[0]] })).toThrow('SubVault config mismatch');
+    });
+
+    it('checks a numeric createChild type and an execute bundle the same way', () => {
+      expect(() => assertCreateChildBundleConfig(bundle({ childOwners: undefined, proposal: { ...bundle().proposal, txType: '5' } })))
+        .toThrow('missing the SubVault owner list');
+      expect(assertCreateChildBundleConfig(bundle({ action: 'execute', receiverAccountExists: {} }))).toEqual({ owners, threshold: 1 });
+    });
+
+    it("refuses a bundled SubVault address other than the proposal's", () => {
+      expect(assertCreateChildBundleConfig(bundle({ childAddress: EMPTY_PUBKEY_B58 }))).toEqual({ owners, threshold: 1 });
+      expect(() => assertCreateChildBundleConfig(bundle({ childAddress: owners[0] })))
+        .toThrow("names a SubVault address other than the proposal's");
+    });
+
+    it('prints the checked owners and threshold in the summary', () => {
+      const out = renderBundleSummary(bundle());
+      expect(out).toContain('Create SubVault');
+      expect(out).toContain('Owners (2)');
+      expect(out).toContain(owners[0]);
+      expect(out).toContain(owners[1]);
+      expect(out).toContain('Threshold');
+      expect(out).not.toContain('(unknown)');
+    });
+  });
+
   it('accepts only the ten transaction types, by name or number', () => {
     expect(requireTxType('transfer')).toBe('transfer');
     expect(requireTxType('9')).toBe('enableChildMultiSig');
@@ -148,7 +280,7 @@ describe('offline-cli', () => {
     expect(canonicalizeBundleTxType(propose)).toBe('addOwner');
     expect(propose.input.txType).toBe('addOwner');
     // The summary compares the type by name to pick the owner target.
-    expect(renderBundleSummary({ ...propose, version: 1, minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58, feePayerAddress: EMPTY_PUBKEY_B58, accounts: {}, events: [], configNonce: 0 }))
+    expect(renderBundleSummary({ ...propose, version: 2, minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58, feePayerAddress: EMPTY_PUBKEY_B58, accounts: {}, events: [], configNonce: 0 }))
       .toContain('New owner       B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY');
 
     const approve = { action: 'approve', proposal: { txType: '0', receivers: [] } } as any;
@@ -160,7 +292,7 @@ describe('offline-cli', () => {
   it('escapes bundle text in warnings printed after confirmation', async () => {
     const bundlePath = join(tmpDir, 'escaped-warning.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 1,
+      version: 2,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: EMPTY_PUBKEY_B58,
@@ -184,7 +316,7 @@ describe('offline-cli', () => {
   it('rejects createChild propose without childPrivateKey', async () => {
     const bundlePath = join(tmpDir, 'create-child.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 1,
+      version: 2,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
@@ -208,7 +340,7 @@ describe('offline-cli', () => {
     // not consent, and nothing may be signed.
     const bundlePath = join(tmpDir, 'no-tty-abort.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 1,
+      version: 2,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
@@ -521,7 +653,7 @@ describe('offline-cli', () => {
 
     function base(overrides: Record<string, unknown> = {}) {
       return {
-        version: 1 as const,
+        version: 2 as const,
         contractAddress: CONTRACT,
         feePayerAddress: FEEPAYER,
         accounts: {},

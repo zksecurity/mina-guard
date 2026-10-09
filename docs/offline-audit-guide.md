@@ -1,11 +1,11 @@
 # Offline Signing (Air-Gapped CLI) — Architecture & Security Notes
 
-The online creation flow also detects proposals another owner already created and links to the existing proposal. Offline requests and signed responses keep their existing formats; imported propose responses still require review of the original form when stale.
+The online creation flow also detects proposals another owner already created and links to the existing proposal. That flow does not change the offline request and response schemas; imported propose responses still require review of the original form when stale.
 
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Requests and signed responses remain version 1. See [design and boundaries](transaction-coordination-design.md).
+**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. A CREATE_CHILD response that deploys into a bare child account (one a payment created, which the node reports with `zkappState: null`) is checked against all-zero state, as the chain checks it; an answer that omits the field blocks the broadcast. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Owner requests use version 2 and owner signed responses use version 1. See [design and boundaries](transaction-coordination-design.md).
 
 This document describes the **air-gapped signing path**: the bundle
 export/import UI inside the web app (`ui/lib/offline-signing.ts`,
@@ -58,7 +58,8 @@ Where it lives in the UI: proposal creation (`app/transactions/new`) has an
 (`app/transactions/[id]`) has the same toggle for *approve* and *execute*.
 In offline mode the user types the **fee-payer address** (the air-gapped
 owner's public key — no wallet connection is needed); the UI checks it is an
-active owner (and, for approve, has not already approved) before exporting.
+active owner (and, for approve, has not already approved) before exporting, and
+for a REMOTE proposal that the backend has indexed the target SubVault.
 One asymmetry to know: **CREATE_CHILD proposals cannot currently be exported**
 — sub-vault creation is wizard-only in the online flow — although the bundle
 format and the CLI fully support them (relevant for hand-built bundles);
@@ -96,7 +97,10 @@ Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
 `configNonce`; execute bundles add per-receiver existence
 (`receiverAccountExists`) and, for child actions, the child's address and
 event history. Field-by-field details are in the bundle format reference
-below.
+below. The export fails when the node answers an account query with an error,
+or with an account that lacks `nonce`, `balance` or `zkappState`: the CLI
+decides funding and deploy targets from these snapshots, so a guess here would
+produce a transaction that fails on chain.
 
 After building, the UI surfaces **pre-transfer warnings** from data already in
 the bundle (missing fee-payer account, balance under 1 MINA, account-creation
@@ -125,10 +129,10 @@ offline CLI's bundle-domain checks.
 MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a v1 testnet bundle,
+For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a testnet bundle,
 use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
-unset, invalid, and mainnet/test-network mismatches fail closed. Version 1
-offline bundles encode devnet as `testnet`.
+unset, invalid, and mainnet/test-network mismatches fail closed. Offline
+bundles encode devnet as `testnet`.
 The CLI checks the bundle against the domain captured when contracts were
 imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
@@ -138,7 +142,11 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    the action and transaction type are known (`canonicalizeBundleTxType`;
    anything else aborts before a summary is shown, and a numeric type code is
    rewritten to its name so the summary and the builder compare the same
-   value), and *before any
+   value), a check that a CREATE_CHILD approval carries the SubVault owners and
+   threshold it authorizes and that they hash, in reserved slot order, to the
+   signed `proposal.data` (`assertCreateChildApprovalConfig`; a missing,
+   malformed or swapped configuration aborts before the summary, which
+   otherwise prints the checked owners and threshold), and *before any
    compile/prove/sign work or key use*, `renderBundleSummary` renders
    everything the proposal hash covers (action, contract, fee payer, fee,
    nonce, memo, expiry, the per-type body, a `*** MAINNET ***` banner when
@@ -151,9 +159,9 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    CLI aborts (see focus point 7).
 2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
    never dials out), the bundled account snapshots injected into o1js's
-   account cache, and the Merkle stores reconstructed from version 1 request checkpoint
+   account cache, and the Merkle stores reconstructed from version 2 request checkpoint
    leaves using `storesFromOfflineRequest` (`contracts/src/store-checkpoint.ts`).
-   Requests without a checkpoint or with a version other than 1 are rejected. Child execution
+   Requests without a checkpoint or with a version other than 2 are rejected. Child execution
    maps still use `rebuildChildExecutionMap` and bundled child events. All roots are
    checked against the bundled account snapshots before any proof
    (`rebuildVerifiedStores`, `snapshotState`); a mismatch aborts.
@@ -186,7 +194,7 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 
 ```json
 {
-  "version": 2,
+  "version": 1,
   "type": "offline-signed-tx",
   "action": "propose | approve | execute",
   "contractAddress": "B62q...",
@@ -228,7 +236,7 @@ takes over.
 
 ---
 
-## Bundle format reference (requests version 1; signed responses version 1)
+## Bundle format reference (requests version 2; signed responses version 1)
 
 The new hash domains are a breaking change: new proposal hashes, purpose-bound
 owner signatures, memo commitments, owner commitments, vote-nullifier keys,
@@ -247,7 +255,7 @@ Distribute a matching CLI, UI/desktop build, backend and network VK together. Ol
 clients cannot sign for the new contracts. This change does not perform deployment,
 reset any database, or migrate funds from existing test vaults.
 
-Version 1 requires `storeCheckpoint` and an empty `events` array. The checkpoint's
+Every request requires `storeCheckpoint` and an empty `events` array. The checkpoint's
 own serialization format remains version 1 (its leaf encoding did not change). It
 contains version, network, vault address, optional replay height, ordered owners,
 approval leaves, nullifier keys, and their roots. The CLI reconstructs the trees
@@ -259,15 +267,26 @@ state preconditions. A fresh offline invocation still performs work proportional
 to the checkpoint's leaves; it no longer processes the full event history.
 
 
+Version 2 adds `childAddress`, `childOwners` and `childThreshold` to CREATE_CHILD
+approve bundles, so the air-gapped signer sees and checks the SubVault
+configuration an approval authorizes. The CLI rejects version 1 requests;
+re-export pending requests with a matching UI. Signed responses stay at
+version 1. `OFFLINE_REQUEST_VERSION` in `contracts/offline-format` is the one
+source for the UI's `OFFLINE_BUNDLE_VERSION`, the CLI's version gate and
+`storesFromOfflineRequest`; `STORE_CHECKPOINT_VERSION` (1) is the checkpoint's own.
+
 ### Common fields (`BundleBase`)
 
 Verification-key migration uses a separate **version 2** request and response.
-It is never parsed as a version 1 owner proposal. The UI offers it only when
+It is never parsed as an owner proposal despite sharing the version 2 request number. The UI offers it only when
 the vault's stored `setVerificationKey.txnVersion` is older than this release's
 version, the installed VK differs from the reviewed replacement VK, and the
 rest of its permissions are canonical. When the VK already matches, the UI
 instead guides an ordinary owner-authorized proved action, which refreshes the
-version only if Mina accepts the proof. The request binds the
+version only if Mina accepts the proof. Migration shares request version 2 with
+owner actions but has a distinct `migrate-verification-key` action and schema;
+its signed response is version 2, while owner signed responses remain version 1.
+The request binds the
 vault and fee payer addresses, node account snapshots, installed VK hash and
 version, and the release-pinned replacement VK hash and version. It contains
 no private keys or governance proposal. The offline CLI independently checks
@@ -291,14 +310,14 @@ request can become stale before broadcast, and the node remains authoritative.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `1` | Request and signed-response format version after the pre-release reset |
+| `version` | `2` | Request format version; signed responses stay at `1` |
 | `action` | `"propose" \| "approve" \| "execute"` | Dispatch |
 | `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; `testnet` accepts CLI `MINA_NETWORK_DOMAIN=testnet` or `devnet` |
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |
-| `events` | `Array<{eventType, payload, blockHeight?}>` | Must be empty in v1 |
-| `storeCheckpoint` | `StoreCheckpoint` | Required public store snapshot in v1 |
+| `events` | `Array<{eventType, payload, blockHeight?}>` | Must be empty |
+| `storeCheckpoint` | `StoreCheckpoint` | Required public store snapshot |
 
 The online checkpoint producer replays `setupOwner`, `ownerChange`,
 `ownerChangeBatch`, `proposal`, `approval`, `execution`, and `executionBatch`;
@@ -320,6 +339,7 @@ the offline CLI restores the resulting leaves without replaying events.
 | `input.childMultiSigEnable` | `boolean` | enableChildMultiSig |
 | `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners) |
 | `input.childPrivateKey` | `string` | createChild only — signs the child's deploy update (see threat model) |
+| `accounts[input.childAccount]` | `FetchedAccount?` | createChild: present when the child's bare account already exists; the CLI then deploys into it without `fundNewAccount` (`deployTargetFromSnapshot`). A snapshot with a verification key or app state is refused |
 | `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config |
 | `input.expirySlot` | `number` | UInt32 inclusion deadline for propose, approve, and execute; 0 = no expiry |
 | `input.memo` | `string` | Plaintext memo — hashed into the proposal **and** attached as the broadcast memo |
@@ -329,6 +349,8 @@ the offline CLI restores the resulting leaves without replaying events.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `proposal` | object | The claimed proposal, mirroring the backend record: `proposalHash`, `proposer`, `toAddress`, `tokenId`, `txType`, `data`, `nonce`, `configNonce`, `expirySlot`, `guardAddress`, `destination`, `childAccount`, `memoHash`, `memo` (advisory plaintext), `receivers` |
+| `childAddress` | `string?` | createChild approve: the SubVault being reserved |
+| `childOwners` / `childThreshold` | `string[]?` / `number?` | createChild approve: the reserved configuration, checked against `proposal.data` by the UI before export and by the CLI before the summary, which prints it |
 
 The CLI does **not** trust `proposal.proposalHash` — it rebuilds the struct
 from the fields and recomputes the hash it signs.
@@ -366,7 +388,11 @@ action differs, and the distinction is the heart of this design:
   renders the rebuilt proposal's fields for out-of-band comparison; its Memo
   line is the bundle's advisory plaintext, not the hash-covered `memoHash`,
   so a Memo check line recomputes `memoToField` from that text and says
-  whether it matches `memoHash` (see focus point 2).
+  whether it matches `memoHash` (see focus point 2). A CREATE_CHILD approve
+  bundle also carries the SubVault owners and threshold; the CLI recomputes
+  their commitment and config hash and refuses the bundle unless it equals
+  `proposal.data`, so the summary shows the configuration the approval
+  authorizes rather than `Threshold (unknown)`.
 - **Execute bundles.** Execution is permissionless on-chain: anyone can
   submit a fully-approved proposal. The `receiverAccountExists` map drives the
   executor-signed account-creation fee (1 MINA per new receiver slot), counted
@@ -583,7 +609,7 @@ recipient is initialized and bound to the sending parent. These state reads are
 ledger-enforced. Allocation never charges for creating recipient accounts, even
 if `receiverAccountExists` is missing an entry or marks it false.
 
-The request format remains v1 and signed responses are unchanged; older allocation
+Owner requests use version 2 and signed responses remain version 1; older allocation
 bundles without recipient snapshots fail closed. Allocation adds no fields to
 proposals or signed responses. This branch also changes proposal hashing and
 owner-signing messages as described above. Rebuild the CLI, UI, and desktop

@@ -5,7 +5,7 @@ Online creation checks whether the exact proposal already exists before requesti
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** the actual transaction app-state preconditions are compared with fresh node state before sending (before Auro wallet handoff). Stale transactions require explicit, eligibility-checked recovery. Node failures block broadcast; a successful check does not guarantee inclusion. See [design and boundaries](transaction-coordination-design.md). Permission-loading notices on vault and proposal pages are delayed and neutral; action gates remain fail-closed.
+**Pre-broadcast state checks:** the actual transaction app-state preconditions are compared with fresh node state before sending (before Auro wallet handoff). Stale transactions require explicit, eligibility-checked recovery. A deploy target that exists without zkApp state (the node answers `zkappState: null` for an account a payment created) is read as all zeros, as the chain reads it, so a deployment into it is checked like any other; an answer that omits the field blocks the broadcast. Node failures block broadcast; a successful check does not guarantee inclusion. See [design and boundaries](transaction-coordination-design.md). Permission-loading notices on vault and proposal pages are delayed and neutral; action gates remain fail-closed.
 
 Online progress follows the submission boundary: Auro shows “Checking latest vault state…” after proving, then “Waiting for wallet confirmation…” only after the check passes. Ledger requests wallet confirmation first, checks the signed transaction, then shows “Broadcasting transaction…”. Early store/root mismatches offer explicit Retry / Cancel; the post-proof check uses the recovery panel.
 
@@ -164,7 +164,9 @@ reclaimable.
   indexer's precomputed copies of those values are ignored. The worker refuses a proposal whose
   transaction type it does not recognize (`requireTxType`) instead of building it as a transfer.
   The chainless UI regression checks the child-specific permission alert and verifies that both online
-  approval and offline bundle creation/broadcast remain unavailable for an unsafe CREATE_CHILD target.
+  approval and offline bundle creation/broadcast remain unavailable for an unsafe CREATE_CHILD target,
+  and that a CREATE_CHILD approval shows the SubVault owners and threshold and keeps Approve disabled
+  until they are verified.
 - **Interactions with the chain.** Interactions with the chain, like transactions submitted, reach the node
   directly. Note, however, that:
   - Transactions submitted through Auro wallet reach the node endpoint defined by Auro.
@@ -269,7 +271,12 @@ A guard that is deployed but not yet configured could be controlled by whoever
 calls `setup()` first.
   - Top-level vaults use the atomic `deployAndSetupContract` — one tx doing
     `fundNewAccount` + `deploy` + `setup`; the worker exposes no separate
-    deploy-only or setup-only API.
+    deploy-only or setup-only API. The creation fee is paid only when the node
+    has no account at the address (`classifyDeployTarget`, `lib/deploy-target.ts`):
+    anyone can create the bare account first by paying into it, which fails a
+    deployment that declares a new account, so a bare account is deployed into
+    as it is, and an address that already carries a verification key or app
+    state is refused. The same rule applies to the child in CREATE_CHILD.
   - CREATE_CHILD spans two transactions by design: the propose tx does
     `deploy(child)` + `reserveForParent(child)` + `propose(parent)` atomically
     (`worker.ts:979-1003`); the later `executeSetupChild` is bound on-chain to
@@ -280,7 +287,9 @@ calls `setup()` first.
   - Account-creation fees on execute are counted from the hash-bound
     `proposalStruct.receivers`, never the raw backend array
     (`worker.ts:1142-1153`), so indexer rows beyond `MAX_RECEIVERS` can't
-    inflate the executor-signed fee.
+    inflate the executor-signed fee. A receiver counts as new only when the
+    node answers "no such account" (`receiverExists`); any other node error
+    stops the build, since a wrong guess fails the transaction after proving.
 
 **3. Indexer-supplied data feeding into signed transactions.**
 The backend is untrusted (see threat model), yet its data rebuilds the Merkle
@@ -297,15 +306,21 @@ operation. Storage failures fall back to verified in-memory operation. Unknown
 legacy event heights disable incremental reuse. A bounded four-vault memory cache
 avoids rehashing old leaves during warm operations; cold restore still rebuilds
 trees from saved leaves. Offline export uses this same worker path to produce
-version 1 request snapshots. Export rejects unknown runtime networks before worker
+version 2 request snapshots. Export rejects unknown runtime networks before worker
 access or account reads; devnet uses the shared testnet proof domain. The offline
 CLI independently reconstructs and checks
 them against bundled account snapshots (see the offline audit guide). Child
 execution maps and child reservation configuration still replay child events.
 Reservation `proposalHash` values are caller-supplied labels. The UI fetches a
-reservation by child address and checks its recomputed configuration hash against
-the parent-approved `CREATE_CHILD` proposal data before approval, execution, or
-offline export. The rebuild does not depend on delivery order: approval
+reservation by child address, checks its recomputed configuration hash against
+the parent-approved `CREATE_CHILD` proposal data, and shows the reserved owners
+and threshold on the proposal page. Approval, execution and offline export wait
+until that check passes (an unindexed reservation blocks, it does not pass), and
+the approve bundle carries the checked configuration for the CLI. For the other
+REMOTE proposals the backend reports whether it has indexed the target SubVault
+(`childTargetIndexed`); an unindexed target blocks approval, execution and
+offline export on the detail page until the backend catches up, since the
+proposal's freshness cannot be judged without the SubVault's state. The rebuild does not depend on delivery order: approval
 leaves keep the largest value seen, owners come from the emitted setup slot index,
 and owner changes replay in `configNonce` order with each insert placed where the
 emitted post-change commitment says. Before any proof the worker compares the
@@ -380,7 +395,10 @@ never reports the earlier tx's failure. An accepted report marks its record
 `recorded`; reconciliation then marks it `untracked` as soon as the backend's
 hash for that action is not this record's (`backendNoLongerTracks`). A report
 the backend never answered within two minutes, say after a reload mid-report,
-is marked the same way (`reportUnanswered`).
+is marked the same way (`reportUnanswered`). SubVault creation records (`kind: 'create'` with a `createChild` summary) use
+the same 20-minute window: a failed creation emits no proposal, and the
+best-chain probe covers only recent blocks, so nothing else would ever clear
+them.
 
 **5. zkApp deploy key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
@@ -422,7 +440,9 @@ installed VK, version, and permissions against the Mina node before broadcast.
 After inclusion, the user can check the on-chain VK hash, stored version, and
 complete permission vector. The saved deploy key is used only in the offline
 CLI; a separate offline fee payer key is needed unless the deploy key also
-funds the fee. The UI does not infer proof compatibility from the version
+funds the fee. The migration request shares version 2 with owner requests but
+has a distinct action and schema; its signed response is version 2, while
+owner signed responses remain version 1. The UI does not infer proof compatibility from the version
 number. A release for a future fork must first review the replacement circuit,
 its VK hash, and that fork's signing rules. Other non-canonical permissions or
 a mismatching VK still block normal owner actions.
@@ -601,7 +621,7 @@ cannot receive an allocation; account-creation fees apply only to ordinary
 transfers. Empty padding is exempt, but non-empty zero-value recipients are checked.
 
 Offline allocation export includes each recipient's full snapshot in `accounts`,
-so the air-gapped CLI can prove the same checks. This uses the existing v1 format;
+so the air-gapped CLI can prove the same checks. Owner requests use version 2;
 old allocation bundles lacking snapshots must be exported again. Desktop uses
 these same worker/exporter paths. Rebuild UI, offline CLI, and desktop together
 with the changed circuit and CI-generated verification-key hashes.

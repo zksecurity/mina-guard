@@ -248,7 +248,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -310,7 +310,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       const contract = await prisma.contract.findUnique({
         where: { address },
-        select: { id: true, ready: true, permissionsVerified: true },
+        select: { id: true, parent: true, ready: true, permissionsVerified: true },
       });
 
       if (!contract || !contract.ready || !contract.permissionsVerified) {
@@ -876,15 +876,27 @@ function toContractState(
   };
 }
 
-/** One-shot lookup of a child's current state by address, used by the
- *  single-proposal route. */
+/** The state of a child the backend has indexed and verified, or null while
+ *  it has no config snapshot yet. `setup` writes the first snapshot, and the
+ *  contract only records a REMOTE proposal for an initialized child, so a
+ *  missing snapshot means the backend has not caught up, not that the child
+ *  is unset; the record then says the target is not indexed. */
+function childTargetState(
+  config: Awaited<ReturnType<typeof latestContractConfig>>,
+): ContractState | null {
+  return toContractState(config);
+}
+
+/** One-shot lookup of the child a REMOTE proposal targets, used by the
+ *  single-proposal route. Null while the backend has not indexed and verified
+ *  the child, so nothing about it is known yet. */
 async function resolveChildState(address: string): Promise<ContractState | null> {
   const child = await prisma.contract.findUnique({
     where: { address },
     select: { id: true, ready: true, permissionsVerified: true },
   });
   if (!child?.ready || !child.permissionsVerified) return null;
-  return toContractState(await latestContractConfig(child.id));
+  return childTargetState(await latestContractConfig(child.id));
 }
 
 /** Batches child-state lookups for a list of proposals. Only REMOTE
@@ -924,7 +936,7 @@ async function buildChildStateMap(
 
   const result = new Map<string, ContractState>();
   for (const child of childContracts) {
-    const state = toContractState(latestByContractId.get(child.id) ?? null);
+    const state = childTargetState(latestByContractId.get(child.id) ?? null);
     if (state) result.set(child.address, state);
   }
   return result;

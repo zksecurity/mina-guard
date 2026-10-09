@@ -134,6 +134,8 @@ function renderBody(
     childAddress?: string | null;
     childOwners?: string[] | null;
     childThreshold?: string | number | null;
+    /** createChild propose: whether the bundle snapshots the child account, so the CLI skips the creation fee. */
+    childAccountExists?: boolean | null;
     reclaimAmount?: string | null;
     enableMultiSig?: boolean | null;
   },
@@ -159,6 +161,9 @@ function renderBody(
         for (const o of src.childOwners) out.push(`    ${o}`);
       }
       out.push(line('Threshold', src.childThreshold ?? '(unknown)'));
+      if (src.childAccountExists != null) {
+        out.push(line('Child account', src.childAccountExists ? 'exists, no creation fee' : 'new, 1 MINA creation fee'));
+      }
       return out;
     }
     case 'reclaimChild':
@@ -265,6 +270,9 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
           childAddress: input.childAccount ?? null,
           childOwners: input.childOwners ?? null,
           childThreshold: input.childThreshold ?? null,
+          childAccountExists: input.txType === 'createChild' && input.childAccount
+            ? Boolean(b.accounts?.[input.childAccount])
+            : null,
           reclaimAmount: input.reclaimAmount ?? null,
           enableMultiSig: input.childMultiSigEnable ?? null,
         }),
@@ -276,7 +284,6 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
       const b = bundle as OfflineApproveBundle | OfflineExecuteBundle;
       const p = b.proposal;
       const txType = normalizeTxType(p.txType);
-      const exec = bundle.action === 'execute' ? (bundle as OfflineExecuteBundle) : null;
       const target0 = realReceivers(p.receivers)[0]?.address ?? null;
       lines = renderHeader(b, p.txType, {
         nonce: p.nonce,
@@ -291,9 +298,10 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
           threshold: p.data ?? null,
           delegate: target0,
           undelegate: target0 === null && txType === 'setDelegate',
-          childAddress: p.childAccount ?? exec?.childAddress ?? null,
-          childOwners: exec?.childOwners ?? null,
-          childThreshold: exec?.childThreshold ?? null,
+          // createChild carries its SubVault config on approve and execute bundles.
+          childAddress: p.childAccount ?? b.childAddress ?? null,
+          childOwners: b.childOwners ?? null,
+          childThreshold: b.childThreshold ?? null,
           reclaimAmount: p.data ?? null,
           enableMultiSig: p.data === '1',
         }),

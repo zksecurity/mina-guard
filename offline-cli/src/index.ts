@@ -28,8 +28,9 @@ if (!isMainThread) {
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
-import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType } from './build-tx.js';
+import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildBundleConfig } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
+import { OFFLINE_REQUEST_VERSION } from 'contracts';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
 import { escapeTerminalLines } from './terminal-safe.js';
 import { handleMigration, renderMigrationSummary, type MigrationBundle } from './migrate-vk.js';
@@ -84,8 +85,8 @@ function readBundle(path: string): OfflineBundle | MigrationBundle {
 
 const bundle = readBundle(bundlePath);
 
-if (bundle.version !== 1 && bundle.version !== 2) {
-  fatal(`Unsupported bundle version: ${(bundle as { version: unknown }).version} (expected 1 or migration version 2)`);
+if (bundle.version !== OFFLINE_REQUEST_VERSION) {
+  fatal(`Unsupported bundle version: ${bundle.version} (expected ${OFFLINE_REQUEST_VERSION}; export a new request with the current UI)`);
 }
 
 if (!['propose', 'approve', 'execute', 'migrate-verification-key'].includes(bundle.action)) {
@@ -96,7 +97,6 @@ if (!['propose', 'approve', 'execute', 'migrate-verification-key'].includes(bund
 
 async function main() {
   if (bundle.action === 'migrate-verification-key') {
-    if (bundle.version !== 2) fatal('Migration requires request format version 2.');
     let summary: string;
     try { summary = renderMigrationSummary(bundle); }
     catch (error) { fatal(`Invalid migration request: ${error instanceof Error ? error.message : String(error)}`); }
@@ -107,11 +107,13 @@ async function main() {
     log('Signed migration transaction written to stdout. Import it into the Vault migration screen.');
     return;
   }
-  if (bundle.version !== 1) fatal('Owner actions require request format version 1.');
   // Refuse an unknown transaction type before showing anything, and turn a
   // numeric code into its name, so the summary and the builder agree on it.
+  // A CREATE_CHILD approval or execution also needs the SubVault owners and
+  // threshold it carries, checked against the signed data, before they are shown.
   try {
     canonicalizeBundleTxType(bundle);
+    if (bundle.action === 'approve' || bundle.action === 'execute') assertCreateChildBundleConfig(bundle);
   } catch (err) {
     fatal(`${err instanceof Error ? err.message : String(err)}\nAborted. No transaction was signed.`);
   }

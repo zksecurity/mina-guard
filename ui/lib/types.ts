@@ -56,6 +56,9 @@ export interface Proposal {
   childAccount: string | null;
   status: ProposalStatus;
   invalidReason: string | null;
+  /** For a REMOTE proposal, whether the backend has indexed its SubVault
+   *  target and could check it; null for other proposals. */
+  childTargetIndexed: boolean | null;
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;

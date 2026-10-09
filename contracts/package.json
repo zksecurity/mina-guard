@@ -21,6 +21,10 @@
     "./guard-permission-policy": {
       "types": "./build/src/guard-permission-policy.d.ts",
       "default": "./build/src/guard-permission-policy.js"
+    },
+    "./offline-format": {
+      "types": "./build/src/offline-format.d.ts",
+      "default": "./build/src/offline-format.js"
     }
   },
   "scripts": {

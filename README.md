@@ -294,14 +294,15 @@ browser storage loses only this optimization, not signing keys. Ranges exceeding
 the existing pagination cap fail closed; cursor pagination is tracked in
 [issue #143](https://github.com/zksecurity/mina-guard/issues/143).
 
-Offline requests exported by this UI use **version 1** with a complete public
+Offline requests exported by this UI use **version 2** with a complete public
 store snapshot. Proposals use application-tagged hashes, distinct
 propose/approve signing messages, and length-prefixed memo commitments (including
 empty memos). Owner-chain links, vote-nullifier keys, and child configuration
 hashes also have separate tags. Use matching CLI/UI/backend/desktop builds and
 new network VKs.
-Requests and signed responses both use v1. Discard older files: the version
-number alone does not distinguish them from current files, and proposals now
+Owner requests use v2 and their signed responses use v1. Discard older files:
+the signed-response version alone does not distinguish old files from current
+ones, and proposals now
 sign the native MINA token ID `Field(1)`.
 This breaking change requires fresh vaults and recreated proposals.
 See [the offline audit guide](docs/offline-audit-guide.md) for migration and trust

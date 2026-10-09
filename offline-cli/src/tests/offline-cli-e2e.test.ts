@@ -162,6 +162,8 @@ function snapshotAccount(addr: PublicKey): unknown {
 
 let owners: Array<{ key: PrivateKey; pub: PublicKey }>;
 let zkAppAddress: PublicKey;
+// Kept for the test that deploys into the parent's own address.
+let zkAppKey: InstanceType<typeof PrivateKey>;
 let zkApp: MinaGuard;
 let deployer: { key: PrivateKey; pub: PublicKey };
 
@@ -188,7 +190,7 @@ describe('offline-cli e2e', () => {
     }));
     owners.sort((a, b) => (a.pub.toBase58() > b.pub.toBase58() ? 1 : -1));
 
-    const zkAppKey = PrivateKey.random();
+    zkAppKey = PrivateKey.random();
     zkAppAddress = zkAppKey.toPublicKey();
     zkApp = new MinaGuard(zkAppAddress);
 
@@ -232,7 +234,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -323,7 +325,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -420,7 +422,7 @@ describe('offline-cli e2e', () => {
       payload: JSON.parse(safeStringify(e.event.data)),
     }));
     const base = {
-      version: 1,
+      version: 2,
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
       feePayerAddress: signer.pub.toBase58(),
@@ -488,7 +490,7 @@ describe('offline-cli e2e', () => {
     });
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -530,7 +532,7 @@ describe('offline-cli e2e', () => {
     // while the summary printed the label, escape sequences included.
     const rawEvents = await zkApp.fetchEvents();
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -583,7 +585,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'execute',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -664,7 +666,7 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 1,
+      version: 2,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
@@ -839,7 +841,7 @@ describe('offline-cli e2e', () => {
     it('propose', async () => {
       const proposer = owners[0];
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -896,7 +898,7 @@ describe('offline-cli e2e', () => {
       const approver = owners[1];
 
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'approve',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -952,7 +954,7 @@ describe('offline-cli e2e', () => {
       }));
 
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'execute',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -1030,16 +1032,22 @@ describe('offline-cli e2e', () => {
       receivers: [{ address: emptyKey, amount: '0' }],
     });
 
-    function configHash(): string {
+    function sortedChildOwnerAddrs(): string[] {
       const childOS = new OwnerStore();
       for (const addr of childOwnerAddrs()) childOS.addSorted(PublicKey.fromBase58(addr));
+      return childOS.owners.map((owner) => owner.toBase58());
+    }
+
+    function configHash(): string {
+      const childOS = new OwnerStore();
+      childOS.owners = sortedChildOwnerAddrs().map((addr) => PublicKey.fromBase58(addr));
       return childConfigHash(childOS.getCommitment(), Field(2), Field(owners.length)).toString();
     }
 
     it('propose createChild', async () => {
       const proposer = owners[0];
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -1151,7 +1159,7 @@ describe('offline-cli e2e', () => {
       const memo = 'pay rent for june';
       const localChildKey = PrivateKey.random();
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -1191,7 +1199,7 @@ describe('offline-cli e2e', () => {
       const approver = owners[1];
 
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'approve',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -1199,6 +1207,12 @@ describe('offline-cli e2e', () => {
         accounts: accountsSnapshotForCreate(),
         events: await parentEvents(),
         proposal: createChildProposalBundle(),
+        // The approval authorizes this configuration; the CLI checks it
+        // against proposal.data before the summary, in the reserved slot
+        // order, which the propose above sorted.
+        childAddress: childAddr.toBase58(),
+        childOwners: sortedChildOwnerAddrs(),
+        childThreshold: 2,
       };
 
       const bundlePath = join(tmpDir, 'create-child-approve.json');
@@ -1275,7 +1289,7 @@ describe('offline-cli e2e', () => {
       accounts[childAddr.toBase58()] = snapshotAccount(childAddr);
 
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'execute',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -1327,7 +1341,7 @@ describe('offline-cli e2e', () => {
       accounts[childAddr.toBase58()] = snapshotAccount(childAddr);
 
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'execute',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -1353,6 +1367,104 @@ describe('offline-cli e2e', () => {
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('config mismatch');
     }, 120_000);
+
+    it('propose createChild into an account someone created first, without funding it again', async () => {
+      const proposer = owners[0];
+      const preKey = PrivateKey.random();
+      const preAddr = preKey.toPublicKey();
+      // Anyone can create the bare account by paying into the address.
+      const payer = owners[1];
+      const pay = await Mina.transaction(payer.pub, async () => {
+        AccountUpdate.fundNewAccount(payer.pub);
+        AccountUpdate.createSigned(payer.pub).send({ to: preAddr, amount: 1_000_000_000 });
+      });
+      await pay.sign([payer.key]).send();
+      expect(Mina.hasAccount(preAddr)).toBe(true);
+
+      const bundle = {
+        version: 2,
+        action: 'propose',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(),
+        accounts: { ...accountsSnapshotForCreate(), [preAddr.toBase58()]: snapshotAccount(preAddr) },
+        events: await parentEvents(),
+        input: {
+          txType: 'createChild',
+          nonce: 0,
+          childAccount: preAddr.toBase58(),
+          createChildConfigHash: configHash(),
+          childPrivateKey: preKey.toBase58(),
+          childOwners: childOwnerAddrs(),
+          childThreshold: 2,
+        },
+        configNonce: 0,
+        networkId: '1',
+      };
+      const bundlePath = join(tmpDir, 'create-child-existing-account.json');
+      writeBundle(bundlePath, bundle);
+
+      const result = await runCLI(bundlePath, proposer.key.toBase58(), 600_000, skipEnv);
+      if (result.code !== 0) console.log('[e2e] CLI stderr:', result.stderr, '\nstdout:', result.stdout);
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      // No account-creation update for the proposer: the account already exists.
+      const proposerUpdates = output.transaction.accountUpdates.filter(
+        (au: any) => au.body.publicKey === proposer.pub.toBase58(),
+      );
+      expect(proposerUpdates).toHaveLength(0);
+      // The ledger accepts a deployment into the existing bare account: no
+      // creation fee, and the address's own key signs the deploy update.
+      const childZkApp = new MinaGuard(preAddr);
+      const deployTx = await Mina.transaction(proposer.pub, async () => {
+        await childZkApp.deploy();
+      });
+      await deployTx.sign([proposer.key, preKey]).send();
+      expect(Mina.getAccount(preAddr).zkapp?.verificationKey).toBeDefined();
+    }, 120_000);
+
+    it('refuses to propose createChild into an address that already holds a zkApp, or with a key for another address', async () => {
+      const proposer = owners[0];
+      const bundleWithKey = async (childPrivateKey: string) => ({
+        version: 2,
+        action: 'propose',
+        minaNetwork: 'testnet',
+        contractAddress: zkAppAddress.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(),
+        accounts: accountsSnapshotForCreate(),
+        events: await parentEvents(),
+        input: {
+          txType: 'createChild',
+          nonce: 0,
+          // The parent vault itself: an address with a verification key.
+          childAccount: zkAppAddress.toBase58(),
+          createChildConfigHash: configHash(),
+          childPrivateKey,
+          childOwners: childOwnerAddrs(),
+          childThreshold: 2,
+        },
+        configNonce: 0,
+        networkId: '1',
+      });
+
+      // A key for some other address is refused before anything else.
+      const mismatchPath = join(tmpDir, 'create-child-key-mismatch.json');
+      writeBundle(mismatchPath, await bundleWithKey(PrivateKey.random().toBase58()));
+      const mismatch = await runCLI(mismatchPath, proposer.key.toBase58(), 600_000, skipEnv);
+      expect(mismatch.code).not.toBe(0);
+      expect(mismatch.stderr).toContain('does not match input.childAccount');
+      expect(mismatch.stdout).toBe('');
+
+      // With the address's own key, the snapshot shows it already holds a zkApp.
+      const takenPath = join(tmpDir, 'create-child-taken-address.json');
+      writeBundle(takenPath, await bundleWithKey(zkAppKey.toBase58()));
+      const taken = await runCLI(takenPath, proposer.key.toBase58(), 600_000, skipEnv);
+      console.log('[e2e] CLI stderr:', taken.stderr);
+      expect(taken.code).not.toBe(0);
+      expect(taken.stderr).toContain('already holds a zkApp');
+      expect(taken.stdout).toBe('');
+    }, 240_000);
   });
 });
 
@@ -1381,7 +1493,7 @@ describe('offline child allocation', () => {
     }));
     const address = childAddress.toBase58();
     const bundle = {
-      version: 1, action: 'execute', minaNetwork: 'testnet',
+      version: 2, action: 'execute', minaNetwork: 'testnet',
       contractAddress: ctx.zkAppAddress.toBase58(), feePayerAddress: ctx.deployerAccount.toBase58(),
       accounts: {
         [ctx.zkAppAddress.toBase58()]: snapshotAccount(ctx.zkAppAddress),

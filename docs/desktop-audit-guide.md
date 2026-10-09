@@ -521,13 +521,13 @@ endpoints, network, expected VK and vault address. Stored leaves and replay bloc
 untrusted; reconstructed roots must match the configured Mina node before use.
 Corruption or a reorg triggers one full replay, and storage failure does not bypass
 verification. These snapshots are separate from the SQLite indexer schema and
-contain public state only. Offline request v1 requires the matching CLI; see the
+contain public state only. Offline request v2 requires the matching CLI; see the
 [offline audit guide](offline-audit-guide.md).
 
 ### Proposal signing compatibility
 
 Desktop packages the same hashing/signing worker and backend as the web
-release. Offline requests and signed responses both use v1 after the pre-release reset.
+release. Offline requests use version 2 and signed responses version 1.
 Discard older files and use matching UI and CLI builds.
 Rebuild packaged UI/backend assets and copy the updated per-network `contracts/.vk-hash`
 when packaging this release. Existing test vaults need fresh deployments and proposals;

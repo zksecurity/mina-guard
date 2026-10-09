@@ -50,7 +50,7 @@ function configure(networkId: string | undefined) {
     fetchedUrls.push(String(url));
     if (init?.method === 'POST') {
       const { variables } = JSON.parse(String(init.body));
-      return Response.json({ data: { account: { publicKey: variables.publicKey } } });
+      return Response.json({ data: { account: { publicKey: variables.publicKey, nonce: '0', balance: { total: '1000000000' }, zkappState: null } } });
     }
     return Response.json([]);
   }) as typeof fetch;
@@ -71,12 +71,12 @@ const builders = [
   { action: 'execute', build: () => buildOfflineExecuteBundle({ ...common, proposal }) },
 ];
 
-describe('v1 offline bundle network selection', () => {
+describe('offline bundle network selection', () => {
   for (const { action, build } of builders) {
     it(`${action}: maps devnet to testnet without changing the snapshot endpoint`, async () => {
       configure('devnet');
       const bundle = await build();
-      expect(bundle.version).toBe(1);
+      expect(bundle.version).toBe(2);
       expect(bundle.events).toEqual([]);
       expect(bundle.storeCheckpoint.network).toBe('testnet');
       expect(checkpointCalls).toEqual(['vault']);
@@ -119,5 +119,69 @@ describe('offline allocation snapshots', () => {
     expect(Object.keys(bundle.accounts).sort()).toEqual(['child-a', 'child-b', 'payer', 'vault']);
     expect(bundle.accounts['child-a'].publicKey).toBe('child-a');
     expect(bundle.receiverAccountExists).toEqual({ 'child-a': true, 'child-b': true });
+  });
+});
+
+describe('account snapshots', () => {
+  it('fails the export when the node answers with an error instead of an account', async () => {
+    configure('testnet');
+    globalThis.fetch = (async (url, init) => {
+      if (init?.method === 'POST') return Response.json({ errors: [{ message: 'node busy' }] });
+      return Response.json([]);
+    }) as typeof fetch;
+    await expect(buildOfflineApproveBundle({ ...common, proposal })).rejects.toThrow('Could not fetch account');
+  });
+
+  it('fails the export when an account answer lacks the fields the CLI decides from', async () => {
+    configure('testnet');
+    globalThis.fetch = (async (url, init) => {
+      if (init?.method === 'POST') return Response.json({ data: { account: { publicKey: 'vault' } } });
+      return Response.json([]);
+    }) as typeof fetch;
+    await expect(buildOfflineApproveBundle({ ...common, proposal })).rejects.toThrow('Incomplete account snapshot');
+  });
+});
+
+describe('CREATE_CHILD approve bundles', () => {
+  const CHILD = 'B62qchildAddressForReservation';
+  const OWNERS = ['B62qownerAddressOne', 'B62qownerAddressTwo'];
+  const reservation = [
+    { eventType: 'createChildConfig', payload: { childAccount: CHILD, threshold: '1', numOwners: '2' } },
+    { eventType: 'createChildOwner', payload: { owner: OWNERS[0], index: '0' } },
+    { eventType: 'createChildOwner', payload: { owner: OWNERS[1], index: '1' } },
+  ];
+  const createChild = (data: string) => ({ ...proposal, txType: 'createChild', childAccount: CHILD, data });
+
+  /** The child's own events hold its reservation; the mocked hash of any config is 'approved-config'. */
+  function serveChildEvents(events: unknown[]) {
+    configure('testnet');
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (url, init) => {
+      if (String(url).includes(`/api/contracts/${CHILD}/events`)) return Response.json(events);
+      return inner(url, init);
+    }) as typeof fetch;
+  }
+
+  it('carries the reserved owners and threshold that hash to the signed data', async () => {
+    serveChildEvents(reservation);
+    const bundle = await buildOfflineApproveBundle({ ...common, proposal: createChild('approved-config') });
+    expect(bundle.childAddress).toBe(CHILD);
+    expect(bundle.childOwners).toEqual(OWNERS);
+    expect(bundle.childThreshold).toBe(1);
+  });
+
+  it('refuses to export when the reservation is missing or does not match', async () => {
+    serveChildEvents([]);
+    await expect(buildOfflineApproveBundle({ ...common, proposal: createChild('approved-config') }))
+      .rejects.toThrow('SubVault config events not found');
+    serveChildEvents(reservation);
+    await expect(buildOfflineApproveBundle({ ...common, proposal: createChild('another-config') }))
+      .rejects.toThrow('does not match the parent-approved proposal data');
+  });
+
+  it('leaves other approvals without a SubVault config', async () => {
+    configure('testnet');
+    const bundle = await buildOfflineApproveBundle({ ...common, proposal });
+    expect(bundle.childOwners).toBeUndefined();
   });
 });

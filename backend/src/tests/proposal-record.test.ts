@@ -22,6 +22,12 @@ function parent(fields: Partial<ContractState> = {}): ContractState {
   return { nonce: null, parentNonce: null, configNonce: null, ...fields };
 }
 
+
+/** A child the backend has indexed, with its config snapshot. */
+function child(fields: Partial<ContractState> = {}): ContractState {
+  return { nonce: null, parentNonce: null, configNonce: null, ...fields };
+}
+
 describe('deriveInvalidReason', () => {
   describe('config_nonce_stale', () => {
     test('returns config_nonce_stale when proposal.configNonce < parent.configNonce', () => {
@@ -117,7 +123,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '2', destination: 'remote', txType: '7' }),
           parent(),
-          { nonce: null, parentNonce: 5, configNonce: null },
+          child({ parentNonce: 5 }),
         ),
       ).toBe('proposal_nonce_stale');
     });
@@ -130,7 +136,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '5', destination: 'remote', txType: '7' }),
           parent({ nonce: 100 }),
-          { nonce: null, parentNonce: 0, configNonce: null },
+          child({ parentNonce: 0 }),
         ),
       ).toBeNull();
     });
@@ -140,7 +146,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '1', destination: 'remote', txType: '7' }),
           parent(),
-          { nonce: null, parentNonce: null, configNonce: null },
+          child({ parentNonce: null }),
         ),
       ).toBeNull();
     });
@@ -160,7 +166,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '10', destination: 'remote', txType: '7' }),
           parent(),
-          { nonce: null, parentNonce: 5, configNonce: null },
+          child({ parentNonce: 5 }),
         ),
       ).toBeNull();
     });
@@ -172,7 +178,7 @@ describe('deriveInvalidReason', () => {
         deriveInvalidReason(
           proposal({ nonce: '0', destination: 'remote', txType: '5' }),
           parent({ nonce: 10 }),
-          { nonce: null, parentNonce: 10, configNonce: null },
+          child({ parentNonce: 10 }),
         ),
       ).toBeNull();
     });
@@ -287,6 +293,25 @@ describe('deriveStatus', () => {
 // Replaces e2e steps 25a-25c (memo lifecycle incl. the stripped-memo mismatch);
 // the happy path still runs end-to-end on the main transfer (steps 7-9).
 // ---------------------------------------------------------------------------
+
+describe('REMOTE proposals and the child the backend knows', () => {
+  const remote = proposal({ nonce: '9', destination: 'remote', txType: '7' });
+
+  test('config staleness wins, then the nonce rule judges against the child', () => {
+    const configStale = proposal({ configNonce: '0', nonce: '9', destination: 'remote', txType: '7' });
+    expect(deriveInvalidReason(configStale, parent({ configNonce: 1 }), child({ parentNonce: 99 }))).toBe('config_nonce_stale');
+    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 9 }))).toBe('proposal_nonce_stale');
+    expect(deriveInvalidReason(remote, parent(), child({ parentNonce: 8 }))).toBeNull();
+  });
+
+  test('an unknown child decides nothing, and LOCAL or CREATE_CHILD proposals ignore it', () => {
+    expect(deriveInvalidReason(remote, parent(), null)).toBeNull();
+    const local = proposal({ nonce: '9', destination: 'local' });
+    expect(deriveInvalidReason(local, parent({ nonce: 1 }), child({ parentNonce: 99 }))).toBeNull();
+    const create = proposal({ nonce: '0', destination: 'remote', txType: '5' });
+    expect(deriveInvalidReason(create, parent(), child({ parentNonce: 99 }))).toBeNull();
+  });
+});
 
 describe('memo match derivation', () => {
   const memo = 'e2e-test-memo';

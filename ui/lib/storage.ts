@@ -102,9 +102,12 @@ export interface PendingTx {
 const PENDING_TXS_KEY = getKey('pending-txs');
 /** 24h prune window — survives long-lived sessions. */
 const PENDING_TX_TTL_MS = 24 * 60 * 60 * 1000;
-/** Prune window for a record the backend refused to track: without it a failed
- *  or dropped transaction would lock the vault in this tab for a day. It
- *  matches the backend's 20-minute wait before it calls a transaction dropped. */
+/** Prune window for a record nothing will resolve if its transaction fails: an
+ *  approve/execute the backend refused to track, or a SubVault creation, whose
+ *  failed transaction emits no proposal and leaves the best-chain probe empty
+ *  once it ages past the probe's window. Without it such a transaction would
+ *  lock the vault in this tab for a day. It matches the backend's 20-minute
+ *  wait before it calls a transaction dropped. */
 export const UNTRACKED_PENDING_TX_TTL_MS = 20 * 60 * 1000;
 
 /** Custom event dispatched on save/clear so banners can refresh in the same tab.
@@ -121,7 +124,8 @@ function pruneStale(records: PendingTx[]): PendingTx[] {
   return records.filter((r) => {
     const ts = new Date(r.createdAt).getTime();
     if (!Number.isFinite(ts)) return false;
-    return now - ts < (r.untracked ? UNTRACKED_PENDING_TX_TTL_MS : PENDING_TX_TTL_MS);
+    const shortLived = r.untracked || (r.kind === 'create' && r.summary?.txType === 'createChild');
+    return now - ts < (shortLived ? UNTRACKED_PENDING_TX_TTL_MS : PENDING_TX_TTL_MS);
   });
 }
 

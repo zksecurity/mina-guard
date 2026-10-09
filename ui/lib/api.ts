@@ -450,6 +450,7 @@ export function toProposal(input: Record<string, unknown>): Proposal {
     childAccount: asNullableString(input.childAccount),
     status: asProposalStatus(input.status),
     invalidReason: asNullableString(input.invalidReason),
+    childTargetIndexed: asNullableBoolean(input.childTargetIndexed),
     approvalCount: asNumber(input.approvalCount),
     createdAtBlock: asNullableNumber(input.createdAtBlock),
     executedAtBlock: asNullableNumber(input.executedAtBlock),

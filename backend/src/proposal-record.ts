@@ -39,6 +39,9 @@ export interface SerializedProposalRecord {
   childAccount: string | null;
   status: string;
   invalidReason: InvalidReason | null;
+  /** For a REMOTE proposal, whether the backend has indexed and verified its
+   *  SubVault target, so the checks above could run; null for other proposals. */
+  childTargetIndexed: boolean | null;
   approvalCount: number;
   createdAtBlock: number | null;
   executedAtBlock: number | null;
@@ -68,6 +71,8 @@ type ProposalInvalidInput = Pick<Proposal, 'nonce' | 'configNonce' | 'destinatio
  * Config-stale takes precedence over nonce-stale (matches on-chain assert
  * ordering and prior indexer logic). CREATE_CHILD (txType='5') bypasses
  * nonce-stale entirely — its nonce is structural (always 0), not sequential.
+ * A REMOTE proposal whose child the backend has not indexed (null child)
+ * decides nothing here and is reported as not indexed instead.
  */
 export function deriveInvalidReason(
   proposal: ProposalInvalidInput,
@@ -161,6 +166,7 @@ export function serializeProposalRecord(
   const execution = proposal.executions[0] ?? null;
   const invalidReason = deriveInvalidReason(proposal, parentState, childState);
   const status = deriveStatus(proposal, execution !== null, latestSlot, invalidReason);
+  const targetsChild = proposal.destination === 'remote' && proposal.txType !== '5' && proposal.childAccount !== null;
 
   return {
     proposalHash: proposal.proposalHash,
@@ -181,6 +187,7 @@ export function serializeProposalRecord(
     childAccount: proposal.childAccount,
     status,
     invalidReason,
+    childTargetIndexed: targetsChild ? childState !== null : null,
     approvalCount: proposal._count.approvals,
     createdAtBlock: proposal.createdAtBlock,
     executedAtBlock: execution?.blockHeight ?? null,

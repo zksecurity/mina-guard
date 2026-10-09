@@ -549,7 +549,7 @@ proof-authorized `setup()` or `reserveForParent()` update overwrites the complet
 | `receive` | `none()` | Anyone can deposit MINA without a proof |
 | `setDelegate` | `proof()` | Delegation only via proven contract methods |
 | `setPermissions` | `impossible()` | Prevents permission downgrade attacks |
-| `setVerificationKey` | `impossibleDuringCurrentVersion()` | Pins the verification key for the lifetime of the current version |
+| `setVerificationKey` | `impossibleDuringCurrentVersion()` | Pins the verification key while the network's transaction version equals the one o1js stamped at deploy (`TransactionVersion.current()`, 4, mirrored by hand in `GUARD_SET_VERIFICATION_KEY_TXN_VERSION`); a later hard fork reads it as `Signature` ([security guide, accepted risk 9](./security-audit-guide.md#accepted-risks-and-known-limitations)) |
 | `setZkappUri` | `impossible()` | Metadata cannot be rewritten |
 | `editActionState` | `proof()` | Actions can only be edited by proof |
 | `setTokenSymbol` | `impossible()` | Token symbol cannot be rewritten |
@@ -560,8 +560,12 @@ proof-authorized `setup()` or `reserveForParent()` update overwrites the complet
 
 Both vectors are defined in `contracts/src/guard-permissions.ts`, with the temporary vector derived
 from the canonical one by overriding only `setPermissions`. If the atomic initialization succeeds,
-the deploy key cannot change the verification key during the stored transaction version: every state/fund knob requires a proof and `setPermissions` is `impossible`.
-After a transaction-version upgrade, Mina can reinterpret the versioned `setVerificationKey` permission as `Signature`; a retained key could replace the proof circuit. If a creator weakens `send` in the deployment update, the proved
+the deploy key cannot change the verification key during the stored transaction version:
+every state/fund knob requires a proof and `setPermissions` is `impossible`.
+After a transaction-version upgrade, Mina can reinterpret the versioned `setVerificationKey`
+permission as `Signature`; a retained key could replace the proof circuit
+([security guide, accepted risk 9](./security-audit-guide.md#accepted-risks-and-known-limitations)).
+If a creator weakens `send` in the deployment update, the proved
 initialization overwrites it. If the creator makes `setPermissions` impossible early, the proved
 write cannot execute and the entire atomic creation transaction fails.
 
@@ -570,8 +574,11 @@ circuit, and its AccountUpdate is authorized by the vault account signature. A c
 canonical MinaGuard verification key while changing `send` to `proofOrSignature()`, retain the
 deployment key, and later withdraw by signature. Therefore a verification-key match alone does not
 identify a safe MinaGuard vault. The backend and every online client MUST compare all on-chain
-permission fields (including `access` and the `setVerificationKey` transaction version) with
-`GUARD_PERMISSIONS` before displaying, funding, proposing, approving, or executing for an account.
+permission fields (including `access`) and the VK hash with `GUARD_PERMISSIONS`
+before displaying, funding, proposing, approving, or executing for an account.
+An older `setVerificationKey.txnVersion` is the sole admitted mismatch when the VK
+still matches the reviewed release; the deploy-key fallback remains active until
+an accepted account update refreshes the version.
 The browser must obtain the actual vector directly from its configured Mina node and compare it
 with a build-time canonical value, rather than trusting an indexer to supply both sides.
 The offline CLI cannot perform this authentication because its bundle is supplied by an untrusted
