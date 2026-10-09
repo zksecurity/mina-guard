@@ -361,6 +361,9 @@ export default function TransactionDetailPage() {
     multisig?.permissionsVerified === true && parentPermissionCheck === 'safe';
   const childPermissionsSafe =
     !proposal?.childAccount || childPermissionCheck === 'match';
+  // A REMOTE proposal needs the backend's view of its SubVault to judge
+  // its nonce. A target not indexed yet blocks actions but invalidates nothing.
+  const targetUnindexed = proposal?.status === 'pending' && proposal.childTargetIndexed === false;
   const canApprove =
     !!proposal &&
     !isLocalPending &&
@@ -370,6 +373,7 @@ export default function TransactionDetailPage() {
     !isConfigStale &&
     permissionsSafe &&
     childPermissionsSafe &&
+    !targetUnindexed &&
     // Block approval when the displayed SubVault config provably does not hash
     // to the signed proposal.data (config-swap). Only a computed mismatch
     // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
@@ -387,6 +391,7 @@ export default function TransactionDetailPage() {
     !isConfigStale &&
     permissionsSafe &&
     childPermissionsSafe &&
+    !targetUnindexed &&
     !executeInFlight &&
     !contractLock.locked &&
     !insufficientBalance;
@@ -714,6 +719,17 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
+        {targetUnindexed && (
+          <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
+            <p className="font-semibold mb-1">SubVault not indexed yet</p>
+            <p className="opacity-90">
+              This proposal targets a SubVault the backend has not indexed and verified yet, so whether the
+              proposal is still current cannot be checked. Approval, execution and offline export wait until
+              it is. If the SubVault was created outside this app, track it here first.
+            </p>
+          </div>
+        )}
+
         {isNonceStale && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">Proposal invalidated by a later nonce</p>
@@ -1008,7 +1024,7 @@ export default function TransactionDetailPage() {
                     <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                   </div>
                   <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
-                  {permissionsSafe && childPermissionsSafe ? (
+                  {permissionsSafe && childPermissionsSafe && !targetUnindexed ? (
                     <div className="flex flex-wrap gap-3">
                       {proposal.approvalCount < owners.length && (
                         <OfflineSigningFlow
@@ -1028,6 +1044,12 @@ export default function TransactionDetailPage() {
                               throw new Error(
                                 'SubVault config mismatch: the displayed owners/threshold do not match the ' +
                                 'signed proposal data. Do not approve this proposal.',
+                              );
+                            }
+                            if (targetUnindexed) {
+                              throw new Error(
+                                'The SubVault this proposal targets is not indexed yet, so it cannot be ' +
+                                'checked. Wait for it before exporting an approval.',
                               );
                             }
                             if (addOwnerDataCheck === 'unexecutable') {
@@ -1079,11 +1101,13 @@ export default function TransactionDetailPage() {
                     </div>
                   ) : (
                     <p className="text-sm text-red-400">
-                      Offline bundle creation and broadcast are blocked until
-                      the Vault and target SubVault pass their live permission checks.
+                      {targetUnindexed
+                        ? 'Offline bundle creation and broadcast wait until the backend has indexed the target SubVault.'
+                        : 'Offline bundle creation and broadcast are blocked until ' +
+                          'the Vault and target SubVault pass their live permission checks.'}
                     </p>
                   )}
-                  {permissionsSafe && childPermissionsSafe && (
+                  {permissionsSafe && childPermissionsSafe && !targetUnindexed && (
                     <UploadSignedResponse
                       acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
                       expectedContractAddress={multisig!.address}
