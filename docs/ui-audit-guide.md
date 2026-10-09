@@ -426,7 +426,11 @@ allow this narrow case when every permission kind is canonical and the only
 permission mismatch is the older version. They continue to report that mismatch
 because the deploy-key signature fallback remains active until an account
 update succeeds. The panel links to proposal creation and can recheck the
-on-chain version; it does not submit a key-signed no-op.
+on-chain version; it does not submit a no-op. Because vault `access` is `none`,
+any fee payer can submit an authorization-free no-op update. The first applied
+vault update refreshes the version and ends the deploy-key fallback even if the
+VK is unchanged; the proved action is advised because it confirms the installed
+circuit still works after the fork.
 
 If the installed VK differs from the release-pinned replacement VK, the detail
 page instead offers deploy-key migration. It displays both hashes, exports a
@@ -435,6 +439,10 @@ The panel warns that a maintainer must publish a fork-compatible CLI release
 first. The browser does not check release availability or authenticate the
 offline binary; users must independently verify the release, checksums, and
 per-network VK hash before entering the saved deploy key.
+If old proofs fail, the signed VK migration must land before any other vault
+account update. A third party can pay for a no-op update that refreshes the
+stored version first, leaving the broken VK installed and ending this saved-key
+migration path.
 The import checks the response binding and command shape, then rechecks the
 installed VK, version, and permissions against the Mina node before broadcast.
 After inclusion, the user can check the on-chain VK hash, stored version, and

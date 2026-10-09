@@ -579,6 +579,10 @@ before displaying, funding, proposing, approving, or executing for an account.
 An older `setVerificationKey.txnVersion` is the sole admitted mismatch when the VK
 still matches the reviewed release; the deploy-key fallback remains active until
 an accepted account update refreshes the version.
+With `access: none`, an authorization-free no-op vault update can be submitted
+by any fee payer and refresh the stored version without changing the VK. After
+a proof-breaking fork, that update can close the saved-key VK migration path
+before the deployer migrates, leaving the broken key installed.
 The browser must obtain the actual vector directly from its configured Mina node and compare it
 with a build-time canonical value, rather than trusting an indexer to supply both sides.
 The offline CLI cannot perform this authentication because its bundle is supplied by an untrusted

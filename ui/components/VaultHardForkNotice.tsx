@@ -21,10 +21,13 @@ export default function VaultHardForkNotice({ creating = false }: { creating?: b
       </p>
       <p>
         A saved key is not a guaranteed recovery plan. Follow Mina hard fork announcements
-        and check the on-chain verification key after any migration. Do not submit a
-        key-signed no-op account update solely to refresh the stored transaction
-        version until the installed Vault code is confirmed to work on the
-        upgraded network: that update can leave a broken verification key locked in.
+        and check the on-chain verification key after any migration. The first applied
+        Vault account update after a version upgrade ends the deploy-key fallback.
+        Because Vault access needs no authorization, anyone can pay to submit a no-op
+        update that ends it. If old proofs no longer work, a compatible verification-key
+        migration with the saved deploy key must land first; otherwise the broken key
+        may remain installed with no saved-key migration path. If proofs still work,
+        use a real proved Vault action to confirm compatibility, not a no-op.
       </p>
     </div>
   );

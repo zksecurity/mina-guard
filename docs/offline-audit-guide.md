@@ -286,6 +286,12 @@ instead guides an ordinary owner-authorized proved action, which refreshes the
 version only if Mina accepts the proof. Migration shares request version 2 with
 owner actions but has a distinct `migrate-verification-key` action and schema;
 its signed response is version 2, while owner signed responses remain version 1.
+Because vault `access` is `none`, any fee payer can submit a no-op vault account
+update after a fork. The first applied update refreshes the stored version.
+If existing proofs fail, a compatible signed VK migration must land before any
+other vault update; a third-party no-op can otherwise end the saved-key
+migration path with the broken VK still installed. For a proof-preserving fork,
+use a real proved action to confirm compatibility rather than a no-op.
 The request binds the
 vault and fee payer addresses, node account snapshots, installed VK hash and
 version, and the release-pinned replacement VK hash and version. It contains

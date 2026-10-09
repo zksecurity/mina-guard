@@ -66,7 +66,7 @@ export default function VaultVerificationKeyMigration({ address, walletAddress }
       ) : <>
         <p>This Vault records transaction version <code>{status?.setVerificationKeyTxnVersion}</code>, while this release expects <code>{GUARD_SET_VERIFICATION_KEY_TXN_VERSION}</code>. Its installed verification key already matches this release. The deploy-key signature fallback remains possible until the Vault receives an accepted account update.</p>
         <p>An ordinary proved Vault action, such as an owner-authorized proposal, can update the stored version if Mina accepts its existing proof. The app allows that action with this matching VK and canonical permission kinds. No deploy key or verification-key replacement is needed.</p>
-        <p>Do not submit a key-signed no-op to update the version. If Mina rejects the proof after the fork, stop and obtain fork-specific guidance and a reviewed compatible replacement VK release before using the saved deploy key.</p>
+        <p>Any fee payer can submit a no-op Vault update without the deploy key because Vault access needs no authorization. The first applied Vault update ends the fallback even if the VK stays unchanged. Use a real proved Vault action to confirm proof compatibility, not a no-op. If Mina rejects the proof, stop and obtain fork-specific guidance and a reviewed compatible replacement VK release before using the saved deploy key.</p>
         <div className="flex flex-wrap gap-3">
           <Link href="/transactions/new" className="rounded bg-amber-500 px-3 py-2 text-black">Create a Vault proposal</Link>
           <button type="button" disabled={busy} className="rounded border border-amber-500 px-3 py-2 disabled:opacity-50" onClick={async () => {
@@ -83,6 +83,7 @@ export default function VaultVerificationKeyMigration({ address, walletAddress }
     <section className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 space-y-3 text-sm" aria-label="Verification key migration">
       <h2 className="font-semibold">Verification-key migration</h2>
       <p>This Vault records transaction version <code>{status?.setVerificationKeyTxnVersion ?? '?'}</code>; this reviewed release expects <code>{GUARD_SET_VERIFICATION_KEY_TXN_VERSION}</code>. The deploy key can replace the installed verification key during Mina&apos;s version fallback. This action bypasses owner voting. Confirm the release and key hash with every owner before proceeding.</p>
+      <p><strong>Migration must land before any other Vault account update.</strong> Any fee payer can submit a no-op update without the deploy key because Vault access needs no authorization. That update refreshes the stored version and ends the saved-key migration path, even if the installed VK cannot prove on the upgraded network.</p>
       <dl className="font-mono text-xs break-all space-y-1">
         <div>Installed VK: {status?.verificationKeyHash ?? '?'}</div>
         <div>Replacement VK: {targetHash}</div>
