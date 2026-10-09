@@ -549,7 +549,7 @@ proof-authorized `setup()` or `reserveForParent()` update overwrites the complet
 | `receive` | `none()` | Anyone can deposit MINA without a proof |
 | `setDelegate` | `proof()` | Delegation only via proven contract methods |
 | `setPermissions` | `impossible()` | Prevents permission downgrade attacks |
-| `setVerificationKey` | `impossibleDuringCurrentVersion()` | Pins the verification key for the lifetime of the current version |
+| `setVerificationKey` | `impossibleDuringCurrentVersion()` | Pins the verification key while the network's transaction version equals the one o1js stamped at deploy (`TransactionVersion.current()`, 4, mirrored by hand in `GUARD_SET_VERIFICATION_KEY_TXN_VERSION`); a later hard fork reads it as `Signature` ([security guide, accepted risk 9](./security-audit-guide.md#accepted-risks-and-known-limitations)) |
 | `setZkappUri` | `impossible()` | Metadata cannot be rewritten |
 | `editActionState` | `proof()` | Actions can only be edited by proof |
 | `setTokenSymbol` | `impossible()` | Token symbol cannot be rewritten |
@@ -560,8 +560,10 @@ proof-authorized `setup()` or `reserveForParent()` update overwrites the complet
 
 Both vectors are defined in `contracts/src/guard-permissions.ts`, with the temporary vector derived
 from the canonical one by overriding only `setPermissions`. If the atomic initialization succeeds,
-the one-shot deploy key is powerless afterward: every state/fund knob requires a proof and every
-permission knob is `impossible`. If a creator weakens `send` in the deployment update, the proved
+the one-shot deploy key is powerless while the network remains on the transaction version stamped
+at deployment ([security guide, accepted risk 9](./security-audit-guide.md#accepted-risks-and-known-limitations)):
+every state/fund knob requires a proof and every permission knob is `impossible`. If a creator
+weakens `send` in the deployment update, the proved
 initialization overwrites it. If the creator makes `setPermissions` impossible early, the proved
 write cannot execute and the entire atomic creation transaction fails.
 
@@ -660,7 +662,7 @@ match, and compiles both distinct domains on a cache miss).
 | MINA receivable | `receive: Permissions.none()` allows deposits without proof |
 | State changes proof-only | `editState: Permissions.proof()` — no signature fallback |
 | Permission downgrade prevented after canonical deployment | `setPermissions: Permissions.impossible()`; online consumers first verify the complete stored vector against `GUARD_PERMISSIONS` |
-| Verification key immutable | `setVerificationKey: impossibleDuringCurrentVersion` |
+| Verification key pinned for the current transaction version | `setVerificationKey: impossibleDuringCurrentVersion`; what a later hard fork changes is in [security guide, accepted risk 9](./security-audit-guide.md#accepted-risks-and-known-limitations) |
 | Bounded circuit size | `MAX_OWNERS = 20`, `MAX_RECEIVERS = 9` |
 
 ## UI model

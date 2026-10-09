@@ -388,7 +388,9 @@ is marked the same way (`reportUnanswered`).
 **5. Ephemeral zkApp key lifecycle & local storage.**
 The only private key the UI holds is the in-browser zkApp deploy key
 (`generateKeypair`), generated for a single tx and not persisted. It is
-powerless after a successful atomic creation: proof-authorized `setup()` (root)
+powerless after a successful atomic creation while the network's transaction version
+stays the one stamped at deploy (see the security guide's accepted risk 9 for what a
+hard fork changes): proof-authorized `setup()` (root)
 or `reserveForParent()` (child) overwrites the signed deployment update with
 the canonical proof-only permission vector and permanently seals it in the
 same transaction. The UI must never broadcast `deploy()` alone. The same
