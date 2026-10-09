@@ -147,7 +147,7 @@ describe('offline-cli', () => {
   it('tells the signer whether a createChild propose pays the child creation fee', () => {
     const CHILD = 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY';
     const propose = (accounts: Record<string, unknown>) => ({
-      version: 1, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      version: 2, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
       feePayerAddress: EMPTY_PUBKEY_B58, accounts, events: [], configNonce: 0,
       input: { txType: 'createChild', nonce: 0, childAccount: CHILD, childOwners: [CHILD], childThreshold: 1 },
     }) as any;

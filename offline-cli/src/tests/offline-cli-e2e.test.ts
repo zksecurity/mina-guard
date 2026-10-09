@@ -1382,7 +1382,7 @@ describe('offline-cli e2e', () => {
       expect(Mina.hasAccount(preAddr)).toBe(true);
 
       const bundle = {
-        version: 1,
+        version: 2,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
@@ -1427,7 +1427,7 @@ describe('offline-cli e2e', () => {
     it('refuses to propose createChild into an address that already holds a zkApp, or with a key for another address', async () => {
       const proposer = owners[0];
       const bundleWithKey = async (childPrivateKey: string) => ({
-        version: 1,
+        version: 2,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
