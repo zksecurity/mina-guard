@@ -129,10 +129,10 @@ offline CLI's bundle-domain checks.
 MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a v1 testnet bundle,
+For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a testnet bundle,
 use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
-unset, invalid, and mainnet/test-network mismatches fail closed. Version 1
-offline bundles encode devnet as `testnet`.
+unset, invalid, and mainnet/test-network mismatches fail closed. Offline
+bundles encode devnet as `testnet`.
 The CLI checks the bundle against the domain captured when contracts were
 imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
@@ -142,7 +142,11 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    the action and transaction type are known (`canonicalizeBundleTxType`;
    anything else aborts before a summary is shown, and a numeric type code is
    rewritten to its name so the summary and the builder compare the same
-   value), and *before any
+   value), a check that a CREATE_CHILD approval carries the SubVault owners and
+   threshold it authorizes and that they hash, in reserved slot order, to the
+   signed `proposal.data` (`assertCreateChildApprovalConfig`; a missing,
+   malformed or swapped configuration aborts before the summary, which
+   otherwise prints the checked owners and threshold), and *before any
    compile/prove/sign work or key use*, `renderBundleSummary` renders
    everything the proposal hash covers (action, contract, fee payer, fee,
    nonce, memo, expiry, the per-type body, a `*** MAINNET ***` banner when
@@ -155,9 +159,9 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    CLI aborts (see focus point 7).
 2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
    never dials out), the bundled account snapshots injected into o1js's
-   account cache, and the Merkle stores reconstructed from version 1 request checkpoint
+   account cache, and the Merkle stores reconstructed from version 2 request checkpoint
    leaves using `storesFromOfflineRequest` (`contracts/src/store-checkpoint.ts`).
-   Requests without a checkpoint or with a version other than 1 are rejected. Child execution
+   Requests without a checkpoint or with a version other than 2 are rejected. Child execution
    maps still use `rebuildChildExecutionMap` and bundled child events. All roots are
    checked against the bundled account snapshots before any proof
    (`rebuildVerifiedStores`, `snapshotState`); a mismatch aborts.
@@ -190,7 +194,7 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 
 ```json
 {
-  "version": 2,
+  "version": 1,
   "type": "offline-signed-tx",
   "action": "propose | approve | execute",
   "contractAddress": "B62q...",
@@ -232,7 +236,7 @@ takes over.
 
 ---
 
-## Bundle format reference (requests version 1; signed responses version 1)
+## Bundle format reference (requests version 2; signed responses version 1)
 
 The new hash domains are a breaking change: new proposal hashes, purpose-bound
 owner signatures, memo commitments, owner commitments, vote-nullifier keys,
@@ -251,7 +255,7 @@ Distribute a matching CLI, UI/desktop build, backend and network VK together. Ol
 clients cannot sign for the new contracts. This change does not perform deployment,
 reset any database, or migrate funds from existing test vaults.
 
-Version 1 requires `storeCheckpoint` and an empty `events` array. The checkpoint's
+Every request requires `storeCheckpoint` and an empty `events` array. The checkpoint's
 own serialization format remains version 1 (its leaf encoding did not change). It
 contains version, network, vault address, optional replay height, ordered owners,
 approval leaves, nullifier keys, and their roots. The CLI reconstructs the trees
@@ -263,18 +267,26 @@ state preconditions. A fresh offline invocation still performs work proportional
 to the checkpoint's leaves; it no longer processes the full event history.
 
 
+Version 2 adds `childAddress`, `childOwners` and `childThreshold` to CREATE_CHILD
+approve bundles, so the air-gapped signer sees and checks the SubVault
+configuration an approval authorizes. The CLI rejects version 1 requests;
+re-export pending requests with a matching UI. Signed responses stay at
+version 1. `OFFLINE_REQUEST_VERSION` in `contracts/offline-format` is the one
+source for the UI's `OFFLINE_BUNDLE_VERSION`, the CLI's version gate and
+`storesFromOfflineRequest`; `STORE_CHECKPOINT_VERSION` (1) is the checkpoint's own.
+
 ### Common fields (`BundleBase`)
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `1` | Request and signed-response format version after the pre-release reset |
+| `version` | `2` | Request format version; signed responses stay at `1` |
 | `action` | `"propose" \| "approve" \| "execute"` | Dispatch |
 | `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; `testnet` accepts CLI `MINA_NETWORK_DOMAIN=testnet` or `devnet` |
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |
-| `events` | `Array<{eventType, payload, blockHeight?}>` | Must be empty in v1 |
-| `storeCheckpoint` | `StoreCheckpoint` | Required public store snapshot in v1 |
+| `events` | `Array<{eventType, payload, blockHeight?}>` | Must be empty |
+| `storeCheckpoint` | `StoreCheckpoint` | Required public store snapshot |
 
 The online checkpoint producer replays `setupOwner`, `ownerChange`,
 `ownerChangeBatch`, `proposal`, `approval`, `execution`, and `executionBatch`;
@@ -306,6 +318,8 @@ the offline CLI restores the resulting leaves without replaying events.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `proposal` | object | The claimed proposal, mirroring the backend record: `proposalHash`, `proposer`, `toAddress`, `tokenId`, `txType`, `data`, `nonce`, `configNonce`, `expirySlot`, `guardAddress`, `destination`, `childAccount`, `memoHash`, `memo` (advisory plaintext), `receivers` |
+| `childAddress` | `string?` | createChild approve: the SubVault being reserved |
+| `childOwners` / `childThreshold` | `string[]?` / `number?` | createChild approve: the reserved configuration, checked against `proposal.data` by the UI before export and by the CLI before the summary, which prints it |
 
 The CLI does **not** trust `proposal.proposalHash` — it rebuilds the struct
 from the fields and recomputes the hash it signs.
@@ -343,7 +357,11 @@ action differs, and the distinction is the heart of this design:
   renders the rebuilt proposal's fields for out-of-band comparison; its Memo
   line is the bundle's advisory plaintext, not the hash-covered `memoHash`,
   so a Memo check line recomputes `memoToField` from that text and says
-  whether it matches `memoHash` (see focus point 2).
+  whether it matches `memoHash` (see focus point 2). A CREATE_CHILD approve
+  bundle also carries the SubVault owners and threshold; the CLI recomputes
+  their commitment and config hash and refuses the bundle unless it equals
+  `proposal.data`, so the summary shows the configuration the approval
+  authorizes rather than `Threshold (unknown)`.
 - **Execute bundles.** Execution is permissionless on-chain: anyone can
   submit a fully-approved proposal. The `receiverAccountExists` map drives the
   executor-signed account-creation fee (1 MINA per new receiver slot), counted

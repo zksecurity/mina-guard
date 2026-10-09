@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 
 /** Cache a preflight by its semantic inputs, not polling object identity.
- * Retry unavailable data without clearing its warning or overlapping requests. */
-export function usePreflightCheck<T extends string>(
+ * Retry unavailable data without clearing its warning or overlapping requests.
+ * A result may be an object, so a check can hand back what it verified. */
+export function usePreflightCheck<T>(
   key: string | null,
   check: () => Promise<T | 'unavailable'>,
 ): T | 'checking' | 'unavailable' | null {

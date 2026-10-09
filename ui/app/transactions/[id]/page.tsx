@@ -31,12 +31,10 @@ import {
   executeChildLifecycleOnchain,
   executeSetupChildOnchain,
   assertLedgerReady,
-  computeCreateChildConfigHash,
   computeMemoHash,
   validateAddOwnerProposalData,
 } from '@/lib/multisigClient';
 import { memoBadge } from '@/lib/memo-check';
-import { fetchChildConfigFromEvents } from '@/lib/api';
 import {
   PENDING_TXS_CHANGED,
   getPendingTx,
@@ -47,6 +45,7 @@ import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { usePreflightCheck } from '@/hooks/usePreflightCheck';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
+import { fetchVerifiedChildConfig, loadChildReservation } from '@/lib/child-reservation';
 import { countNewRecipientSlots } from '@/lib/recipient-account-fee';
 import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse, downloadOfflineBundle } from '@/components/OfflineSigningFlow';
 
@@ -172,7 +171,9 @@ export default function TransactionDetailPage() {
   // events display and compare it to the signed proposal.data. A mismatch means
   // the config shown here is NOT the config being approved — on-chain the
   // execute would revert, but we warn approvers before they sign. 'unavailable'
-  // = events not indexed yet, so we can't check (not a mismatch).
+  // = events not indexed yet, so we can't check (not a mismatch). The result
+  // keeps the owners and threshold: approvers see the configuration whose hash
+  // matched, and nothing is approved or exported until it does.
   const pendingCreateChild = proposal?.txType === 'createChild' && proposal.status === 'pending';
   // Keep polling objects out of the key. These are the inputs that can change
   // the result; proposal payload fields are included even if its hash is unchanged.
@@ -183,22 +184,24 @@ export default function TransactionDetailPage() {
   ];
   const canCheckProposal = !!multisig && proposalsAddress === multisig.address &&
     !proposal?._localPending;
-  const childConfigCheck = usePreflightCheck<'match' | 'mismatch'>(
+  const childConfigCheck = usePreflightCheck<
+    | { status: 'match' | 'mismatch'; owners: string[]; threshold: number }
+    | { status: 'invalid'; reason: string }
+  >(
     pendingCreateChild && canCheckProposal
       ? JSON.stringify([...preflightContext, proposal?.childAccount, proposal?.data]) : null,
     async () => {
       if (!proposal?.childAccount || !proposal.data) return 'unavailable';
-      const config = await fetchChildConfigFromEvents(proposal.childAccount);
-      if (!config) return 'unavailable';
-      const { configHash } = await computeCreateChildConfigHash({
-        childOwners: config.owners,
-        childThreshold: config.threshold,
-        // The reserved slot order is what the signed data binds.
-        preserveOrder: true,
-      });
-      return configHash === proposal.data ? 'match' : 'mismatch';
+      const reservation = await loadChildReservation(proposal.childAccount, proposal.data);
+      if (reservation.status === 'missing') return 'unavailable';
+      if (reservation.status === 'invalid') return { status: 'invalid', reason: reservation.reason };
+      return { status: reservation.status, owners: reservation.owners, threshold: reservation.threshold };
     },
   );
+  const childCheck = typeof childConfigCheck === 'object' && childConfigCheck !== null ? childConfigCheck : null;
+  const childConfigStatus = childCheck ? childCheck.status : childConfigCheck;
+  const childConfig = childCheck && childCheck.status !== 'invalid' ? childCheck : null;
+  const childReservationError = childCheck?.status === 'invalid' ? childCheck.reason : null;
   const [childPermissionCheck, setChildPermissionCheck] = useState<
     'checking' | 'match' | 'mismatch' | null
   >(null);
@@ -364,7 +367,7 @@ export default function TransactionDetailPage() {
   // A REMOTE proposal needs the backend's view of its SubVault to judge
   // its nonce. A target not indexed yet blocks actions but invalidates nothing.
   const targetUnindexed = proposal?.status === 'pending' && proposal.childTargetIndexed === false;
-  const canApprove =
+  const canApproveExceptConfig =
     !!proposal &&
     !isLocalPending &&
     proposal.status === 'pending' &&
@@ -374,15 +377,15 @@ export default function TransactionDetailPage() {
     permissionsSafe &&
     childPermissionsSafe &&
     !targetUnindexed &&
-    // Block approval when the displayed SubVault config provably does not hash
-    // to the signed proposal.data (config-swap). Only a computed mismatch
-    // blocks — 'checking'/'unavailable' don't, to avoid gating on indexer lag.
-    childConfigCheck !== 'mismatch' &&
     // Same for addOwner: block when proposal.data provably matches no position.
     addOwnerDataCheck !== 'unexecutable' &&
     !addOwnerBlocked &&
     !myPendingApprove &&
     !contractLock.locked;
+  // A SubVault is approved only once its owners and threshold are shown and
+  // hash to the signed proposal.data. Indexer lag is a reason to wait, not to
+  // approve a configuration nobody has seen.
+  const canApprove = canApproveExceptConfig && (!pendingCreateChild || childConfigStatus === 'match');
   const canExecute =
     !!proposal &&
     !isLocalPending &&
@@ -519,16 +522,7 @@ export default function TransactionDetailPage() {
         const childAddr = captured.proposal.childAccount;
         if (!childAddr) throw new Error('createChild proposal missing childAccount');
         onProgress('Fetching SubVault config from events...');
-        const childConfig = await fetchChildConfigFromEvents(childAddr);
-        if (!childConfig) throw new Error('SubVault config not found in indexed events');
-        const { configHash } = await computeCreateChildConfigHash({
-          childOwners: childConfig.owners,
-          childThreshold: childConfig.threshold,
-          preserveOrder: true,
-        });
-        if (configHash !== captured.proposal.data) {
-          throw new Error('SubVault reservation does not match the parent-approved proposal data');
-        }
+        const childConfig = await fetchVerifiedChildConfig(childAddr, captured.proposal.data);
         const result = await executeSetupChildOnchain({
           parentAddress: captured.contractAddress,
           childAddress: childAddr,
@@ -740,7 +734,7 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {pendingCreateChild && childConfigCheck === 'mismatch' && (
+        {pendingCreateChild && childConfigStatus === 'mismatch' && (
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
             <p className="font-semibold mb-1">SubVault config does not match the signed proposal</p>
             <p className="opacity-90">
@@ -764,12 +758,22 @@ export default function TransactionDetailPage() {
           />
         )}
 
-        {pendingCreateChild && childConfigCheck === 'unavailable' && (
+        {pendingCreateChild && childReservationError && (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400 text-sm">
+            <p className="font-semibold mb-1">SubVault reservation is invalid</p>
+            <p className="opacity-90">
+              {childReservationError}. The reservation cannot be checked against the signed proposal data,
+              so it is not shown. Do not approve this proposal.
+            </p>
+          </div>
+        )}
+
+        {pendingCreateChild && childConfigStatus === 'unavailable' && (
           <div className="rounded-xl border border-orange-400/30 bg-orange-400/10 p-4 text-orange-300 text-sm">
             <p className="font-semibold mb-1">SubVault config could not be verified</p>
             <p className="opacity-90">
-              The SubVault config events are not indexed yet, so the displayed config could not be checked against
-              the signed proposal data. Wait for indexing to confirm the config before approving.
+              The SubVault config events are not indexed yet, so its owners and threshold cannot be shown or
+              checked against the signed proposal data. Approval and offline export wait until they are.
             </p>
           </div>
         )}
@@ -809,6 +813,35 @@ export default function TransactionDetailPage() {
           <h3 className="text-sm font-semibold text-safe-text uppercase tracking-wider">Details</h3>
           <div className="space-y-3">
             <DetailRow label="Type" value={txLabel} />
+            {/* A SubVault approval authorizes its owners and threshold, so they
+                are shown from the reservation whose hash matched proposal.data. */}
+            {proposal.txType === 'createChild' && (
+              <>
+                <DetailRow label="SubVault" value={proposal.childAccount ?? '-'} mono copyable />
+                {childConfig ? (
+                  <>
+                    <DetailRow
+                      label="SubVault Threshold"
+                      value={`${childConfig.threshold} of ${childConfig.owners.length}`}
+                    />
+                    <div className="py-2 border-b border-safe-border/50 last:border-0" data-testid="subvault-owners">
+                      <span className="text-sm text-safe-text">SubVault Owners</span>
+                      <ul className="mt-1 space-y-1">
+                        {childConfig.owners.map((owner, index) => (
+                          <li key={index} className="text-sm font-mono break-all">{owner}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </>
+                ) : pendingCreateChild ? (
+                  <DetailRow
+                    label="SubVault Owners"
+                    value={childConfigStatus === 'unavailable' ? 'Not indexed yet'
+                      : childConfigStatus === 'invalid' ? 'Invalid reservation' : 'Verifying…'}
+                  />
+                ) : null}
+              </>
+            )}
             <DetailRow label="Proposal Hash" value={proposal.proposalHash} mono copyable />
             <DetailRow label="Nonce" value={proposal.nonce ?? '-'} mono copyable />
             <DetailRow label="Proposed by" value={proposal.proposer ?? '-'} mono copyable />
@@ -962,15 +995,24 @@ export default function TransactionDetailPage() {
                       {isOperating ? 'Waiting for pending transaction...' : 'Approve Proposal'}
                     </button>
                   )}
-                  {/* Config-swap: keep a disabled Approve visible with the reason,
-                      rather than hiding it, so the block is explicit. */}
-                  {childConfigCheck === 'mismatch' && proposal.status === 'pending' && isOwner && !hasApproved && (
+                  {/* Keep a disabled Approve visible with the reason, rather than
+                      hiding it, so the block is explicit: a config swap, or a
+                      configuration not shown yet. */}
+                  {pendingCreateChild && canApproveExceptConfig && childConfigStatus !== 'match' && (
                     <button
                       disabled
-                      title="Displayed SubVault config does not match the signed proposal data"
+                      title={childConfigStatus === 'mismatch'
+                        ? 'Displayed SubVault config does not match the signed proposal data'
+                        : childConfigStatus === 'invalid'
+                          ? 'The SubVault reservation cannot be checked against the signed proposal data'
+                          : 'The SubVault owners and threshold must be shown and verified before approval'}
                       className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
                     >
-                      Approve blocked — config mismatch
+                      {childConfigStatus === 'mismatch'
+                        ? 'Approve blocked — config mismatch'
+                        : childConfigStatus === 'invalid'
+                          ? 'Approve blocked — invalid reservation'
+                          : 'Approve waits for the SubVault config'}
                     </button>
                   )}
                   {addOwnerDataCheck === 'unexecutable' && proposal.status === 'pending' && isOwner && !hasApproved && (
@@ -1040,11 +1082,14 @@ export default function TransactionDetailPage() {
                             if (approvalAddresses.includes(offlineFeePayerAddress)) {
                               throw new Error('This address has already approved this proposal');
                             }
-                            if (childConfigCheck === 'mismatch') {
-                              throw new Error(
-                                'SubVault config mismatch: the displayed owners/threshold do not match the ' +
-                                'signed proposal data. Do not approve this proposal.',
-                              );
+                            if (pendingCreateChild && childConfigStatus !== 'match') {
+                              throw new Error(childConfigStatus === 'mismatch'
+                                ? 'SubVault config mismatch: the displayed owners/threshold do not match the ' +
+                                  'signed proposal data. Do not approve this proposal.'
+                                : childConfigStatus === 'invalid'
+                                  ? `SubVault reservation is invalid: ${childReservationError}. Do not approve this proposal.`
+                                  : 'The SubVault owners and threshold are not verified yet. ' +
+                                    'Wait for them to show before exporting an approval.');
                             }
                             if (targetUnindexed) {
                               throw new Error(

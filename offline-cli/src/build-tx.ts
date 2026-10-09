@@ -10,7 +10,7 @@
 //   - Network: worker connects to a real Mina node; CLI uses a dummy
 //     endpoint with a patched getNetworkState.
 //   - Merkle stores: worker maintains them in memory across operations;
-//     CLI restores a v1 request leaf snapshot.
+//     CLI restores the request's checkpoint leaf snapshot.
 //
 // The contract calls and proof generation are identical. A future
 // refactor could move the proof to the browser (2-trip flow), which
@@ -53,6 +53,8 @@ import {
   childConfigHash,
   NETWORK_DOMAIN_NAME,
   storesFromOfflineRequest,
+  OFFLINE_REQUEST_VERSION,
+  OFFLINE_RESPONSE_VERSION,
   type StoreCheckpoint,
   rebuildChildExecutionMap,
   assertChildExecutionMapMatchesChain,
@@ -101,9 +103,10 @@ interface BundleAccount {
   zkappUri: string | null;
 }
 
-/** Fields common to all bundle actions. */
+/** Fields common to all bundle actions. Version 2 adds the SubVault
+ *  configuration to CREATE_CHILD approve bundles. */
 interface BundleBase {
-  version: 1;
+  version: typeof OFFLINE_REQUEST_VERSION;
   storeCheckpoint: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
@@ -139,6 +142,11 @@ export interface OfflineProposeBundle extends BundleBase {
 export interface OfflineApproveBundle extends BundleBase {
   action: 'approve';
   proposal: BundleProposal;
+  /** CREATE_CHILD only: the reserved SubVault configuration this approval
+   *  authorizes; checked against `proposal.data` before the summary. */
+  childAddress?: string;
+  childOwners?: string[];
+  childThreshold?: number;
 }
 
 export interface OfflineExecuteBundle extends BundleBase {
@@ -202,7 +210,7 @@ interface NewProposalInput {
 // ---------------------------------------------------------------------------
 
 interface SignedTxOutput {
-  version: 1;
+  version: typeof OFFLINE_RESPONSE_VERSION;
   type: 'offline-signed-tx';
   action: 'propose' | 'approve' | 'execute';
   contractAddress: string;
@@ -283,6 +291,53 @@ export function canonicalizeBundleTxType(bundle: OfflineBundle): TxType {
   const txType = requireTxType(bundle.proposal?.txType);
   bundle.proposal.txType = txType;
   return txType;
+}
+
+/**
+ * Checks the SubVault configuration a CREATE_CHILD approve or execute bundle
+ * carries, before the summary shows it. The owner list and threshold must be
+ * well formed and, in the reserved slot order, hash to the proposal data the
+ * signature covers, and a bundled child address must be the proposal's; the
+ * summary then prints exactly what was checked. Other types return null.
+ */
+export function assertCreateChildBundleConfig(
+  bundle: OfflineApproveBundle | OfflineExecuteBundle,
+): { owners: string[]; threshold: number } | null {
+  if (requireTxType(bundle.proposal?.txType) !== 'createChild') return null;
+  const { childOwners, childThreshold } = bundle;
+  if (!Array.isArray(childOwners) || childOwners.length === 0) {
+    throw new Error('createChild bundle is missing the SubVault owner list');
+  }
+  if (childOwners.length > MAX_OWNERS) {
+    throw new Error(`createChild bundle lists more than ${MAX_OWNERS} SubVault owners`);
+  }
+  if (!Number.isInteger(childThreshold) || childThreshold! < 1 || childThreshold! > childOwners.length) {
+    throw new Error('createChild bundle has an invalid SubVault threshold');
+  }
+  if (bundle.childAddress !== undefined && bundle.childAddress !== bundle.proposal.childAccount) {
+    throw new Error("createChild bundle names a SubVault address other than the proposal's");
+  }
+  let owners: PublicKey[];
+  try {
+    owners = childOwners.map((owner) => {
+      if (typeof owner !== 'string' || owner === EMPTY_PUBKEY_B58) throw new Error('empty');
+      return PublicKey.fromBase58(owner);
+    });
+  } catch {
+    throw new Error('createChild bundle has an invalid SubVault owner address');
+  }
+  // Keep the order reserveForParent committed (its slot index), not base58
+  // order: the reserved config hash binds that exact order.
+  const store = new OwnerStore();
+  store.owners = owners;
+  const expected = childConfigHash(store.getCommitment(), Field(childThreshold!), Field(childOwners.length));
+  if (expected.toString() !== (bundle.proposal.data ?? '')) {
+    throw new Error(
+      'SubVault config mismatch: the bundle\'s owners/threshold do not hash to the proposal data ' +
+      'this approval would sign. The bundle may contain a tampered SubVault config.',
+    );
+  }
+  return { owners: childOwners, threshold: childThreshold! };
 }
 
 function uiTxTypeToField(type: string): InstanceType<typeof Field> {
@@ -897,7 +952,7 @@ export async function handlePropose(
   }
 
   return {
-    version: 1,
+    version: OFFLINE_RESPONSE_VERSION,
     type: 'offline-signed-tx',
     action: 'propose',
     contractAddress: bundle.contractAddress,
@@ -934,6 +989,8 @@ export async function handleApprove(
 
   // refuse to co-sign an addOwner that can never execute
   assertExecutableAddOwnerData(proposalStruct, ownerStore);
+  // and a SubVault whose announced configuration is not the one signed
+  assertCreateChildBundleConfig(bundle);
 
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
@@ -986,7 +1043,7 @@ export async function handleApprove(
   const signedTxJson = signFeePayer(serializeTx(tx), privateKey, bundle.minaNetwork);
 
   return {
-    version: 1,
+    version: OFFLINE_RESPONSE_VERSION,
     type: 'offline-signed-tx',
     action: 'approve',
     contractAddress: bundle.contractAddress,
@@ -1042,28 +1099,15 @@ export async function handleExecute(
   if (isCreateChild) {
     const childAddr = bundle.childAddress ?? bundle.proposal.childAccount;
     if (!childAddr) throw new Error('createChild execute bundle missing childAddress');
-    if (!bundle.childOwners || bundle.childThreshold == null) {
-      throw new Error('createChild execute bundle missing childOwners/childThreshold');
-    }
+    // The same check the CLI ran before the summary; direct callers get it here.
+    const checked = assertCreateChildBundleConfig(bundle)!;
 
     // Keep the order reserveForParent committed (its slot index), not base58
     // order: the reserved config hash binds that exact order.
     const childOwnerStore = new OwnerStore();
-    childOwnerStore.owners = bundle.childOwners.map((addr) => PublicKey.fromBase58(addr));
+    childOwnerStore.owners = checked.owners.map((addr) => PublicKey.fromBase58(addr));
     const paddedOwners = [...childOwnerStore.owners];
     while (paddedOwners.length < MAX_OWNERS) paddedOwners.push(PublicKey.empty());
-
-    const expectedData = childConfigHash(
-      childOwnerStore.getCommitment(),
-      Field(bundle.childThreshold!),
-      Field(bundle.childOwners!.length),
-    );
-    if (expectedData.toString() !== (bundle.proposal.data ?? '0')) {
-      throw new Error(
-        'SubVault config mismatch: announced owners/threshold do not match the proposal data hash. ' +
-        'The bundle may contain tampered SubVault config.',
-      );
-    }
 
     const childAccount = bundle.accounts[childAddr];
     if (!childAccount) {
@@ -1102,7 +1146,7 @@ export async function handleExecute(
     const signedTxJson = signFeePayer(serializeTx(tx), privateKey, bundle.minaNetwork);
 
     return {
-      version: 1,
+      version: OFFLINE_RESPONSE_VERSION,
       type: 'offline-signed-tx',
       action: 'execute',
       contractAddress: bundle.contractAddress,
@@ -1157,7 +1201,7 @@ export async function handleExecute(
     const signedTxJson = signFeePayer(serializeTx(tx), privateKey, bundle.minaNetwork);
 
     return {
-      version: 1,
+      version: OFFLINE_RESPONSE_VERSION,
       type: 'offline-signed-tx',
       action: 'execute',
       contractAddress: bundle.contractAddress,
@@ -1247,7 +1291,7 @@ export async function handleExecute(
   const signedTxJson = signFeePayer(serializeTx(tx), privateKey, bundle.minaNetwork);
 
   return {
-    version: 1,
+    version: OFFLINE_RESPONSE_VERSION,
     type: 'offline-signed-tx',
     action: 'execute',
     contractAddress: bundle.contractAddress,

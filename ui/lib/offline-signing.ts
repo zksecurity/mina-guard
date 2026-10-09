@@ -1,10 +1,13 @@
-import { parseChildConfigFromEvents, fetchAllEvents } from './api';
-import { computeCreateChildConfigHash, exportStoreCheckpoint } from './multisigClient';
+import { fetchAllEvents } from './api';
+import { exportStoreCheckpoint } from './multisigClient';
+import { fetchVerifiedChildConfig } from './child-reservation';
 import type { StoreCheckpoint } from 'contracts';
 import { OFFLINE_RESPONSE_VERSION } from './offline-format';
 import { getMinaGuardConfig } from './endpoints';
+import { OFFLINE_REQUEST_VERSION } from 'contracts/offline-format';
 
-export const OFFLINE_BUNDLE_VERSION = 1;
+/** The request format the CLI accepts; one constant for the UI, the CLI and the store restorer. */
+export const OFFLINE_BUNDLE_VERSION = OFFLINE_REQUEST_VERSION;
 
 interface BundleReceiver {
   address: string;
@@ -88,6 +91,11 @@ export interface OfflineApproveBundle extends BundleBase {
     receivers: BundleReceiver[];
     [key: string]: unknown;
   };
+  /** CREATE_CHILD only: the reserved SubVault configuration, checked against
+   *  `proposal.data` before export, for the CLI to check and show again. */
+  childAddress?: string;
+  childOwners?: string[];
+  childThreshold?: number;
 }
 
 export interface OfflineExecuteBundle extends BundleBase {
@@ -237,14 +245,22 @@ export async function buildOfflineApproveBundle(params: {
     fetchGraphQLAccount(params.feePayerAddress),
   ];
   const childAddr = params.proposal.childAccount;
+  const isCreateChild = params.proposal.txType === 'createChild';
+  if (isCreateChild && !childAddr) throw new Error('createChild proposal missing childAccount');
   if (childAddr) fetches.push(fetchGraphQLAccount(childAddr));
-  const [contractAccount, feePayerAccount, childAccount] = await Promise.all(fetches);
+  // A CREATE_CHILD approval authorizes the SubVault's owners and threshold, so
+  // the bundle carries them for the CLI to check and show before signing.
+  const [[contractAccount, feePayerAccount, childAccount], verifiedChild] = await Promise.all([
+    Promise.all(fetches),
+    isCreateChild && childAddr ? fetchVerifiedChildConfig(childAddr, params.proposal.data) : null,
+  ]);
 
   const accounts: Record<string, BundleAccount> = {
     [params.contractAddress]: contractAccount,
     [params.feePayerAddress]: feePayerAccount,
   };
   if (childAddr && childAccount) accounts[childAddr] = childAccount;
+  const childConfig = verifiedChild && childAddr ? { childAddress: childAddr, ...verifiedChild } : null;
 
   return {
     version: OFFLINE_BUNDLE_VERSION,
@@ -256,6 +272,9 @@ export async function buildOfflineApproveBundle(params: {
     events: [],
     storeCheckpoint,
     proposal: params.proposal,
+    ...(childConfig
+      ? { childAddress: childConfig.childAddress, childOwners: childConfig.owners, childThreshold: childConfig.threshold }
+      : {}),
   };
 }
 
@@ -316,22 +335,8 @@ export async function buildOfflineExecuteBundle(params: {
 
   if (isCreateChild && childAddr) {
     childAddress = childAddr;
-    childEvents = await fetchAllEvents(childAddress);
-    const config = parseChildConfigFromEvents(childEvents, childAddr);
-    if (!config) {
-      throw new Error(
-        'SubVault config events not found for this proposal. ' +
-        'The createChildConfig events may not have been indexed yet — try again shortly.',
-      );
-    }
-    const { configHash } = await computeCreateChildConfigHash({
-      childOwners: config.owners,
-      childThreshold: config.threshold,
-      preserveOrder: true,
-    });
-    if (configHash !== params.proposal.data) {
-      throw new Error('SubVault reservation does not match the parent-approved proposal data');
-    }
+    const config = await fetchVerifiedChildConfig(childAddr, params.proposal.data);
+    childEvents = config.events;
     childOwners = config.owners;
     childThreshold = config.threshold;
   }

@@ -209,15 +209,15 @@ The packaged UI uses the same IndexedDB store checkpoints as the web app, scoped
 to configured endpoints, network, expected verification key and vault address.
 Changing endpoint configuration selects a different cache namespace. This public
 cache is separate from the SQLite indexer database and contains no signing keys.
-Offline export creates version 1 requests: distribute the matching offline CLI
-alongside this desktop build. Requests and signed responses both use v1 after the pre-release reset;
-discard older files rather than reusing them. See `docs/offline-audit-guide.md` for the migration details.
+Offline export creates version 2 requests: distribute the matching offline CLI
+alongside this desktop build. Signed responses stay at version 1; the CLI refuses
+version 1 requests, so re-export pending ones. See `docs/offline-audit-guide.md` for the migration details.
 
 ### Proposal signing compatibility
 
 Desktop packages the same hashing/signing worker and backend as the web
 release, including tagged owner, vote-nullifier, and SubVault configuration
-hashes. Offline requests and signed responses both use v1 after the pre-release reset.
+hashes. Offline requests use version 2 and signed responses version 1.
 Discard older files and use matching UI and CLI builds.
 Rebuild packaged UI/backend assets and copy the updated per-network `contracts/.vk-hash`
 when packaging this release. Existing test vaults need fresh deployments and proposals;

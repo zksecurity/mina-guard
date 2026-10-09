@@ -163,7 +163,9 @@ reclaimable.
   indexer's precomputed copies of those values are ignored. The worker refuses a proposal whose
   transaction type it does not recognize (`requireTxType`) instead of building it as a transfer.
   The chainless UI regression checks the child-specific permission alert and verifies that both online
-  approval and offline bundle creation/broadcast remain unavailable for an unsafe CREATE_CHILD target.
+  approval and offline bundle creation/broadcast remain unavailable for an unsafe CREATE_CHILD target,
+  and that a CREATE_CHILD approval shows the SubVault owners and threshold and keeps Approve disabled
+  until they are verified.
 - **Interactions with the chain.** Interactions with the chain, like transactions submitted, reach the node
   directly. Note, however, that:
   - Transactions submitted through Auro wallet reach the node endpoint defined by Auro.
@@ -303,19 +305,21 @@ operation. Storage failures fall back to verified in-memory operation. Unknown
 legacy event heights disable incremental reuse. A bounded four-vault memory cache
 avoids rehashing old leaves during warm operations; cold restore still rebuilds
 trees from saved leaves. Offline export uses this same worker path to produce
-version 1 request snapshots. Export rejects unknown runtime networks before worker
+version 2 request snapshots. Export rejects unknown runtime networks before worker
 access or account reads; devnet uses the shared testnet proof domain. The offline
 CLI independently reconstructs and checks
 them against bundled account snapshots (see the offline audit guide). Child
 execution maps and child reservation configuration still replay child events.
 Reservation `proposalHash` values are caller-supplied labels. The UI fetches a
-reservation by child address and checks its recomputed configuration hash against
-the parent-approved `CREATE_CHILD` proposal data before approval, execution, or
-offline export. For the other REMOTE proposals the backend reports whether it
-has indexed the target SubVault (`childTargetIndexed`); an unindexed target
-blocks approval, execution and offline export on the detail page until the
-backend catches up, since the proposal's freshness cannot be judged without
-the SubVault's state. The rebuild does not depend on delivery order: approval
+reservation by child address, checks its recomputed configuration hash against
+the parent-approved `CREATE_CHILD` proposal data, and shows the reserved owners
+and threshold on the proposal page. Approval, execution and offline export wait
+until that check passes (an unindexed reservation blocks, it does not pass), and
+the approve bundle carries the checked configuration for the CLI. For the other
+REMOTE proposals the backend reports whether it has indexed the target SubVault
+(`childTargetIndexed`); an unindexed target blocks approval, execution and
+offline export on the detail page until the backend catches up, since the
+proposal's freshness cannot be judged without the SubVault's state. The rebuild does not depend on delivery order: approval
 leaves keep the largest value seen, owners come from the emitted setup slot index,
 and owner changes replay in `configNonce` order with each insert placed where the
 emitted post-change commitment says. Before any proof the worker compares the

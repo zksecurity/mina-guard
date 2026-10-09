@@ -1,10 +1,11 @@
 import { ApprovalStore, OwnerStore, VoteNullifierStore } from './storage.js';
 import { MAX_OWNERS } from './constants.js';
 import { assertStoresMatchChain, rebuildStores, type ChainState, type IndexedEvent, type RebuiltStores } from './event-rebuild.js';
+import { OFFLINE_REQUEST_VERSION, STORE_CHECKPOINT_VERSION } from './offline-format.js';
 
 /** Public reconstruction data only. Never includes keys or signing material. */
 export interface StoreCheckpoint {
-  version: 1;
+  version: typeof STORE_CHECKPOINT_VERSION;
   network: 'mainnet' | 'testnet';
   address: string;
   /** Last completely fetched event block; null for legacy events without heights. */
@@ -28,7 +29,7 @@ function requireRoots(chain: ChainState): void {
 
 export function checkpointStores(stores: RebuiltStores, scope: StoreScope, throughBlock: number | null): StoreCheckpoint {
   return {
-    version: 1, ...scope, throughBlock,
+    version: STORE_CHECKPOINT_VERSION, ...scope, throughBlock,
     owners: stores.ownerStore.serialize(),
     approvals: stores.approvalStore.serialize(),
     nullifiers: stores.nullifierStore.serialize(),
@@ -42,7 +43,7 @@ export function checkpointStores(stores: RebuiltStores, scope: StoreScope, throu
 
 /** Recompute trees from leaves, never trust serialized internal nodes or roots. */
 export function restoreStoreCheckpoint(checkpoint: StoreCheckpoint, scope: StoreScope): RebuiltStores {
-  if (!checkpoint || checkpoint.version !== 1 || checkpoint.network !== scope.network || checkpoint.address !== scope.address
+  if (!checkpoint || checkpoint.version !== STORE_CHECKPOINT_VERSION || checkpoint.network !== scope.network || checkpoint.address !== scope.address
     || (checkpoint.throughBlock !== null && (!Number.isSafeInteger(checkpoint.throughBlock) || checkpoint.throughBlock < 0))
     || typeof checkpoint.owners !== 'string' || typeof checkpoint.approvals !== 'string' || typeof checkpoint.nullifiers !== 'string') {
     throw new Error('Invalid or incompatible store checkpoint');
@@ -65,10 +66,12 @@ export function storesFromOfflineRequest(request: {
   version: number; minaNetwork: 'mainnet' | 'testnet'; contractAddress: string;
   events: readonly IndexedEvent[]; storeCheckpoint?: StoreCheckpoint;
 }, chain: ChainState): RebuiltStores {
-  if (request.version !== 1) throw new Error(`Unsupported bundle version: ${request.version} (expected 1)`);
+  if (request.version !== OFFLINE_REQUEST_VERSION) {
+    throw new Error(`Unsupported request version: ${request.version} (expected ${OFFLINE_REQUEST_VERSION})`);
+  }
   requireRoots(chain);
   if (!request.storeCheckpoint || !Array.isArray(request.events) || request.events.length !== 0) {
-    throw new Error('Offline request version 1 requires a complete store checkpoint and empty events');
+    throw new Error('An offline request requires a complete store checkpoint and empty events');
   }
   const stores = restoreStoreCheckpoint(request.storeCheckpoint, { network: request.minaNetwork, address: request.contractAddress });
   // Offline account snapshots are supplied by the online machine. As before,

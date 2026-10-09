@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { Field, PrivateKey } from 'o1js';
 import { ApprovalStore } from '../storage.js';
 import { rebuildStores, type IndexedEvent, type RebuiltStores } from '../event-rebuild.js';
+import { OFFLINE_REQUEST_VERSION } from '../offline-format.js';
 import { checkpointStores, restoreStoreCheckpoint, storesFromOfflineRequest, IncrementalStoreCache, type StoreCheckpoint } from '../store-checkpoint.js';
 import { computeOwnerChain } from '../list-commitment.js';
 
@@ -154,12 +155,12 @@ describe('verified incremental store checkpoints', () => {
     expect(roots(await cache.get(h.source))).toEqual(roots(b));
   });
 
-  it('accepts request v1 with checkpoint v1, rejects incompatible or inconsistent requests', () => {
+  it('accepts the current request version with checkpoint v1, rejects incompatible or inconsistent requests', () => {
     const stores = rebuildStores(history);
-    const request = { version: 1, minaNetwork: scope.network, contractAddress: scope.address, events: history };
+    const request = { version: OFFLINE_REQUEST_VERSION, minaNetwork: scope.network, contractAddress: scope.address, events: history };
     const v1 = { ...request, events: [], storeCheckpoint: checkpointStores(stores, scope, null) };
     expect(roots(storesFromOfflineRequest(v1, roots(stores)))).toEqual(roots(stores));
-    for (const invalid of [ { ...v1, version: 2 }, { ...v1, version: 4 }, { ...v1, version: 3 }, { ...v1, storeCheckpoint: undefined }, { ...v1, events: history } ]) {
+    for (const invalid of [ { ...v1, version: 1 }, { ...v1, version: 4 }, { ...v1, version: 3 }, { ...v1, storeCheckpoint: undefined }, { ...v1, events: history } ]) {
       expect(() => storesFromOfflineRequest(invalid, roots(stores))).toThrow();
     }
     expect(() => storesFromOfflineRequest(v1, { ...roots(stores), approvalRoot: '1' })).toThrow();
