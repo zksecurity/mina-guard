@@ -1,0 +1,150 @@
+name: Mainnet images (manual build and attest; no deploy)
+
+# This release identity is separate from the Mesa Trail testnet workflow.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: mainnet-image-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  vk-hashes:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/vk-hashes.yml
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: vk-hashes
+    runs-on: ubuntu-latest
+    environment: Production
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE_PREFIX: ghcr.io/zksecurity/mina-guard/mainnet
+      MINA_NETWORK_DOMAIN: mainnet
+      NEXT_PUBLIC_MINA_NETWORK: mainnet
+      NEXT_PUBLIC_BASE_PATH: ''
+      NEXT_PUBLIC_API_BASE_URL: ${{ vars.MAINNET_API_BASE_URL }}
+      NEXT_PUBLIC_MINA_ENDPOINT: ${{ vars.MAINNET_MINA_ENDPOINT }}
+      NEXT_PUBLIC_ARCHIVE_ENDPOINT: ${{ vars.MAINNET_ARCHIVE_ENDPOINT }}
+      NEXT_PUBLIC_BLOCK_EXPLORER_URL: ${{ vars.MAINNET_BLOCK_EXPLORER_URL }}
+      NEXT_PUBLIC_POLL_INTERVAL_MS: '1000'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download VK manifest for this commit
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: minaguard-vk-manifest
+          path: contracts
+      - name: Verify VK manifest source
+        run: bash contracts/scripts/verify-vk-manifest.sh
+
+      - name: Select mainnet VK hash
+        id: vk
+        run: |
+          hash="$(contracts/scripts/read-vk-hash.sh mainnet)"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Validate explicit mainnet build inputs
+        env:
+          NEXT_PUBLIC_MINAGUARD_VK_HASH: ${{ steps.vk.outputs.hash }}
+        run: python3 deploy/validate-mainnet-build-config.py
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push mainnet backend
+        id: backend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: preview-env/Dockerfile.backend
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}-backend:${{ github.sha }}
+          build-args: |
+            MINA_NETWORK_DOMAIN=${{ env.MINA_NETWORK_DOMAIN }}
+            MINAGUARD_VK_HASH=${{ steps.vk.outputs.hash }}
+
+      - name: Build and push mainnet frontend
+        id: frontend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: preview-env/Dockerfile.frontend
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}-frontend:${{ github.sha }}
+          build-args: |
+            MINA_NETWORK_DOMAIN=${{ env.MINA_NETWORK_DOMAIN }}
+            NEXT_PUBLIC_BASE_PATH=${{ env.NEXT_PUBLIC_BASE_PATH }}
+            NEXT_PUBLIC_API_BASE_URL=${{ env.NEXT_PUBLIC_API_BASE_URL }}
+            NEXT_PUBLIC_MINA_ENDPOINT=${{ env.NEXT_PUBLIC_MINA_ENDPOINT }}
+            NEXT_PUBLIC_ARCHIVE_ENDPOINT=${{ env.NEXT_PUBLIC_ARCHIVE_ENDPOINT }}
+            NEXT_PUBLIC_MINA_NETWORK=${{ env.NEXT_PUBLIC_MINA_NETWORK }}
+            NEXT_PUBLIC_MINAGUARD_VK_HASH=${{ steps.vk.outputs.hash }}
+            NEXT_PUBLIC_BLOCK_EXPLORER_URL=${{ env.NEXT_PUBLIC_BLOCK_EXPLORER_URL }}
+            NEXT_PUBLIC_POLL_INTERVAL_MS=${{ env.NEXT_PUBLIC_POLL_INTERVAL_MS }}
+            ENABLE_SOURCE_MAPS=false
+
+      - name: Attest mainnet backend digest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-backend
+          subject-digest: ${{ steps.backend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest mainnet frontend digest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}-frontend
+          subject-digest: ${{ steps.frontend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Write digest manifest
+        env:
+          MAINNET_VK_HASH: ${{ steps.vk.outputs.hash }}
+          BACKEND_DIGEST: ${{ steps.backend.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          prefix = os.environ['IMAGE_PREFIX']
+          for name in ('BACKEND_DIGEST', 'FRONTEND_DIGEST'):
+              if not re.fullmatch(r'sha256:[0-9a-f]{64}', os.environ[name]):
+                  raise SystemExit(f'{name} is not an OCI sha256 digest')
+          manifest = {
+              'network': 'mainnet',
+              'sha': os.environ['GITHUB_SHA'],
+              'vk_hash': os.environ['MAINNET_VK_HASH'],
+              'backend': f"{prefix}-backend@{os.environ['BACKEND_DIGEST']}",
+              'frontend': f"{prefix}-frontend@{os.environ['FRONTEND_DIGEST']}",
+              'public_config': {
+                  'api_base_url': os.environ['NEXT_PUBLIC_API_BASE_URL'],
+                  'mina_endpoint': os.environ['NEXT_PUBLIC_MINA_ENDPOINT'],
+                  'archive_endpoint': os.environ['NEXT_PUBLIC_ARCHIVE_ENDPOINT'],
+                  'block_explorer_url': os.environ['NEXT_PUBLIC_BLOCK_EXPLORER_URL'],
+              },
+          }
+          with open('mainnet-images.json', 'w', encoding='utf-8') as output:
+              json.dump(manifest, output, indent=2)
+              output.write('\n')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mainnet-images-${{ github.sha }}
+          path: mainnet-images.json
+          if-no-files-found: error

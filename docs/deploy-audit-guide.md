@@ -1,10 +1,11 @@
 # Deployment — Architecture & Security Notes
 
 This document describes the in-repo **deployment assets** (`deploy/`) — the compose
-stacks, Caddy routing, and deploy scripts that run the hosted MinaGuard demo box. It is
-**context for auditors, not fund-safety surface**: by the non-custodial design, even
-host-root compromise here cannot move vault funds
-([`security-audit-guide.md`](./security-audit-guide.md)). Production operational security
+stacks, Caddy routing, and deploy scripts for the hosted MinaGuard demo box. The
+frontend deployment is a fund-safety surface: an attacker who can serve altered
+JavaScript can mislead owners into signing an unintended transaction. A host does
+not hold owner private keys, but host compromise can still affect what owners see
+and approve ([`security-audit-guide.md`](./security-audit-guide.md)). Operational security
 (servers, firewalls, CI, secrets) lives in the private ops repo,
 `mina-guard-ops/architecture.md`, shared with auditors on request.
 
@@ -47,6 +48,7 @@ inner Caddy.
 | `Caddyfile.trail` | Inner-Caddy routes for the trail stack (`/trail/*`), including cross-host proxies to the node-stack box |
 | `trail-pull-deploy.sh` | Box-side pull agent (phase 2): pulls the latest signed `/trail` images, verifies each build-provenance attestation with `gh attestation verify`, rolling-`up -d`s on digest change |
 | `systemd/trail-pull-deploy.{service,timer}` | User-level systemd oneshot + 2-minute timer that drives `trail-pull-deploy.sh` |
+| `validate-mainnet-build-config.py` | Rejects incomplete or visibly non-mainnet public URLs before the manual mainnet image build |
 | `.env.example` | Template for `deploy/.env` (gitignored), sourced by `deploy-trail.sh` |
 
 Both scripts expect to be run from the repo root.
@@ -101,7 +103,7 @@ either network with `MINA_NETWORK_DOMAIN=<network> bun run dev-helpers/cli.ts vk
 for debugging; local results do not need to be committed.
 
 - URLs after deploy: `https://mina-trail.duckdns.org/trail/` (app), `/trail/health`, `/trail/graphql`, `/trail/archive`, `/trail/explorer`. The frontend bundle bakes these `mina-trail.duckdns.org/trail` URLs (both the on-box `docker-compose.trail.yml` build args and the pull-based `trail-release.yml` build) — **not** `mina-nodes` (which serves `/app/*`).
-- **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). What fires on every push to `main` is instead `.github/workflows/trail-release.yml`, which **builds, pushes, and attests** the `/trail` GHCR images and deploys nothing — the box pulls and verifies them itself (see *Pull-based deploy* below).
+- **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). `.github/workflows/trail-release.yml` instead **builds, pushes, and attests** the `/trail` GHCR images on pushes to `main` and deploys nothing. The intended phase-2 process pulls and verifies them on the box; check its live status below before relying on it.
 
 **Why `down` wipes the DB (`down -v`).** During active contract development the VK hash changes
 with every circuit-touching merge, and discovery filters by VK hash — so previously-indexed
@@ -136,15 +138,83 @@ on it via a pushed-branch workflow.
   against the attestation-verified digests, with **no** volume wipe (the interim `down -v` is
   reversed here; wipe only when a release deliberately changes the VK).
 
-Both phase-2 files are marked **draft / not-yet-enabled on the trail box**; until they are, redeploy
-manually via `deploy-trail.yml` (`workflow_dispatch`) or over SSH.
+Both phase-2 files are marked **draft in this repository**. That label does not establish
+what is active on a remote box. Log in as the deploy user and check the live timer,
+unit contents, and recent runs before relying on pull-based deployment:
+
+```bash
+systemctl --user is-enabled trail-pull-deploy.timer
+systemctl --user is-active trail-pull-deploy.timer
+systemctl --user list-timers --all trail-pull-deploy.timer
+systemctl --user cat trail-pull-deploy.service trail-pull-deploy.timer
+journalctl --user -u trail-pull-deploy.service -n 50 --no-pager
+docker ps --filter name=minaguard-trail --format '{{.Names}} {{.Image}}'
+```
+
+The timer should be enabled and active, recent runs should exit successfully
+after verifying the image attestations, and the running app image references
+should be pinned to `@sha256:` digests. A digest reference alone does not prove
+the installed pull script verified it; inspect that script and its successful
+journal entries. If the timer is absent or inactive, use the currently
+authorized manual deploy procedure and verify the served release separately.
+
+### AWS mainnet image build (preparation only)
+
+`.github/workflows/mainnet-image-build.yml` is a **manual**, `main`-branch-only
+build and attestation path for a future AWS deployment. It does not modify AWS,
+start a service, or deploy a contract. It publishes backend and frontend images
+under distinct `ghcr.io/zksecurity/mina-guard/mainnet-*` package names, tagged
+with the source commit only, and uploads `mainnet-images-<sha>` with the exact OCI
+digests. There is no mutable `:main` mainnet tag or mainnet explorer build. Mesa
+Trail's push-triggered testnet release remains separate.
+
+The shared backend and frontend Dockerfiles pin the multi-platform `oven/bun:1`
+base image by OCI digest. Review and update that digest deliberately in both
+Dockerfiles when upgrading Bun; the same files also build Trail and preview
+images. The frontend's `apt-get` package resolution is still time-dependent.
+
+Before dispatch, verify the GitHub `Production` environment has required
+reviewers and prevent-self-review; merely naming the environment in YAML does
+not enforce approval. A read-only GitHub API check on 2026-10-27 found a required
+reviewer rule with prevent-self-review enabled, and none of the `MAINNET_*`
+variables below configured yet. Recheck that live setting before release. Set
+these **public build-time** environment variables on that environment to the
+intended browser-reachable HTTPS services:
+
+| Variable | Frontend use |
+|---|---|
+| `MAINNET_API_BASE_URL` | Indexer/API origin or base URL |
+| `MAINNET_MINA_ENDPOINT` | Mina mainnet GraphQL endpoint |
+| `MAINNET_ARCHIVE_ENDPOINT` | Mainnet archive GraphQL endpoint |
+| `MAINNET_BLOCK_EXPLORER_URL` | Mainnet transaction/address links |
+
+The workflow refuses missing, non-HTTPS, local, or visibly testnet/devnet/trail
+URLs, URLs with credentials or query strings, and a nonempty base path. These
+values are **baked into public JavaScript**; never put a secret or API token in
+them. The `vk-hashes` job generates a manifest tied to the checked-out commit;
+the release verifies that source SHA and selects the **mainnet** VK hash with
+`read-vk-hash.sh mainnet`. The Docker builds receive both
+`NEXT_PUBLIC_MINA_NETWORK=mainnet` and `MINA_NETWORK_DOMAIN=mainnet`, plus that
+mainnet hash. The frontend production build checks their agreement. The backend
+image records the same domain and hash; the AWS runtime must still explicitly
+set `MINA_NETWORK_DOMAIN=mainnet` and compare its `MINAGUARD_VK_HASH` against the
+release manifest.
+
+Before serving a digest on AWS, the deployment verifier must check each OCI
+attestation against this repository's `mainnet-image-build.yml@refs/heads/main`
+workflow identity, use the digest from the release manifest, confirm the Mina
+GraphQL endpoint actually reports mainnet, and check the browser-served release.
+Those AWS deployment and independent served-content checks are not implemented
+by this build workflow. A successful image build alone does not establish that
+the frontend/backend are live or that mainnet account creation is ready.
 
 ---
 
 ## Threat model & assumptions
 
-This tier is **outside the fund-safety TCB**. Its security notes are about the cross-host data
-plane and the load-bearing network control, not about protecting vault funds.
+The cross-host data plane and edge firewall are load-bearing network controls.
+Frontend integrity and release verification also matter because owners may sign
+transactions based on content served from this tier.
 
 ### The load-bearing control is the edge firewall, not host `ufw`
 
@@ -198,6 +268,7 @@ deploy/
 ├── docker-compose.trail.pull.yml   # trail app stack, pull-based (GHCR images by verified digest)
 ├── Caddyfile.trail                 # inner-Caddy routes for /trail/* + cross-host node proxies
 ├── trail-pull-deploy.sh            # box-side pull agent: pull + attestation-verify + rolling up -d
+├── validate-mainnet-build-config.py # CI check for explicit mainnet frontend build inputs
 ├── systemd/
 │   ├── trail-pull-deploy.service   # user-level oneshot that runs trail-pull-deploy.sh
 │   └── trail-pull-deploy.timer     # 2-minute timer driving the service
@@ -206,7 +277,8 @@ deploy/
 
 The push-to-`main` CI workflow that feeds the pull path lives at
 `.github/workflows/trail-release.yml` (build · push · attest); `deploy-trail.yml` is now
-`workflow_dispatch`-only.
+`workflow_dispatch`-only. The distinct manual AWS mainnet image build is in
+`.github/workflows/mainnet-image-build.yml`.
 
 ---
 

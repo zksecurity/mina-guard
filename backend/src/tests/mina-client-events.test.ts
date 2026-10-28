@@ -189,25 +189,68 @@ describe('archive event query', () => {
       return Response.json({ data: { events: [block(5, [{ data: approval(1n) }])] } });
     }) as typeof fetch);
 
-    const blocks = await fetchArchiveEventBlocks(endpoints, 'B62qvault', 4);
+    const blocks = await fetchArchiveEventBlocks(endpoints, 'B62qvault', 4, 5);
 
     expect(blocks).toHaveLength(1);
     expect(bodies[0].query).toContain('authorizationKind');
-    expect(bodies[0].variables.input).toMatchObject({ address: 'B62qvault', from: 4 });
+    expect(bodies[0].variables.input).toMatchObject({ address: 'B62qvault', from: 4, to: 6 });
     expect(typeof bodies[0].variables.input.tokenId).toBe('string');
   });
 
-  test('omits `from` for a scan from genesis and falls back to the second endpoint', async () => {
+  test('bounds a scan from genesis and falls back to the second endpoint', async () => {
     const urls: string[] = [];
     spyOn(globalThis, 'fetch').mockImplementation((async (url: unknown, init?: RequestInit) => {
       urls.push(String(url));
       if (String(url) === endpoints.primary) return new Response('down', { status: 502 });
-      expect(JSON.parse(String(init?.body)).variables.input).not.toHaveProperty('from');
+      expect(JSON.parse(String(init?.body)).variables.input).toMatchObject({ from: 0, to: 1 });
       return Response.json({ data: { events: [] } });
     }) as typeof fetch);
 
-    expect(await fetchArchiveEventBlocks(endpoints, 'B62qvault', 0)).toEqual([]);
+    expect(await fetchArchiveEventBlocks(endpoints, 'B62qvault', 0, 0)).toEqual([]);
     expect(urls).toEqual([endpoints.primary, endpoints.fallback]);
+  });
+
+  test('reads every page across the archive range cap, including boundary blocks', async () => {
+    const ranges: Array<[number, number]> = [];
+    const fixtures = [block(4_999, [{ data: approval(1n) }]),
+      block(5_000, [{ data: approval(2n) }]),
+      block(10_000, [{ data: approval(3n) }])];
+    spyOn(globalThis, 'fetch').mockImplementation((async (_url: unknown, init?: RequestInit) => {
+      const input = JSON.parse(String(init?.body)).variables.input as { from: number; to: number };
+      ranges.push([input.from, input.to]);
+      // Model the API's silent range truncation if a client asks for too much.
+      const effectiveTo = Math.min(input.to, input.from + 5_000);
+      return Response.json({ data: { events: fixtures.filter(
+        (event) => event.blockInfo.height >= input.from && event.blockInfo.height < effectiveTo,
+      ) } });
+    }) as typeof fetch);
+
+    const blocks = await fetchArchiveEventBlocks(endpoints, 'B62qvault', 0, 10_000);
+    expect(ranges).toEqual([[0, 5_000], [5_000, 10_000], [10_000, 10_001]]);
+    expect(blocks.map((event) => event.blockInfo.height)).toEqual([4_999, 5_000, 10_000]);
+  });
+
+  test('rejects the whole fetch if a later page fails', async () => {
+    let requests = 0;
+    spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      requests += 1;
+      return requests === 1
+        ? Response.json({ data: { events: [] } })
+        : Response.json({ errors: [{ message: 'archive unavailable' }] });
+    }) as typeof fetch);
+
+    await expect(fetchArchiveEventBlocks({ primary: endpoints.primary, fallback: null }, 'B62qvault', 0, 5_000))
+      .rejects.toThrow('archive unavailable');
+    expect(requests).toBe(2);
+  });
+
+  test('rejects an archive that ignores the requested upper bound', async () => {
+    spyOn(globalThis, 'fetch').mockImplementation((async () => Response.json({
+      data: { events: [block(5_000, [{ data: approval(1n) }])] },
+    })) as typeof fetch);
+
+    await expect(fetchArchiveEventBlocks(endpoints, 'B62qvault', 0, 4_999))
+      .rejects.toThrow('outside the requested block range');
   });
 
   test('explains an archive that does not expose authorizationKind', async () => {
@@ -215,7 +258,7 @@ describe('archive event query', () => {
       errors: [{ message: 'Cannot query field "authorizationKind" on type "TransactionInfo".' }],
     })) as typeof fetch);
 
-    await expect(fetchArchiveEventBlocks({ primary: 'http://old-archive', fallback: null }, 'B62qvault', 0))
+    await expect(fetchArchiveEventBlocks({ primary: 'http://old-archive', fallback: null }, 'B62qvault', 0, 0))
       .rejects.toThrow('v0.0.8 or later');
   });
 });

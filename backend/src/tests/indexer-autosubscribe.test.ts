@@ -16,6 +16,7 @@ const liteConfig = {
   minaguardVkHash: null,
   lightnetAccountManager: null,
   indexerMode: 'lite' as const,
+  discoveryBackend: 'daemon' as const,
 } as unknown as BackendConfig;
 
 const fullConfig = { ...liteConfig, indexerMode: 'full' as const } as BackendConfig;
@@ -366,6 +367,81 @@ function makeAddOwnerProposalEvent(proposalHash: string, blockHeight: number) {
     txHash: `tx-propose-${proposalHash}`,
   };
 }
+
+describe('tick: delayed archive events', () => {
+  test('replays a ready contract block after the daemon cursor passed it', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: true, permissionsVerified: true },
+    });
+    await setCursor(99);
+
+    const event = makeAddOwnerProposalEvent('late-proposal', 100);
+    let archiveHeight = 100;
+    let archiveCaughtUp = false;
+    const queriedFrom: number[] = [];
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => archiveHeight,
+      fetchBestChainHeaders: async () => [],
+      fetchDecodedContractEvents: async (_address: string, from: number) => {
+        queriedFrom.push(from);
+        return archiveCaughtUp && from <= event.blockHeight ? [event] : [];
+      },
+    }));
+
+    const first = new MinaGuardIndexer(liteConfig);
+    await first.start();
+    first.stop();
+    expect(await prisma.proposal.count({ where: { contractId: contract.id } })).toBe(0);
+    expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value).toBe('100');
+
+    // Archive-node-api catches up only after the cursor has passed block 100.
+    archiveHeight = 101;
+    archiveCaughtUp = true;
+    const second = new MinaGuardIndexer(liteConfig);
+    await second.start();
+    second.stop();
+
+    expect(queriedFrom[1]).toBeLessThanOrEqual(100);
+    expect(await prisma.proposal.count({ where: { contractId: contract.id } })).toBe(1);
+
+    // The next overlap must not apply the same event twice.
+    archiveHeight = 102;
+    const third = new MinaGuardIndexer(liteConfig);
+    await third.start();
+    third.stop();
+    expect(await prisma.eventRaw.count({ where: { contractId: contract.id } })).toBe(1);
+    expect(await prisma.proposal.count({ where: { contractId: contract.id } })).toBe(1);
+  });
+
+  test('daemon discovery covers a deployment while archive ingestion trails it', async () => {
+    await setCursor(100);
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    let scannedBlocks = 0;
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => 100, // archive pending tip
+      fetchBestChainHeaders: async () => [{ height: 120, blockHash: 'h120', parentHash: 'h119' }],
+      discoverCandidateAddresses: async (_config: BackendConfig, window: number) => {
+        scannedBlocks = window;
+        return [address];
+      },
+      fetchDecodedContractEvents: async () => [],
+    }));
+
+    const indexer = new MinaGuardIndexer(fullConfig);
+    await indexer.start();
+    indexer.stop();
+
+    // The 20-block daemon/archive gap must be included in the scanner's
+    // window, and the unready rescan must start before any scanned deploy.
+    expect(scannedBlocks).toBe(25);
+    const contract = await prisma.contract.findUniqueOrThrow({ where: { address } });
+    expect(contract.discoveredAtBlock).toBe(96);
+    expect(contract.ready).toBe(false);
+  });
+});
 
 describe('tick: rescanUnreadyContracts', () => {
   async function runSingleTick(config: BackendConfig): Promise<MinaGuardIndexer> {

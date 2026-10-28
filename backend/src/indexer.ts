@@ -25,6 +25,15 @@ import {
 
 const REORG_DETECTION_WINDOW = 290;
 
+/**
+ * Even after reading the archive's own pending tip, a transient inconsistency
+ * between its height and events queries can hide an event for one tick. Re-read
+ * a small overlap in daemon-discovery mode; EventRaw fingerprints make replay
+ * idempotent. Archive-discovery mode reads the same Postgres DB as the events
+ * API and avoids this extra query cost on mainnet.
+ */
+const EVENT_REPLAY_BLOCKS = 5;
+
 /** Grace period before treating a tx absent from both bestChain and mempool as
  *  dropped. Covers the brief window between a tx leaving the mempool and its
  *  block appearing in bestChain (~2 blocks / 6 min on mainnet). */
@@ -209,7 +218,9 @@ export class MinaGuardIndexer {
       const indexedHeight = await this.getIndexedHeight();
       this.status.indexedHeight = indexedHeight;
 
-      const fromHeight = indexedHeight + 1;
+      const fromHeight = this.config.discoveryBackend === 'daemon'
+        ? Math.max(this.config.indexStartHeight, indexedHeight - EVENT_REPLAY_BLOCKS + 1)
+        : indexedHeight + 1;
       const toHeight = latestHeight;
 
       // Scan for new contract deployments. The candidate-address source is
@@ -239,15 +250,28 @@ export class MinaGuardIndexer {
             latestHeight,
           );
         } else {
+          // Candidate discovery scans the daemon, which may be ahead of the
+          // archive tip used by indexed_height. Size this window from the
+          // daemon's own height so a deploy made during archive catch-up is
+          // still found after an indexer restart.
+          const daemonHeaders = await fetchBestChainHeaders(this.config, 1);
+          const daemonHeight = daemonHeaders.at(-1)?.height;
+          if (daemonHeight === undefined) {
+            throw new Error('Daemon bestChain has no height for contract discovery');
+          }
           const discoveryWindow = Math.max(
             1,
-            Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
+            Math.min(290, daemonHeight - indexedHeight + DISCOVERY_MARGIN),
           );
-          // TODO: daemon path approximates deployBlock as latestHeight, which
-          // sits above the actual deploy by up to ~290 blocks. Follow-up PR
-          // threads per-block height through the bestChain query.
+          // The address scanner does not return each deploy's exact height.
+          // Persist the earliest scanned height as a safe rescan floor for an
+          // unready contract; using the tip could skip its deploy events.
+          const scanFloor = Math.max(
+            this.config.indexStartHeight,
+            daemonHeight - discoveryWindow + 1,
+          );
           const addrs = await discoverCandidateAddresses(this.config, discoveryWindow);
-          candidates = addrs.map((address) => ({ address, deployBlock: latestHeight }));
+          candidates = addrs.map((address) => ({ address, deployBlock: scanFloor }));
         }
         const failureCount = await this.processCandidateAddresses(candidates);
         if (this.config.discoveryBackend === 'archive' && failureCount === 0) {
@@ -308,8 +332,9 @@ export class MinaGuardIndexer {
    * `deployBlock` is persisted as `discoveredAtBlock` so `rescanUnreadyContracts`
    * scans a tight `[deploy_block, latestHeight]` window. For archive discovery
    * this is the actual on-chain deploy block (from MIN(blocks.height) in the
-   * SQL); for daemon discovery it's the tick's chain tip — close enough since
-   * bestChain horizon caps the imprecision at ~290 blocks.
+   * SQL); for daemon discovery it's the earliest block in the scanned
+   * bestChain window, so an unready contract's later rescan includes its
+   * actual deploy even when archive ingestion trails the daemon.
    *
    * Returns the count of candidates that threw — the archive branch in tick()
    * uses this to decide whether to advance the archive_discovered_height
@@ -433,7 +458,10 @@ export class MinaGuardIndexer {
 
   /** Indexes events for all tracked contracts across the requested block range. */
   private async syncKnownContracts(fromHeight: number, toHeight: number): Promise<void> {
-    const contracts = await prisma.contract.findMany();
+    // Unready contracts were already scanned from their own persisted lower
+    // bound above. The overlap here is for ready contracts; scanning an
+    // unready, not-yet-deployed address would ignore discoveredAtBlock.
+    const contracts = await prisma.contract.findMany({ where: { ready: true } });
 
     for (const contract of contracts) {
       try {
