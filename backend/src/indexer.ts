@@ -26,13 +26,13 @@ import {
 const REORG_DETECTION_WINDOW = 290;
 
 /**
- * Even after reading the archive's own pending tip, a transient inconsistency
- * between its height and events queries can hide an event for one tick. Re-read
- * a small overlap in daemon-discovery mode; EventRaw fingerprints make replay
- * idempotent. Archive-discovery mode reads the same Postgres DB as the events
- * API and avoids this extra query cost on mainnet.
+ * Pending blocks can be replaced below the indexed tip even when the archive
+ * height and event queries read the same database. A replacement block may add
+ * a vault event where the old block had none, leaving no stored BlockHeader for
+ * reorg detection. Re-read the full pending horizon; EventRaw fingerprints make
+ * unchanged events idempotent.
  */
-const EVENT_REPLAY_BLOCKS = 5;
+const EVENT_REPLAY_BLOCKS = REORG_DETECTION_WINDOW;
 
 /** Grace period before treating a tx absent from both bestChain and mempool as
  *  dropped. Covers the brief window between a tx leaving the mempool and its
@@ -96,6 +96,7 @@ type ContractConfigChanges = Partial<ContractConfigFields>;
 export class MinaGuardIndexer {
   private readonly config: BackendConfig;
   private intervalHandle: NodeJS.Timeout | null = null;
+  private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
   private archivePool: pg.Pool | null = null;
   private status: Omit<IndexerStatus, 'indexerMode'> = {
@@ -190,6 +191,10 @@ export class MinaGuardIndexer {
 
   /** Runs one complete indexing loop: discovery, ingestion, and cursor advancement. */
   private async tick(): Promise<void> {
+    // A replay across many contracts can outlast the poll interval. Never let
+    // overlapping ticks race to write the same discovery and event cursors.
+    if (this.tickInProgress) return;
+    this.tickInProgress = true;
     this.status.lastRunAt = new Date().toISOString();
 
     try {
@@ -218,10 +223,20 @@ export class MinaGuardIndexer {
       const indexedHeight = await this.getIndexedHeight();
       this.status.indexedHeight = indexedHeight;
 
-      const fromHeight = this.config.discoveryBackend === 'daemon'
-        ? Math.max(this.config.indexStartHeight, indexedHeight - EVENT_REPLAY_BLOCKS + 1)
-        : indexedHeight + 1;
+      const fromHeight = Math.max(
+        this.config.indexStartHeight,
+        indexedHeight - EVENT_REPLAY_BLOCKS + 1,
+      );
       const toHeight = latestHeight;
+      // A transiently shorter pending chain must not move the cursor backward
+      // without rolling back the rows derived above it. Reorg detection above
+      // performs that rollback when it has a proved fork point.
+      if (toHeight < indexedHeight || toHeight < fromHeight) {
+        throw new Error(
+          `Archive tip ${toHeight} is below indexed height ${indexedHeight} or replay start ${fromHeight}; ` +
+          'indexing paused until the archive catches up or the reorg is investigated.',
+        );
+      }
 
       // Scan for new contract deployments. The candidate-address source is
       // pluggable: 'daemon' scans bestChain (capped at 290 blocks — see Mina's
@@ -231,18 +246,19 @@ export class MinaGuardIndexer {
       // handled by detectAndRollbackReorg above, which rewinds IndexerCursor
       // on fork — the next tick re-covers the reorged range.
       if (this.config.indexerMode === 'full') {
-        const DISCOVERY_MARGIN = 5;
+        const DAEMON_DISCOVERY_MARGIN = 5;
         let candidates: DiscoveryCandidate[];
         if (this.config.discoveryBackend === 'archive' && this.config.minaguardVkHash) {
           // Cold start (no archive_discovered_height cursor): scan from
           // indexStartHeight back to genesis-or-configured-floor so historical
-          // deploys are picked up. Subsequent ticks scan only the new delta
-          // plus a small reorg margin. The archive query filters by MinaGuard's
-          // VK hash, so even a from-genesis scan returns a tiny row set.
+          // deploys are picked up. Subsequent ticks rescan the pending horizon:
+          // a reorg can add a deploy below the discovery cursor without any
+          // previously stored MinaGuard event header to trigger rollback.
+          // The archive query filters by MinaGuard's VK hash.
           const lastDiscovered = await this.getArchiveDiscoveredHeight();
           const discoveryFromHeight = lastDiscovered === null
             ? this.config.indexStartHeight
-            : Math.max(this.config.indexStartHeight, lastDiscovered - DISCOVERY_MARGIN);
+            : Math.max(this.config.indexStartHeight, lastDiscovered - REORG_DETECTION_WINDOW + 1);
           candidates = await discoverCandidateAddressesFromArchive(
             this.getArchivePool(),
             this.config.minaguardVkHash,
@@ -261,7 +277,7 @@ export class MinaGuardIndexer {
           }
           const discoveryWindow = Math.max(
             1,
-            Math.min(290, daemonHeight - indexedHeight + DISCOVERY_MARGIN),
+            Math.min(290, daemonHeight - indexedHeight + DAEMON_DISCOVERY_MARGIN),
           );
           // The address scanner does not return each deploy's exact height.
           // Persist the earliest scanned height as a safe rescan floor for an
@@ -314,6 +330,8 @@ export class MinaGuardIndexer {
       this.status.lastError = error instanceof Error
         ? error.message
         : `Non-Error thrown by indexer tick: ${describeThrown(error)}`;
+    } finally {
+      this.tickInProgress = false;
     }
   }
 

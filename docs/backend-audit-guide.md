@@ -82,37 +82,47 @@ cannot advance ahead of archive ingestion. If that query fails, the cursor stays
 3. **Read cursor** — `IndexerCursor.indexed_height` (default `indexStartHeight` if absent).
 4. **Discover (full mode only)** — collect candidate addresses and run them through `processCandidateAddresses` (dedup → VK re-verify → insert → backfill, with per-candidate error isolation):
    - **daemon**: scan a recent bestChain slice sized from `daemonHeight - indexedHeight + margin` (capped at 290 blocks). The daemon may be ahead of the archive's event cursor. `discoveredAtBlock` uses the earliest scanned height as a safe lower bound for unready-contract rescans, since the scanner does not return the exact deploy block.
-   - **archive**: one VK-hash-filtered SQL query over `[from, latestHeight]`, where `from` is the `archive_discovered_height` cursor minus a small reorg margin — or, on cold start (no cursor yet), `indexStartHeight`, giving a from-genesis sweep that picks up historical deploys. `discoveredAtBlock` is the actual on-chain deploy block (`MIN(blocks.height)`). The cursor only advances when **zero** candidates failed, so transient failures (e.g. a flaky VK fetch) are retried next tick instead of being dropped past the cursor forever.
+   - **archive**: one VK-hash-filtered SQL query over `[from, latestHeight]`, where `from` starts the 290-height window ending at `archive_discovered_height` — or, on cold start (no cursor yet), uses `indexStartHeight` for historical discovery. This also finds a deploy added by a pending-chain reorg below the old cursor, even when the replaced block had no MinaGuard event header. `discoveredAtBlock` is the actual on-chain deploy block (`MIN(blocks.height)`). The cursor only advances when **zero** candidates failed, so transient failures (e.g. a flaky VK fetch) are retried next tick instead of being dropped past the cursor forever.
 5. **Rescan unready contracts** — any `Contract` with `ready = false` is re-synced from its `discoveredAtBlock` up to `latestHeight`. This is what makes subscribe-before-deploy self-healing.
-6. **Forward sweep** — `syncKnownContracts(fromHeight, latestHeight)` across every tracked contract. With daemon discovery, `fromHeight` overlaps the last five indexed blocks to tolerate a transient gap between archive height and event queries; event fingerprints deduplicate replay. With archive discovery, it is `indexedHeight + 1` because the cursor and event API read the same archive Postgres and repeated reads would add cost on mainnet.
+6. **Forward sweep** — `syncKnownContracts(fromHeight, latestHeight)` across ready contracts, with `fromHeight` replaying the last 290 indexed heights in either discovery mode. A pending-chain reorg can add an event below the cursor even when the old block had no stored event header. Event fingerprints deduplicate unchanged events. The overlap also tolerates transient gaps between archive height and event queries.
 7. **Advance cursor** — persist `indexed_height = latestHeight`.
 8. **Poll pending submissions** — `pollPendingSubmissions` checks every in-flight approve/execute tx hash (each one checked with the node when it was reported; see focus point 5) against bestChain and records structured failure reasons on the `Proposal` row. Transactions still `pending` past a 20-minute grace period are additionally checked against the daemon mempool (`pooledZkappCommands`); absent from both, they're marked dropped via `lastApproveError`/`lastExecuteError`, which releases the UI's signer lock. (Successful txs need no handling here — their Approval/Execution events clear them in the apply pipeline.)
 
 If any step throws, the cursor is **not** advanced, so the next tick retries the same window.
-Per-contract sync errors re-throw for the same reason.
+Per-contract sync errors re-throw for the same reason. Only one tick runs at a time: if a 290-block
+replay outlasts the poll interval, the next scheduled tick is skipped and a later one runs. With
+the default 15-second interval, a settled indexer makes about four archive event queries per
+minute per ready contract, plus one VK-filtered archive discovery query per tick in full archive
+mode. Backfills can make many more paged requests. Size the archive API and its rate limit for
+the number of tracked contracts, and monitor indexer lag and tick duration.
 
 ### Reorg handling
 
-Mina has probabilistic finality (~290 blocks). The indexer handles any reorg that forks at or
-above the last 290 bestChain headers; reorgs that fork deeper than the detection window are
-logged and left for operator intervention (see [Failure semantics](#failure-semantics)).
+Mina has probabilistic finality (~290 blocks). The event and archive-discovery sweeps replay
+the last 290 heights so newly appearing events and deploys inside that window are found even
+without a stored header from the replaced block. Existing history on a losing branch still
+depends on the header comparison below; a mismatch without an agreed stored predecessor
+requires operator intervention. Reorgs deeper than the 290-block window also require
+operator intervention (see [Failure semantics](#failure-semantics)).
 
 **Detection** (`detectAndRollbackReorg`):
 - Fetch the last `REORG_DETECTION_WINDOW` (290) bestChain headers.
 - Compare against stored `BlockHeader` rows over the same height range.
 - Walk descending: the fork point is the highest stored height whose hash still matches the chain. Everything above it is non-canonical.
-- If every overlapping header mismatches, the reorg is deeper than visibility — log and skip (operator intervention).
+- If every overlapping stored header mismatches, there is no proved fork point in the sparse stored headers. Log and skip rollback for operator intervention; this can also happen in a shallow reorg when the vault has had no earlier event in the detection window.
 
 **Rollback** (`rollbackAboveFork`) is one atomic transaction deleting all `> forkHeight` rows
 across `BlockHeader`, `EventRaw`, `ContractConfig`, `OwnerMembership`, `ProposalExecution`,
 `Approval`, `Proposal`, `Contract` (by `discoveredAtBlock`), and rewinding the cursor to
 `forkHeight`.
 
-This is safe because every mutable table stores the block at which its row became valid
+This is safe when a fork point was found, because every mutable table stores the block at which its row became valid
 (`validFromBlock`, `createdAtBlock`, `blockHeight`, `discoveredAtBlock`). No "current state" row
 needs patching — deleting the post-fork history is enough, and the forward sweep re-derives state
 from re-fetched events. `BlockHeader` is upserted at event ingestion time, so reorg detection only
-has teeth on heights where MinaGuard activity landed — which is exactly where it's needed.
+has teeth only on heights where MinaGuard activity landed. The replay window catches new
+events at previously event-free heights; it cannot by itself remove stale events already
+recorded on a losing branch if no agreed stored header lets the detector roll back.
 
 ### Contract discovery and readiness
 
@@ -245,12 +255,12 @@ re-checked rather than grandfathered.
 
 - **GraphQL fetch failure during reorg check** → log, skip rollback, continue tick (the stored state may still be valid).
 - **GraphQL fetch failure mid-tick** → caught at `tick()` boundary, `lastError` set, cursor not advanced. Next tick retries.
-- **Archive height unavailable** → the archive pending-tip query fails closed. The indexer never substitutes the daemon tip, which may be ahead of archive events. The five-block overlap in daemon discovery mode also recovers events briefly absent from an otherwise responsive archive API. A longer archive/API inconsistency requires investigation and reindexing.
+- **Archive height unavailable or below the cursor** → the archive pending-tip query fails closed. The indexer never substitutes the daemon tip, which may be ahead of archive events. If the tip falls below `indexed_height`, the tick records an error and leaves both cursors unchanged rather than rewinding the event cursor without rolling back derived rows. It resumes when the archive catches up or a detected reorg has rolled back to an agreed fork. The 290-block overlap in both discovery modes recovers events briefly absent from an otherwise responsive archive API. A longer archive/API inconsistency requires investigation and reindexing.
 - **Per-candidate discovery failure** → caught inside `processCandidateAddresses` so one bad candidate (archive-node-api hiccup during backfill, transient daemon error during VK fetch) doesn't abort the batch. The failure count gates the `archive_discovered_height` cursor: any failure keeps it in place so the same range is re-scanned next tick (cheap — one VK-filtered SQL; already-inserted rows dedup harmlessly).
 - **Per-contract sync failure** → re-thrown from `syncKnownContracts` so the cursor stays put. Every tracked contract must sync cleanly before the cursor moves.
 - **Archive postgres unavailability** → the `pg.Pool` is created with 5s connection / 30s statement timeouts and TCP keepalives, so a wedged or firewalled archive DB fails the tick quickly (surfacing in `lastError`) instead of hanging it for the kernel TCP timeout. Idle-client pool errors are logged and swallowed; the pool replaces the dead client on the next checkout.
 - **Dropped-tx classification is fail-safe** → a submission is only marked dropped when both lookups positively succeed (see focus point 3). Either lookup failing leaves the submission untouched for the next tick.
-- **Duplicate events** → idempotent via `EventRaw.fingerprint` unique constraint, including overlapping syncs of the same events (ticks are not serialized; a slow tick can overlap the next).
+- **Duplicate events** → idempotent via `EventRaw.fingerprint` unique constraint, including a subscribe backfill overlapping a tick. Scheduled ticks themselves are serialized by an in-flight guard.
 - **Crash or error mid-apply** → the event's transaction rolls back, leaving neither the `EventRaw` marker nor partial derived rows. Transient database errors fail the tick and the event is retried; other errors are retried once, and if they repeat the event is recorded with `applyError` and indexing continues.
 - **Malformed event** (unknown type index, wrong field count, non-field data, failed type check) → if it is not proof-authorized it is dropped like any forged event. A proof-authorized one came from the vault's own circuit and should always decode, so failing to means a backend/VK version mismatch or bad archive data: it is logged as an error and recorded as eventType `malformed` with its raw data and `applyError` set, without changing state. The rest of the vault's events are indexed.
 - **Event not from a proof-authorized update** (forged, or the signed `deployed` event) → skipped at fetch time; an archive response without a recognized `authorizationKind` fails the sync, so the tick retries rather than indexing unauthenticated events.
