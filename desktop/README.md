@@ -34,8 +34,13 @@ Recognized variables:
 Everything else the backend needs (`MINA_ENDPOINT`, `ARCHIVE_ENDPOINT`,
 `DATABASE_URL`, `INDEXER_MODE`, `INDEX_START_HEIGHT`) is injected at runtime
 by `backend-embed.ts` from the persisted user config — no env config needed
-for those. The configured archive must expose event authorization kinds
-(Archive-Node-API v0.0.8+); otherwise the embedded indexer refuses to sync.
+for those. Setup checks that the configured archive reports a valid pending
+block height and accepts a one-block `events(input:{from,to})` query selecting the
+fields the indexer reads, including `transactionInfo.authorizationKind`
+(Archive-Node-API v0.0.8+). GraphQL errors or missing results reject the
+endpoint before it is saved. This short probe cannot verify that a server's
+`BLOCK_RANGE_SIZE` is at least 5,000 or that actual event rows populate
+`authorizationKind`; both remain requirements for reliable indexing.
 
 ## Build pipeline (what each script does)
 
@@ -43,7 +48,7 @@ Run from `desktop/`.
 
 | Script | Effect |
 |--------|--------|
-| `bun run test` | Runs endpoint identity, shared test-network proof-domain and Auro bridge unit tests; CI runs the same script. |
+| `bun run test` | Runs endpoint identity and archive-capability checks, shared test-network proof-domain and Auro bridge unit tests; CI runs the same script. |
 | `bun run prepare:backend` | Regenerates the SQLite Prisma client in `../backend/src/generated/prisma/` from `schema.sqlite.prisma`. Runs the schema-sync check against `schema.prisma` first. |
 | `bun run prepare:schema-sql` | Regenerates `desktop/assets/schema.sql` via `prisma migrate diff`. This is what `backend-embed.ts` executes against a fresh SQLite DB on first launch. |
 | `bun run prepare:assets` | Runs `prepare:schema-sql`, then copies `assets/schema.sql` into `dist/assets/` and copies the CI-generated `../contracts/.vk-hash` into both `assets/.vk-hash` and `dist/assets/.vk-hash`. |
@@ -59,8 +64,10 @@ Release builds download and verify the CI VK manifest for their exact source
 commit before packaging. A local `bun run build` needs a generated
 `../contracts/.vk-hash` first.
 The endpoint check accepts nodes explicitly reporting either test-network ID,
-but rejects mainnet and nodes without a supported `networkID`. Saved endpoints
-are rechecked at startup; mainnet requires its own circuit build and VK.
+but rejects mainnet and nodes without a supported `networkID`. It rejects an
+archive without the pending-height and bounded-event fields needed by the
+indexer. Saved endpoints are rechecked at startup; mainnet requires its own
+circuit build and VK.
 
 ## Quick start (dev)
 
