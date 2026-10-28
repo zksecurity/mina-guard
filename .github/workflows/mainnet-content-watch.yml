@@ -1,0 +1,89 @@
+name: Mainnet public-content watch
+
+# Runs on GitHub-hosted infrastructure, outside the frontend server. Set the
+# approved run, source SHA, and manifest hash only after deploying that release.
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: mainnet-content-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+  attestations: read
+
+jobs:
+  check:
+    if: ${{ github.ref == 'refs/heads/main' && (vars.MAINNET_APPROVED_SHA != '' || vars.MAINNET_APPROVED_RUN_ID != '' || vars.MAINNET_APPROVED_MANIFEST_SHA256 != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APPROVED_SHA: ${{ vars.MAINNET_APPROVED_SHA }}
+      APPROVED_RUN_ID: ${{ vars.MAINNET_APPROVED_RUN_ID }}
+      APPROVED_MANIFEST_SHA256: ${{ vars.MAINNET_APPROVED_MANIFEST_SHA256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Require an alert channel
+        env:
+          ALERT_WEBHOOK: ${{ secrets.MAINNET_WATCHER_ALERT_WEBHOOK }}
+        run: test -n "$ALERT_WEBHOOK"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify approved release and check public bytes
+        id: watch
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid approved SHA' >&2; exit 1; }
+          [[ "$APPROVED_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid approved run ID' >&2; exit 1; }
+          [[ "$APPROVED_MANIFEST_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Invalid approved manifest hash' >&2; exit 1; }
+          gh run view "$APPROVED_RUN_ID" --json headSha,headBranch,event,conclusion \
+            > "$RUNNER_TEMP/approved-run.json"
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP'] + '/approved-run.json', encoding='utf-8') as source:
+              run = json.load(source)
+          if (run.get('headSha') != os.environ['APPROVED_SHA']
+                  or run.get('headBranch') != 'main'
+                  or run.get('event') != 'workflow_dispatch'
+                  or run.get('conclusion') != 'success'):
+              raise SystemExit('Approved run is not a successful manual main-branch build of the approved SHA')
+          PY
+          release_dir="$RUNNER_TEMP/mainnet-release"
+          mkdir -p "$release_dir"
+          gh run download "$APPROVED_RUN_ID" --name "mainnet-images-$APPROVED_SHA" --dir "$release_dir"
+          python3 deploy/verify-mainnet-release.py \
+            --manifest "$release_dir/mainnet-images.json" \
+            --content-manifest "$release_dir/mainnet-content.json" \
+            --approved-sha "$APPROVED_SHA" \
+            --approved-manifest-sha256 "$APPROVED_MANIFEST_SHA256" \
+            > "$RUNNER_TEMP/verified-mainnet-release.json"
+          python3 deploy/mainnet-content-integrity.py check \
+            --manifest "$release_dir/mainnet-content.json" \
+            --base-url https://app.minaguard.com
+
+      - name: Alert on changed content or failed check
+        if: ${{ failure() || steps.watch.outcome == 'failure' }}
+        env:
+          ALERT_WEBHOOK: ${{ secrets.MAINNET_WATCHER_ALERT_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          test -n "$ALERT_WEBHOOK" || { echo 'MAINNET_WATCHER_ALERT_WEBHOOK is not configured' >&2; exit 1; }
+          payload="$(python3 -c 'import json, os; print(json.dumps({"text": "MinaGuard public-content check failed: " + os.environ["RUN_URL"]}))')"
+          curl --fail --silent --output /dev/null --max-time 15 --retry 2 \
+            --header 'Content-Type: application/json' --data "$payload" "$ALERT_WEBHOOK"
+
+      - name: Mark check failed
+        if: ${{ failure() || steps.watch.outcome == 'failure' }}
+        run: exit 1

@@ -165,7 +165,10 @@ build and attestation path for a future AWS deployment. It does not modify AWS,
 start a service, or deploy a contract. It publishes backend and frontend images
 under distinct `ghcr.io/zksecurity/mina-guard/mainnet-*` package names, tagged
 with the source commit only, and uploads `mainnet-images-<sha>` with the exact OCI
-digests. There is no mutable `:main` mainnet tag or mainnet explorer build. Mesa
+digests. That artifact also contains `mainnet-content.json`, a list of hashes
+for the frontend image's pre-rendered HTML and static files. Both JSON files
+and both OCI images receive build-provenance attestations from the same workflow.
+There is no mutable `:main` mainnet tag or mainnet explorer build. Mesa
 Trail's push-triggered testnet release remains separate.
 
 The shared backend and frontend Dockerfiles pin the multi-platform `oven/bun:1`
@@ -200,13 +203,75 @@ image records the same domain and hash; the AWS runtime must still explicitly
 set `MINA_NETWORK_DOMAIN=mainnet` and compare its `MINAGUARD_VK_HASH` against the
 release manifest.
 
-Before serving a digest on AWS, the deployment verifier must check each OCI
-attestation against this repository's `mainnet-image-build.yml@refs/heads/main`
-workflow identity, use the digest from the release manifest, confirm the Mina
-GraphQL endpoint actually reports mainnet, and check the browser-served release.
-Those AWS deployment and independent served-content checks are not implemented
-by this build workflow. A successful image build alone does not establish that
-the frontend/backend are live or that mainnet account creation is ready.
+### Release verification before AWS deployment
+
+Choose the 40-character source commit and exact digest manifest through the
+release review, then download the successful manual build's
+`mainnet-images-<sha>` artifact. Record the SHA-256 of `mainnet-images.json`
+separately as `sha256:<64 lowercase hex>`; it pins both image digests and the
+public build configuration. For example, use
+`sha256sum release/mainnet-images.json` during review and keep the approved
+result in the release record. Recomputing the value from an unreviewed file
+immediately before deployment is not independent approval. On an operator
+machine with `gh` access to this repository and GHCR, run:
+
+```bash
+python3 deploy/verify-mainnet-release.py \
+  --manifest release/mainnet-images.json \
+  --content-manifest release/mainnet-content.json \
+  --approved-sha "$APPROVED_SHA" \
+  --approved-manifest-sha256 "$APPROVED_MANIFEST_SHA256" > release/verified.json
+```
+
+The command checks the attested bytes of both JSON files and both exact image
+digests against this repository's `mainnet-image-build.yml@refs/heads/main`
+workflow identity, the approved source commit and manifest hash, and
+GitHub-hosted runner policy.
+It also checks the release's mainnet settings and asks the configured Mina
+GraphQL endpoint for `networkID`. Any failure produces no deployment JSON. AWS
+must only start the exact backend and frontend digest references in the verified
+output; it must not substitute a tag or an unverified manifest field. This
+repository has no production AWS deployment entrypoint, so the preflight is
+not yet enforced by an AWS deploy.
+
+### Watch the content served to owners
+
+After the verified release is serving at `https://app.minaguard.com`, configure
+the repository Actions variable `MAINNET_APPROVED_SHA` with the **deployed**
+40-character commit, `MAINNET_APPROVED_RUN_ID` with its successful manual build
+run ID, and `MAINNET_APPROVED_MANIFEST_SHA256` with the separately approved
+`sha256:` hash of its exact `mainnet-images.json`. Set the Actions secret
+`MAINNET_WATCHER_ALERT_WEBHOOK` to an HTTPS endpoint that accepts a JSON `text`
+field. Test the webhook and run
+`Mainnet public-content watch` manually once. Its GitHub-hosted runner then
+checks about every 15 minutes: it downloads that exact run's release artifact,
+verifies its attestations and image digests, and compares public HTML for `/`,
+`/transactions`, `/transactions/new`, `/accounts/new`, `/settings`, and `/guide`
+plus every Next static asset from the approved frontend image. A changed inline
+script, an injected script, a changed worker chunk, a missing file, a failed
+verification, or an unreachable site makes the run fail and sends an alert with
+the run link. The watcher never learns its expected hashes from the public site.
+
+Set all three approved-release variables only after the new digest is deployed
+and reviewed. A later build of the same commit can produce different image
+bytes, so do not replace its run ID or manifest hash without reviewing and deploying
+that new release. Remove all three variables to stop the scheduled watch when
+the site is intentionally offline. A missing value while any other is present
+causes a failed run and alert.
+Keep the release artifact available while that digest is live: an expired or
+missing artifact causes a failed check and alert. Before Actions artifact
+retention expires, deploy a newly reviewed release or move the signed JSON
+files into durable storage and update the watcher to retrieve them from there.
+This monitor runs outside the
+app host, but it shares the repository's GitHub trust boundary. It can detect
+changes visible to its fetches; it does not prevent first exposure, cover the
+HTML of dynamic `/accounts/<address>` or `/transactions/<id>` pages, or prove
+what every visitor received. A successful image
+build or monitor run alone does not establish that mainnet account creation is
+ready. GitHub may delay or skip a scheduled run, so a separate check of the
+watcher's run cadence is needed if a missed run must also alert. Each run
+downloads the public static assets again; include that traffic in the hosting
+egress estimate.
 
 ---
 

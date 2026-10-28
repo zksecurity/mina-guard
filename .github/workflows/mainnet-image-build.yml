@@ -143,8 +143,39 @@ jobs:
               output.write('\n')
           PY
 
+      - name: Attest mainnet digest manifest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: mainnet-images.json
+
+      - name: Record approved frontend bytes from the pinned image
+        env:
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE_PREFIX}-frontend@${FRONTEND_DIGEST}"
+          docker pull "$image"
+          container="$(docker create "$image")"
+          trap 'docker rm -f "$container" >/dev/null' EXIT
+          next_root="$RUNNER_TEMP/mainnet-next"
+          mkdir -p "$next_root/server"
+          docker cp "$container:/app/ui/.next/server/app" "$next_root/server/app"
+          docker cp "$container:/app/ui/.next/static" "$next_root/static"
+          python3 deploy/mainnet-content-integrity.py baseline \
+            --next-root "$next_root" \
+            --frontend-digest "$FRONTEND_DIGEST" \
+            --source-sha "$GITHUB_SHA" \
+            --output mainnet-content.json
+
+      - name: Attest approved frontend bytes
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: mainnet-content.json
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mainnet-images-${{ github.sha }}
-          path: mainnet-images.json
+          path: |
+            mainnet-images.json
+            mainnet-content.json
           if-no-files-found: error

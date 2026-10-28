@@ -12,6 +12,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mainnet-release-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Test mainnet release and public-content checks
+        run: python3 -m unittest discover -s deploy/tests -p 'test_*.py'
+
   test:
     timeout-minutes: 30
     runs-on: ubuntu-latest

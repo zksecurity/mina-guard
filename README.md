@@ -165,6 +165,17 @@ commit, and passes both `MINA_NETWORK_DOMAIN=mainnet` and
 `NEXT_PUBLIC_MINA_NETWORK=mainnet` to the builds. The existing Trail release
 remains a separate testnet build.
 
+The release also attests its digest manifest and records the approved frontend
+HTML and static asset hashes from the exact frontend image. Before AWS starts a
+release, run `deploy/verify-mainnet-release.py` with an independently approved
+source commit; the future AWS deploy path must require its verified digest
+output. `deploy/mainnet-content-integrity.py` compares the public site with the
+approved bytes. The GitHub-hosted watch workflow can run it every 15 minutes
+after its approved release run, source SHA, manifest hash, and alert webhook
+are configured. These checks do not
+deploy the app or start monitoring by themselves; see the
+[deployment audit guide](docs/deploy-audit-guide.md) for setup and limits.
+
 These settings have distinct jobs: the Mina and archive URLs choose which
 chain services the app talks to; the network name selects the wallet network;
 the contract domain is part of the proposal hash and circuit; and the VK hash

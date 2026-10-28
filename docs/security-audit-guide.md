@@ -91,6 +91,13 @@ requires explicit confirmation before anything is signed). Owners with material 
 should treat the offline path as the reference signing flow. The self-contained
 [desktop build](./desktop-audit-guide.md) shrinks the remote-frontend dependency from "the hosting
 operator, continuously" to "the installer you obtained, once."
+The mainnet release workflow attests the frontend image and a baseline of its
+served HTML and static assets. An external watcher can compare the public site
+with that approved baseline after deployment; it alerts on changes visible to
+its fetches but cannot prevent the first malicious response or certify every
+owner's view. The AWS deployment path must still require release verification,
+and the watcher must be configured before these controls protect a live site
+(see the deployment audit guide).
 At creation, a compromised frontend could also retain the generated deploy key;
 the owner threshold does not protect against that key's post-upgrade signature
 fallback (accepted risk 9).
