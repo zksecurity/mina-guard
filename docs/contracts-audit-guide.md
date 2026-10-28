@@ -604,8 +604,9 @@ assumptions it *does* rest on:
   choose; the contract only guarantees the stored commitment cannot disagree with the announced
   owner list (see [Setup](#on-chain-multi-step-flow)). Depositors verify setup events first.
 - **Mina's finality horizon.** Replay/precondition guarantees are on-chain and absolute; the
-  *display* of them via the indexer inherits Mina's ~290-block reorg horizon (an availability
-  concern owned by the backend, not a fund-safety one).
+  *display* of them via the indexer inherits Mina's ~290-block reorg horizon. A mismatched
+  stored event block without an agreed predecessor can pause indexing even on a shallower fork
+  until an operator reindexes (an availability concern owned by the backend, not a fund-safety one).
 
 ### Suggested focus points
 

@@ -261,7 +261,7 @@ describe('detectAndRollbackReorg', () => {
     expect(cursor?.value).toBe('6');
   });
 
-  test('bails safely when entire detection window disagrees (reorg deeper than window)', async () => {
+  test('stops when stored headers disagree without a proved fork point', async () => {
     await seedHeaders([
       { height: 5, blockHash: 'h5-old', parentHash: 'h4-old' },
       { height: 6, blockHash: 'h6-old', parentHash: 'h5-old' },
@@ -275,12 +275,67 @@ describe('detectAndRollbackReorg', () => {
       ],
     }));
 
-    const fork = await detectAndRollbackReorg(stubConfig);
-    expect(fork).toBeNull();
-    // Nothing rolled back — state is preserved, operator has to intervene.
+    await expect(detectAndRollbackReorg(stubConfig)).rejects.toThrow('Unresolved chain reorg');
+    // Nothing rolls back without a proved fork point; an operator has to intervene.
     expect(await prisma.blockHeader.findMany()).toHaveLength(2);
     const cursor = await prisma.indexerCursor.findUnique({ where: { key: 'indexed_height' } });
     expect(cursor?.value).toBe('6');
+  });
+
+  test('does not replay a replacement event over stored history with no agreed header', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: true, permissionsVerified: true, discoveredAtBlock: 1 },
+    });
+    await seedHeaders([{ height: 500, blockHash: 'old-500', parentHash: 'old-499' }]);
+    await prisma.eventRaw.create({
+      data: {
+        contractId: contract.id, blockHeight: 500, eventType: 'proposal',
+        payload: '{}', fingerprint: 'old-branch-proposal',
+      },
+    });
+    await prisma.proposal.create({
+      data: { contractId: contract.id, proposalHash: 'old-proposal', createdAtBlock: 500 },
+    });
+    await prisma.indexerCursor.create({ data: { key: 'indexed_height', value: '500' } });
+
+    let eventFetches = 0;
+    const replacementEvent: ChainEvent = {
+      type: 'proposal', event: { proposalHash: 'new-proposal', txType: '1' },
+      blockHeight: 500, blockHash: 'new-500', parentHash: 'old-499',
+      txHash: 'new-proposal-tx', txMemo: null,
+    };
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => 501,
+      fetchBestChainHeaders: async () => [
+        { height: 499, blockHash: 'old-499', parentHash: 'old-498' },
+        { height: 500, blockHash: 'new-500', parentHash: 'old-499' },
+        { height: 501, blockHash: 'new-501', parentHash: 'new-500' },
+      ],
+      fetchDecodedContractEvents: async () => {
+        eventFetches += 1;
+        return [replacementEvent];
+      },
+    }));
+
+    const indexer = new MinaGuardIndexer({
+      ...stubConfig, indexerMode: 'lite', discoveryBackend: 'daemon',
+    } as BackendConfig);
+    await indexer.start();
+    indexer.stop();
+
+    expect(indexer.getStatus().lastError).toContain('Unresolved chain reorg at height 500');
+    expect(indexer.getStatus().lastSuccessfulRunAt).toBeNull();
+    expect(eventFetches).toBe(0);
+    expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value)
+      .toBe('500');
+    expect((await prisma.blockHeader.findUniqueOrThrow({ where: { height: 500 } })).blockHash)
+      .toBe('old-500');
+    expect((await prisma.eventRaw.findMany()).map((event) => event.fingerprint))
+      .toEqual(['old-branch-proposal']);
+    expect((await prisma.proposal.findMany()).map((proposal) => proposal.proposalHash))
+      .toEqual(['old-proposal']);
   });
 
   test('returns null if daemon fetch throws', async () => {

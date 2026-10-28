@@ -1616,6 +1616,8 @@ function asNullableAddress(value: string | null): string | null {
  * On mismatch, rolls back all history above the fork point and returns the
  * fork height. Returns null when stored state agrees with the chain, no
  * stored headers overlap the detection window, or the daemon is unreachable.
+ * Throws when stored headers disagree but no agreed fork point can be proved,
+ * so the tick cannot ingest events from both sides of a fork.
  *
  * Exported so tests can drive reorg handling directly without the rest of tick().
  */
@@ -1669,15 +1671,13 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
   }
 
   if (forkHeight === null) {
-    // Every stored row in the detection window disagrees with the chain. The
-    // reorg is deeper than our visibility; we can't pinpoint the fork safely.
-    // Log loudly and bail — operator intervention needed (Mina finality is
-    // ~290 blocks, so this effectively shouldn't happen in practice).
-    console.error(
-      `[indexer] reorg deeper than detection window (${REORG_DETECTION_WINDOW} blocks); ` +
-      `all overlapping stored headers disagree with chain. Skipping rollback.`,
+    // Sparse stored headers can leave no agreed predecessor even for a shallow
+    // reorg. Do not replay or advance the cursor while old-branch rows remain.
+    throw new Error(
+      `Unresolved chain reorg at height ${highestMismatch.height}: no matching stored header ` +
+      `in the last ${REORG_DETECTION_WINDOW} blocks. Indexing paused until the chain ` +
+      'matches stored history or an operator reindexes from a trusted point.',
     );
-    return null;
   }
 
   console.warn(
