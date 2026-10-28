@@ -1,12 +1,14 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { OFFLINE_MAX_FEE_NANOMINA, OFFLINE_MIN_FEE_NANOMINA } from 'contracts/offline-format';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
-import { assertOfflineResponseVersion } from '@/lib/offline-format';
+import { assertOfflineResponseVersion, signedOwnerFeeNanomina } from '@/lib/offline-format';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { assessPreflightRetry } from '@/lib/multisigClient';
 import { countNewRecipientSlotsFromSnapshot } from '@/lib/recipient-account-fee';
 import { fetchProposal } from '@/lib/api';
+import { formatMina } from '@/lib/types';
 import { preflightBeforeSend, preflightFailureMessage, withStoreRecovery, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD } from '@/lib/preflight-flow';
 
 // CLI binaries are published per release by the offline-cli-release workflow
@@ -215,7 +217,7 @@ interface OfflineSigningFlowProps {
   action: 'propose' | 'approve' | 'execute';
   label: string;
   onBuildBundle: () => Promise<unknown>;
-  onExported?: (filename: string) => void;
+  onExported?: (filename: string, fee: number) => void;
   cliBinaryName?: string | null;
 }
 
@@ -261,18 +263,26 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
   const [exportError, setExportError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [exportedFilename, setExportedFilename] = useState<string | null>(null);
+  const [exportedFee, setExportedFee] = useState<number | null>(null);
 
   const handleExport = async () => {
     setBuilding(true);
     setExportError(null);
     setWarnings([]);
     setExportedFilename(null);
+    setExportedFee(null);
     try {
       const bundle = await withStoreRecovery(onBuildBundle, true);
       setWarnings(extractBundleWarnings(bundle));
+      const fee = (bundle as { fee?: unknown } | null)?.fee;
+      if (typeof fee !== 'number' || !Number.isSafeInteger(fee) ||
+          fee < OFFLINE_MIN_FEE_NANOMINA || fee > OFFLINE_MAX_FEE_NANOMINA) {
+        throw new Error('The offline request has no valid fee. Nothing was exported.');
+      }
+      setExportedFee(fee);
       const filename = downloadOfflineBundle(action, bundle);
       setExportedFilename(filename);
-      onExported?.(filename);
+      onExported?.(filename, fee);
     } catch (err) {
       if (!(err instanceof Error && err.message === PREFLIGHT_CANCELLED)) {
         setExportError(err instanceof Error ? err.message : String(err));
@@ -297,6 +307,11 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
           <p className="text-xs text-safe-text/60">
             Exported <code className="bg-safe-dark px-1.5 py-0.5 rounded text-safe-text/80">{exportedFilename}</code>
           </p>
+          {exportedFee !== null && (
+            <p className="text-xs text-safe-text/80">
+              Estimated transaction fee: {formatMina(String(exportedFee))} MINA. Confirm this fee in the offline CLI before signing.
+            </p>
+          )}
           <p className="text-xs text-safe-text/50">Run on the air-gapped machine:</p>
           <code className="block text-xs bg-safe-dark px-2 py-1.5 rounded text-safe-text/80">
             MINA_PRIVATE_KEY=EK... ./{cliBinaryName ?? 'mina-guard-cli'} {exportedFilename} &gt; signed.json
@@ -319,19 +334,22 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
 
 interface UploadSignedResponseProps {
   acceptActions: Array<'propose' | 'approve' | 'execute'>;
+  /** Fee from a request exported in this page session, when available. */
+  expectedFees?: Partial<Record<'propose' | 'approve' | 'execute', number>>;
   /** When set, reject signed responses that target a different contract/vault. */
   expectedContractAddress?: string;
   /** When set, reject signed responses that target a different proposal hash. */
   expectedProposalHash?: string;
   /** Live, online policy check performed immediately before broadcasting. */
   beforeBroadcast?: (response: OfflineSignedTxResponse) => Promise<void>;
-  onComplete?: (response: OfflineSignedTxResponse, txHash: string) => void;
+  onComplete?: (response: OfflineSignedTxResponse, txHash: string, feePayer: string) => void;
   /** Rebuild the same action after eligibility is refreshed, never a replacement proposal. */
   onRecreate?: (response: OfflineSignedTxResponse) => Promise<void>;
 }
 
 export function UploadSignedResponse({
   acceptActions,
+  expectedFees,
   expectedContractAddress,
   expectedProposalHash,
   beforeBroadcast,
@@ -343,6 +361,14 @@ export function UploadSignedResponse({
   const [done, setDone] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [recreated, setRecreated] = useState(false);
+  const [pending, setPending] = useState<{
+    response: OfflineSignedTxResponse;
+    txJson: string;
+    fee: number;
+    feePayer: string;
+    matchedExport: boolean;
+    config: string;
+  } | null>(null);
   const processingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -353,6 +379,7 @@ export function UploadSignedResponse({
     setBroadcasting(false);
     setError(null);
     setDone(false);
+    setPending(null);
     try {
       const text = await file.text();
 
@@ -399,6 +426,39 @@ export function UploadSignedResponse({
 
       const txJson = typeof response.transaction === 'string'
         ? response.transaction : JSON.stringify(response.transaction);
+      let signedTransaction: any;
+      try {
+        signedTransaction = JSON.parse(txJson);
+      } catch {
+        throw new Error('Signed response contains an invalid transaction. Not broadcasting.');
+      }
+      const expectedFee = expectedFees?.[response.action];
+      const fee = signedOwnerFeeNanomina(signedTransaction, expectedFee);
+      const feePayer = signedTransaction?.feePayer?.body?.publicKey;
+      if (typeof feePayer !== 'string' || !feePayer) {
+        throw new Error('Signed transaction has no fee payer. Not broadcasting.');
+      }
+      setPending({ response, txJson, fee, feePayer, matchedExport: expectedFee !== undefined,
+        config: JSON.stringify(getMinaGuardConfig()) });
+    } catch (err) {
+      if (!(err instanceof Error && err.message === PREFLIGHT_CANCELLED)) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      processingRef.current = false;
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const broadcastReviewed = async () => {
+    if (!pending || processingRef.current) return;
+    processingRef.current = true;
+    const { response, txJson, feePayer } = pending;
+    setPending(null);
+    setError(null);
+    try {
+      if (JSON.stringify(getMinaGuardConfig()) !== pending.config) {
+        throw new Error('Network changed since the signed file was uploaded. Upload it again on the intended network.');
+      }
+      signedOwnerFeeNanomina(JSON.parse(txJson), expectedFees?.[response.action]);
       const assess = async () => {
         if (response.action === 'propose') {
           return { status: 'review' as const, message: 'The original proposal request is needed to recreate this transaction. Review the proposal form and export a fresh request.' };
@@ -438,13 +498,12 @@ export function UploadSignedResponse({
         throw new Error(`Broadcast failed: ${msg}`);
       }
       setDone(true);
-      onComplete?.(response, txHash);
+      onComplete?.(response, txHash, feePayer);
     } catch (err) {
       if (!(err instanceof Error && err.message === PREFLIGHT_CANCELLED)) setError(err instanceof Error ? err.message : String(err));
     } finally {
       processingRef.current = false;
       setBroadcasting(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -481,6 +540,20 @@ export function UploadSignedResponse({
           className="hidden"
         />
       </label>
+      {pending && (
+        <div className="space-y-2 rounded-lg border border-amber-400 p-3 text-sm text-safe-text">
+          <p className="font-semibold">Review the signed transaction before broadcast</p>
+          <p>Action: {pending.response.action}. Fee payer: <code>{pending.feePayer}</code>.</p>
+          <p>Signed transaction fee: {formatMina(String(pending.fee))} MINA.</p>
+          {!pending.matchedExport && (
+            <p className="text-amber-400">No request fee is available in this page session. Compare this fee with the exported request and offline CLI summary.</p>
+          )}
+          <div className="flex gap-2">
+            <button type="button" onClick={broadcastReviewed} className="rounded bg-safe-green px-3 py-1.5 font-semibold text-safe-dark">Broadcast signed transaction</button>
+            <button type="button" onClick={() => setPending(null)} className="rounded border border-safe-border px-3 py-1.5">Cancel</button>
+          </div>
+        </div>
+      )}
       {broadcasting && (
         <p className="text-sm text-safe-text">Broadcasting transaction...</p>
       )}

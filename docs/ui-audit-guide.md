@@ -188,7 +188,7 @@ reclaimable.
   compares mainnet versus non-mainnet after extracting the short network name;
   it does not validate the wallet's chain namespace. Build-time domain validation
   does not change that wallet check or establish the wallet's actual chain identity.
-  V1 offline exporters explicitly map devnet to the shared `testnet` bundle domain
+  Version 3 offline exporters explicitly map devnet to the shared `testnet` bundle domain
   without changing the snapshot endpoint, and reject unknown runtime networks.
   `bun run --filter ui test` covers this behavior for propose, approve, and execute;
   the CI test job runs that script.
@@ -226,13 +226,33 @@ Assuming that the frontend (UI) is not compromised, the interactions are the fol
   of the app — the desktop build, documented in [`desktop-audit-guide.md`](./desktop-audit-guide.md).
  There are three ways to sign:
   - **Auro wallet.** Used for signing and submitting transactions, as a browser extension. For submitting
-    the transaction (fees etc.), the user can see the data and confirm. For zkAppCommand signature, the signature
+    the transaction (fees etc.), the user can see the data and confirm. Auro retains the fixed
+    0.1 MINA fee embedded by the worker. For zkAppCommand signature, the signature
     is blind. That is, the user only sees a Field element before signing.
   - **Ledger wallet.** Used for signing, through WebHID. Transactions are submitted through the node endpoints
-    defined in the frontend code. Due to interface restrictions, signatures are again blind.
+    defined in the frontend code. The worker selects a bounded 0.01–0.1 MINA fee
+    from pending zkApp commands at that node before building the transaction;
+    a failed query or empty pool selects 0.01 MINA. Due to interface restrictions,
+    signatures are again blind.
   - **Offline-CLI.** Used for signing with a key on a different device (e.g. air-gapped). A bundle is exported
-    and is assumed to be transported through an *untrusted* medium. Documented in
+    with the same bounded fee, shown in the online export UI and again in the
+    CLI summary before signing. The bundle travels through an *untrusted* medium. Documented in
     [`offline-audit-guide.md`](./offline-audit-guide.md).
+
+The fee-per-account-update median is a market heuristic, not Mina's flat
+protocol minimum or a guarantee of timely inclusion. Ledger signs the fee
+inside the transaction commitment, and the offline response's fee-payer
+signature binds the fee in the signed command. The CLI builds that command
+from the version 3 request. VK migration uses a separate version 3 request
+with a fixed 0.1 MINA fee and no `fee` field.
+On owner signed-response upload, the UI reads the fee from the signed command
+itself, rejects malformed or out-of-range fees, and rejects a mismatch with
+the most recent same-action request exported in the current page session. It
+displays that fee and the fee payer for review and requires a separate
+**Broadcast signed transaction** click. After a reload, no exported fee is retained for an
+automatic comparison; the user must compare the displayed signed fee with
+the saved request and offline CLI summary before broadcasting. The existing
+network, policy, and live-state checks still run at broadcast time.
 
 
 #### Suggested focus points
@@ -306,7 +326,7 @@ operation. Storage failures fall back to verified in-memory operation. Unknown
 legacy event heights disable incremental reuse. A bounded four-vault memory cache
 avoids rehashing old leaves during warm operations; cold restore still rebuilds
 trees from saved leaves. Offline export uses this same worker path to produce
-version 2 request snapshots. Export rejects unknown runtime networks before worker
+version 3 request snapshots. Export rejects unknown runtime networks before worker
 access or account reads; devnet uses the shared testnet proof domain. The offline
 CLI independently reconstructs and checks
 them against bundled account snapshots (see the offline audit guide). Child
@@ -434,7 +454,7 @@ circuit still works after the fork.
 
 If the installed VK differs from the release-pinned replacement VK, the detail
 page instead offers deploy-key migration. It displays both hashes, exports a
-version 2 request, and imports the MinaGuard offline CLI's signed response.
+version 3 request, and imports the MinaGuard offline CLI's signed response.
 The panel warns that a maintainer must publish a fork-compatible CLI release
 first. The browser does not check release availability or authenticate the
 offline binary; users must independently verify the release, checksums, and
@@ -448,7 +468,7 @@ installed VK, version, and permissions against the Mina node before broadcast.
 After inclusion, the user can check the on-chain VK hash, stored version, and
 complete permission vector. The saved deploy key is used only in the offline
 CLI; a separate offline fee payer key is needed unless the deploy key also
-funds the fee. The migration request shares version 2 with owner requests but
+funds the fee. The migration request shares version 3 with owner requests but
 has a distinct action and schema; its signed response is version 2, while
 owner signed responses remain version 1. The UI does not infer proof compatibility from the version
 number. A release for a future fork must first review the replacement circuit,
@@ -629,7 +649,7 @@ cannot receive an allocation; account-creation fees apply only to ordinary
 transfers. Empty padding is exempt, but non-empty zero-value recipients are checked.
 
 Offline allocation export includes each recipient's full snapshot in `accounts`,
-so the air-gapped CLI can prove the same checks. Owner requests use version 2;
+so the air-gapped CLI can prove the same checks. Owner requests use version 3;
 old allocation bundles lacking snapshots must be exported again. Desktop uses
 these same worker/exporter paths. Rebuild UI, offline CLI, and desktop together
 with the changed circuit and CI-generated verification-key hashes.

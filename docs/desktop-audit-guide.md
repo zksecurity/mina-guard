@@ -22,7 +22,7 @@ and warns about its signature fallback after a Mina transaction-version upgrade.
 The desktop shell does not separately store, encrypt, or recover that file.
 For an older stored transaction version with an unchanged reviewed VK, the
 shared Vault detail page guides an ordinary proved action and an on-chain
-version check. If the VK differs, it exposes the version 2 offline VK migration
+version check. If the VK differs, it exposes the version 3 offline VK migration
 request. The shell does not handle the saved deploy key: the matching MinaGuard
 offline CLI signs the request, and the packaged UI verifies the signed command
 and later reads the on-chain result. Package the UI and CLI from the same
@@ -97,8 +97,20 @@ Signing inside the shell:
   below).
 - **Ledger** — works in-window over WebHID; Electron requires explicit
   device-selection and permission handlers, which `main.ts` provides.
-- **Offline-CLI** — unchanged; the export/upload UI is the same one documented
+- **Offline-CLI** — the export/upload UI is the same one documented
   in [`offline-audit-guide.md`](./offline-audit-guide.md).
+
+The packaged Ledger worker and offline exporter estimate a bounded 0.01–0.1
+MINA fee from pending zkApp commands at the runtime-configured Mina node. An
+empty or unavailable pool uses 0.01 MINA. Offline export shows the selected
+fee, and the CLI shows that exact amount again before signing. The external
+Auro path keeps its fixed 0.1 MINA fee; VK migration also uses fixed 0.1 MINA.
+The packaged owner-response upload shows the fee parsed from the signed command,
+rejects malformed or out-of-range fees and mismatches with the latest same-action
+export from the current page session, and waits for a separate broadcast click.
+After a reload, the user compares the shown fee with the saved request and CLI
+summary.
+This fee change does not require a SQLite schema migration.
 
 ---
 
@@ -521,14 +533,14 @@ endpoints, network, expected VK and vault address. Stored leaves and replay bloc
 untrusted; reconstructed roots must match the configured Mina node before use.
 Corruption or a reorg triggers one full replay, and storage failure does not bypass
 verification. These snapshots are separate from the SQLite indexer schema and
-contain public state only. Offline request v2 requires the matching CLI; see the
+contain public state only. Offline request v3 requires the matching CLI; see the
 [offline audit guide](offline-audit-guide.md).
 
 ### Proposal signing compatibility
 
 Desktop packages the same hashing/signing worker and backend as the web
-release. Offline requests use version 2 and signed responses version 1.
-Discard older files and use matching UI and CLI builds.
-Rebuild packaged UI/backend assets and copy the updated per-network `contracts/.vk-hash`
-when packaging this release. Existing test vaults need fresh deployments and proposals;
-this release does not reset local databases or migrate existing vault funds.
+release. Offline requests use version 3; owner signed responses remain version
+1 and VK migration responses remain version 2. Re-export older requests and
+use matching UI and CLI builds. Rebuild packaged UI/backend assets with the
+current per-network `contracts/.vk-hash`. Fee selection does not change the
+circuit or proposal hashes, so existing vaults and proposals remain usable.

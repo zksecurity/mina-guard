@@ -160,7 +160,7 @@ describe('verified incremental store checkpoints', () => {
     const request = { version: OFFLINE_REQUEST_VERSION, minaNetwork: scope.network, contractAddress: scope.address, events: history };
     const v1 = { ...request, events: [], storeCheckpoint: checkpointStores(stores, scope, null) };
     expect(roots(storesFromOfflineRequest(v1, roots(stores)))).toEqual(roots(stores));
-    for (const invalid of [ { ...v1, version: 1 }, { ...v1, version: 4 }, { ...v1, version: 3 }, { ...v1, storeCheckpoint: undefined }, { ...v1, events: history } ]) {
+    for (const invalid of [ { ...v1, version: 1 }, { ...v1, version: 2 }, { ...v1, version: 4 }, { ...v1, storeCheckpoint: undefined }, { ...v1, events: history } ]) {
       expect(() => storesFromOfflineRequest(invalid, roots(stores))).toThrow();
     }
     expect(() => storesFromOfflineRequest(v1, { ...roots(stores), approvalRoot: '1' })).toThrow();

@@ -11,8 +11,8 @@ const root = createRoot(document.getElementById('root')!);
 root.render(<><TransactionPreflightPanel /><OfflineSigningFlow action="approve" label="Approve" onBuildBundle={async () => {
   (window as any).exportBuilds = ((window as any).exportBuilds ?? 0) + 1;
   if ((window as any).storeError) throw new Error((window as any).storeError);
-  return { version: 2, action: 'approve', proposal: { proposalHash: '42' } };
+  return { version: 3, action: 'approve', fee: 20_000_000, proposal: { proposalHash: '42' } };
 }} /><UploadSignedResponse acceptActions={['approve', 'execute']} expectedContractAddress="vault" expectedProposalHash="42"
   beforeBroadcast={async () => { (window as any).policies++; }}
-  onRecreate={async response => { (window as any).exports++; downloadOfflineBundle(response.action, { version: 2, action: response.action, proposal: { proposalHash: '42' } }); }}
+  onRecreate={async response => { (window as any).exports++; downloadOfflineBundle(response.action, { version: 3, action: response.action, fee: 20_000_000, proposal: { proposalHash: '42' } }); }}
   onComplete={() => { (window as any).completed++; }} /></>);

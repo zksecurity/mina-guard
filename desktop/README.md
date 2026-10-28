@@ -209,16 +209,26 @@ The packaged UI uses the same IndexedDB store checkpoints as the web app, scoped
 to configured endpoints, network, expected verification key and vault address.
 Changing endpoint configuration selects a different cache namespace. This public
 cache is separate from the SQLite indexer database and contains no signing keys.
-Offline export creates version 2 requests: distribute the matching offline CLI
-alongside this desktop build. Signed responses stay at version 1; the CLI refuses
-version 1 requests, so re-export pending ones. See `docs/offline-audit-guide.md` for the migration details.
+Offline export creates version 3 owner requests with a bounded fee selected from
+the configured Mina node's zkApp mempool; the matching offline CLI shows that
+fee before signing. The configured node is also used by the packaged Ledger
+flow. Auro keeps its fixed fee. Version 3 VK migration requests have no fee
+field and use a fixed 0.1 MINA fee. Distribute the matching offline CLI
+alongside this desktop build. On owner response upload, the packaged UI shows
+the fee from the signed command and requires a separate broadcast click. It
+rejects out-of-range fees and mismatches with the latest same-action request exported
+in this page session. After a reload, compare the displayed fee with the saved
+request and CLI summary. Owner signed responses stay at version 1 and
+migration responses at version 2; the CLI refuses version 1 and 2 requests,
+so re-export pending ones. See `docs/offline-audit-guide.md` for the migration details.
 
 ### Proposal signing compatibility
 
 Desktop packages the same hashing/signing worker and backend as the web
 release, including tagged owner, vote-nullifier, and SubVault configuration
-hashes. Offline requests use version 2 and signed responses version 1.
-Discard older files and use matching UI and CLI builds.
-Rebuild packaged UI/backend assets and copy the updated per-network `contracts/.vk-hash`
-when packaging this release. Existing test vaults need fresh deployments and proposals;
-this release does not reset local databases or migrate existing vault funds.
+hashes. Offline requests use version 3; owner signed responses remain version 1
+and VK migration responses remain version 2. Re-export older requests and use
+matching UI and CLI builds. Rebuild the packaged UI/backend assets with the
+current per-network `contracts/.vk-hash` when packaging this fee change. The
+circuit and proposal hashes do not change, so existing vaults and proposals do
+not need to be recreated.

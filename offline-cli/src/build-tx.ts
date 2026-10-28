@@ -33,6 +33,7 @@ import {
 } from 'o1js';
 
 import Client from 'mina-signer';
+import { OFFLINE_MIN_FEE_NANOMINA, OFFLINE_MAX_FEE_NANOMINA } from 'contracts/offline-format';
 
 import { escapeTerminalText } from './terminal-safe.js';
 
@@ -64,7 +65,7 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Must match the fee used by the web worker. */
+/** Fixed fee for the separate verification-key migration flow. */
 export const ZKAPP_TX_FEE = 0.1e9; // 0.1 MINA in nanomina
 
 export const EMPTY_PUBKEY_B58 = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
@@ -103,14 +104,15 @@ interface BundleAccount {
   zkappUri: string | null;
 }
 
-/** Fields common to all bundle actions. Version 2 adds the SubVault
- *  configuration to CREATE_CHILD approve bundles. */
+/** Fields common to all owner-action bundles. Version 3 requires a fee. */
 interface BundleBase {
   version: typeof OFFLINE_REQUEST_VERSION;
   storeCheckpoint: StoreCheckpoint;
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
   feePayerAddress: string;
+  /** Fee payer amount in nanomina; required by owner request version 3. */
+  fee: number;
   accounts: Record<string, BundleAccount>;
   events: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
 }
@@ -738,10 +740,19 @@ export function signChildAccount(txJson: string, childKey: InstanceType<typeof P
 // Transaction sender helper
 // ---------------------------------------------------------------------------
 
-function txSender(pub: InstanceType<typeof PublicKey>, memo?: string) {
+/** Validate the untrusted request fee before it is displayed or signed. */
+export function resolveBundleFee(bundle: Pick<BundleBase, 'fee'>): number {
+  const fee = bundle.fee;
+  if (!Number.isSafeInteger(fee) || fee < OFFLINE_MIN_FEE_NANOMINA || fee > OFFLINE_MAX_FEE_NANOMINA) {
+    throw new Error(`Invalid request fee: expected an integer in nanomina from ${OFFLINE_MIN_FEE_NANOMINA} to ${OFFLINE_MAX_FEE_NANOMINA}`);
+  }
+  return fee;
+}
+
+function txSender(pub: InstanceType<typeof PublicKey>, fee: number, memo?: string) {
   return memo !== undefined
-    ? { sender: pub, fee: ZKAPP_TX_FEE, memo }
-    : { sender: pub, fee: ZKAPP_TX_FEE };
+    ? { sender: pub, fee, memo }
+    : { sender: pub, fee };
 }
 
 /** Safely serializes tx.toJSON() regardless of whether it returns a string or object. */
@@ -814,6 +825,7 @@ export async function handlePropose(
   log: LogFn,
 ): Promise<SignedTxOutput> {
   assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
+  const fee = resolveBundleFee(bundle);
   // The helpers below compare the type by name, so use the canonical name.
   const input: NewProposalInput = { ...bundle.input, txType: requireTxType(bundle.input.txType) };
   const isCreateChild = input.txType === 'createChild';
@@ -912,7 +924,7 @@ export async function handlePropose(
   const contractAddress = PublicKey.fromBase58(bundle.contractAddress);
   const contract = new MinaGuard(contractAddress);
 
-  const tx = await Mina.transaction(txSender(proposer, input.memo), async () => {
+  const tx = await Mina.transaction(txSender(proposer, fee, input.memo), async () => {
     if (isCreateChild && childKey && childOwnerStore && childPaddedOwners) {
       const childAddress = childKey.toPublicKey();
       const childZkApp = new MinaGuard(childAddress);
@@ -971,6 +983,7 @@ export async function handleApprove(
   log: LogFn,
 ): Promise<SignedTxOutput> {
   assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
+  const fee = resolveBundleFee(bundle);
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
   injectAccounts(bundle);
@@ -1019,7 +1032,7 @@ export async function handleApprove(
   log('Building transaction...');
   const contract = new MinaGuard(PublicKey.fromBase58(bundle.contractAddress));
 
-  const tx = await Mina.transaction(txSender(approver), async () => {
+  const tx = await Mina.transaction(txSender(approver, fee), async () => {
     await contract.approveProposal(
       proposalStruct,
       signature,
@@ -1062,6 +1075,7 @@ export async function handleExecute(
   log: LogFn,
 ): Promise<SignedTxOutput> {
   assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
+  const fee = resolveBundleFee(bundle);
   const txType = requireTxType(bundle.proposal.txType);
   const isCreateChild = txType === 'createChild';
   const isChildLifecycle = CHILD_LIFECYCLE_TYPES.has(txType);
@@ -1125,7 +1139,7 @@ export async function handleExecute(
 
     await compileContract(log);
     log('Building transaction...');
-    const tx = await Mina.transaction(txSender(executor), async () => {
+    const tx = await Mina.transaction(txSender(executor, fee), async () => {
       await childZkApp.executeSetupChild(
         Field(bundle.childThreshold!),
         Field(bundle.childOwners!.length),
@@ -1170,7 +1184,7 @@ export async function handleExecute(
     await compileContract(log);
     log('Building transaction...');
     const childMemo = bundle.proposal.memo ?? undefined;
-    const tx = await Mina.transaction(txSender(executor, childMemo), async () => {
+    const tx = await Mina.transaction(txSender(executor, fee, childMemo), async () => {
       if (txType === 'reclaimChild') {
         const amount = UInt64.from(bundle.proposal.data ?? '0');
         await childZkApp.executeReclaimToParent(
@@ -1241,7 +1255,7 @@ export async function handleExecute(
   const contract = new MinaGuard(PublicKey.fromBase58(bundle.contractAddress));
 
   const proposalMemo = bundle.proposal.memo ?? undefined;
-  const tx = await Mina.transaction(txSender(executor, proposalMemo), async () => {
+  const tx = await Mina.transaction(txSender(executor, fee, proposalMemo), async () => {
     if (newAccountCount > 0) {
       AccountUpdate.fundNewAccount(executor, newAccountCount);
     }

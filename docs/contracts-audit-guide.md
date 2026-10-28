@@ -26,8 +26,10 @@ ordering, network domain, vault and child bindings remain committed by proposal 
 These application and action tags have no numeric suffix. The contract is not
 upgradeable; offline file versions separately track UI/CLI compatibility.
 
-This breaking release requires fresh vaults and fresh proposals; there is no legacy
-hash/signature acceptance path. See the [offline migration](offline-audit-guide.md#bundle-format-reference-requests-version-1-signed-responses-version-1).
+The earlier proposal-domain migration required fresh vaults and proposals;
+there is no legacy hash/signature acceptance path. This fee change does not
+alter the circuit or require new vaults. See the
+[offline format migration](offline-audit-guide.md#bundle-format-reference-requests-version-3-owner-signed-responses-version-1).
 
 The regression `proposal-signing.test.ts` rejects legacy/application and
 action substitutions with fast proofs. CI compiles or reuses the network VK

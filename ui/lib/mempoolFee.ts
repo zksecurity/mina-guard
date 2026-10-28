@@ -1,11 +1,13 @@
-// TODO: verify Mesa per-block zkApp command cap; 12 is unconfirmed and
-// taken from a working assumption. Once confirmed against Mesa node config,
-// remove this TODO.
-const TOP_N = 12;
+import { OFFLINE_MAX_FEE_NANOMINA, OFFLINE_MIN_FEE_NANOMINA } from 'contracts/offline-format';
 
-// Mina spec minimum fee per account update, per mina-signer's
-// getAccountUpdateMinimumFee docstring ("0.001 according to the Mina spec").
-// 0.001 MINA = 1e6 nanomina.
+// Use the twelve highest fee-per-update commands as a market sample. The
+// current mainnet node profile caps zkApp commands per block at twelve.
+const TOP_N = 12;
+const MEMPOOL_QUERY_TIMEOUT_MS = 10_000;
+
+// A floor for the estimate when a pooled transaction paid almost nothing.
+// This is a pricing heuristic, not the network's transaction minimum, which
+// is a flat 0.001 MINA on current mainnet.
 export const MIN_FEE_PER_AU = 1e6;
 
 // The daemon wraps each pooled command in a result object; the raw command
@@ -52,15 +54,14 @@ function median(sorted: number[]): number {
  *
  * NOTE: median-of-top-N from the mempool reflects what is *waiting*, not what is
  * *clearing*. In a quiet mempool the raw median can be near zero, so the per-AU
- * rate is floored at the spec minimum, the result is always a fee the pool
- * accepts for `accountUpdateCount` AUs. Callers remain responsible for any
- * market-level floor (see resolveZkappFee).
+ * rate is floored at a heuristic minimum. This cannot guarantee inclusion:
+ * callers apply a flat fallback and an automatic fee ceiling below.
  */
 export async function estimateZkappFee(
   graphqlEndpoint: string,
   accountUpdateCount: number,
 ): Promise<FeeEstimate> {
-  if (accountUpdateCount <= 0) {
+  if (!Number.isSafeInteger(accountUpdateCount) || accountUpdateCount <= 0) {
     throw new Error(`accountUpdateCount must be positive, got ${accountUpdateCount}`);
   }
 
@@ -68,6 +69,7 @@ export async function estimateZkappFee(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query: QUERY }),
+    signal: AbortSignal.timeout(MEMPOOL_QUERY_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`mempool query failed: HTTP ${res.status}`);
@@ -104,27 +106,38 @@ export async function estimateZkappFee(
 }
 
 // Flat fallback when the mempool is empty or the query fails, and the floor
-// under any mempool-derived estimate. 0.01 MINA covers 10 AUs at the spec
-// minimum. The floor deliberately assumes 10 AUs rather than
-// DEFAULT_AU_ESTIMATE: the estimate multiplies by an *assumed* AU count, but
-// the built tx can carry more (per-row receivers, fundNewAccount, child
-// setup) — flooring at 4 AUs could yield a sub-minimum fee the pool rejects.
-// TODO: revisit if a multisig tx ever exceeds 10 AUs.
-export const EMPTY_MEMPOOL_FALLBACK_FEE = 1e7;
+// under a mempool-derived estimate. It has been observed on included mainnet
+// zkApp transactions, but inclusion speed depends on the current fee market.
+export const EMPTY_MEMPOOL_FALLBACK_FEE = OFFLINE_MIN_FEE_NANOMINA;
+/** Preserve the existing Auro fee while changing Ledger and offline flows. */
+export const AURO_TX_FEE = OFFLINE_MAX_FEE_NANOMINA;
 
 // AU count to assume when estimating fees for multisig flows where the actual
 // count isn't known until after Mina.transaction() builds the tx.
 export const DEFAULT_AU_ESTIMATE = 4;
 
 /** High-level wrapper around estimateZkappFee for callers that just want a
- *  ready-to-use fee value: returns the mempool-derived estimate floored at
- *  EMPTY_MEMPOOL_FALLBACK_FEE, which is also returned on any failure.
+ *  ready-to-use fee value: returns the mempool-derived estimate bounded by
+ *  the fallback and the automatic fee ceiling, or the fallback on failure.
  *  Does not log; callers add their own logging if they want. */
 export async function resolveZkappFee(graphqlEndpoint: string): Promise<number> {
   try {
     const estimate = await estimateZkappFee(graphqlEndpoint, DEFAULT_AU_ESTIMATE);
-    return Math.max(estimate.fee, EMPTY_MEMPOOL_FALLBACK_FEE);
+    return Math.min(
+      Math.max(estimate.fee, EMPTY_MEMPOOL_FALLBACK_FEE),
+      OFFLINE_MAX_FEE_NANOMINA,
+    );
   } catch {
     return EMPTY_MEMPOOL_FALLBACK_FEE;
   }
+}
+
+/** Auro continues to use its existing embedded fee; only Ledger estimates. */
+export function resolveOnlineZkappFee(
+  graphqlEndpoint: string,
+  signer: 'auro' | 'ledger',
+): Promise<number> {
+  return signer === 'ledger'
+    ? resolveZkappFee(graphqlEndpoint)
+    : Promise.resolve(AURO_TX_FEE);
 }

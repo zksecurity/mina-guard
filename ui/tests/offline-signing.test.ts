@@ -49,7 +49,13 @@ function configure(networkId: string | undefined) {
   globalThis.fetch = (async (url, init) => {
     fetchedUrls.push(String(url));
     if (init?.method === 'POST') {
-      const { variables } = JSON.parse(String(init.body));
+      const { query, variables } = JSON.parse(String(init.body));
+      if (query.includes('pooledZkappCommands')) {
+        return Response.json({ data: { pooledZkappCommands: [{ zkappCommand: {
+          feePayer: { body: { fee: '20000000' } },
+          accountUpdates: [{ body: { publicKey: 'a' } }, { body: { publicKey: 'b' } }],
+        } }] } });
+      }
       return Response.json({ data: { account: { publicKey: variables.publicKey, nonce: '0', balance: { total: '1000000000' }, zkappState: null } } });
     }
     return Response.json([]);
@@ -76,12 +82,13 @@ describe('offline bundle network selection', () => {
     it(`${action}: maps devnet to testnet without changing the snapshot endpoint`, async () => {
       configure('devnet');
       const bundle = await build();
-      expect(bundle.version).toBe(2);
+      expect(bundle.version).toBe(3);
+      expect(bundle.fee).toBe(40_000_000);
       expect(bundle.events).toEqual([]);
       expect(bundle.storeCheckpoint.network).toBe('testnet');
       expect(checkpointCalls).toEqual(['vault']);
       expect(bundle.minaNetwork).toBe('testnet');
-      expect(fetchedUrls.filter((url) => url === endpoint)).toHaveLength(2);
+      expect(fetchedUrls.filter((url) => url === endpoint)).toHaveLength(3);
     });
 
     it(`${action}: preserves mainnet and testnet`, async () => {

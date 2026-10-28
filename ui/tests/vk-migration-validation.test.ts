@@ -5,7 +5,7 @@ import { AccountUpdate, Field, Mina, PrivateKey, TokenId } from 'o1js';
 
 function fixture(): { request: OfflineMigrationBundle; response: OfflineMigrationResponse } {
   const request = {
-    version: 2, action: 'migrate-verification-key', minaNetwork: 'testnet',
+    version: 3, action: 'migrate-verification-key', minaNetwork: 'testnet',
     contractAddress: 'vault', feePayerAddress: 'payer',
     sourceVerificationKeyHash: '111', sourceTxnVersion: '3',
     targetVerificationKeyHash: '222', targetTxnVersion: '4',

@@ -23,7 +23,7 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - For transfers to new recipient accounts, the executor pays the account-creation cost and transaction fee; see the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with a creation-time local deploy-key download. The browser does not persist the key; the creator may retain the downloaded copy. A Mina transaction-version upgrade can make that key sufficient to replace the vault verification key without owner approval. If a fork breaks old proofs and no backup exists, funds may become inaccessible. See the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
-- For an older-version vault whose VK still matches this release, the detail page guides owners to submit an ordinary proved action and check that Mina refreshed the stored version. This works only if Mina accepts the existing proof. Any fee payer can instead submit a no-op vault update that ends the deploy-key fallback, so a proved action is the safer compatibility check. If the installed VK differs from the reviewed replacement, the detail page can export a version 2 VK migration request. The MinaGuard offline CLI compiles and checks the replacement VK, signs with the saved deploy key and an offline fee payer key, and returns a transaction for the UI to validate and broadcast. If proofs break, that migration must land before any other vault update, including a third-party no-op. A future fork still needs a reviewed compatible release and per-network VK hash before migration is attempted.
+- For an older-version vault whose VK still matches this release, the detail page guides owners to submit an ordinary proved action and check that Mina refreshed the stored version. This works only if Mina accepts the existing proof. Any fee payer can instead submit a no-op vault update that ends the deploy-key fallback, so a proved action is the safer compatibility check. If the installed VK differs from the reviewed replacement, the detail page can export a version 3 VK migration request. The MinaGuard offline CLI compiles and checks the replacement VK, signs with the saved deploy key and an offline fee payer key, and returns a transaction for the UI to validate and broadcast. If proofs break, that migration must land before any other vault update, including a third-party no-op. A future fork still needs a reviewed compatible release and per-network VK hash before migration is attempted.
 - Child reservations validate governance bounds and initialized root-parent state; successful child setup clears the consumed reservation hash.
 - Child allocations require initialized recipients bound to the sending parent. Complete child setup before funding; ordinary transfers and external deposits to uninitialized children remain unrecoverable until setup succeeds. See [safe child funding](docs/contracts-audit-guide.md#safe-child-funding).
 
@@ -294,16 +294,23 @@ browser storage loses only this optimization, not signing keys. Ranges exceeding
 the existing pagination cap fail closed; cursor pagination is tracked in
 [issue #143](https://github.com/zksecurity/mina-guard/issues/143).
 
-Offline requests exported by this UI use **version 2** with a complete public
+Offline requests exported by this UI use **version 3** with a complete public
 store snapshot. Proposals use application-tagged hashes, distinct
 propose/approve signing messages, and length-prefixed memo commitments (including
 empty memos). Owner-chain links, vote-nullifier keys, and child configuration
 hashes also have separate tags. Use matching CLI/UI/backend/desktop builds and
-new network VKs.
-Owner requests use v2 and their signed responses use v1. Discard older files:
-the signed-response version alone does not distinguish old files from current
-ones, and proposals now
-sign the native MINA token ID `Field(1)`.
-This breaking change requires fresh vaults and recreated proposals.
+the current per-network VKs.
+Owner requests include a bounded, mempool-derived fee in nanomina; the offline
+CLI shows that exact fee before signing it. An empty or unavailable mempool uses
+0.01 MINA, while VK migration keeps its fixed 0.1 MINA fee. Auro keeps its
+existing fixed fee and online Ledger uses the same bounded estimate as offline
+export. On owner response upload, the UI shows the signed command's fee and
+requires a separate broadcast click. It rejects fees outside 0.01–0.1 MINA or
+different from the latest same-action request exported in the page session.
+After a reload, compare the displayed fee with the saved request and CLI summary.
+Version 1 and 2 requests must be re-exported with a matching UI and
+CLI; owner signed responses stay at version 1 and VK migration responses stay
+at version 2. This fee change does not alter proposal hashes, circuits, or
+verification keys and does not require new vaults or proposals.
 See [the offline audit guide](docs/offline-audit-guide.md) for migration and trust
 boundaries. Desktop packages the same worker and exporter.

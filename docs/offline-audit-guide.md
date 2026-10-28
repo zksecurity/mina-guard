@@ -5,7 +5,7 @@ The online creation flow also detects proposals another owner already created an
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
 
 
-**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. A CREATE_CHILD response that deploys into a bare child account (one a payment created, which the node reports with `zkappState: null`) is checked against all-zero state, as the chain checks it; an answer that omits the field blocks the broadcast. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Owner requests use version 2 and owner signed responses use version 1. See [design and boundaries](transaction-coordination-design.md).
+**Pre-broadcast state checks:** signed uploads retain their existing binding and policy checks, then compare their actual app-state preconditions with current node state. A CREATE_CHILD response that deploys into a bare child account (one a payment created, which the node reports with `zkappState: null`) is checked against all-zero state, as the chain checks it; an answer that omits the field blocks the broadcast. Stale approval/execution files offer an eligibility-checked fresh export. Imported propose files require review of the original form. Owner requests use version 3 and owner signed responses use version 1. See [design and boundaries](transaction-coordination-design.md).
 
 This document describes the **air-gapped signing path**: the bundle
 export/import UI inside the web app (`ui/lib/offline-signing.ts`,
@@ -35,7 +35,8 @@ networked device:
    the fee payer with `MINA_PRIVATE_KEY`, and writes a **signed response**
    JSON to stdout.
 3. **Broadcast** — back on the online machine, the signed response is uploaded
-   in the UI, which validates it and broadcasts the pre-signed transaction
+   in the UI. The UI validates it and displays the fee from the signed command
+   for review. The user then clicks **Broadcast signed transaction** to send it
    directly to the configured Mina GraphQL endpoint (`sendZkapp`). The backend
    is never involved in broadcasting.
 
@@ -47,11 +48,11 @@ contract checks that `expirySlot` fits in `0..4294967295`; zero means no expiry.
 For a non-zero deadline, the Mina ledger checks that the transaction is included
 at or before that slot. An offline transaction can be built and signed before
 expiry and still be rejected if broadcast too late. This matches the online
-path described in [`ui-audit-guide.md`](./ui-audit-guide.md). Proposal hashes,
-events, and request/response formats are unchanged. This circuit change requires
+path described in [`ui-audit-guide.md`](./ui-audit-guide.md). That earlier
+deadline change did not alter proposal hashes or events, but it did require
 regenerated per-network verification-key hashes and matching UI, offline CLI,
-and desktop builds before release; existing deployed vaults retain their old
-behavior.
+and desktop builds. The later fee change updates owner requests to version 3
+without changing the circuit or signed-response format.
 
 Where it lives in the UI: proposal creation (`app/transactions/new`) has an
 **Online / Offline** toggle for *propose*; the proposal detail page
@@ -93,6 +94,14 @@ store checkpoint** exported by the worker after comparing its roots against the
 node. The worker updates its saved stores using later event blocks instead of
 replaying the vault's full history on each export. No signing or proving runs
 during export.
+For owner actions, export queries the configured Mina node's pending zkApp
+commands and estimates a fee from the median of the highest 12 fee-per-account-
+update samples, assuming four account updates. The result is bounded to
+0.01–0.1 MINA; an empty pool or failed query uses 0.01 MINA. This is a market
+heuristic, not Mina's protocol minimum or a promise of inclusion. The selected
+integer nanomina fee is saved in the version 3 request and cannot change after
+offline signing without invalidating the fee-payer signature. Verification-key
+migration requests have no `fee` field and use the fixed 0.1 MINA fee instead.
 Propose bundles add the form's `NewProposalInput` and a freshly re-fetched
 `configNonce`; execute bundles add per-receiver existence
 (`receiverAccountExists`) and, for child actions, the child's address and
@@ -104,7 +113,8 @@ produce a transaction that fails on chain.
 
 After building, the UI surfaces **pre-transfer warnings** from data already in
 the bundle (missing fee-payer account, balance under 1 MINA, account-creation
-fees) and downloads the bundle as `<action>-<id>-<timestamp>.json`. For ordinary
+fees), shows the selected transaction fee for the user to compare with the
+offline CLI summary, and downloads the bundle as `<action>-<id>-<timestamp>.json`. For ordinary
 transfer execution, the warning estimates the executor-funded creation cost
 per canonical receiver slot from the receiver-account snapshot. Repeated new
 addresses count once per slot, matching the CLI transaction builder. It appears
@@ -148,8 +158,9 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    malformed or swapped configuration aborts before the summary, which
    otherwise prints the checked owners and threshold), and *before any
    compile/prove/sign work or key use*, `renderBundleSummary` renders
-   everything the proposal hash covers (action, contract, fee payer, fee,
-   nonce, memo, expiry, the per-type body, a `*** MAINNET ***` banner when
+   the action, contract, fee payer, the exact request fee that the CLI will
+   sign, and everything the proposal hash covers (including
+   nonce, memo, expiry, the per-type body), plus a `*** MAINNET ***` banner when
    applicable). Every summary line goes through `escapeTerminalText`, so
    control, format (bidi) and line-separator characters from the bundle print
    as visible `\u{XX}` text instead of acting on the terminal; error and log
@@ -159,9 +170,9 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    CLI aborts (see focus point 7).
 2. **Offline chain state** — an o1js network with dummy endpoints (the CLI
    never dials out), the bundled account snapshots injected into o1js's
-   account cache, and the Merkle stores reconstructed from version 2 request checkpoint
+   account cache, and the Merkle stores reconstructed from the version 3 request checkpoint
    leaves using `storesFromOfflineRequest` (`contracts/src/store-checkpoint.ts`).
-   Requests without a checkpoint or with a version other than 2 are rejected. Child execution
+   Owner requests without a checkpoint or with a version other than 3 are rejected. Child execution
    maps still use `rebuildChildExecutionMap` and bundled child events. All roots are
    checked against the bundled account snapshots before any proof
    (`rebuildVerifiedStores`, `snapshotState`); a mismatch aborts.
@@ -229,33 +240,39 @@ the **binding checks**: the response's `contractAddress` must equal the vault
 open on the page, and on the proposal detail page `proposalHash` must equal
 the proposal being viewed — a signed file for a different vault or proposal
 is rejected. (The propose page can only bind by contract: its hash is new by
-definition.) It then POSTs `sendZkapp` straight to the frontend-configured
-Mina endpoint, maps common node rejections to actionable messages, and on
-success records a pending tx so the normal pending-tx/lock reconciliation
-takes over.
+definition.) The UI reads `feePayer.body.fee` from the actual signed command,
+requires a canonical integer string in the 0.01–0.1 MINA range, and rejects a
+mismatch with the most recent request exported for the same action in the current
+page session. It shows the signed fee and fee payer in a review panel and does
+not broadcast on upload. The user must click **Broadcast signed transaction**.
+After a reload, the page no longer has the exported fee to compare automatically;
+the panel instead asks the user to compare the signed fee with the saved request
+and offline CLI summary. At the click, the UI checks the fee again and performs
+the existing network, policy, and live-state checks before POSTing `sendZkapp`
+to the configured Mina endpoint. It maps common node rejections to actionable
+messages and, on success, records a pending tx for normal reconciliation.
 
 ---
 
-## Bundle format reference (requests version 2; signed responses version 1)
+## Bundle format reference (requests version 3; owner signed responses version 1)
 
-The new hash domains are a breaking change: new proposal hashes, purpose-bound
-owner signatures, memo commitments, owner commitments, vote-nullifier keys,
-child configuration hashes, and verification keys. There is no legacy
-signature fallback. New proposals sign the native MINA token ID `Field(1)`
-instead of the former `Field(0)` sentinel. Request and response formats both
-remain v1; this version number does not distinguish older v1 files from current
-files.
-Discard all earlier requests and signed responses and regenerate them with matching
-UI and CLI builds. Requests must include a checkpoint and empty events; legacy
-full-event requests are rejected. Existing test vaults require fresh deployment;
-pending proposals must be recreated and approved again. Do not attempt to reuse
-old Merkle approval state or signing files.
+Version 3 adds the owner request's fee without changing proposal hashes, owner
+signing messages, circuit constraints, verification keys, or signed response
+formats. Re-export pending version 1 or 2 requests with the matching UI and
+CLI before signing; the CLI rejects those request versions. Owner signed
+responses remain version 1 and VK migration responses remain version 2. The
+signed-response version alone does not authenticate which UI or CLI produced a
+file, so use the matching release and the existing import binding checks. This
+fee change does not require redeploying vaults or recreating proposals.
 
-Distribute a matching CLI, UI/desktop build, backend and network VK together. Older
-clients cannot sign for the new contracts. This change does not perform deployment,
-reset any database, or migrate funds from existing test vaults.
+The existing proposal protocol uses application-tagged hashes, purpose-bound
+owner signatures, length-prefixed memo commitments, separate owner and
+vote-nullifier keys, child configuration hashes, and native MINA token ID
+`Field(1)`. Every owner request still requires a checkpoint and empty `events`
+array; legacy full-event requests remain unsupported. Distribute matching
+CLI, UI/desktop, backend, and per-network VK artifacts together.
 
-Every request requires `storeCheckpoint` and an empty `events` array. The checkpoint's
+Every owner request requires `storeCheckpoint` and an empty `events` array. The checkpoint's
 own serialization format remains version 1 (its leaf encoding did not change). It
 contains version, network, vault address, optional replay height, ordered owners,
 approval leaves, nullifier keys, and their roots. The CLI reconstructs the trees
@@ -269,21 +286,22 @@ to the checkpoint's leaves; it no longer processes the full event history.
 
 Version 2 adds `childAddress`, `childOwners` and `childThreshold` to CREATE_CHILD
 approve bundles, so the air-gapped signer sees and checks the SubVault
-configuration an approval authorizes. The CLI rejects version 1 requests;
-re-export pending requests with a matching UI. Signed responses stay at
-version 1. `OFFLINE_REQUEST_VERSION` in `contracts/offline-format` is the one
+configuration an approval authorizes. Version 3 adds a required integer fee in
+nanomina to owner requests. The CLI rejects version 1 and 2 requests; re-export
+pending files with a matching UI. Owner signed responses stay at version 1.
+`OFFLINE_REQUEST_VERSION` in `contracts/offline-format` is the one
 source for the UI's `OFFLINE_BUNDLE_VERSION`, the CLI's version gate and
 `storesFromOfflineRequest`; `STORE_CHECKPOINT_VERSION` (1) is the checkpoint's own.
 
 ### Common fields (`BundleBase`)
 
-Verification-key migration uses a separate **version 2** request and response.
-It is never parsed as an owner proposal despite sharing the version 2 request number. The UI offers it only when
+Verification-key migration uses a separate **version 3 request** and **version 2 response**.
+It is never parsed as an owner proposal despite sharing the version 3 request number. The UI offers it only when
 the vault's stored `setVerificationKey.txnVersion` is older than this release's
 version, the installed VK differs from the reviewed replacement VK, and the
 rest of its permissions are canonical. When the VK already matches, the UI
 instead guides an ordinary owner-authorized proved action, which refreshes the
-version only if Mina accepts the proof. Migration shares request version 2 with
+version only if Mina accepts the proof. Migration shares request version 3 with
 owner actions but has a distinct `migrate-verification-key` action and schema;
 its signed response is version 2, while owner signed responses remain version 1.
 Because vault `access` is `none`, any fee payer can submit a no-op vault account
@@ -299,7 +317,8 @@ no private keys or governance proposal. The offline CLI independently checks
 these fields, compiles the release's `MinaGuard` VK, and refuses a target-hash
 mismatch. `MINA_PRIVATE_KEY` is the saved deploy key; if the fee payer differs,
 `MINA_FEE_PAYER_PRIVATE_KEY` supplies its key. Both remain offline. The CLI
-shows the installed and replacement hashes, network, and vault before signing.
+shows the installed and replacement hashes, network, vault, and fixed 0.1 MINA
+fee before signing.
 Its output is a version 2 signed transaction; stdout still contains JSON only.
 The UI cannot establish that a compatible CLI release has been published or
 authenticate the binary run offline. A maintainer must publish a reviewed
@@ -316,11 +335,12 @@ request can become stale before broadcast, and the node remains authoritative.
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `version` | `2` | Request format version; signed responses stay at `1` |
+| `version` | `3` | Request format version; owner signed responses stay at `1` |
 | `action` | `"propose" \| "approve" \| "execute"` | Dispatch |
 | `minaNetwork` | `"testnet" \| "mainnet"` | o1js network id → fee-payer signature domain; `testnet` accepts CLI `MINA_NETWORK_DOMAIN=testnet` or `devnet` |
 | `contractAddress` | `string` | The vault being operated on |
 | `feePayerAddress` | `string` | Public key of the air-gapped signer (must match `MINA_PRIVATE_KEY`) |
+| `fee` | integer nanomina | Required for owner propose/approve/execute requests: bounded 0.01–0.1 MINA estimate saved at export; CLI displays and signs this exact value. VK migration has no `fee` field and uses fixed 0.1 MINA. |
 | `accounts` | `Record<address, FetchedAccount>` | On-chain snapshots injected via `addCachedAccount` (nonce, balance, zkApp state, verification key) |
 | `events` | `Array<{eventType, payload, blockHeight?}>` | Must be empty |
 | `storeCheckpoint` | `StoreCheckpoint` | Required public store snapshot |
@@ -412,8 +432,10 @@ action differs, and the distinction is the heart of this design:
 a fully signed and proved transaction: any mutation breaks the fee-payer
 signature (it covers the full commitment) or the proof. The UI's binding
 checks (contract + proposal hash) tie the signed file to the vault/proposal
-open on the page, and the node verifies the signature and proof on receipt.
-Broadcasting is not privileged.
+open on the page. The signed-command fee check compares it with the latest
+same-action export when available; after reload, the operator must compare it
+with the saved request and CLI summary. The node verifies the signature and proof on
+receipt. Broadcasting is not privileged.
 
 **The CLI binary is the trust root of the offline path.** It handles
 `MINA_PRIVATE_KEY` and renders the summary the operator relies on. Binaries
@@ -431,7 +453,9 @@ is read from the `MINA_PRIVATE_KEY` environment variable.
 `build-tx.ts` ↔ `worker.ts` ↔ `contracts`).** The CLI deliberately duplicates
 rather than imports UI logic (`normalizeTxType`, `uiTxTypeToField`,
 `buildReceiversForProposal`, `buildProposalDataField`, the `NewProposalInput`
-mirror, `ZKAPP_TX_FEE`). Memo decoding imports the shared contracts helper,
+mirror). The owner fee comes from the version 3 request and is validated through
+shared bounds before the CLI displays or signs it; `ZKAPP_TX_FEE` applies only
+to VK migration. Memo decoding imports the shared contracts helper,
 which checks the base58check checksum, user-memo tag, and declared length. The
 summary renders the fields that feed `proposal.hash()` and the outer tx (fee
 included), so these copies sit on the propose path between what is signed and
@@ -615,11 +639,10 @@ recipient is initialized and bound to the sending parent. These state reads are
 ledger-enforced. Allocation never charges for creating recipient accounts, even
 if `receiverAccountExists` is missing an entry or marks it false.
 
-Owner requests use version 2 and signed responses remain version 1; older allocation
+Owner requests use version 3 and signed responses remain version 1; older allocation
 bundles without recipient snapshots fail closed. Allocation adds no fields to
-proposals or signed responses. This branch also changes proposal hashing and
-owner-signing messages as described above. Rebuild the CLI, UI, and desktop
-with the changed circuit and CI-generated verification-key hashes.
+proposals or signed responses. Rebuild the CLI, UI, and desktop together for
+the fee protocol; the circuit and per-network verification-key hashes do not change.
 
 Only fund children after setup. Ordinary transfers and external deposits to a
 reserved child remain unrecoverable through parent reclaim/destroy until setup

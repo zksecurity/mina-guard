@@ -83,8 +83,10 @@ page. It downloads a fresh request and displays:
 It does not sign or broadcast anything. Obsolete actions are not exported. An
 imported *propose* response does not carry the original proposal form input, so the
 UI asks the user to review the original form and export a fresh request rather than
-inventing a replacement. Exported requests remain main's version 2; signed responses
-remain version 1. The CLI and signing protocol are unchanged.
+inventing a replacement. At the time of this coordination change, exported
+requests used version 2 and signed responses used version 1; the coordination
+logic did not change the CLI protocol. Current owner requests use version 3
+with an explicit fee, while signed responses remain version 1.
 
 ## Compatibility and validation
 
