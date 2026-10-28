@@ -107,6 +107,9 @@ afterAll(async () => {
     new Promise<void>((resolve) => fullModeServer?.close(() => resolve())),
   ]);
   await prisma.$disconnect();
+  // afterEach reinstalls the baseline stub for the next test in this file.
+  // Remove it here so later test files see the real height query.
+  mock.restore();
 });
 
 function post(path: string, body: unknown) {
