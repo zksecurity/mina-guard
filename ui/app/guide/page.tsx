@@ -318,7 +318,7 @@ export default function GuidePage() {
         </div>
       </div>
     </header>
-    <BetaNotice />
+    <BetaNotice showGuideLink={false} />
     <div className="px-6 md:px-10 py-10 md:py-14">
       <div className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_216px] xl:gap-14">
         {/* ---------- CONTENT ---------- */}

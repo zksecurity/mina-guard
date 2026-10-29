@@ -1,7 +1,7 @@
 import Link from 'next/link';
 
 /** Product status is visible on every network, in the app and standalone guide. */
-export default function BetaNotice() {
+export default function BetaNotice({ showGuideLink = true }: { showGuideLink?: boolean }) {
   return (
     <aside
       aria-label="Beta product notice"
@@ -15,13 +15,18 @@ export default function BetaNotice() {
       </span>
       MinaGuard is in beta, including on Mainnet.{' '}
       <strong className="font-semibold text-white">You could lose funds</strong> if the
-      software fails.{' '}
-      <Link
-        href="/guide#beta"
-        className="text-safe-green underline underline-offset-2 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-safe-green"
-      >
-        Read the beta guide
-      </Link>
+      software fails.
+      {showGuideLink && (
+        <>
+          {' '}
+          <Link
+            href="/guide#beta"
+            className="text-safe-green underline underline-offset-2 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-safe-green"
+          >
+            Read the beta guide
+          </Link>
+        </>
+      )}
     </aside>
   );
 }
