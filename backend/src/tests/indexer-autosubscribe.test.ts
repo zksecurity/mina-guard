@@ -16,6 +16,7 @@ const liteConfig = {
   minaguardVkHash: null,
   lightnetAccountManager: null,
   indexerMode: 'lite' as const,
+  discoveryBackend: 'daemon' as const,
 } as unknown as BackendConfig;
 
 const fullConfig = { ...liteConfig, indexerMode: 'full' as const } as BackendConfig;
@@ -367,6 +368,81 @@ function makeAddOwnerProposalEvent(proposalHash: string, blockHeight: number) {
   };
 }
 
+describe('tick: delayed archive events', () => {
+  test('replays a ready contract block after the daemon cursor passed it', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: true, permissionsVerified: true },
+    });
+    await setCursor(99);
+
+    const event = makeAddOwnerProposalEvent('late-proposal', 100);
+    let archiveHeight = 100;
+    let archiveCaughtUp = false;
+    const queriedFrom: number[] = [];
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => archiveHeight,
+      fetchBestChainHeaders: async () => [],
+      fetchDecodedContractEvents: async (_address: string, from: number) => {
+        queriedFrom.push(from);
+        return archiveCaughtUp && from <= event.blockHeight ? [event] : [];
+      },
+    }));
+
+    const first = new MinaGuardIndexer(liteConfig);
+    await first.start();
+    first.stop();
+    expect(await prisma.proposal.count({ where: { contractId: contract.id } })).toBe(0);
+    expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value).toBe('100');
+
+    // Archive-node-api catches up only after the cursor has passed block 100.
+    archiveHeight = 101;
+    archiveCaughtUp = true;
+    const second = new MinaGuardIndexer(liteConfig);
+    await second.start();
+    second.stop();
+
+    expect(queriedFrom[1]).toBeLessThanOrEqual(100);
+    expect(await prisma.proposal.count({ where: { contractId: contract.id } })).toBe(1);
+
+    // The next overlap must not apply the same event twice.
+    archiveHeight = 102;
+    const third = new MinaGuardIndexer(liteConfig);
+    await third.start();
+    third.stop();
+    expect(await prisma.eventRaw.count({ where: { contractId: contract.id } })).toBe(1);
+    expect(await prisma.proposal.count({ where: { contractId: contract.id } })).toBe(1);
+  });
+
+  test('daemon discovery covers a deployment while archive ingestion trails it', async () => {
+    await setCursor(100);
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    let scannedBlocks = 0;
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => 100, // archive pending tip
+      fetchBestChainHeaders: async () => [{ height: 120, blockHash: 'h120', parentHash: 'h119' }],
+      discoverCandidateAddresses: async (_config: BackendConfig, window: number) => {
+        scannedBlocks = window;
+        return [address];
+      },
+      fetchDecodedContractEvents: async () => [],
+    }));
+
+    const indexer = new MinaGuardIndexer(fullConfig);
+    await indexer.start();
+    indexer.stop();
+
+    // The 20-block daemon/archive gap must be included in the scanner's
+    // window, and the unready rescan must start before any scanned deploy.
+    expect(scannedBlocks).toBe(25);
+    const contract = await prisma.contract.findUniqueOrThrow({ where: { address } });
+    expect(contract.discoveredAtBlock).toBe(96);
+    expect(contract.ready).toBe(false);
+  });
+});
+
 describe('tick: rescanUnreadyContracts', () => {
   async function runSingleTick(config: BackendConfig): Promise<MinaGuardIndexer> {
     const indexer = new MinaGuardIndexer(config);
@@ -374,6 +450,116 @@ describe('tick: rescanUnreadyContracts', () => {
     indexer.stop();
     return indexer;
   }
+
+  function stubTicks(fetchEvents: (address: string, from: number, to: number) => Promise<unknown[]>) {
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => 1000,
+      fetchBestChainHeaders: async () => [],
+      fetchDecodedContractEvents: fetchEvents,
+    }));
+  }
+
+  test('scans an empty vault history once, then only replays recent blocks', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(1000);
+    const ranges: Array<{ from: number; to: number }> = [];
+    stubTicks(async (_address, from, to) => { ranges.push({ from, to }); return []; });
+
+    await runSingleTick(liteConfig);
+    let updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(false);
+    expect(updated.lastSyncedAt).not.toBeNull();
+    await runSingleTick(liteConfig);
+    updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(false);
+    expect(ranges).toEqual([{ from: 0, to: 1000 }, { from: 711, to: 1000 }]);
+  });
+
+  test('the first scan uses indexStartHeight when no discovered height is stored', async () => {
+    await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false },
+    });
+    await setCursor(1000);
+    const starts: number[] = [];
+    stubTicks(async (_address, from) => { starts.push(from); return []; });
+    const config = { ...liteConfig, indexStartHeight: 100 };
+    await runSingleTick(config);
+    await runSingleTick(config);
+    expect(starts).toEqual([100, 711]);
+  });
+
+  test('a missing account still receives a full first scan when it appears', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(1000);
+    const starts: number[] = [];
+    let accountFound = false;
+    stubTicks(async (_address, from) => { starts.push(from); return []; });
+    stubMinaClient(() => ({
+      fetchVaultSecurityStatus: async () => ({ accountFound, safe: true }),
+    }));
+    await runSingleTick(liteConfig);
+    expect(starts).toEqual([]);
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).lastSyncedAt).toBeNull();
+    accountFound = true;
+    await runSingleTick(liteConfig);
+    expect(starts).toEqual([0]);
+  });
+
+  test('a failed first scan retries full history without advancing the cursor', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(1000);
+    const starts: number[] = [];
+    let fail = true;
+    stubTicks(async (_address, from) => {
+      starts.push(from);
+      if (fail) throw new Error('archive page unavailable');
+      return [];
+    });
+    const failed = await runSingleTick(liteConfig);
+    expect(failed.getStatus().lastError).toContain('archive page unavailable');
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).lastSyncedAt).toBeNull();
+    expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value).toBe('1000');
+    fail = false;
+    await runSingleTick(liteConfig);
+    expect(starts).toEqual([0, 0]);
+  });
+
+  test('a resumed unready scan starts from the saved cursor, not a far-ahead tip', async () => {
+    await prisma.contract.create({
+      data: {
+        address: PrivateKey.random().toPublicKey().toBase58(), ready: false,
+        discoveredAtBlock: 0, lastSyncedAt: new Date(),
+      },
+    });
+    await setCursor(1000);
+    const ranges: Array<{ from: number; to: number }> = [];
+    stubTicks(async (_address, from, to) => { ranges.push({ from, to }); return []; });
+    stubMinaClient(() => ({ fetchLatestBlockHeight: async () => 5000 }));
+    await runSingleTick(liteConfig);
+    await runSingleTick(liteConfig);
+    expect(ranges).toEqual([{ from: 711, to: 5000 }, { from: 4711, to: 5000 }]);
+  });
+
+  test('a recent subscription never scans below its own lower bound', async () => {
+    await prisma.contract.create({
+      data: {
+        address: PrivateKey.random().toPublicKey().toBase58(), ready: false,
+        discoveredAtBlock: 900, lastSyncedAt: new Date(),
+      },
+    });
+    await setCursor(1000);
+    const starts: number[] = [];
+    stubTicks(async (_address, from) => { starts.push(from); return []; });
+    await runSingleTick(liteConfig);
+    expect(starts).toEqual([900]);
+  });
 
   test('unready contract with no archive events stays unready', async () => {
     const address = PrivateKey.random().toPublicKey().toBase58();

@@ -26,12 +26,16 @@ import { resolveIndexerMode } from '@/lib/indexer-mode';
 import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import VaultHardForkNotice from '@/components/VaultHardForkNotice';
+import { getMinaGuardConfig } from '@/lib/endpoints';
+import { assertMinaNodeNetwork, resolveCreateVaultNetwork } from '@/lib/create-vault-network';
+import type { MinaGuardNetworkId } from '@/types/mina-guard-config';
 
-const NETWORKS = [
-  { label: 'Testnet', value: 'testnet', enabled: true },
-  { label: 'Devnet (coming soon)', value: 'devnet', enabled: false },
-  { label: 'Mainnet (coming soon)', value: 'mainnet', enabled: false },
-] as const;
+const CREATE_VAULT_BUILD_CONFIG = {
+  network: process.env.NEXT_PUBLIC_MINA_NETWORK,
+  minaEndpoint: process.env.NEXT_PUBLIC_MINA_ENDPOINT,
+  archiveEndpoint: process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT,
+  expectedVkHash: process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH,
+};
 
 export default function CreateAccountWizardPage() {
   return (
@@ -72,9 +76,19 @@ function CreateAccountWizard() {
 
   // Step 1 fields
   const [name, setName] = useState('');
-  const [networkValue, setNetworkValue] = useState<typeof NETWORKS[number]['value']>('testnet');
-  const network = NETWORKS.find((n) => n.value === networkValue) ?? NETWORKS[0];
+  const [networkValue, setNetworkValue] = useState<MinaGuardNetworkId | null | undefined>(undefined);
 
+  useEffect(() => {
+    // Electron may inject a runtime endpoint and network after server rendering.
+    try {
+      setNetworkValue(resolveCreateVaultNetwork(
+        CREATE_VAULT_BUILD_CONFIG,
+        getMinaGuardConfig().networkId,
+      ));
+    } catch {
+      setNetworkValue(null);
+    }
+  }, []);
 
   // Step 2 fields. Subaccount mode tries to prefill from the parent's owners
   // + threshold so users start from a sensible "same governance as parent"
@@ -169,12 +183,31 @@ function CreateAccountWizard() {
     return null;
   };
 
+  const confirmCreateVaultNetwork = async () => {
+    const config = getMinaGuardConfig();
+    const currentNetwork = resolveCreateVaultNetwork(CREATE_VAULT_BUILD_CONFIG, config.networkId);
+    if (!currentNetwork || currentNetwork !== networkValue) {
+      throw new Error('The configured network changed or is incomplete. Reload before creating a Vault.');
+    }
+    await assertMinaNodeNetwork(config);
+    if (JSON.stringify(getMinaGuardConfig()) !== JSON.stringify(config)) {
+      throw new Error('The network configuration changed. Reload before creating a Vault.');
+    }
+  };
+
   const handleDeploy = async () => {
     const error = validateStep2();
     if (error) { setFormError(error); return; }
     if (!wallet.address || !keypair) return;
     if (!riskAccepted) {
       setFormError('Confirm that you understand the deploy-key and hard fork risk.');
+      return;
+    }
+
+    try {
+      await confirmCreateVaultNetwork();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Could not confirm the configured network.');
       return;
     }
 
@@ -235,6 +268,13 @@ function CreateAccountWizard() {
     }
     if (parentContract.configNonce == null) {
       setFormError('The Vault is not fully indexed yet, try again in a moment.');
+      return;
+    }
+
+    try {
+      await confirmCreateVaultNetwork();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Could not confirm the configured network.');
       return;
     }
 
@@ -359,11 +399,11 @@ function CreateAccountWizard() {
                   </div>
                   <div>
                     <h2 className="text-base font-semibold">
-                      {step === 1 ? 'Choose name and network' : 'Configure owners and threshold'}
+                      {step === 1 ? 'Name and network' : 'Configure owners and threshold'}
                     </h2>
                     <p className="text-xs text-safe-text">
                       {step === 1
-                        ? 'Give the Vault a local nickname and pick the network to deploy to.'
+                        ? 'Give the Vault a local nickname and check this deployment’s network.'
                         : 'Add signer addresses and the minimum approvals needed to execute a proposal.'}
                     </p>
                   </div>
@@ -396,27 +436,21 @@ function CreateAccountWizard() {
                     </label>
                     <label className="space-y-1">
                       <span className="text-xs text-safe-text flex items-center h-5">Network</span>
-                      <select
-                        value={networkValue}
-                        onChange={(e) => setNetworkValue(e.target.value as typeof networkValue)}
-                        disabled={isSubaccount}
-                        className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-safe-green disabled:opacity-60"
-                        title={
-                          isSubaccount
-                            ? 'SubVaults inherit their Vault network.'
-                            : 'Devnet and Mainnet support is coming soon.'
-                        }
-                      >
-                        {NETWORKS.map((n) => (
-                          <option key={n.value} value={n.value} disabled={!n.enabled}>
-                            {n.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="w-full bg-safe-dark border border-safe-border rounded-lg px-4 py-3 text-sm" aria-live="polite">
+                        {networkValue === undefined
+                          ? 'Checking network…'
+                          : networkValue
+                            ? networkValue.charAt(0).toUpperCase() + networkValue.slice(1)
+                            : 'Unavailable'}
+                      </div>
                       <span className="text-[10px] text-safe-text">
-                        {isSubaccount
-                          ? 'Locked to the Vault network.'
-                          : 'Only Testnet is available right now.'}
+                        {networkValue
+                          ? isSubaccount
+                            ? 'SubVaults use their parent Vault network.'
+                            : 'Network is fixed by this deployment.'
+                          : networkValue === undefined
+                            ? 'Confirming this deployment\'s network.'
+                            : 'Vault creation requires a matching network and complete build configuration.'}
                       </span>
                     </label>
                   </div>
@@ -544,7 +578,8 @@ function CreateAccountWizard() {
                 {step === 1 ? (
                   <button
                     onClick={() => setStep(2)}
-                    className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all"
+                    disabled={!networkValue}
+                    className="bg-safe-green text-safe-dark font-semibold rounded-lg px-5 py-2 text-sm hover:brightness-110 transition-all disabled:opacity-60"
                   >
                     Next
                   </button>

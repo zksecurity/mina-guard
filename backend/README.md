@@ -4,6 +4,12 @@ Proposal responses include `executionTxHash` from indexed execution records for 
 
 Express API + polling indexer for MinaGuard contracts.
 
+Reorg recovery removes affected history before replaying and preserves lite-mode
+vault subscriptions. Recovery without an agreeing stored predecessor leaves a
+`lastWarning` in indexer status; older history may still require reindexing.
+Unready vaults scan their full history once, then replay recent blocks after a
+successful scan, including an empty result.
+
 Moved: architecture, security notes, **and** operator docs (setup, scripts, env
 vars, API routes, proposal-status derivation, Lightnet dev, troubleshooting)
 now live in one place —

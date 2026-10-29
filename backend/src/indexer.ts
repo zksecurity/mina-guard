@@ -25,6 +25,15 @@ import {
 
 const REORG_DETECTION_WINDOW = 290;
 
+/**
+ * Pending blocks can be replaced below the indexed tip even when the archive
+ * height and event queries read the same database. A replacement block may add
+ * a vault event where the old block had none, leaving no stored BlockHeader for
+ * reorg detection. Re-read the full pending horizon; EventRaw fingerprints make
+ * unchanged events idempotent.
+ */
+const EVENT_REPLAY_BLOCKS = REORG_DETECTION_WINDOW;
+
 /** Grace period before treating a tx absent from both bestChain and mempool as
  *  dropped. Covers the brief window between a tx leaving the mempool and its
  *  block appearing in bestChain (~2 blocks / 6 min on mainnet). */
@@ -64,6 +73,8 @@ export interface IndexerStatus {
   latestSlot: number;
   indexedHeight: number;
   lastError: string | null;
+  /** Latest recovery warning; retained across successful ticks until restart. */
+  lastWarning: string | null;
   discoveredContracts: number;
   indexerMode: 'full' | 'lite';
 }
@@ -87,6 +98,7 @@ type ContractConfigChanges = Partial<ContractConfigFields>;
 export class MinaGuardIndexer {
   private readonly config: BackendConfig;
   private intervalHandle: NodeJS.Timeout | null = null;
+  private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
   private archivePool: pg.Pool | null = null;
   private status: Omit<IndexerStatus, 'indexerMode'> = {
@@ -97,6 +109,7 @@ export class MinaGuardIndexer {
     latestSlot: 0,
     indexedHeight: 0,
     lastError: null,
+    lastWarning: null,
     discoveredContracts: 0,
   };
 
@@ -181,6 +194,10 @@ export class MinaGuardIndexer {
 
   /** Runs one complete indexing loop: discovery, ingestion, and cursor advancement. */
   private async tick(): Promise<void> {
+    // A replay across many contracts can outlast the poll interval. Never let
+    // overlapping ticks race to write the same discovery and event cursors.
+    if (this.tickInProgress) return;
+    this.tickInProgress = true;
     this.status.lastRunAt = new Date().toISOString();
 
     try {
@@ -209,8 +226,20 @@ export class MinaGuardIndexer {
       const indexedHeight = await this.getIndexedHeight();
       this.status.indexedHeight = indexedHeight;
 
-      const fromHeight = indexedHeight + 1;
+      const fromHeight = Math.max(
+        this.config.indexStartHeight,
+        indexedHeight - EVENT_REPLAY_BLOCKS + 1,
+      );
       const toHeight = latestHeight;
+      // A transiently shorter pending chain must not move the cursor backward
+      // without rolling back the rows derived above it. Reorg detection above
+      // performs that rollback when it finds a stored-header mismatch.
+      if (toHeight < indexedHeight || toHeight < fromHeight) {
+        throw new Error(
+          `Archive tip ${toHeight} is below indexed height ${indexedHeight} or replay start ${fromHeight}; ` +
+          'indexing paused until the archive catches up or the reorg is investigated.',
+        );
+      }
 
       // Scan for new contract deployments. The candidate-address source is
       // pluggable: 'daemon' scans bestChain (capped at 290 blocks — see Mina's
@@ -220,18 +249,19 @@ export class MinaGuardIndexer {
       // handled by detectAndRollbackReorg above, which rewinds IndexerCursor
       // on fork — the next tick re-covers the reorged range.
       if (this.config.indexerMode === 'full') {
-        const DISCOVERY_MARGIN = 5;
+        const DAEMON_DISCOVERY_MARGIN = 5;
         let candidates: DiscoveryCandidate[];
         if (this.config.discoveryBackend === 'archive' && this.config.minaguardVkHash) {
           // Cold start (no archive_discovered_height cursor): scan from
           // indexStartHeight back to genesis-or-configured-floor so historical
-          // deploys are picked up. Subsequent ticks scan only the new delta
-          // plus a small reorg margin. The archive query filters by MinaGuard's
-          // VK hash, so even a from-genesis scan returns a tiny row set.
+          // deploys are picked up. Subsequent ticks rescan the pending horizon:
+          // a reorg can add a deploy below the discovery cursor without any
+          // previously stored MinaGuard event header to trigger rollback.
+          // The archive query filters by MinaGuard's VK hash.
           const lastDiscovered = await this.getArchiveDiscoveredHeight();
           const discoveryFromHeight = lastDiscovered === null
             ? this.config.indexStartHeight
-            : Math.max(this.config.indexStartHeight, lastDiscovered - DISCOVERY_MARGIN);
+            : Math.max(this.config.indexStartHeight, lastDiscovered - REORG_DETECTION_WINDOW + 1);
           candidates = await discoverCandidateAddressesFromArchive(
             this.getArchivePool(),
             this.config.minaguardVkHash,
@@ -239,15 +269,28 @@ export class MinaGuardIndexer {
             latestHeight,
           );
         } else {
+          // Candidate discovery scans the daemon, which may be ahead of the
+          // archive tip used by indexed_height. Size this window from the
+          // daemon's own height so a deploy made during archive catch-up is
+          // still found after an indexer restart.
+          const daemonHeaders = await fetchBestChainHeaders(this.config, 1);
+          const daemonHeight = daemonHeaders.at(-1)?.height;
+          if (daemonHeight === undefined) {
+            throw new Error('Daemon bestChain has no height for contract discovery');
+          }
           const discoveryWindow = Math.max(
             1,
-            Math.min(290, latestHeight - indexedHeight + DISCOVERY_MARGIN),
+            Math.min(290, daemonHeight - indexedHeight + DAEMON_DISCOVERY_MARGIN),
           );
-          // TODO: daemon path approximates deployBlock as latestHeight, which
-          // sits above the actual deploy by up to ~290 blocks. Follow-up PR
-          // threads per-block height through the bestChain query.
+          // The address scanner does not return each deploy's exact height.
+          // Persist the earliest scanned height as a safe rescan floor for an
+          // unready contract; using the tip could skip its deploy events.
+          const scanFloor = Math.max(
+            this.config.indexStartHeight,
+            daemonHeight - discoveryWindow + 1,
+          );
           const addrs = await discoverCandidateAddresses(this.config, discoveryWindow);
-          candidates = addrs.map((address) => ({ address, deployBlock: latestHeight }));
+          candidates = addrs.map((address) => ({ address, deployBlock: scanFloor }));
         }
         const failureCount = await this.processCandidateAddresses(candidates);
         if (this.config.discoveryBackend === 'archive' && failureCount === 0) {
@@ -264,11 +307,12 @@ export class MinaGuardIndexer {
         }
       }
 
-      // Rescan contracts that haven't yet seen a MinaGuard event. Runs
-      // every tick until events land; syncSingleContract flips ready=true
+      // Rescan contracts that haven't yet seen a MinaGuard event. The first
+      // complete scan covers their history; later ticks replay recent blocks.
+      // syncSingleContract flips ready=true
       // on first ingestion, after which the contract joins the forward
       // sweep below.
-      await this.rescanUnreadyContracts(latestHeight);
+      await this.rescanUnreadyContracts(fromHeight, latestHeight);
 
       if (toHeight >= fromHeight) {
         await this.syncKnownContracts(fromHeight, toHeight);
@@ -290,12 +334,16 @@ export class MinaGuardIndexer {
       this.status.lastError = error instanceof Error
         ? error.message
         : `Non-Error thrown by indexer tick: ${describeThrown(error)}`;
+    } finally {
+      this.tickInProgress = false;
     }
   }
 
   /** Instance wrapper around {@link detectAndRollbackReorg} for use inside tick(). */
   private async detectAndRollbackReorg(): Promise<number | null> {
-    return detectAndRollbackReorg(this.config);
+    return detectAndRollbackReorg(this.config, (warning) => {
+      this.status.lastWarning = warning;
+    });
   }
 
   /**
@@ -308,8 +356,9 @@ export class MinaGuardIndexer {
    * `deployBlock` is persisted as `discoveredAtBlock` so `rescanUnreadyContracts`
    * scans a tight `[deploy_block, latestHeight]` window. For archive discovery
    * this is the actual on-chain deploy block (from MIN(blocks.height) in the
-   * SQL); for daemon discovery it's the tick's chain tip — close enough since
-   * bestChain horizon caps the imprecision at ~290 blocks.
+   * SQL); for daemon discovery it's the earliest block in the scanned
+   * bestChain window, so an unready contract's later rescan includes its
+   * actual deploy even when archive ingestion trails the daemon.
    *
    * Returns the count of candidates that threw — the archive branch in tick()
    * uses this to decide whether to advance the archive_discovered_height
@@ -411,21 +460,19 @@ export class MinaGuardIndexer {
   }
 
   /**
-   * Re-scans every unready contract over its persisted lower bound
-   * (`discoveredAtBlock`) up to the current chain tip. The subscribe
-   * route records `discoveredAtBlock` at insert time; the tick rescans
-   * that range each run until `syncSingleContract` ingests a first event
-   * and flips `ready=true`. This is what makes subscribe-before-deploy
-   * self-healing: the first tick after the deploy lands (and the archive
-   * indexes it) picks up the events.
+   * Scans an unready contract's full history once, then replays the same recent
+   * window as ready contracts. Missing accounts and failed scans do not stamp
+   * lastSyncedAt, so subscribe-before-deploy still gets a full first scan.
    */
-  private async rescanUnreadyContracts(latestHeight: number): Promise<void> {
+  private async rescanUnreadyContracts(fromHeight: number, latestHeight: number): Promise<void> {
     const unready = await prisma.contract.findMany({
       where: { ready: false },
-      select: { id: true, address: true, discoveredAtBlock: true },
+      select: { id: true, address: true, discoveredAtBlock: true, lastSyncedAt: true },
     });
     for (const c of unready) {
-      const from = c.discoveredAtBlock ?? this.config.indexStartHeight;
+      const from = c.lastSyncedAt === null
+        ? (c.discoveredAtBlock ?? this.config.indexStartHeight)
+        : Math.max(c.discoveredAtBlock ?? 0, fromHeight);
       if (from > latestHeight) continue;
       await this.syncSingleContract(c.id, c.address, from, latestHeight);
     }
@@ -433,7 +480,10 @@ export class MinaGuardIndexer {
 
   /** Indexes events for all tracked contracts across the requested block range. */
   private async syncKnownContracts(fromHeight: number, toHeight: number): Promise<void> {
-    const contracts = await prisma.contract.findMany();
+    // Unready contracts were already scanned from their own persisted lower
+    // bound above. The overlap here is for ready contracts; scanning an
+    // unready, not-yet-deployed address would ignore discoveredAtBlock.
+    const contracts = await prisma.contract.findMany({ where: { ready: true } });
 
     for (const contract of contracts) {
       try {
@@ -1570,10 +1620,15 @@ function asNullableAddress(value: string | null): string | null {
  * On mismatch, rolls back all history above the fork point and returns the
  * fork height. Returns null when stored state agrees with the chain, no
  * stored headers overlap the detection window, or the daemon is unreachable.
+ * Without an agreed stored predecessor, removes rows from the earliest
+ * mismatching stored height and warns that older history remains unchecked.
  *
  * Exported so tests can drive reorg handling directly without the rest of tick().
  */
-export async function detectAndRollbackReorg(config: BackendConfig): Promise<number | null> {
+export async function detectAndRollbackReorg(
+  config: BackendConfig,
+  onWarning?: (warning: string) => void,
+): Promise<number | null> {
   let headers: Awaited<ReturnType<typeof fetchBestChainHeaders>>;
   try {
     headers = await fetchBestChainHeaders(config, REORG_DETECTION_WINDOW);
@@ -1603,6 +1658,7 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
   // may have a run of mismatches before hitting the last agreed height below.
   let forkHeight: number | null = null;
   let highestMismatch: { height: number; stored: string; chain: string } | null = null;
+  let lowestMismatchHeight: number | null = null;
   for (let i = stored.length - 1; i >= 0; i--) {
     const s = stored[i];
     const c = chainByHeight.get(s.height);
@@ -1614,6 +1670,7 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
     if (highestMismatch === null) {
       highestMismatch = { height: s.height, stored: s.blockHash, chain: c.blockHash };
     }
+    lowestMismatchHeight = s.height;
   }
 
   if (highestMismatch === null) {
@@ -1623,23 +1680,25 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
   }
 
   if (forkHeight === null) {
-    // Every stored row in the detection window disagrees with the chain. The
-    // reorg is deeper than our visibility; we can't pinpoint the fork safely.
-    // Log loudly and bail — operator intervention needed (Mina finality is
-    // ~290 blocks, so this effectively shouldn't happen in practice).
-    console.error(
-      `[indexer] reorg deeper than detection window (${REORG_DETECTION_WINDOW} blocks); ` +
-      `all overlapping stored headers disagree with chain. Skipping rollback.`,
+    // Every event-derived row has a header at its height. With sparse headers,
+    // remove all rows from the earliest known mismatch before replaying; there
+    // are no event rows in the gap between the window root and that mismatch.
+    forkHeight = lowestMismatchHeight! - 1;
+    const warning =
+      `Reorg recovery without an agreed stored predecessor: rolling back to ${forkHeight} ` +
+      `before earliest mismatch ${lowestMismatchHeight}. History older than the ` +
+      `${REORG_DETECTION_WINDOW}-block detection window is unverified; a deeper fork ` +
+      'requires investigation and reindexing.';
+    console.warn(`[indexer] ${warning}`);
+    onWarning?.(warning);
+  } else {
+    console.warn(
+      `[indexer] reorg detected: highest mismatch at ${highestMismatch.height} ` +
+      `(stored=${highestMismatch.stored} chain=${highestMismatch.chain}); ` +
+      `rolling back to last agreed height ${forkHeight}`,
     );
-    return null;
   }
-
-  console.warn(
-    `[indexer] reorg detected: highest mismatch at ${highestMismatch.height} ` +
-    `(stored=${highestMismatch.stored} chain=${highestMismatch.chain}); ` +
-    `rolling back to last agreed height ${forkHeight}`,
-  );
-  await rollbackAboveFork(forkHeight);
+  await rollbackAboveFork(forkHeight, config.indexerMode);
   return forkHeight;
 }
 
@@ -1660,10 +1719,14 @@ export async function deleteContract(contractId: number): Promise<void> {
 
 /**
  * Atomically deletes all append-only history rows above `forkHeight` and
- * rewinds the indexer cursor. The next tick resumes syncing from fork + 1.
+ * rewinds the indexer cursor. The next tick replays from the rewound cursor's
+ * recent-history window.
  * Exported for testing.
  */
-export async function rollbackAboveFork(forkHeight: number): Promise<void> {
+export async function rollbackAboveFork(
+  forkHeight: number,
+  indexerMode: BackendConfig['indexerMode'] = 'full',
+): Promise<void> {
   await prisma.$transaction([
     prisma.blockHeader.deleteMany({ where: { height: { gt: forkHeight } } }),
     prisma.eventRaw.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
@@ -1672,7 +1735,15 @@ export async function rollbackAboveFork(forkHeight: number): Promise<void> {
     prisma.proposalExecution.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
     prisma.approval.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
     prisma.proposal.deleteMany({ where: { createdAtBlock: { gt: forkHeight } } }),
-    prisma.contract.deleteMany({ where: { discoveredAtBlock: { gt: forkHeight } } }),
+    // A lite subscription is user intent. Preserve it even if its deploy was
+    // orphaned; full-mode discovery can recreate deleted contract rows.
+    ...(indexerMode === 'lite' ? [] : [
+      prisma.contract.deleteMany({ where: { discoveredAtBlock: { gt: forkHeight } } }),
+    ]),
+    prisma.contract.updateMany({
+      where: { events: { none: {} } },
+      data: { ready: false, permissionsVerified: false },
+    }),
     prisma.indexerCursor.upsert({
       where: { key: 'indexed_height' },
       create: { key: 'indexed_height', value: String(forkHeight) },

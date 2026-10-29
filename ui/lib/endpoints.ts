@@ -10,5 +10,11 @@ export function getMinaGuardConfig(): MinaGuardConfig {
   const minaEndpoint = process.env.NEXT_PUBLIC_MINA_ENDPOINT ?? 'https://api.minascan.io/node/devnet/v1/graphql';
   const archiveEndpoint = process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ?? 'https://api.minascan.io/archive/devnet/v1/graphql';
   const networkId = (process.env.NEXT_PUBLIC_MINA_NETWORK as MinaGuardNetworkId) || 'testnet';
+  if (networkId === 'mainnet' &&
+      (!process.env.NEXT_PUBLIC_MINA_ENDPOINT ||
+       !process.env.NEXT_PUBLIC_ARCHIVE_ENDPOINT ||
+       !process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH)) {
+    throw new Error('Mainnet requires explicit Mina and archive endpoints and an expected verification-key hash.');
+  }
   return { minaEndpoint, archiveEndpoint, networkId };
 }

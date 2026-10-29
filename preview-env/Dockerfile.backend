@@ -1,4 +1,4 @@
-FROM oven/bun:1 AS base
+FROM oven/bun:1@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS base
 WORKDIR /app
 
 # Copy root workspace config + all workspace package.jsons
@@ -29,14 +29,21 @@ RUN cd contracts && bun run build
 # the host runner is expected to have computed it once (full host memory)
 # and threaded it through. The o1js circuit compile peaks well above the
 # memory available inside a typical CI Docker build, OOM-killing the step.
+ARG MINA_NETWORK_DOMAIN=testnet
 ARG MINAGUARD_VK_HASH=
-RUN if [ -n "$MINAGUARD_VK_HASH" ]; then \
+ENV MINA_NETWORK_DOMAIN=$MINA_NETWORK_DOMAIN
+RUN case "$MINA_NETWORK_DOMAIN" in mainnet|testnet|devnet) ;; \
+      *) echo "ERROR: invalid MINA_NETWORK_DOMAIN" >&2; exit 1;; esac; \
+    if [ "$MINA_NETWORK_DOMAIN" = mainnet ] && [ -z "$MINAGUARD_VK_HASH" ]; then \
+      echo "ERROR: mainnet backend requires the verified VK manifest hash" >&2; exit 1; \
+    fi; \
+    if [ -n "$MINAGUARD_VK_HASH" ]; then \
       case "$MINAGUARD_VK_HASH" in *[!0-9]*) echo "ERROR: MINAGUARD_VK_HASH must be decimal" >&2; exit 1;; esac; \
       echo "Using prebuilt MINAGUARD_VK_HASH: $MINAGUARD_VK_HASH"; \
       echo "$MINAGUARD_VK_HASH" > /app/.vk-hash; \
     else \
       echo "MINAGUARD_VK_HASH build arg not set — compiling circuit (memory-heavy)..."; \
-      vk_output="$(MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts vk-hash compile 2>&1)" || { echo "$vk_output" >&2; echo "ERROR: VK hash compile failed — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1; }; \
+      vk_output="$(bun run dev-helpers/cli.ts vk-hash compile 2>&1)" || { echo "$vk_output" >&2; echo "ERROR: VK hash compile failed — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1; }; \
       echo "$vk_output"; \
       vk_hash="$(printf '%s\n' "$vk_output" | awk '/^vkHash/{print $NF; exit}')"; \
       case "$vk_hash" in ''|*[!0-9]*) echo "ERROR: no decimal VK hash found in compile output — refusing to build without a MinaGuard verification-key trust anchor" >&2; exit 1;; esac; \

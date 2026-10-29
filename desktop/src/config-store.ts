@@ -48,24 +48,45 @@ function truncate(message: string): string {
   return message.length > 500 ? `${message.slice(0, 500)}…` : message;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// PublicKey.empty().toBase58(). The one-block range validates the archive's
+// event query shape without backfilling any vault history during setup.
+const ARCHIVE_PROBE_ADDRESS = 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG';
+// TokenId.toBase58(TokenId.default), matching the backend's event filter.
+const ARCHIVE_PROBE_TOKEN_ID = 'wSHV2S4qX9jFsLjQo8r1BsMLH2ZRKsZx6EJd1sbozGPieEC4Jf';
+const ARCHIVE_PROBE_QUERY = `query ArchiveProbe($input: EventFilterOptionsInput!) {
+  networkState { maxBlockHeight { pendingMaxBlockHeight } }
+  events(input: $input) {
+    blockInfo { height stateHash parentHash }
+    eventData { transactionInfo { hash memo status authorizationKind } data }
+  }
+}`;
+
 /** POSTs a GraphQL query and returns the response's `data`. Throws a
- *  user-displayable error when the endpoint is unreachable or does not answer
- *  like a GraphQL server. */
+ *  user-displayable error when the endpoint is unreachable or rejects a
+ *  required query. */
 async function probeGraphql(
   label: string,
   url: string,
   query: string,
-): Promise<Record<string, unknown> | undefined> {
+  variables?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   let res: Awaited<ReturnType<typeof fetch>>;
   try {
     res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (err) {
     throw new Error(`${label} is unreachable: ${describeError(err)}`);
+  }
+  if (!res.ok) {
+    throw new Error(`${label} returned HTTP ${res.status}`);
   }
   let json: unknown;
   try {
@@ -73,23 +94,49 @@ async function probeGraphql(
   } catch {
     throw new Error(`${label} did not return a GraphQL response (HTTP ${res.status})`);
   }
-  if (typeof json !== 'object' || json === null || (!('data' in json) && !('errors' in json))) {
+  if (!isRecord(json)) {
     throw new Error(`${label} did not return a GraphQL response (HTTP ${res.status})`);
   }
-  return (json as { data?: Record<string, unknown> }).data;
+  if (json.errors !== undefined) {
+    if (!Array.isArray(json.errors) || json.errors.length > 0) {
+      const first = Array.isArray(json.errors) ? json.errors[0] : null;
+      const reason = isRecord(first) && typeof first.message === 'string'
+        ? truncate(first.message)
+        : 'GraphQL error';
+      throw new Error(`${label} rejected the required query: ${reason}`);
+    }
+  }
+  if (!isRecord(json.data)) {
+    throw new Error(`${label} did not return GraphQL data`);
+  }
+  return json.data;
 }
 
-/** Verifies both endpoints and requires the Mina node to report its network ID.
+/** Verifies the node network and the archive queries needed by the indexer.
  *  Callers must not persist endpoints when this check fails. */
 export async function verifyEndpoints(
   minaEndpoint: string,
   archiveEndpoint: string,
 ): Promise<NetworkId> {
-  const [minaData] = await Promise.all([
+  const [minaData, archiveData] = await Promise.all([
     probeGraphql('Mina endpoint', minaEndpoint, '{ networkID }'),
-    probeGraphql('Archive endpoint', archiveEndpoint, '{ __typename }'),
+    probeGraphql('Archive endpoint', archiveEndpoint, ARCHIVE_PROBE_QUERY, {
+      input: { address: ARCHIVE_PROBE_ADDRESS, tokenId: ARCHIVE_PROBE_TOKEN_ID, from: 0, to: 1 },
+    }),
   ]);
-  const detected = parseNodeNetworkId(minaData?.networkID);
+  const maxHeight = isRecord(archiveData.networkState)
+    ? archiveData.networkState.maxBlockHeight
+    : null;
+  const rawHeight = isRecord(maxHeight) ? maxHeight.pendingMaxBlockHeight : null;
+  const validHeight = typeof rawHeight === 'number'
+    || (typeof rawHeight === 'string' && /^(0|[1-9][0-9]*)$/.test(rawHeight));
+  if (!validHeight || !Number.isSafeInteger(Number(rawHeight)) || Number(rawHeight) < 0) {
+    throw new Error('Archive endpoint did not report a valid pending block height');
+  }
+  if (!Array.isArray(archiveData.events)) {
+    throw new Error('Archive endpoint did not return a bounded events list');
+  }
+  const detected = parseNodeNetworkId(minaData.networkID);
   // This build's proof circuit is compiled for one network (BUILD_NETWORK_DOMAIN);
   // proposals proved here won't verify against contracts on a different network.
   // Reject a mismatched node loudly at setup instead of letting proofs fail
