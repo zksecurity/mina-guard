@@ -58,11 +58,15 @@ On launch (`src/main.ts`):
 
 1. **First run:** a setup window asks for a Mina GraphQL endpoint and an
    archive endpoint (pre-filled with minascan mainnet defaults — never used
-   silently). The archive must expose event authorization kinds
-   (Archive-Node-API v0.0.8+); otherwise the embedded indexer refuses to sync. Save probes both endpoints with a real GraphQL query, detects the
-   network id from the node, and persists `config.json`. Unreachable endpoints
-   or nodes without an explicit, supported `networkID` are rejected before
-   anything is persisted. Saved endpoints are rechecked on every startup.
+   silently). Save probes both endpoints, detects the node's network ID, and
+   checks that the archive reports a valid pending height and accepts a bounded
+   one-block event query selecting the fields the indexer needs, including
+   `transactionInfo.authorizationKind` (Archive-Node-API v0.0.8+). HTTP or
+   GraphQL errors, missing fields, and nodes without an explicit supported
+   `networkID` are rejected before `config.json` is persisted. Saved endpoints
+   are rechecked on every startup. The short archive probe does not establish
+   historical completeness or prove the server's `BLOCK_RANGE_SIZE` is at least
+   5,000; those remain deployment requirements.
 2. The **backend is booted in-process** (`src/backend-embed.ts`): the same
    `backend/` package (Express API router + indexer), esbuild-bundled at
    packaging time, running against **SQLite** (`minaguard.db` in the user-data
@@ -71,6 +75,14 @@ On launch (`src/main.ts`):
    (`POST /api/subscribe`) are indexed: "add existing account" backfills from
    block 0 via the archive endpoint, while the auto-subscribe right after a
    deploy starts a few blocks below the current height.
+
+   Empty, deployed vaults complete that initial history scan once, then use the
+   shared indexer's recent replay window. Reorg rollback preserves desktop
+   subscriptions and hides vaults left with no events until their live checks
+   and event ingestion succeed again. A missing deploy continues to be polled.
+   Sparse-header recovery warnings remain in `/api/indexer/status.lastWarning`
+   until restart; see [backend reorg handling](backend-audit-guide.md#reorg-handling)
+   for the limit on history older than the detection window.
 3. A **Next.js standalone server** (the pre-built `ui/` app) is forked as a
    child process on `127.0.0.1:5051`.
 4. A **front HTTP server** on `127.0.0.1:5050` multiplexes everything:
@@ -272,9 +284,14 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   `config:set-endpoints` also rejects any non-main-window sender
   (`assertMainWindow`, focus point 1).
 - **Endpoints are probed before persisting** (`verifyEndpoints`,
-  `src/config-store.ts`): both must answer a real GraphQL POST within
-  10 s. The network id must be explicitly reported in the node's `networkID`
-  field; URL names are never used to guess it. A node whose proof domain doesn't match this
+  `src/config-store.ts`): both must answer GraphQL POSTs within 10 s without
+  HTTP or GraphQL errors. The archive's pending height must be a nonnegative
+  safe integer, and a one-block `events(input:{from,to})` query must return an
+  events list while selecting the indexer's authorization and block fields.
+  This checks schema compatibility, not the configured event-range cap or
+  whether real event rows carry authorization values. The network id must be
+  explicitly reported in the node's `networkID` field; URL names are never
+  used to guess it. A node whose proof domain doesn't match this
   build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet versus the shared
   testnet/devnet proof domain) is rejected at save time — the bundled circuit
   can only prove against one domain.
@@ -369,9 +386,13 @@ allowlist, and the id rides a URL handed to the OS browser
 (`GET /auro/payload?id=`).
 
 **3. Endpoint lifecycle & network-id detection (`src/config-store.ts`).**
-Probing requires both endpoints to answer a GraphQL query. The node-reported
-network ID must match the build's exact proof domain (`BUILD_NETWORK_DOMAIN`)
-to be persisted; saved endpoints are revalidated on startup. The ID then
+Probing requires both endpoints to answer GraphQL queries without errors. The
+archive must report a valid pending height and accept a bounded event query
+with the fields used by the local indexer; the one-block probe cannot verify
+that the server accepts the required 5,000-block range or that its history is
+complete. The node-reported network ID must match the build's exact proof domain
+(`BUILD_NETWORK_DOMAIN`) to be persisted; saved endpoints are revalidated on
+startup. The ID then
 feeds `requestNetwork`, the worker's `Mina.Network` id, the offline bundles'
 `minaNetwork`, and `.vk-hash` line selection. Cross-network proposal replay
 is blocked by the compile-time `NETWORK_DOMAIN` when the correct per-network
@@ -467,11 +488,11 @@ desktop/
 
 ## Build & packaging pipeline
 
-`bun run --filter desktop test` checks endpoint identity, proof-domain matching
-and the Auro bridge (the page's signer check, `window.mina` in `preload.js`, and
-the main process remembering the accounts from the latest connect) without
-launching Electron, a browser or Auro, and without changing local state. CI runs
-the same unit tests.
+`bun run --filter desktop test` checks endpoint identity, archive query
+capabilities, proof-domain matching, and the Auro bridge (the page's signer
+check, `window.mina` in `preload.js`, and the main process remembering the
+accounts from the latest connect) without launching Electron, a browser or
+Auro, and without changing local state. CI runs the same unit tests.
 
 All steps run from `desktop/` (`bun run build` chains them; details in
 `desktop/README.md`):

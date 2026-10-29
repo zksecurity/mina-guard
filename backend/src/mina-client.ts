@@ -141,36 +141,32 @@ export async function fetchGenesisConstants(
   return { genesisTimestampMs, slotDurationMs };
 }
 
-/** Fetches latest block height from archive node to stay aligned with event availability. */
+/**
+ * Reads the archive's pending tip, which is the latest block its events API
+ * can serve. The daemon can be ahead of archive ingestion; using its bestChain
+ * height as an event cursor would permanently skip late archive events.
+ */
 export async function fetchLatestBlockHeight(config: BackendConfig): Promise<number> {
-  // Read the tip height from the daemon's bestChain. The previous
-  // `networkState { maxBlockHeight }` query targeted the archive endpoint, but
-  // that field is part of the *daemon* schema — the archive-node-api rejects it
-  // with a generic "Unexpected error.", which wedged the whole indexer tip
-  // check. bestChain.consensusState.blockHeight is what the daemon actually
-  // exposes (and what fetchBestChainHeaders already relies on).
   const query = `{
-    bestChain(maxLength: 1) {
-      protocolState {
-        consensusState { blockHeight }
-      }
-    }
+    networkState { maxBlockHeight { pendingMaxBlockHeight } }
   }`;
   const response = await graphqlRequest<{
-    bestChain?: Array<{
-      protocolState?: { consensusState?: { blockHeight?: string | number } };
-    }>;
-  }>(query, config.minaEndpoint, config.minaFallbackEndpoint);
-  const raw = response.bestChain?.[0]?.protocolState?.consensusState?.blockHeight;
-  return Number(raw ?? '0');
+    networkState?: { maxBlockHeight?: { pendingMaxBlockHeight?: string | number | null } };
+  }>(query, config.archiveEndpoint, config.archiveFallbackEndpoint, undefined, 10_000);
+  const height = Number(response.networkState?.maxBlockHeight?.pendingMaxBlockHeight);
+  if (!Number.isSafeInteger(height) || height < 0 ||
+      response.networkState?.maxBlockHeight?.pendingMaxBlockHeight == null) {
+    throw new Error('Archive networkState has no valid pendingMaxBlockHeight');
+  }
+  return height;
 }
 
 /**
  * Same as fetchLatestBlockHeight but reads directly from the archive postgres
  * (when DISCOVERY_BACKEND=archive). Bypasses archive-node-api, which has been
- * observed to return generic "Unexpected error." responses on the networkState
- * query when the underlying daemon is mid-block; postgres always has the
- * latest persisted block height.
+ * observed to return generic "Unexpected error." responses when its archive
+ * database has no canonical blocks. Postgres still has the latest persisted
+ * pending block height in that case.
  */
 export async function fetchLatestBlockHeightFromArchive(pool: Pool): Promise<number> {
   const result = await pool.query<{ max: string | null }>(
@@ -648,8 +644,7 @@ export async function fetchDecodedContractEvents(
   toHeight: number
 ): Promise<ChainEvent[]> {
   if (!archiveEndpoints) throw new Error('configureNetwork must run before fetching events');
-  // TODO: restore toHeight once archive node supports upper-bound filtering
-  const blocks = await fetchArchiveEventBlocks(archiveEndpoints, address, fromHeight);
+  const blocks = await fetchArchiveEventBlocks(archiveEndpoints, address, fromHeight, toHeight);
   return decodeContractEvents(address, blocks);
 }
 
@@ -674,23 +669,44 @@ const EVENTS_QUERY = `query VaultEvents($input: EventFilterOptionsInput!) {
   }
 }`;
 
-/** Fetches a vault's raw events, with each emitting update's authorization kind. */
+// Archive Node API silently shortens wider event ranges. Its default cap is
+// 10,000 blocks; keep each request below that and require a matching or higher
+// BLOCK_RANGE_SIZE on the configured archive endpoint.
+const EVENT_QUERY_BLOCK_SPAN = 5_000;
+
+/** Fetches a vault's raw events over an inclusive range, with authorization kind. */
 export async function fetchArchiveEventBlocks(
   endpoints: ArchiveEndpoints,
   address: string,
   fromHeight: number,
+  toHeight: number,
 ): Promise<ArchiveEventBlock[]> {
-  const input = {
-    address,
-    tokenId: TokenId.toBase58(TokenId.default),
-    ...(fromHeight > 0 ? { from: fromHeight } : {}),
-  };
+  if (!Number.isSafeInteger(fromHeight) || fromHeight < 0 ||
+      !Number.isSafeInteger(toHeight) || toHeight < fromHeight || toHeight >= 2_147_483_647) {
+    throw new Error('Invalid archive event block range');
+  }
+  const blocks: ArchiveEventBlock[] = [];
   try {
-    const data = await graphqlRequest<{ events?: ArchiveEventBlock[] | null }>(
-      EVENTS_QUERY, endpoints.primary, endpoints.fallback, { input },
-    );
-    if (!Array.isArray(data.events)) throw new Error('archive response has no events list');
-    return data.events;
+    for (let from = fromHeight; from <= toHeight; from += EVENT_QUERY_BLOCK_SPAN) {
+      // The archive API's `to` is exclusive; indexer callers pass an inclusive tip.
+      const to = Math.min(from + EVENT_QUERY_BLOCK_SPAN, toHeight + 1);
+      const input = {
+        address,
+        tokenId: TokenId.toBase58(TokenId.default),
+        from,
+        to,
+      };
+      const data = await graphqlRequest<{ events?: ArchiveEventBlock[] | null }>(
+        EVENTS_QUERY, endpoints.primary, endpoints.fallback, { input },
+      );
+      if (!Array.isArray(data.events)) throw new Error('archive response has no events list');
+      if (data.events.some((event) => !Number.isSafeInteger(event?.blockInfo?.height) ||
+          event.blockInfo.height < from || event.blockInfo.height >= to)) {
+        throw new Error('archive response contains an event outside the requested block range');
+      }
+      blocks.push(...data.events);
+    }
+    return blocks;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (/authorizationKind/.test(message)) {

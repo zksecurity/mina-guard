@@ -159,6 +159,43 @@ describe('rollbackAboveFork', () => {
     const cursor = await prisma.indexerCursor.findUnique({ where: { key: 'indexed_height' } });
     expect(cursor?.value).toBe('20');
   });
+
+  for (const mode of ['lite', 'full'] as const) {
+    test(`${mode} mode hides contracts whose only events were rolled back`, async () => {
+      const contract = await prisma.contract.create({
+        data: {
+          address: PrivateKey.random().toPublicKey().toBase58(),
+          discoveredAtBlock: 5, ready: true, permissionsVerified: true,
+        },
+      });
+      await prisma.eventRaw.create({
+        data: { contractId: contract.id, blockHeight: 15, eventType: 'setup', payload: '{}', fingerprint: 'orphaned-setup' },
+      });
+      await rollbackAboveFork(10, mode);
+      const remaining = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+      expect(remaining.ready).toBe(false);
+      expect(remaining.permissionsVerified).toBe(false);
+      expect(await prisma.eventRaw.count()).toBe(0);
+    });
+  }
+
+  test('lite mode preserves subscriptions whose deploy was orphaned', async () => {
+    const contract = await prisma.contract.create({
+      data: {
+        address: PrivateKey.random().toPublicKey().toBase58(), discoveredAtBlock: 15,
+        ready: true, permissionsVerified: true, lastSyncedAt: new Date(),
+      },
+    });
+    await prisma.eventRaw.create({
+      data: { contractId: contract.id, blockHeight: 15, eventType: 'setup', payload: '{}', fingerprint: 'lite-orphaned-deploy' },
+    });
+    await rollbackAboveFork(10, 'lite');
+    const remaining = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(remaining.discoveredAtBlock).toBe(15);
+    expect(remaining.lastSyncedAt).toEqual(contract.lastSyncedAt);
+    expect(remaining.ready).toBe(false);
+    expect(remaining.permissionsVerified).toBe(false);
+  });
 });
 
 describe('detectAndRollbackReorg', () => {
@@ -261,8 +298,9 @@ describe('detectAndRollbackReorg', () => {
     expect(cursor?.value).toBe('6');
   });
 
-  test('bails safely when entire detection window disagrees (reorg deeper than window)', async () => {
+  test('rolls back before the lowest mismatch when no stored predecessor agrees', async () => {
     await seedHeaders([
+      { height: 2, blockHash: 'h2', parentHash: 'h1' },
       { height: 5, blockHash: 'h5-old', parentHash: 'h4-old' },
       { height: 6, blockHash: 'h6-old', parentHash: 'h5-old' },
     ]);
@@ -275,12 +313,125 @@ describe('detectAndRollbackReorg', () => {
       ],
     }));
 
-    const fork = await detectAndRollbackReorg(stubConfig);
-    expect(fork).toBeNull();
-    // Nothing rolled back — state is preserved, operator has to intervene.
-    expect(await prisma.blockHeader.findMany()).toHaveLength(2);
+    const warnings: string[] = [];
+    expect(await detectAndRollbackReorg(stubConfig, (warning) => warnings.push(warning))).toBe(4);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('earliest mismatch 5');
+    expect(warnings[0]).toContain('deeper fork');
+    expect((await prisma.blockHeader.findMany()).map((h) => h.height)).toEqual([2]);
     const cursor = await prisma.indexerCursor.findUnique({ where: { key: 'indexed_height' } });
-    expect(cursor?.value).toBe('6');
+    expect(cursor?.value).toBe('4');
+  });
+
+  test('removes the losing branch before replaying a replacement event with sparse headers', async () => {
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: true, permissionsVerified: true, discoveredAtBlock: 1, lastSyncedAt: new Date() },
+    });
+    await seedHeaders([{ height: 500, blockHash: 'old-500', parentHash: 'old-499' }]);
+    await prisma.eventRaw.create({
+      data: {
+        contractId: contract.id, blockHeight: 500, eventType: 'proposal',
+        payload: '{}', fingerprint: 'old-branch-proposal',
+      },
+    });
+    await prisma.proposal.create({
+      data: { contractId: contract.id, proposalHash: 'old-proposal', createdAtBlock: 500 },
+    });
+    await prisma.indexerCursor.create({ data: { key: 'indexed_height', value: '500' } });
+
+    let eventFetches = 0;
+    const replacementEvent: ChainEvent = {
+      type: 'proposal', event: { proposalHash: 'new-proposal', txType: '1' },
+      blockHeight: 500, blockHash: 'new-500', parentHash: 'old-499',
+      txHash: 'new-proposal-tx', txMemo: null,
+    };
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => 501,
+      fetchVaultSecurityStatus: async () => ({ accountFound: true, safe: true }),
+      fetchBestChainHeaders: async () => [
+        { height: 499, blockHash: 'old-499', parentHash: 'old-498' },
+        { height: 500, blockHash: 'new-500', parentHash: 'old-499' },
+        { height: 501, blockHash: 'new-501', parentHash: 'new-500' },
+      ],
+      fetchDecodedContractEvents: async () => {
+        eventFetches += 1;
+        return [replacementEvent];
+      },
+    }));
+
+    const indexer = new MinaGuardIndexer({
+      ...stubConfig, indexerMode: 'lite', discoveryBackend: 'daemon',
+    } as BackendConfig);
+    await indexer.start();
+    indexer.stop();
+
+    expect(indexer.getStatus().lastError).toBeNull();
+    expect(indexer.getStatus().lastWarning).toContain('rolling back to 499');
+    expect(eventFetches).toBe(0);
+    expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value)
+      .toBe('499');
+    expect(await prisma.blockHeader.count()).toBe(0);
+    expect(await prisma.eventRaw.count()).toBe(0);
+    expect(await prisma.proposal.count()).toBe(0);
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).ready).toBe(false);
+
+    // The next tick replays into a clean database instead of stalling again or
+    // retaining the old proposal alongside its replacement.
+    await indexer.start();
+    indexer.stop();
+    expect(indexer.getStatus().lastError).toBeNull();
+    expect(indexer.getStatus().lastWarning).toContain('rolling back to 499');
+    expect(eventFetches).toBeGreaterThan(0);
+    expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value)
+      .toBe('501');
+    expect((await prisma.blockHeader.findUniqueOrThrow({ where: { height: 500 } })).blockHash)
+      .toBe('new-500');
+    expect(await prisma.eventRaw.count()).toBe(1);
+    expect((await prisma.proposal.findMany()).map((proposal) => proposal.proposalHash))
+      .toEqual(['new-proposal']);
+    expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).ready).toBe(true);
+  });
+
+  test('an orphaned lite deploy stays subscribed and hidden if the account does not return', async () => {
+    const contract = await prisma.contract.create({
+      data: {
+        address: PrivateKey.random().toPublicKey().toBase58(), ready: true,
+        permissionsVerified: true, discoveredAtBlock: 500, lastSyncedAt: new Date(),
+      },
+    });
+    await seedHeaders([{ height: 500, blockHash: 'old-500', parentHash: 'h499' }]);
+    await prisma.eventRaw.create({
+      data: { contractId: contract.id, blockHeight: 500, eventType: 'setup', payload: '{}', fingerprint: 'lost-lite-deploy' },
+    });
+    await prisma.indexerCursor.create({ data: { key: 'indexed_height', value: '500' } });
+    let accountChecks = 0;
+    let eventFetches = 0;
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeight: async () => 501,
+      fetchBestChainHeaders: async () => [
+        { height: 499, blockHash: 'h499', parentHash: 'h498' },
+        { height: 500, blockHash: 'new-500', parentHash: 'h499' },
+        { height: 501, blockHash: 'new-501', parentHash: 'new-500' },
+      ],
+      fetchVaultSecurityStatus: async () => { accountChecks += 1; return { accountFound: false, safe: false }; },
+      fetchDecodedContractEvents: async () => { eventFetches += 1; return []; },
+    }));
+    const indexer = new MinaGuardIndexer({ ...stubConfig, indexerMode: 'lite', discoveryBackend: 'daemon' } as BackendConfig);
+    for (let tick = 0; tick < 3; tick++) {
+      await indexer.start();
+      indexer.stop();
+      expect(indexer.getStatus().lastError).toBeNull();
+    }
+    const retained = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(retained.ready).toBe(false);
+    expect(retained.permissionsVerified).toBe(false);
+    expect(accountChecks).toBe(2);
+    expect(eventFetches).toBe(0);
+    expect(indexer.getStatus().indexedHeight).toBe(501);
+    expect(indexer.getStatus().lastWarning).toContain('rolling back to 499');
   });
 
   test('returns null if daemon fetch throws', async () => {

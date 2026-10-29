@@ -443,7 +443,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p>Connect Auro (browser extension) or Ledger (USB, via WebHID). Ledger also requires a <Em>Vault Index</Em>, the account number on the device (default <Tok>0</Tok>).</p>
               </Step>
               <Step n={2} title="Start a vault" img="/guide/step-create-name.png" imgAlt="Name and network step">
-                <p>From <Tok>Your Vaults</Tok>, select <Tok>Create Vault</Tok>. Enter a local nickname and choose a network. Only Testnet is currently available.</p>
+                <p>From <Tok>Your Vaults</Tok>, select <Tok>Create Vault</Tok>. Enter a local nickname. The network shown is fixed by the deployment; a Mainnet build shows Mainnet, while a test-network build shows its configured Testnet or Devnet label.</p>
               </Step>
               <Step n={3} title="Set owners and threshold" img="/guide/step-create-owners.png" imgAlt="Owners and threshold step">
                 <p>The vault address is generated automatically. Add each owner address (up to twenty; your wallet is included by default) and set the threshold.</p>
@@ -591,7 +591,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             <div className="mt-5 space-y-3">
               {[
                 { l: 'Blind signing', v: <>Auro and Ledger sign only the proposal <b className="text-white">hash</b>. Confirm the action in the app first; it recomputes and verifies the hash before signing.</> },
-                { l: 'Networks', v: <><b className="text-white">Testnet</b> is currently available. Devnet and Mainnet are planned.</> },
+                { l: 'Networks', v: <>The app shows the network configured for this deployment. Confirm that your wallet is on that network before signing.</> },
               ].map((f) => (
                 <div key={f.l} className="flex flex-col sm:flex-row sm:gap-3 text-sm text-safe-text leading-relaxed">
                   <span className="font-mono text-[0.7rem] uppercase tracking-wide text-safe-text/60 sm:min-w-[128px] shrink-0 mb-0.5 sm:mb-0">{f.l}</span>

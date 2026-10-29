@@ -6,6 +6,16 @@ import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function isHttpsEndpoint(value) {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 // Build stamp for the footer: version from package.json, short commit from git
 // (or NEXT_PUBLIC_COMMIT_SHA in CI). git is best-effort — a build without a
 // working tree (e.g. Docker layer) just omits the commit.
@@ -84,6 +94,16 @@ export default function configForPhase(phase) {
         + '(mainnet, testnet, or devnet); '
         + 'MINA_NETWORK_DOMAIN, if set, must match too.',
       );
+    }
+    if (network === 'mainnet') {
+      for (const name of ['NEXT_PUBLIC_MINA_ENDPOINT', 'NEXT_PUBLIC_ARCHIVE_ENDPOINT']) {
+        if (!isHttpsEndpoint(process.env[name])) {
+          throw new Error(`Mainnet UI build requires an explicit HTTPS ${name}.`);
+        }
+      }
+      if (!/^[1-9][0-9]*$/.test(process.env.NEXT_PUBLIC_MINAGUARD_VK_HASH ?? '')) {
+        throw new Error('Mainnet UI build requires a decimal NEXT_PUBLIC_MINAGUARD_VK_HASH.');
+      }
     }
   }
   return nextConfig;

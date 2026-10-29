@@ -23,6 +23,7 @@ MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI
 - For transfers to new recipient accounts, the executor pays the account-creation cost and transaction fee; see the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
 - Indexed read API for contracts, owners, proposals, approvals, and raw events.
 - Deploy + setup UI flow with a creation-time local deploy-key download. The browser does not persist the key; the creator may retain the downloaded copy. A Mina transaction-version upgrade can make that key sufficient to replace the vault verification key without owner approval. If a fork breaks old proofs and no backup exists, funds may become inaccessible. See the [accepted risk](docs/security-audit-guide.md#accepted-risks-and-known-limitations).
+- Vault creation displays the network fixed by the deployed UI build. Before deploying a Vault or proposing a SubVault, the UI checks that the configured Mina node reports the matching network. Mainnet creation requires explicit HTTPS Mina and archive endpoints and a mainnet verification-key hash.
 - For an older-version vault whose VK still matches this release, the detail page guides owners to submit an ordinary proved action and check that Mina refreshed the stored version. This works only if Mina accepts the existing proof. Any fee payer can instead submit a no-op vault update that ends the deploy-key fallback, so a proved action is the safer compatibility check. If the installed VK differs from the reviewed replacement, the detail page can export a version 3 VK migration request. The MinaGuard offline CLI compiles and checks the replacement VK, signs with the saved deploy key and an offline fee payer key, and returns a transaction for the UI to validate and broadcast. If proofs break, that migration must land before any other vault update, including a third-party no-op. A future fork still needs a reviewed compatible release and per-network VK hash before migration is attempted.
 - Child reservations validate governance bounds and initialized root-parent state; successful child setup clears the consumed reservation hash.
 - Child allocations require initialized recipients bound to the sending parent. Complete child setup before funding; ordinary transfers and external deposits to uninitialized children remain unrecoverable until setup succeeds. See [safe child funding](docs/contracts-audit-guide.md#safe-child-funding).
@@ -150,6 +151,27 @@ its platform CI step allows 25 minutes for the selected tests. These proof
 tests still run on every PR check. A VK cache miss recompiles the circuit,
 including after cache expiry or a merge to a branch that cannot access the
 PR's cache.
+
+### Mainnet image preparation
+
+`.github/workflows/mainnet-image-build.yml` is a manual build and attestation
+workflow for the `main` branch. It publishes separate `mainnet-*` GHCR images;
+it does not deploy them to AWS. Set the public GitHub Actions variables
+`MAINNET_API_BASE_URL`, `MAINNET_MINA_ENDPOINT`,
+`MAINNET_ARCHIVE_ENDPOINT`, and `MAINNET_BLOCK_EXPLORER_URL` to the intended
+HTTPS URLs before dispatching it. The workflow rejects missing or obviously
+non-mainnet URLs, selects the `mainnet` entry from the VK manifest for that
+commit, and passes both `MINA_NETWORK_DOMAIN=mainnet` and
+`NEXT_PUBLIC_MINA_NETWORK=mainnet` to the builds. The existing Trail release
+remains a separate testnet build.
+
+These settings have distinct jobs: the Mina and archive URLs choose which
+chain services the app talks to; the network name selects the wallet network;
+the contract domain is part of the proposal hash and circuit; and the VK hash
+checks the compiled contract. Keep all four aligned when configuring the AWS
+runtime. The browser checks the Mina node's reported network again before
+Vault creation. See the [deployment audit guide](docs/deploy-audit-guide.md)
+for the release boundary and remaining AWS setup.
 
 ## PR Preview Environments
 

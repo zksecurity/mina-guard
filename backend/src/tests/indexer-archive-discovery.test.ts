@@ -320,10 +320,10 @@ describe('archive discovery: backfill range', () => {
 });
 
 describe('archive discovery: cursor progression', () => {
-  test('uses indexStartHeight on cold start; uses prior cursor minus margin on subsequent runs', async () => {
+  test('uses indexStartHeight on cold start; replays the pending horizon on subsequent runs', async () => {
     // First tick: no cursor exists; archive query should be called with from=indexStartHeight=0.
     // After the tick, archive_discovered_height = latestHeight.
-    // Second tick at a higher latestHeight: from = max(indexStartHeight, prevCursor - DISCOVERY_MARGIN).
+    // Second tick at a higher latestHeight: rescan the last 290 pending heights.
     const calls: Array<{ from: number; to: number }> = [];
 
     let latestHeight = 1000;
@@ -354,7 +354,122 @@ describe('archive discovery: cursor progression', () => {
     const indexer2 = new MinaGuardIndexer(archiveConfig);
     await indexer2.start();
     indexer2.stop();
-    // DISCOVERY_MARGIN is 5 in the source.
-    expect(calls[1]).toEqual({ from: 1000 - 5, to: 1500 });
+    expect(calls[1]).toEqual({ from: 1000 - 290 + 1, to: 1500 });
+  });
+
+  test('finds a new pending-chain deploy below the prior discovery cursor', async () => {
+    await setIndexedHeight(600);
+    await prisma.indexerCursor.create({ data: { key: 'archive_discovered_height', value: '600' } });
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    let discoveryFrom = -1;
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeightFromArchive: async () => 601,
+      fetchBestChainHeaders: async () => [],
+      discoverCandidateAddressesFromArchive: async (
+        _pool: unknown, _vkHash: string, from: number,
+      ) => {
+        discoveryFrom = from;
+        return from <= 500 ? [{ address, deployBlock: 500 }] : [];
+      },
+      fetchVaultSecurityStatus: async () => securityStatus(),
+      fetchDecodedContractEvents: async () => [],
+    }));
+
+    const indexer = new MinaGuardIndexer(archiveConfig);
+    await indexer.start();
+    indexer.stop();
+
+    expect(discoveryFrom).toBeLessThanOrEqual(500);
+    expect((await prisma.contract.findUnique({ where: { address } }))?.discoveredAtBlock).toBe(500);
+  });
+
+  test('indexes a new event in a reorged block with no previously stored header', async () => {
+    await setIndexedHeight(600);
+    await prisma.indexerCursor.create({ data: { key: 'archive_discovered_height', value: '600' } });
+    const address = PrivateKey.random().toPublicKey().toBase58();
+    const contract = await prisma.contract.create({
+      data: { address, ready: true, permissionsVerified: true, discoveredAtBlock: 1 },
+    });
+    const event = {
+      type: 'proposal',
+      event: { proposalHash: 'reorg-added-proposal', txType: '1' },
+      blockHeight: 500,
+      blockHash: 'new-block-500',
+      parentHash: 'block-499',
+      txHash: 'reorg-added-tx',
+      txMemo: null,
+    };
+    let eventFrom = -1;
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeightFromArchive: async () => 601,
+      fetchBestChainHeaders: async () => [],
+      discoverCandidateAddressesFromArchive: async () => [],
+      fetchDecodedContractEvents: async (_address: string, from: number, to: number) => {
+        eventFrom = from;
+        return from <= 500 && to >= 500 ? [event] : [];
+      },
+    }));
+
+    expect(await prisma.blockHeader.findUnique({ where: { height: 500 } })).toBeNull();
+    const indexer = new MinaGuardIndexer(archiveConfig);
+    await indexer.start();
+    indexer.stop();
+
+    expect(eventFrom).toBeLessThanOrEqual(500);
+    expect(await prisma.eventRaw.count({ where: { contractId: contract.id } })).toBe(1);
+    expect(await prisma.proposal.count({ where: { contractId: contract.id } })).toBe(1);
+  });
+
+  test('does not overlap a slow tick with the next poll', async () => {
+    let releaseHeight!: () => void;
+    const heightGate = new Promise<void>((resolve) => { releaseHeight = resolve; });
+    let heightCalls = 0;
+    stubMinaClient(() => ({
+      fetchLatestBlockHeightFromArchive: async () => {
+        heightCalls += 1;
+        await heightGate;
+        return 0;
+      },
+      fetchBestChainHeaders: async () => [],
+      discoverCandidateAddressesFromArchive: async () => [],
+      fetchDecodedContractEvents: async () => [],
+    }));
+
+    const indexer = new MinaGuardIndexer(archiveConfig);
+    const runTick = () => (indexer as unknown as { tick(): Promise<void> }).tick();
+    const first = runTick();
+    expect(heightCalls).toBe(1);
+    await runTick();
+    expect(heightCalls).toBe(1);
+    releaseHeight();
+    await first;
+    await runTick();
+    expect(heightCalls).toBe(2);
+    indexer.stop();
+  });
+
+  test('keeps the cursor when the archive tip drops below it', async () => {
+    await setIndexedHeight(600);
+    let discoveryCalls = 0;
+    stubMinaClient(() => ({
+      fetchGenesisConstants: async () => ({ genesisTimestampMs: 0, slotDurationMs: 90000 }),
+      fetchLatestBlockHeightFromArchive: async () => 100,
+      fetchBestChainHeaders: async () => [],
+      discoverCandidateAddressesFromArchive: async () => {
+        discoveryCalls += 1;
+        return [];
+      },
+    }));
+
+    const indexer = new MinaGuardIndexer(archiveConfig);
+    await indexer.start();
+    indexer.stop();
+
+    expect(indexer.getStatus().lastError).toContain('below indexed height 600');
+    expect(discoveryCalls).toBe(0);
+    expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value)
+      .toBe('600');
   });
 });

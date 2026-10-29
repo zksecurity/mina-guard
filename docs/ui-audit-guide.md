@@ -181,6 +181,8 @@ reclaimable.
   The network must be explicitly set to `mainnet`, `testnet`, or `devnet`; missing, invalid, or
   conflicting values abort compilation. `next build` rejects a missing or invalid
   value, or a mismatch with `MINA_NETWORK_DOMAIN` when it is also set.
+  A mainnet build also requires explicit HTTPS Mina and archive endpoints and a decimal
+  `NEXT_PUBLIC_MINAGUARD_VK_HASH`; it cannot fall back to the default devnet endpoints.
   The chosen domain must match the build's node network
   and expected VK hash. The worker rejects a desktop runtime networkId outside
   its baked-in proof domain. Mainnet uses `Field(1)`; testnet and devnet retain
@@ -201,6 +203,15 @@ reclaimable.
   endpoints and networkId can be supplied at runtime by the desktop shell
   (`window.__minaGuardConfig`), but the worker rejects a networkId different
   from its compiled domain. The circuit domain itself is fixed at build time.
+
+- **Vault creation uses the configured network.** The name step displays the effective
+  deployment network as read-only. A mainnet build shows Mainnet only when its explicit
+  endpoints and expected VK hash are configured and its runtime network is mainnet. Before
+  deploying a Vault or proposing a SubVault, the browser queries the Mina node for
+  `networkID` and rejects an unsupported or mismatched proof domain. Testnet and devnet
+  share the existing proof domain; mainnet must be reported as mainnet. The check also
+  rejects a configuration change before transaction preparation. This check does not
+  attest the browser bundle or establish the indexer's network identity.
 
 ---
 
