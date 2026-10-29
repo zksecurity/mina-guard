@@ -23,11 +23,14 @@ the self-contained desktop build of this same UI in
 
 MinaGuard is in beta on every supported network, including Mainnet. Bugs could
 cause loss of funds; users should keep balances to amounts they can afford to lose.
-`components/BetaNotice.tsx` displays a non-dismissible notice below the header
+`components/BetaNotice.tsx` displays a dismissible notice below the header
 (and below a network-mismatch warning, when present) on every app route. The
 standalone `/guide` renders the same warning without the link back to itself;
-its `#beta` section explains the risk and precautions. The notice wraps on narrow screens
-and is included in the shared UI packaged by the desktop app.
+its `#beta` section explains the risk and precautions. Dismissing the notice
+hides it for the current browser tab session. The shared web and desktop UI
+also shows the warning in a dialog each time the proposal-creation page opens,
+before either online proposal creation or offline request export. The dialog
+can be dismissed with Continue or Escape; it does not create a transaction.
 
 This disclosure does not enforce balance limits or verify a transaction's safety.
 Existing network checks and signing confirmations still apply.

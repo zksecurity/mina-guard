@@ -1,6 +1,7 @@
 'use client';
 
 import TransactionPreflightPanel from '@/components/TransactionPreflightPanel';
+import BetaProposalDialog from '@/components/BetaProposalDialog';
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -254,6 +255,7 @@ function NewTransactionPageInner() {
 
   return (
     <div>
+      <BetaProposalDialog />
       <div className="p-6 max-w-2xl">
         <button
           type="button"

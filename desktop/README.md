@@ -4,6 +4,8 @@
 > you can afford to lose. This applies to the desktop app on both Testnet and
 > Mainnet; Mainnet funds are real. Read **User guide → Beta product** in the app
 > (`/guide#beta`).
+> You can dismiss the banner for the current tab; the warning appears again
+> when you open the proposal-creation page.
 
 Online creation checks whether the exact proposal already exists before requesting a signature, and again when assessing a stale transaction. The recovery panel offers **View proposal** so another owner can approve the existing proposal. Propose and approve recheck their indexed witnesses against fresh vault state after the proposal signature, before building the transaction.
 
