@@ -211,7 +211,10 @@ reclaimable.
   `networkID` and rejects an unsupported or mismatched proof domain. Testnet and devnet
   share the existing proof domain; mainnet must be reported as mainnet. The check also
   rejects a configuration change before transaction preparation. This check does not
-  attest the browser bundle or establish the indexer's network identity.
+  attest the browser bundle or establish the indexer's network identity. The
+  separate mainnet release workflow attests the built frontend image and its
+  content baseline; its external watcher is described in the deployment audit
+  guide and only runs after the approved release is configured.
 
 ---
 
