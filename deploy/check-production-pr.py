@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
-"""Accept a release-pointer change or a complete sync from reviewed main."""
+"""Check that a production PR merges the exact reviewed main tree."""
 
 import argparse
-import base64
-import binascii
-import hashlib
 import json
-import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 
 REPOSITORY = "zksecurity/mina-guard"
-POINTER = "deploy/production-release.json"
 
 
 def sha(value: object) -> str:
@@ -62,70 +57,46 @@ def tree(commit: str) -> dict[str, tuple[str, str, str]]:
     return entries
 
 
-def without_pointer(entries: dict) -> dict:
-    return {path: entry for path, entry in entries.items() if path != POINTER}
-
-
-def classify(base: dict, head: dict, main: dict | None = None) -> str:
-    if base == head:
-        raise ValueError("production PR has no file changes")
-    if base.get(POINTER) != head.get(POINTER):
-        if without_pointer(base) != without_pointer(head):
-            raise ValueError("a release change cannot also update production code")
-        if head.get(POINTER, ())[:2] != ("blob", "100644"):
-            raise ValueError("release pointer must be a regular non-executable file")
-        return "promotion"
-    if main is None or without_pointer(head) != without_pointer(main):
-        raise ValueError("sync must copy the complete current main tree and preserve the release pointer")
-    return "sync"
-
-
-def check_pr(number: str, head_sha: str, base_sha: str, record_output: Path) -> dict:
+def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
     if not re.fullmatch(r"[1-9][0-9]*", number):
         raise ValueError("invalid PR number")
     sha(head_sha)
     sha(base_sha)
 
-    def check_refs() -> None:
+    def check_refs() -> dict:
         pr = api(f"pulls/{number}")
         if (pr.get("state") != "open"
                 or pr.get("base", {}).get("ref") != "production"
                 or pr.get("base", {}).get("repo", {}).get("full_name") != REPOSITORY
                 or pr.get("head", {}).get("repo", {}).get("full_name") != REPOSITORY
+                or pr.get("head", {}).get("ref") != "main"
                 or pr.get("head", {}).get("sha") != head_sha
                 or pr.get("base", {}).get("sha") != base_sha):
             raise ValueError("PR repository, head, or production base changed; refresh the PR check")
+        if pr.get("mergeable") is False:
+            raise ValueError("production PR must have a conflict-free merge result")
+        return pr
 
-    check_refs()
-    # Requiring the current base in the PR head makes its tree the merge result.
-    comparison = api(f"compare/{base_sha}...{head_sha}")
-    if comparison.get("status") != "ahead":
-        raise ValueError("update the PR branch with the current production branch first")
-    base, head = tree(base_sha), tree(head_sha)
-    main_sha = None
-    main = None
-    if base.get(POINTER) == head.get(POINTER):
-        main_sha = sha(api("git/ref/heads/main").get("object", {}).get("sha"))
-        main = tree(main_sha)
-    kind = classify(base, head, main)
-    record = None
-    if kind == "promotion":
-        blob_sha = head[POINTER][2]
-        blob = api(f"git/blobs/{blob_sha}")
-        size = blob.get("size")
-        if (type(size) is not int or not 0 < size <= 4096
-                or blob.get("encoding") != "base64" or not isinstance(blob.get("content"), str)):
-            raise ValueError("invalid release-pointer blob")
-        record = base64.b64decode(blob["content"].replace("\n", ""), validate=True)
-        digest = hashlib.sha1(f"blob {len(record)}\0".encode() + record).hexdigest()
-        if len(record) != size or digest != blob_sha:
-            raise ValueError("release-pointer bytes do not match the checked Git tree")
-    check_refs()
-    if main_sha and sha(api("git/ref/heads/main").get("object", {}).get("sha")) != main_sha:
-        raise ValueError("main changed during this check; refresh the sync PR")
-    if record is not None:
-        record_output.write_bytes(record)
-    return {"kind": kind, "headSha": head_sha, "baseSha": base_sha, "mainSha": main_sha}
+    for attempt in range(10):
+        pr = check_refs()
+        if pr.get("mergeable") is True and pr.get("merge_commit_sha"):
+            break
+        if attempt < 9:
+            time.sleep(1)
+    else:
+        raise ValueError("GitHub has not computed a merge result; rerun this check")
+    merge_sha = sha(pr.get("merge_commit_sha"))
+    main_sha = sha(api("git/ref/heads/main").get("object", {}).get("sha"))
+    if main_sha != head_sha:
+        raise ValueError("production PR must use the current main commit")
+    if tree(merge_sha) != tree(main_sha):
+        raise ValueError("production merge result must exactly match main")
+    latest = check_refs()
+    if latest.get("mergeable") is not True or latest.get("merge_commit_sha") != merge_sha:
+        raise ValueError("production merge result changed during the check")
+    if sha(api("git/ref/heads/main").get("object", {}).get("sha")) != main_sha:
+        raise ValueError("main changed during this check; refresh the production PR")
+    return {"headSha": head_sha, "baseSha": base_sha, "mergeSha": merge_sha}
 
 
 def main() -> int:
@@ -133,15 +104,11 @@ def main() -> int:
     parser.add_argument("--pr-number", required=True)
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--base-sha", required=True)
-    parser.add_argument("--record-output", required=True, type=Path)
     args = parser.parse_args()
     try:
-        result = check_pr(args.pr_number, args.head_sha, args.base_sha, args.record_output)
-        if output := os.environ.get("GITHUB_OUTPUT"):
-            with open(output, "a", encoding="utf-8") as stream:
-                stream.write(f"kind={result['kind']}\n")
+        result = check_pr(args.pr_number, args.head_sha, args.base_sha)
         print(json.dumps(result, sort_keys=True))
-    except (ValueError, OSError, subprocess.TimeoutExpired, binascii.Error) as error:
+    except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         print(f"Production PR rejected: {error}", file=sys.stderr)
         return 1
     return 0

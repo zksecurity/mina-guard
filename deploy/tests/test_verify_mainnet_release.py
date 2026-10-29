@@ -25,7 +25,7 @@ BACKEND = "ghcr.io/zksecurity/mina-guard/mainnet-backend@sha256:" + "b" * 64
 FRONTEND = "ghcr.io/zksecurity/mina-guard/mainnet-frontend@sha256:" + "c" * 64
 IDENTITY = (
     "https://github.com/zksecurity/mina-guard/.github/workflows/"
-    "mainnet-image-build.yml@refs/heads/main"
+    "mainnet-image-build.yml@refs/heads/production"
 )
 
 
@@ -132,7 +132,7 @@ class MainnetReleaseVerifierTest(unittest.TestCase):
             self.assertEqual(call[:2], ["attestation", "verify"])
             self.assertEqual(call[call.index("--repo") + 1], "zksecurity/mina-guard")
             self.assertEqual(call[call.index("--cert-identity") + 1], IDENTITY)
-            self.assertEqual(call[call.index("--source-ref") + 1], "refs/heads/main")
+            self.assertEqual(call[call.index("--source-ref") + 1], "refs/heads/production")
             self.assertEqual(call[call.index("--source-digest") + 1], SHA)
             self.assertEqual(
                 call[call.index("--predicate-type") + 1],

@@ -64,11 +64,11 @@ jobs:
           with open(os.environ['RUNNER_TEMP'] + '/approved-run.json', encoding='utf-8') as source:
               run = json.load(source)
           if (run.get('headSha') != os.environ['APPROVED_SHA']
-                  or run.get('headBranch') != 'main'
+                  or run.get('headBranch') != 'production'
                   or run.get('event') not in ('push', 'workflow_dispatch')
                   or run.get('workflowName') != 'Mainnet images (build and attest; no deploy)'
                   or run.get('conclusion') != 'success'):
-              raise SystemExit('Deployed release is not a successful main-branch build of the approved SHA')
+              raise SystemExit('Deployed release is not a successful production-branch build of the approved SHA')
           PY
           release_dir="$RUNNER_TEMP/mainnet-release"
           mkdir -p "$release_dir"

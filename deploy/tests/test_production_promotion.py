@@ -1,4 +1,4 @@
-"""Release promotion must pin one successful attested main-branch build."""
+"""Release metadata must pin one successful attested production build."""
 
 import hashlib
 import importlib.util
@@ -63,7 +63,7 @@ class PromotionTest(unittest.TestCase):
         def gh(args, **_kwargs):
             if args[1:3] == ["run", "view"]:
                 return json.dumps({
-                    "headSha": SHA, "headBranch": "main", "event": "push",
+                    "headSha": SHA, "headBranch": "production", "event": "push",
                     "conclusion": "success", "workflowName": promotion.WORKFLOW,
                 })
             if args[1:3] == ["run", "download"]:
@@ -86,12 +86,12 @@ class PromotionTest(unittest.TestCase):
             files.assert_not_called()
             images.assert_not_called()
 
-        for change in [{"headBranch": "production"}, {"event": "pull_request"},
+        for change in [{"headBranch": "main"}, {"event": "pull_request"},
                        {"workflowName": "other"}, {"conclusion": "failure"}]:
             def bad_run(args, **_kwargs):
                 if args[1:3] != ["run", "view"]:
                     raise AssertionError("artifact downloaded before run identity check")
-                return json.dumps({"headSha": SHA, "headBranch": "main", "event": "push",
+                return json.dumps({"headSha": SHA, "headBranch": "production", "event": "push",
                                    "conclusion": "success", "workflowName": promotion.WORKFLOW} | change)
             with self.subTest(change=change), patch.object(promotion, "command", side_effect=bad_run), \
                  self.assertRaises(ValueError):

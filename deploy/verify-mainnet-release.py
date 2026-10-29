@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 REPOSITORY = "zksecurity/mina-guard"
 WORKFLOW_IDENTITY = (
     "https://github.com/zksecurity/mina-guard/.github/workflows/"
-    "mainnet-image-build.yml@refs/heads/main"
+    "mainnet-image-build.yml@refs/heads/production"
 )
 IMAGE_PREFIX = "ghcr.io/zksecurity/mina-guard/mainnet"
 MAX_MANIFEST_BYTES = 64 * 1024
@@ -174,7 +174,7 @@ def verify_attestation(subject: str, approved_sha: str, label: str) -> None:
         "--repo", REPOSITORY,
         "--cert-identity", WORKFLOW_IDENTITY,
         "--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
-        "--source-ref", "refs/heads/main",
+        "--source-ref", "refs/heads/production",
         "--source-digest", approved_sha,
         "--predicate-type", "https://slsa.dev/provenance/v1",
         "--deny-self-hosted-runners",

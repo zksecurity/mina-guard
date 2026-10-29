@@ -3,7 +3,7 @@ name: Mainnet images (build and attest; no deploy)
 # This release identity is separate from the Mesa Trail testnet workflow.
 on:
   push:
-    branches: [main]
+    branches: [production]
   workflow_dispatch: {}
 
 concurrency:
@@ -15,11 +15,11 @@ permissions:
 
 jobs:
   vk-hashes:
-    if: github.ref == 'refs/heads/main' && vars.MAINNET_BUILD_ENABLED == 'true'
+    if: github.ref == 'refs/heads/production' && vars.MAINNET_BUILD_ENABLED == 'true'
     uses: ./.github/workflows/vk-hashes.yml
 
   release:
-    if: github.ref == 'refs/heads/main' && vars.MAINNET_BUILD_ENABLED == 'true'
+    if: github.ref == 'refs/heads/production' && vars.MAINNET_BUILD_ENABLED == 'true'
     needs: vk-hashes
     runs-on: ubuntu-latest
     permissions:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a reviewed production pointer against one attested mainnet build."""
+"""Check a production release record against one attested mainnet build."""
 
 import argparse
 import hashlib
@@ -61,10 +61,10 @@ def verify_candidate(record: dict[str, object]) -> dict[str, object]:
         "gh", "run", "view", run_id, "--repo", REPOSITORY,
         "--json", "headSha,headBranch,event,conclusion,workflowName",
     ]))
-    if (not isinstance(run, dict) or run.get("headSha") != sha or run.get("headBranch") != "main"
+    if (not isinstance(run, dict) or run.get("headSha") != sha or run.get("headBranch") != "production"
             or run.get("event") not in ("push", "workflow_dispatch")
             or run.get("conclusion") != "success" or run.get("workflowName") != WORKFLOW):
-        raise ValueError("candidate is not a successful main-branch mainnet build")
+        raise ValueError("candidate is not a successful production-branch mainnet build")
     with tempfile.TemporaryDirectory(prefix="minaguard-promotion-") as directory:
         artifact = Path(directory)
         command([
