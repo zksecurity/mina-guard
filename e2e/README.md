@@ -144,6 +144,11 @@ from seeded inputs. Form tests use the capture hook
 (`__e2eCaptureWorkerCalls`, `ui/lib/multisigClient.ts`) to assert the exact
 payload each form hands the worker without compiling the contract.
 
+The display tests drain intercepted requests during teardown with
+`page.unrouteAll({ behavior: 'wait' })`. This lets pending polling handlers finish
+reading and fulfilling their responses before Playwright closes the context;
+handler errors still fail the test.
+
 Requires a reachable Postgres — defaults to the repo's e2e db container on
 `127.0.0.1:15432` (`docker compose -f preview-env/docker-compose.e2e.yml up db`);
 override with `E2E_UI_DATABASE_URL`. The whole suite runs in ~1-2 minutes.
