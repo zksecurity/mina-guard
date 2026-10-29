@@ -13,9 +13,9 @@ export default function BetaNotice() {
       >
         BETA
       </span>
-      MinaGuard is in beta.{' '}
+      MinaGuard is in beta, including on Mainnet.{' '}
       <strong className="font-semibold text-white">You could lose funds</strong> if the
-      software fails — on every network, including Mainnet.{' '}
+      software fails.{' '}
       <Link
         href="/guide#beta"
         className="text-safe-green underline underline-offset-2 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-safe-green"

@@ -1,6 +1,6 @@
 # MinaGuard Desktop
 
-> **BETA — MinaGuard is in beta.** Bugs could cause loss of funds. Use only amounts
+> **BETA: MinaGuard is in beta.** Bugs could cause loss of funds. Use only amounts
 > you can afford to lose. This applies to the desktop app on both Testnet and
 > Mainnet; Mainnet funds are real. Read **User guide → Beta product** in the app
 > (`/guide#beta`).

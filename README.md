@@ -1,6 +1,6 @@
 # MinaGuard Monorepo
 
-> **BETA — MinaGuard is in beta.** Bugs could cause loss of funds. Use only amounts
+> **BETA: MinaGuard is in beta.** Bugs could cause loss of funds. Use only amounts
 > you can afford to lose. Beta describes the product's maturity, not the network:
 > this applies on both Testnet and Mainnet. Mainnet funds are real. Read
 > **User guide → Beta product** in the app (`/guide#beta`) before using a vault.
