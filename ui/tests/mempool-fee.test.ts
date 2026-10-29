@@ -37,15 +37,60 @@ describe('mempool fee selection', () => {
     expect(estimate).toEqual({ fee: 30_000_000, feePerAU: 7_500_000, sampleSize: 12 });
   });
 
-  it('uses the 0.01 MINA fallback for an empty or unavailable pool', async () => {
+  it('uses the 0.01 MINA fallback only for a confirmed empty pool', async () => {
     pooled([]);
-    expect(await resolveZkappFee(endpoint)).toBe(EMPTY_MEMPOOL_FALLBACK_FEE);
+    expect(await resolveZkappFee(endpoint)).toBe(10_000_000);
+  });
+
+  it('uses the old 0.1 MINA fee when the pool cannot be queried', async () => {
     globalThis.fetch = (async () => { throw new Error('node unavailable'); }) as unknown as typeof fetch;
-    expect(await resolveZkappFee(endpoint)).toBe(EMPTY_MEMPOOL_FALLBACK_FEE);
+    expect(await resolveZkappFee(endpoint)).toBe(100_000_000);
+    expect(await resolveOnlineZkappFee(endpoint, 'ledger')).toBe(100_000_000);
   });
 
   it('falls back when the node aborts the timed query', async () => {
     globalThis.fetch = (async () => { throw new DOMException('timed out', 'TimeoutError'); }) as unknown as typeof fetch;
+    expect(await resolveZkappFee(endpoint)).toBe(100_000_000);
+  });
+
+  it('does not treat an HTTP error with an empty-pool body as a successful query', async () => {
+    globalThis.fetch = (async () => Response.json({ data: { pooledZkappCommands: [] } }, { status: 503 })) as unknown as typeof fetch;
+    expect(await resolveZkappFee(endpoint)).toBe(100_000_000);
+  });
+
+  it('uses 0.1 MINA for invalid JSON', async () => {
+    globalThis.fetch = (async () => new Response('not-json')) as unknown as typeof fetch;
+    expect(await resolveZkappFee(endpoint)).toBe(100_000_000);
+  });
+
+  for (const [name, response] of [
+    ['null response', null],
+    ['missing data', {}],
+    ['missing pool', { data: {} }],
+    ['null pool', { data: { pooledZkappCommands: null } }],
+    ['non-array pool', { data: { pooledZkappCommands: {} } }],
+    ['GraphQL errors with partial data', { errors: [{ message: 'node busy' }], data: { pooledZkappCommands: [] } }],
+    ['null entry', { data: { pooledZkappCommands: [null] } }],
+    ['missing command', { data: { pooledZkappCommands: [{}] } }],
+    ['zero account updates', { data: { pooledZkappCommands: [{ zkappCommand: { feePayer: { body: { fee: '1' } }, accountUpdates: [] } }] } }],
+  ] as const) {
+    it(`uses 0.1 MINA for ${name}`, async () => {
+      globalThis.fetch = (async () => Response.json(response)) as unknown as typeof fetch;
+      expect(await resolveZkappFee(endpoint)).toBe(100_000_000);
+    });
+  }
+
+  for (const fee of [null, '', ' ', 'NaN', '-1', '1.5', '1e7', '9007199254740992']) {
+    it(`does not mistake an unusable fee (${JSON.stringify(fee)}) for an empty pool`, async () => {
+      globalThis.fetch = (async () => Response.json({ data: { pooledZkappCommands: [{ zkappCommand: {
+        feePayer: { body: { fee } }, accountUpdates: [{}],
+      } }] } })) as unknown as typeof fetch;
+      expect(await resolveZkappFee(endpoint)).toBe(100_000_000);
+    });
+  }
+
+  it('keeps the 0.01 MINA floor for a valid low-fee sample', async () => {
+    pooled([0]);
     expect(await resolveZkappFee(endpoint)).toBe(EMPTY_MEMPOOL_FALLBACK_FEE);
   });
 

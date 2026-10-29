@@ -26,6 +26,9 @@ export interface FeeEstimate {
   sampleSize: number;
 }
 
+/** Only a successful query with an explicit empty array confirms a quiet pool. */
+class EmptyMempoolError extends Error {}
+
 const QUERY = `{
   pooledZkappCommands {
     zkappCommand {
@@ -75,22 +78,30 @@ export async function estimateZkappFee(
     throw new Error(`mempool query failed: HTTP ${res.status}`);
   }
   const json = await res.json();
-  if (json.errors) {
+  if (json?.errors) {
     throw new Error(`mempool query errors: ${JSON.stringify(json.errors)}`);
   }
-  const pool: PooledZkappCommandResult[] = json.data?.pooledZkappCommands ?? [];
+  const pool: PooledZkappCommandResult[] | undefined = json?.data?.pooledZkappCommands;
+  if (!Array.isArray(pool)) {
+    throw new Error('mempool query returned no valid pool');
+  }
+  if (pool.length === 0) {
+    throw new EmptyMempoolError('mempool is empty');
+  }
 
   const feePerAU: number[] = [];
   for (const entry of pool) {
-    const cmd = entry.zkappCommand;
-    const auCount = cmd?.accountUpdates?.length ?? 0;
+    const cmd = entry?.zkappCommand;
+    const auCount = Array.isArray(cmd?.accountUpdates) ? cmd.accountUpdates.length : 0;
     if (auCount === 0) continue;
-    const fee = Number(cmd?.feePayer?.body?.fee);
-    if (!Number.isFinite(fee) || fee < 0) continue;
+    const rawFee = cmd?.feePayer?.body?.fee;
+    if (typeof rawFee !== 'string' || !/^\d+$/.test(rawFee)) continue;
+    const fee = Number(rawFee);
+    if (!Number.isSafeInteger(fee)) continue;
     feePerAU.push(fee / auCount);
   }
   if (feePerAU.length === 0) {
-    throw new Error('mempool empty or no usable entries');
+    throw new Error('mempool has no usable entries');
   }
 
   feePerAU.sort((a, b) => b - a);
@@ -105,10 +116,11 @@ export async function estimateZkappFee(
   };
 }
 
-// Flat fallback when the mempool is empty or the query fails, and the floor
-// under a mempool-derived estimate. It has been observed on included mainnet
-// zkApp transactions, but inclusion speed depends on the current fee market.
+// Floor under a market estimate, and fallback for a confirmed empty pool.
+// An unavailable pool uses the existing fixed fee instead; neither guarantees
+// inclusion or measures the clearing price when the query fails.
 export const EMPTY_MEMPOOL_FALLBACK_FEE = OFFLINE_MIN_FEE_NANOMINA;
+export const UNAVAILABLE_MEMPOOL_FALLBACK_FEE = OFFLINE_MAX_FEE_NANOMINA;
 /** Preserve the existing Auro fee while changing Ledger and offline flows. */
 export const AURO_TX_FEE = OFFLINE_MAX_FEE_NANOMINA;
 
@@ -118,7 +130,8 @@ export const DEFAULT_AU_ESTIMATE = 4;
 
 /** High-level wrapper around estimateZkappFee for callers that just want a
  *  ready-to-use fee value: returns the mempool-derived estimate bounded by
- *  the fallback and the automatic fee ceiling, or the fallback on failure.
+ *  the floor and the automatic fee ceiling. A confirmed empty pool uses the
+ *  floor; query failures or unusable responses use the existing fixed fee.
  *  Does not log; callers add their own logging if they want. */
 export async function resolveZkappFee(graphqlEndpoint: string): Promise<number> {
   try {
@@ -127,8 +140,10 @@ export async function resolveZkappFee(graphqlEndpoint: string): Promise<number> 
       Math.max(estimate.fee, EMPTY_MEMPOOL_FALLBACK_FEE),
       OFFLINE_MAX_FEE_NANOMINA,
     );
-  } catch {
-    return EMPTY_MEMPOOL_FALLBACK_FEE;
+  } catch (error) {
+    return error instanceof EmptyMempoolError
+      ? EMPTY_MEMPOOL_FALLBACK_FEE
+      : UNAVAILABLE_MEMPOOL_FALLBACK_FEE;
   }
 }
 

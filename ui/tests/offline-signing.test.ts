@@ -112,6 +112,28 @@ describe('offline bundle network selection', () => {
   }
 });
 
+describe('offline bundle fee fallback', () => {
+  for (const { action, build } of builders) {
+    for (const unavailable of [false, true]) {
+      it(`${action}: exports ${unavailable ? '0.1 MINA when unavailable' : '0.01 MINA for a confirmed empty pool'}`, async () => {
+        configure('mainnet');
+        const inner = globalThis.fetch;
+        globalThis.fetch = (async (url, init) => {
+          if (init?.method === 'POST' && JSON.parse(String(init.body)).query.includes('pooledZkappCommands')) {
+            if (unavailable) throw new DOMException('timed out', 'TimeoutError');
+            return Response.json({ data: { pooledZkappCommands: [] } });
+          }
+          return inner(url, init);
+        }) as typeof fetch;
+        const bundle = await build();
+        expect(bundle.version).toBe(3);
+        expect(bundle.fee).toBe(unavailable ? 100_000_000 : 10_000_000);
+        expect(bundle.minaNetwork).toBe('mainnet');
+      });
+    }
+  }
+});
+
 describe('offline allocation snapshots', () => {
   it('exports each recipient account for offline child-state preconditions', async () => {
     configure('testnet');

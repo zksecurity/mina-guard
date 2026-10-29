@@ -97,8 +97,11 @@ during export.
 For owner actions, export queries the configured Mina node's pending zkApp
 commands and estimates a fee from the median of the highest 12 fee-per-account-
 update samples, assuming four account updates. The result is bounded to
-0.01–0.1 MINA; an empty pool or failed query uses 0.01 MINA. This is a market
-heuristic, not Mina's protocol minimum or a promise of inclusion. The selected
+0.01–0.1 MINA. A successful query with an explicit empty pool uses 0.01 MINA;
+query failures, invalid pool responses, and pools without usable fee samples
+use the previous fixed 0.1 MINA fee. That fallback is a conservative policy when
+market data is unavailable. The estimate is a market heuristic, not Mina's
+protocol minimum or a promise of inclusion. The selected
 integer nanomina fee is saved in the version 3 request and cannot change after
 offline signing without invalidating the fee-payer signature. Verification-key
 migration requests have no `fee` field and use the fixed 0.1 MINA fee instead.

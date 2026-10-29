@@ -232,7 +232,10 @@ Assuming that the frontend (UI) is not compromised, the interactions are the fol
   - **Ledger wallet.** Used for signing, through WebHID. Transactions are submitted through the node endpoints
     defined in the frontend code. The worker selects a bounded 0.01–0.1 MINA fee
     from pending zkApp commands at that node before building the transaction;
-    a failed query or empty pool selects 0.01 MINA. Due to interface restrictions,
+    a confirmed empty pool selects 0.01 MINA. Failed queries, invalid pool
+    responses, and pools without usable fee samples select the previous fixed
+    0.1 MINA fee. This conservative fallback does not measure congestion or
+    guarantee inclusion. Due to interface restrictions,
     signatures are again blind.
   - **Offline-CLI.** Used for signing with a key on a different device (e.g. air-gapped). A bundle is exported
     with the same bounded fee, shown in the online export UI and again in the

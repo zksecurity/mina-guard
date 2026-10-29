@@ -301,8 +301,11 @@ empty memos). Owner-chain links, vote-nullifier keys, and child configuration
 hashes also have separate tags. Use matching CLI/UI/backend/desktop builds and
 the current per-network VKs.
 Owner requests include a bounded, mempool-derived fee in nanomina; the offline
-CLI shows that exact fee before signing it. An empty or unavailable mempool uses
-0.01 MINA, while VK migration keeps its fixed 0.1 MINA fee. Auro keeps its
+CLI shows that exact fee before signing it. A successful query confirming an
+empty mempool uses 0.01 MINA. A failed query, missing pool, or pool with no usable
+fee samples falls back to the previous fixed 0.1 MINA fee. This fallback is a
+conservative policy, not evidence of congestion or an inclusion guarantee.
+VK migration keeps its fixed 0.1 MINA fee. Auro keeps its
 existing fixed fee and online Ledger uses the same bounded estimate as offline
 export. On owner response upload, the UI shows the signed command's fee and
 requires a separate broadcast click. It rejects fees outside 0.01–0.1 MINA or

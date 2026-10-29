@@ -102,7 +102,10 @@ Signing inside the shell:
 
 The packaged Ledger worker and offline exporter estimate a bounded 0.01–0.1
 MINA fee from pending zkApp commands at the runtime-configured Mina node. An
-empty or unavailable pool uses 0.01 MINA. Offline export shows the selected
+explicitly empty pool from a successful query uses 0.01 MINA. Query failures,
+invalid pool responses, and pools without usable fee samples use the previous
+fixed 0.1 MINA fee. The fallback is a conservative policy and does not guarantee
+inclusion. Offline export shows the selected
 fee, and the CLI shows that exact amount again before signing. The external
 Auro path keeps its fixed 0.1 MINA fee; VK migration also uses fixed 0.1 MINA.
 The packaged owner-response upload shows the fee parsed from the signed command,
