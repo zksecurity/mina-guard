@@ -171,6 +171,9 @@ release, run `deploy/verify-mainnet-release.py` with an independently approved
 source commit; the private ops rollout independently verifies the digest
 output on the app host. Promote a reviewed run with a PR that updates only
 `deploy/production-release.json` on the protected `production` branch.
+To update the deployment checker, use a separate PR that copies all tracked
+files from current `main` while preserving that release file exactly. Both
+kinds of PR require human review; see the maintenance steps in the guide below.
 `deploy/mainnet-content-integrity.py` compares the public site with the
 approved bytes. The GitHub-hosted watch workflow can run it every 15 minutes
 after the ops App actor ID, watch gate, and alert webhook are configured. These checks do not

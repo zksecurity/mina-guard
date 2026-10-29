@@ -241,13 +241,46 @@ branch that changes only `deploy/production-release.json`:
 
 `Check mainnet production promotion` checks the exact run, source commit,
 manifest bytes, two signed JSON files, and two attested images using trusted
-code from the base branch. Require that check and human review on `production`;
+code from the base branch. The promotion path logs into GHCR with its read-only
+package permission before checking the image attestations. Require that check
+and human review on `production`, and require PR branches to be up to date;
 disallow direct pushes and bypasses. Bootstrap the branch from a commit that
 already contains this workflow, then set its protection rule before accepting
 the first promotion PR. Merging a reviewed promotion PR changes the pointer;
 the private ops workflow polls that branch and deploys only after its own
 preflight and host verification. The first infrastructure launch and runtime
 preparation remain explicit operator actions in the ops runbook.
+
+### Update the production checker
+
+Use a separate maintenance PR when the workflows or verification scripts need
+an update. Start its branch from the current `production` branch, copy the full
+tracked file tree from the current `main` commit, and preserve
+`deploy/production-release.json` from `production` byte for byte, including its
+file mode. If production has no release pointer yet, leave it absent. Include
+additions, deletions, renamed files, executable bits, symlinks, and submodule
+commit IDs from `main`; copying just the checker files is not accepted.
+
+The existing production checker reads GitHub's Git objects as data. It never
+checks out or runs the proposed code. It accepts the sync only when every file
+outside the release pointer matches one pinned current `main` commit, and the
+PR head includes the current production base. The run prints that main commit
+ID. It rejects partial trees, changed release pointers, and branches that move
+while it is checking. This allows future checker updates through the same
+required check and human review, without an administrator bypass.
+
+Open the PR into `production` and obtain approval before merging. If `main`
+advances before merge, refresh the copied tree and rerun the check; a successful
+run records main's tip at check time, not a permanent lock on main. If production
+advances, update the PR branch from that base and rerun the check. Keeping the
+release pointer unchanged means this maintenance PR does not select a new app
+release. An app promotion must be a separate PR, with its existing build and
+attestation verification.
+
+Bootstrap production with a reviewed commit containing this maintenance path
+before making the check required. If an older pointer-only checker has already
+been required, it cannot approve its own replacement; an explicitly authorized
+temporary protection change would be needed to install this version first.
 
 ### Watch the content served to owners
 

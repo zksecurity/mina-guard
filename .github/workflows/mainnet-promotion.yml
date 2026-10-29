@@ -1,7 +1,7 @@
 name: Check mainnet production promotion
 
 # This workflow runs trusted production-branch code. Never check out or execute
-# the proposed PR head; it supplies only one JSON release pointer.
+# the proposed PR head. Inspect its Git objects as data only.
 on:
   pull_request_target:
     branches: [production]
@@ -22,21 +22,26 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - name: Accept only an in-repository release pointer
+      - name: Check release promotion or maintenance sync
+        id: change
         run: |
           set -euo pipefail
-          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename' > "$RUNNER_TEMP/changed-files"
-          test "$(cat "$RUNNER_TEMP/changed-files")" = 'deploy/production-release.json'
-          gh api -H 'Accept: application/vnd.github.raw+json' \
-            "repos/$GITHUB_REPOSITORY/contents/deploy/production-release.json?ref=$HEAD_SHA" \
-            > "$RUNNER_TEMP/production-release.json"
+          python3 deploy/check-production-pr.py --pr-number "$PR_NUMBER" \
+            --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA" \
+            --record-output "$RUNNER_TEMP/production-release.json"
+      - name: Authenticate for release image verification
+        if: steps.change.outputs.kind == 'promotion'
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
       - name: Verify the selected build and exact manifest
+        if: steps.change.outputs.kind == 'promotion'
         run: |
           set -euo pipefail
           python3 deploy/production-promotion.py \
