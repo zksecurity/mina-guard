@@ -1,5 +1,6 @@
 import { AccountUpdate, Cache, Field, Mina, PrivateKey, PublicKey, UInt32, UInt64, addCachedAccount, TokenId } from 'o1js';
 import { MinaGuard, NETWORK_DOMAIN_NAME, GUARD_PERMISSION_KINDS, GUARD_PERMISSION_NAMES, GUARD_SET_VERIFICATION_KEY_TXN_VERSION } from 'contracts';
+import { OFFLINE_REQUEST_VERSION } from 'contracts/offline-format';
 import { assertBundleNetwork, signChildAccount, signFeePayer, ZKAPP_TX_FEE } from './build-tx.js';
 import { escapeTerminalText } from './terminal-safe.js';
 
@@ -13,7 +14,7 @@ type Snapshot = {
 };
 
 export interface MigrationBundle {
-  version: 2;
+  version: typeof OFFLINE_REQUEST_VERSION;
   action: 'migrate-verification-key';
   minaNetwork: 'mainnet' | 'testnet';
   contractAddress: string;
@@ -27,7 +28,7 @@ export interface MigrationBundle {
 
 export function validateMigrationBundle(bundle: MigrationBundle): void {
   assertBundleNetwork(bundle.minaNetwork, NETWORK_DOMAIN_NAME);
-  if (bundle.version !== 2 || bundle.action !== 'migrate-verification-key') throw new Error('Unsupported migration format');
+  if (bundle.version !== OFFLINE_REQUEST_VERSION || bundle.action !== 'migrate-verification-key') throw new Error('Unsupported migration format');
   const vault = bundle.accounts?.[bundle.contractAddress];
   const payer = bundle.accounts?.[bundle.feePayerAddress];
   if (!vault || !payer || !vault.verificationKey || !vault.zkappState ||
@@ -60,6 +61,7 @@ export function renderMigrationSummary(bundle: MigrationBundle): string {
     `Network: ${bundle.minaNetwork}`,
     `Vault: ${bundle.contractAddress}`,
     `Fee payer: ${bundle.feePayerAddress}`,
+    `Fee: ${ZKAPP_TX_FEE / 1e9} MINA`,
     `Installed VK hash: ${bundle.sourceVerificationKeyHash}`,
     `Replacement VK hash: ${bundle.targetVerificationKeyHash}`,
     `Stored transaction version: ${bundle.sourceTxnVersion}`,

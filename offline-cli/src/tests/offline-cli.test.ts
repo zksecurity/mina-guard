@@ -31,7 +31,7 @@ import {
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig, resolveBundleFee } from '../build-tx.ts';
 import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
@@ -93,7 +93,7 @@ describe('offline-cli', () => {
     expect(result.code).not.toBe(0);
   }, 30_000);
 
-  it.each([1, 3, 99])('rejects incompatible bundle version %i', async (version) => {
+  it.each([1, 2, 99])('rejects incompatible bundle version %i', async (version) => {
     const bundlePath = join(tmpDir, 'bad-version.json');
     writeFileSync(bundlePath, JSON.stringify({ version, action: 'propose' }));
     const result = await runCLI(bundlePath, 'EKtest');
@@ -109,31 +109,65 @@ describe('offline-cli', () => {
     expect(result.stderr).toContain('Unsupported bundle version');
   }, 30_000);
 
-  it('routes a version 2 migration request to migration validation', async () => {
-    const bundlePath = join(tmpDir, 'invalid-v2-migration.json');
-    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'migrate-verification-key' }));
+  it('routes a version 3 migration request to migration validation', async () => {
+    const bundlePath = join(tmpDir, 'invalid-v3-migration.json');
+    writeFileSync(bundlePath, JSON.stringify({ version: 3, action: 'migrate-verification-key' }));
     const result = await runCLI(bundlePath, 'EKtest');
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Invalid migration request');
     expect(result.stdout).toBe('');
   }, 30_000);
 
+  it('rejects a version 2 migration request before key use', async () => {
+    const bundlePath = join(tmpDir, 'old-v2-migration.json');
+    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'migrate-verification-key' }));
+    const result = await runCLI(bundlePath, 'EKtest');
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Unsupported bundle version');
+    expect(result.stdout).toBe('');
+  }, 30_000);
+
   it('rejects unknown action', async () => {
     const bundlePath = join(tmpDir, 'bad-action.json');
-    writeFileSync(bundlePath, JSON.stringify({ version: 2, action: 'unknown' }));
+    writeFileSync(bundlePath, JSON.stringify({ version: 3, action: 'unknown' }));
     const result = await runCLI(bundlePath, 'EKtest');
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('Unknown bundle action');
   }, 30_000);
 
+  it.each([undefined, null, 0, -1, 9_999_999, 100_000_001, 10_000_000.5, '20000000', Infinity, NaN])(
+    'rejects invalid owner-request fee %s', (fee) => {
+      expect(() => resolveBundleFee({ fee } as any)).toThrow('Invalid request fee');
+    },
+  );
+
+  it.each([
+    ['missing', undefined],
+    ['below minimum', 9_999_999],
+    ['above maximum', 100_000_001],
+    ['fractional', 20_000_000.5],
+  ])('refuses a %s fee before summary or key use', async (name, fee) => {
+    const bundlePath = join(tmpDir, `bad-fee-${name}.json`);
+    writeFileSync(bundlePath, JSON.stringify({
+      version: 3, action: 'propose', minaNetwork: 'testnet',
+      contractAddress: EMPTY_PUBKEY_B58, feePayerAddress: EMPTY_PUBKEY_B58,
+      fee, accounts: {}, events: [], input: { txType: 'transfer', nonce: 1 },
+    }));
+    const result = await runCLI(bundlePath, 'EKtest');
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('Invalid request fee');
+    expect(result.stderr).not.toContain('====');
+    expect(result.stdout).toBe('');
+  }, 30_000);
+
   it('refuses an unknown transaction type before rendering a summary or signing', async () => {
     const bundlePath = join(tmpDir, 'unknown-type.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 2,
+      version: 3,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: EMPTY_PUBKEY_B58,
-      feePayerAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000,
       accounts: {},
       events: [],
       proposal: { proposalHash: '1', txType: 'Send\u001b[1A\u202e', receivers: [] },
@@ -164,8 +198,8 @@ describe('offline-cli', () => {
   it('tells the signer whether a createChild propose pays the child creation fee', () => {
     const CHILD = 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY';
     const propose = (accounts: Record<string, unknown>) => ({
-      version: 2, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
-      feePayerAddress: EMPTY_PUBKEY_B58, accounts, events: [], configNonce: 0,
+      version: 3, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000, accounts, events: [], configNonce: 0,
       input: { txType: 'createChild', nonce: 0, childAccount: CHILD, childOwners: [CHILD], childThreshold: 1 },
     }) as any;
     expect(renderBundleSummary(propose({}))).toContain('new, 1 MINA creation fee');
@@ -175,11 +209,11 @@ describe('offline-cli', () => {
   it('refuses a createChild approve bundle without its SubVault config before rendering a summary', async () => {
     const bundlePath = join(tmpDir, 'create-child-no-config.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 2,
+      version: 3,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: EMPTY_PUBKEY_B58,
-      feePayerAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000,
       accounts: {},
       events: [],
       proposal: { proposalHash: '1', txType: 'createChild', data: '5', childAccount: EMPTY_PUBKEY_B58, receivers: [] },
@@ -194,11 +228,11 @@ describe('offline-cli', () => {
   it('refuses a createChild execute bundle without its SubVault config before rendering a summary', async () => {
     const bundlePath = join(tmpDir, 'create-child-execute-no-config.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 2,
+      version: 3,
       action: 'execute',
       minaNetwork: 'testnet',
       contractAddress: EMPTY_PUBKEY_B58,
-      feePayerAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000,
       accounts: {},
       events: [],
       receiverAccountExists: {},
@@ -218,8 +252,8 @@ describe('offline-cli', () => {
     store.owners = [ownerA, ownerB];
     const data = childConfigHash(store.getCommitment(), Field(1), Field(2)).toString();
     const bundle = (overrides: Record<string, unknown> = {}) => ({
-      version: 2, action: 'approve', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
-      feePayerAddress: EMPTY_PUBKEY_B58, accounts: {}, events: [],
+      version: 3, action: 'approve', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000, accounts: {}, events: [],
       proposal: { proposalHash: '1', txType: 'createChild', data, childAccount: EMPTY_PUBKEY_B58, receivers: [] },
       childOwners: owners, childThreshold: 1, ...overrides,
     }) as any;
@@ -280,7 +314,7 @@ describe('offline-cli', () => {
     expect(canonicalizeBundleTxType(propose)).toBe('addOwner');
     expect(propose.input.txType).toBe('addOwner');
     // The summary compares the type by name to pick the owner target.
-    expect(renderBundleSummary({ ...propose, version: 2, minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58, feePayerAddress: EMPTY_PUBKEY_B58, accounts: {}, events: [], configNonce: 0 }))
+    expect(renderBundleSummary({ ...propose, version: 3, minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58, feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000, accounts: {}, events: [], configNonce: 0 }))
       .toContain('New owner       B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY');
 
     const approve = { action: 'approve', proposal: { txType: '0', receivers: [] } } as any;
@@ -292,11 +326,11 @@ describe('offline-cli', () => {
   it('escapes bundle text in warnings printed after confirmation', async () => {
     const bundlePath = join(tmpDir, 'escaped-warning.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 2,
+      version: 3,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: EMPTY_PUBKEY_B58,
-      feePayerAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000,
       accounts: { 'bad\u001b[2Jaccount': { publicKey: 'bad\u001b[2Jaccount' } },
       events: [],
       proposal: { proposalHash: '1', txType: 'transfer', receivers: [] },
@@ -316,11 +350,11 @@ describe('offline-cli', () => {
   it('rejects createChild propose without childPrivateKey', async () => {
     const bundlePath = join(tmpDir, 'create-child.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 2,
+      version: 3,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
-      feePayerAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
+      feePayerAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG', fee: 100_000_000,
       accounts: {},
       events: [],
       input: { txType: 'createChild', nonce: 1 },
@@ -340,11 +374,11 @@ describe('offline-cli', () => {
     // not consent, and nothing may be signed.
     const bundlePath = join(tmpDir, 'no-tty-abort.json');
     writeFileSync(bundlePath, JSON.stringify({
-      version: 2,
+      version: 3,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
-      feePayerAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
+      feePayerAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG', fee: 100_000_000,
       accounts: {},
       events: [],
       input: { txType: 'createChild', nonce: 1 },
@@ -653,14 +687,28 @@ describe('offline-cli', () => {
 
     function base(overrides: Record<string, unknown> = {}) {
       return {
-        version: 2 as const,
+        version: 3 as const,
         contractAddress: CONTRACT,
-        feePayerAddress: FEEPAYER,
+        feePayerAddress: FEEPAYER, fee: 100_000_000,
         accounts: {},
         events: [],
         ...overrides,
       };
     }
+
+    it('shows the fee that each owner action will sign', () => {
+      const proposal = { proposalHash: '123', txType: 'transfer', nonce: '1', receivers: [] };
+      const cases = [
+        { action: 'propose', fee: 20_000_000, expected: '0.02 MINA', input: { txType: 'transfer', nonce: 1, receivers: [] } },
+        { action: 'approve', fee: 30_000_000, expected: '0.03 MINA', proposal },
+        { action: 'execute', fee: 40_000_000, expected: '0.04 MINA', proposal, receiverAccountExists: {} },
+      ];
+      for (const bundle of cases) {
+        const out = renderBundleSummary({ ...base(), minaNetwork: 'testnet', ...bundle } as any);
+        expect(out).toContain(bundle.expected);
+        expect(out).not.toContain('0.1 MINA');
+      }
+    });
 
     it('renders a transfer propose: amounts, total, network, skips empty rows', () => {
       const bundle = {
@@ -684,7 +732,7 @@ describe('offline-cli', () => {
       expect(out).toContain(REAL_ADDR);
       expect(out).toContain('2.5 MINA');
       expect(out).toContain('Total');
-      expect(out).toContain('0.1 MINA'); // fee line, from ZKAPP_TX_FEE
+      expect(out).toContain('0.1 MINA'); // fee line, from the request bundle
       expect(out).toContain('testnet');
       expect(out).toContain(CONTRACT);
       expect(out).toContain(FEEPAYER);

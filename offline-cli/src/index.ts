@@ -28,7 +28,7 @@ if (!isMainThread) {
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
-import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildBundleConfig } from './build-tx.js';
+import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildBundleConfig, resolveBundleFee } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
 import { OFFLINE_REQUEST_VERSION } from 'contracts';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
@@ -114,6 +114,7 @@ async function main() {
   try {
     canonicalizeBundleTxType(bundle);
     if (bundle.action === 'approve' || bundle.action === 'execute') assertCreateChildBundleConfig(bundle);
+    resolveBundleFee(bundle);
   } catch (err) {
     fatal(`${err instanceof Error ? err.message : String(err)}\nAborted. No transaction was signed.`);
   }

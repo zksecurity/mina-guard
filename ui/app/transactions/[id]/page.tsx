@@ -102,6 +102,7 @@ export default function TransactionDetailPage() {
   const [actionMode, setActionMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
   const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
+  const [exportedFees, setExportedFees] = useState<Partial<Record<'approve' | 'execute', number>>>({});
   const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
   const [checkingRecipientFee, setCheckingRecipientFee] = useState(false);
 
@@ -1072,7 +1073,10 @@ export default function TransactionDetailPage() {
                         <OfflineSigningFlow
                           action="approve"
                           label="Approve"
-                          onExported={setExportedBundleName}
+                          onExported={(filename, fee) => {
+                            setExportedBundleName(filename);
+                            setExportedFees((current) => ({ ...current, approve: fee }));
+                          }}
                           cliBinaryName={cliBinaryName}
                           onBuildBundle={async () => {
                             assertValidMinaAddress(offlineFeePayerAddress);
@@ -1126,7 +1130,10 @@ export default function TransactionDetailPage() {
                         <OfflineSigningFlow
                           action="execute"
                           label="Execute"
-                          onExported={setExportedBundleName}
+                          onExported={(filename, fee) => {
+                            setExportedBundleName(filename);
+                            setExportedFees((current) => ({ ...current, execute: fee }));
+                          }}
                           cliBinaryName={cliBinaryName}
                           onBuildBundle={async () => {
                             assertValidMinaAddress(offlineFeePayerAddress);
@@ -1155,6 +1162,7 @@ export default function TransactionDetailPage() {
                   {permissionsSafe && childPermissionsSafe && !targetUnindexed && (
                     <UploadSignedResponse
                       acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
+                      expectedFees={exportedFees}
                       expectedContractAddress={multisig!.address}
                       expectedProposalHash={proposal!.proposalHash}
                       beforeBroadcast={() =>
@@ -1177,15 +1185,16 @@ export default function TransactionDetailPage() {
                           ? await buildOfflineApproveBundle(params)
                           : await buildOfflineExecuteBundle(params);
                         setExportedBundleName(downloadOfflineBundle(response.action, bundle));
+                        setExportedFees((current) => ({ ...current, [response.action]: bundle.fee }));
                       }}
-                      onComplete={(response, txHash) => {
+                      onComplete={(response, txHash, feePayer) => {
                         const kind = response.action as 'approve' | 'execute';
                         savePendingTx({
                           kind,
                           contractAddress: multisig!.address,
                           proposalHash: proposal!.proposalHash,
                           txHash,
-                          signerPubkey: offlineFeePayerAddress,
+                          signerPubkey: feePayer,
                           createdAt: new Date().toISOString(),
                         });
                         reportSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);

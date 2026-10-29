@@ -7,6 +7,7 @@ import { getMinaGuardConfig } from './endpoints';
 import { fetchVaultSecurityStatus } from './api';
 import { GUARD_SET_VERIFICATION_KEY_TXN_VERSION } from 'contracts/guard-permission-policy';
 import { OFFLINE_REQUEST_VERSION } from 'contracts/offline-format';
+import { resolveZkappFee } from './mempoolFee';
 
 /** The request format the CLI accepts; one constant for the UI, the CLI and the store restorer. */
 export const OFFLINE_BUNDLE_VERSION = OFFLINE_REQUEST_VERSION;
@@ -46,6 +47,8 @@ interface BundleBase {
   minaNetwork: 'testnet' | 'mainnet';
   contractAddress: string;
   feePayerAddress: string;
+  /** Nanomina chosen when the online UI exports this request. */
+  fee: number;
   accounts: Record<string, BundleAccount>;
   events: Array<{ eventType: string; payload: unknown; blockHeight?: number | null }>;
 }
@@ -278,6 +281,7 @@ export async function buildOfflineProposeBundle(params: {
   if (params.input.childAccount && childAccount) {
     accounts[params.input.childAccount] = childAccount;
   }
+  const fee = await resolveZkappFee(minaEndpoint());
 
   return {
     version: OFFLINE_BUNDLE_VERSION,
@@ -285,6 +289,7 @@ export async function buildOfflineProposeBundle(params: {
     minaNetwork: network,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
+    fee,
     accounts,
     events: [],
     storeCheckpoint,
@@ -321,6 +326,7 @@ export async function buildOfflineApproveBundle(params: {
   };
   if (childAddr && childAccount) accounts[childAddr] = childAccount;
   const childConfig = verifiedChild && childAddr ? { childAddress: childAddr, ...verifiedChild } : null;
+  const fee = await resolveZkappFee(minaEndpoint());
 
   return {
     version: OFFLINE_BUNDLE_VERSION,
@@ -328,6 +334,7 @@ export async function buildOfflineApproveBundle(params: {
     minaNetwork: network,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
+    fee,
     accounts,
     events: [],
     storeCheckpoint,
@@ -400,6 +407,7 @@ export async function buildOfflineExecuteBundle(params: {
     childOwners = config.owners;
     childThreshold = config.threshold;
   }
+  const fee = await resolveZkappFee(minaEndpoint());
 
   return {
     version: OFFLINE_BUNDLE_VERSION,
@@ -407,6 +415,7 @@ export async function buildOfflineExecuteBundle(params: {
     minaNetwork: network,
     contractAddress: params.contractAddress,
     feePayerAddress: params.feePayerAddress,
+    fee,
     accounts,
     events: [],
     storeCheckpoint,

@@ -45,4 +45,4 @@ Build this backend with the matching contracts package and network VK. Empty mem
 now have a application-tagged, length-prefixed commitment and are verified like non-empty
 memos; zero is no longer an absence sentinel. Database and event shapes are unchanged.
 See the [memo lifecycle](../docs/backend-audit-guide.md#data-model) and
-[breaking migration](../docs/offline-audit-guide.md#bundle-format-reference-requests-version-1-signed-responses-version-1).
+[offline format migration](../docs/offline-audit-guide.md#bundle-format-reference-requests-version-3-owner-signed-responses-version-1).

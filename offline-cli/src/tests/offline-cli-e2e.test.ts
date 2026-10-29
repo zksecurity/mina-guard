@@ -226,6 +226,7 @@ describe('offline-cli e2e', () => {
 
   it('propose', async () => {
     const proposer = owners[0];
+    const fee = 20_000_000;
 
     const rawEvents = await zkApp.fetchEvents();
     const bundleEvents = rawEvents.map((e) => ({
@@ -234,11 +235,11 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 3,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
-      feePayerAddress: proposer.pub.toBase58(),
+      feePayerAddress: proposer.pub.toBase58(), fee,
       accounts: {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [proposer.pub.toBase58()]: snapshotAccount(proposer.pub),
@@ -262,6 +263,7 @@ describe('offline-cli e2e', () => {
     if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
 
     expect(result.stderr).toContain('Action: propose');
+    expect(result.stderr).toContain('0.02 MINA');
     expect(result.stderr).toContain('Proposal hash:');
     expect(result.stderr).toContain('Proof generated');
     expect(result.code).toBe(0);
@@ -274,6 +276,7 @@ describe('offline-cli e2e', () => {
     expect(output.proposalHash).toBeTruthy();
     expect(output.transaction).toBeTruthy();
     expect(output.transaction.feePayer.authorization).toBeTruthy();
+    expect(output.transaction.feePayer.body.fee).toBe(String(fee));
 
     proposalHash = output.proposalHash;
 
@@ -317,6 +320,7 @@ describe('offline-cli e2e', () => {
   it('approve', async () => {
     expect(proposalHash).toBeTruthy();
     const approver = owners[1];
+    const fee = 30_000_000;
 
     const rawEvents = await zkApp.fetchEvents();
     const bundleEvents = rawEvents.map((e) => ({
@@ -325,11 +329,11 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 3,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
-      feePayerAddress: approver.pub.toBase58(),
+      feePayerAddress: approver.pub.toBase58(), fee,
       accounts: {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [approver.pub.toBase58()]: snapshotAccount(approver.pub),
@@ -366,6 +370,7 @@ describe('offline-cli e2e', () => {
     if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
 
     expect(result.stderr).toContain('Action: approve');
+    expect(result.stderr).toContain('0.03 MINA');
     expect(result.stderr).toContain('Proposal hash:');
     expect(result.stderr).toContain('Proof generated');
     expect(result.code).toBe(0);
@@ -376,6 +381,7 @@ describe('offline-cli e2e', () => {
     expect(output.action).toBe('approve');
     expect(output.proposalHash).toBe(proposalHash);
     expect(output.transaction.feePayer.authorization).toBeTruthy();
+    expect(output.transaction.feePayer.body.fee).toBe(String(fee));
 
     // Execute approve on LocalBlockchain to advance state
     const receivers = [new Receiver({ address: recipient, amount: UInt64.from(1_000_000_000) })];
@@ -422,10 +428,10 @@ describe('offline-cli e2e', () => {
       payload: JSON.parse(safeStringify(e.event.data)),
     }));
     const base = {
-      version: 2,
+      version: 3,
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
-      feePayerAddress: signer.pub.toBase58(),
+      feePayerAddress: signer.pub.toBase58(), fee: 100_000_000,
       accounts: {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [signer.pub.toBase58()]: snapshotAccount(signer.pub),
@@ -490,11 +496,11 @@ describe('offline-cli e2e', () => {
     });
 
     const bundle = {
-      version: 2,
+      version: 3,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
-      feePayerAddress: owners[2].pub.toBase58(),
+      feePayerAddress: owners[2].pub.toBase58(), fee: 100_000_000,
       accounts: {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [owners[2].pub.toBase58()]: snapshotAccount(owners[2].pub),
@@ -532,11 +538,11 @@ describe('offline-cli e2e', () => {
     // while the summary printed the label, escape sequences included.
     const rawEvents = await zkApp.fetchEvents();
     const bundle = {
-      version: 2,
+      version: 3,
       action: 'approve',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
-      feePayerAddress: owners[2].pub.toBase58(),
+      feePayerAddress: owners[2].pub.toBase58(), fee: 100_000_000,
       accounts: {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [owners[2].pub.toBase58()]: snapshotAccount(owners[2].pub),
@@ -577,6 +583,7 @@ describe('offline-cli e2e', () => {
   it('execute transfer', async () => {
     expect(proposalHash).toBeTruthy();
     const executor = owners[2];
+    const fee = 40_000_000;
 
     const rawEvents = await zkApp.fetchEvents();
     const bundleEvents = rawEvents.map((e) => ({
@@ -585,11 +592,11 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 3,
       action: 'execute',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
-      feePayerAddress: executor.pub.toBase58(),
+      feePayerAddress: executor.pub.toBase58(), fee,
       accounts: {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [executor.pub.toBase58()]: snapshotAccount(executor.pub),
@@ -629,6 +636,7 @@ describe('offline-cli e2e', () => {
     if (result.code !== 0) console.log('[e2e] CLI stdout:', result.stdout);
 
     expect(result.stderr).toContain('Action: execute');
+    expect(result.stderr).toContain('0.04 MINA');
     expect(result.stderr).toContain('Proposal hash:');
     expect(result.stderr).toContain('Proof generated');
     expect(result.code).toBe(0);
@@ -639,6 +647,7 @@ describe('offline-cli e2e', () => {
     expect(output.action).toBe('execute');
     expect(output.proposalHash).toBe(proposalHash);
     expect(output.transaction.feePayer.authorization).toBeTruthy();
+    expect(output.transaction.feePayer.body.fee).toBe(String(fee));
 
     console.log('[e2e] Execute OK');
   }, 600_000);
@@ -666,11 +675,11 @@ describe('offline-cli e2e', () => {
     }));
 
     const bundle = {
-      version: 2,
+      version: 3,
       action: 'propose',
       minaNetwork: 'testnet',
       contractAddress: zkAppAddress.toBase58(),
-      feePayerAddress: proposer.pub.toBase58(),
+      feePayerAddress: proposer.pub.toBase58(), fee: 100_000_000,
       accounts: {
         [zkAppAddress.toBase58()]: snapshotAccount(zkAppAddress),
         [proposer.pub.toBase58()]: snapshotAccount(proposer.pub),
@@ -841,11 +850,11 @@ describe('offline-cli e2e', () => {
     it('propose', async () => {
       const proposer = owners[0];
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: proposer.pub.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(), fee: 100_000_000,
         accounts: accountsSnapshot(),
         events: await parentEvents(),
         input: {
@@ -898,11 +907,11 @@ describe('offline-cli e2e', () => {
       const approver = owners[1];
 
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'approve',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: approver.pub.toBase58(),
+        feePayerAddress: approver.pub.toBase58(), fee: 100_000_000,
         accounts: accountsSnapshot(),
         events: await parentEvents(),
         proposal: childProposalBundle(),
@@ -954,11 +963,11 @@ describe('offline-cli e2e', () => {
       }));
 
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'execute',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: executor.pub.toBase58(),
+        feePayerAddress: executor.pub.toBase58(), fee: 100_000_000,
         accounts: accountsSnapshot(),
         events: await parentEvents(),
         proposal: childProposalBundle(),
@@ -1047,11 +1056,11 @@ describe('offline-cli e2e', () => {
     it('propose createChild', async () => {
       const proposer = owners[0];
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: proposer.pub.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(), fee: 100_000_000,
         accounts: accountsSnapshotForCreate(),
         events: await parentEvents(),
         input: {
@@ -1159,11 +1168,11 @@ describe('offline-cli e2e', () => {
       const memo = 'pay rent for june';
       const localChildKey = PrivateKey.random();
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: proposer.pub.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(), fee: 100_000_000,
         accounts: accountsSnapshotForCreate(),
         events: await parentEvents(),
         input: {
@@ -1199,11 +1208,11 @@ describe('offline-cli e2e', () => {
       const approver = owners[1];
 
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'approve',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: approver.pub.toBase58(),
+        feePayerAddress: approver.pub.toBase58(), fee: 100_000_000,
         accounts: accountsSnapshotForCreate(),
         events: await parentEvents(),
         proposal: createChildProposalBundle(),
@@ -1289,11 +1298,11 @@ describe('offline-cli e2e', () => {
       accounts[childAddr.toBase58()] = snapshotAccount(childAddr);
 
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'execute',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: executor.pub.toBase58(),
+        feePayerAddress: executor.pub.toBase58(), fee: 100_000_000,
         accounts,
         events: await parentEvents(),
         proposal: createChildProposalBundle(),
@@ -1341,11 +1350,11 @@ describe('offline-cli e2e', () => {
       accounts[childAddr.toBase58()] = snapshotAccount(childAddr);
 
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'execute',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: executor.pub.toBase58(),
+        feePayerAddress: executor.pub.toBase58(), fee: 100_000_000,
         accounts,
         events: await parentEvents(),
         proposal: createChildProposalBundle(),
@@ -1382,11 +1391,11 @@ describe('offline-cli e2e', () => {
       expect(Mina.hasAccount(preAddr)).toBe(true);
 
       const bundle = {
-        version: 2,
+        version: 3,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: proposer.pub.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(), fee: 100_000_000,
         accounts: { ...accountsSnapshotForCreate(), [preAddr.toBase58()]: snapshotAccount(preAddr) },
         events: await parentEvents(),
         input: {
@@ -1427,11 +1436,11 @@ describe('offline-cli e2e', () => {
     it('refuses to propose createChild into an address that already holds a zkApp, or with a key for another address', async () => {
       const proposer = owners[0];
       const bundleWithKey = async (childPrivateKey: string) => ({
-        version: 2,
+        version: 3,
         action: 'propose',
         minaNetwork: 'testnet',
         contractAddress: zkAppAddress.toBase58(),
-        feePayerAddress: proposer.pub.toBase58(),
+        feePayerAddress: proposer.pub.toBase58(), fee: 100_000_000,
         accounts: accountsSnapshotForCreate(),
         events: await parentEvents(),
         input: {
@@ -1493,8 +1502,8 @@ describe('offline child allocation', () => {
     }));
     const address = childAddress.toBase58();
     const bundle = {
-      version: 2, action: 'execute', minaNetwork: 'testnet',
-      contractAddress: ctx.zkAppAddress.toBase58(), feePayerAddress: ctx.deployerAccount.toBase58(),
+      version: 3, action: 'execute', minaNetwork: 'testnet',
+      contractAddress: ctx.zkAppAddress.toBase58(), feePayerAddress: ctx.deployerAccount.toBase58(), fee: 100_000_000,
       accounts: {
         [ctx.zkAppAddress.toBase58()]: snapshotAccount(ctx.zkAppAddress),
         [ctx.deployerAccount.toBase58()]: snapshotAccount(ctx.deployerAccount),

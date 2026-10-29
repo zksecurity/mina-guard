@@ -35,7 +35,15 @@ describe('offline checkpoint export', () => {
     process.env.NEXT_PUBLIC_MINA_NETWORK = 'testnet';
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       if (String(input).includes('/events')) throw new Error('Unexpected full history request');
-      const address = JSON.parse(String(init?.body)).variables.publicKey;
+      const request = JSON.parse(String(init?.body));
+      if (String(request.query).includes('pooledZkappCommands')) {
+        calls.push('fee:node');
+        return Response.json({ data: { pooledZkappCommands: [{ zkappCommand: {
+          feePayer: { body: { fee: '5000000' } },
+          accountUpdates: [{ body: { publicKey: 'example' } }],
+        } }] } });
+      }
+      const address = request.variables.publicKey;
       calls.push(`account:${address}`);
       return Response.json({ data: { account: { publicKey: address, nonce: '0', balance: { total: '1000000000' }, zkappState: [] } } });
     }) as typeof fetch;
@@ -54,7 +62,9 @@ describe('offline checkpoint export', () => {
       expect(bundle.contractAddress).toBe('vault');
       expect(bundle.minaNetwork).toBe('testnet');
       expect(calls[0]).toBe('checkpoint:vault');
-      expect(calls).toHaveLength(3);
+      expect(bundle.fee).toBe(20_000_000);
+      expect(calls).toContain('fee:node');
+      expect(calls).toHaveLength(4);
     }
   });
 });

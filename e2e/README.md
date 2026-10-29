@@ -2,7 +2,7 @@
 
 Transaction preparation worker regression: build contracts, then run `MINA_NETWORK_DOMAIN=testnet bun e2e/preflight/worker-preparation.ts`. This runs the actual worker against an owned LocalBlockchain with stubbed network/indexer I/O and proving/compilation disabled. It checks a proposal included while another owner waits to sign, duplicate creation on retry, existing-proposal guidance, and a different nonce remaining available. It does not validate production proofs or physical wallets.
 
-Transaction preflight browser checks: `bun e2e/preflight/browser.ts` from the repo root. Requires Playwright Chromium; runs without a database or development stack. Covers initial store-mismatch retry/cancel for online preparation and offline export, as well as post-proof recovery. Wallet/prover/node I/O is simulated; this does not validate physical wallets or live inclusion. CI runs this before the full UI suite.
+Transaction preflight browser checks: `bun e2e/preflight/browser.ts` from the repo root. Requires Playwright Chromium; runs without a database or development stack. Covers initial store-mismatch retry/cancel for online preparation and offline export, post-proof recovery, and signed-fee review before a separate offline broadcast click. Wallet/prover/node I/O is simulated; this does not validate physical wallets or live inclusion. CI runs this before the full UI suite.
 
 End-to-end tests for MinaGuard using [Playwright](https://playwright.dev/). The test suite exercises the full lifecycle — deploy, propose, approve, execute — against a real Mina network through the UI with a mock wallet.
 
@@ -203,7 +203,7 @@ API sanity, vault list/dashboard/settings rendering, per-status detail pages
 filtering and tab counts, per-tx-type form payload capture, and all
 client-side form validation. Proposal signing coverage includes the committed empty-memo
 display and rejecting unsupported signed-response versions before broadcast. Offline request
-export tests cover v2 requests with v1 checkpoints; signed responses use v1.
+export tests cover v3 owner requests with v1 checkpoints and bounded fees; owner signed responses use v1.
 
 Run heavy validation sequentially with the limits in
 [AGENTS.md](../AGENTS.md#memory-safe-validation). The chainless suite still needs

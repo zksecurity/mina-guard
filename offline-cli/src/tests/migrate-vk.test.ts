@@ -5,7 +5,7 @@ import { validateMigrationBundle, renderMigrationSummary, type MigrationBundle }
 const olderVersion = String(Number(GUARD_SET_VERIFICATION_KEY_TXN_VERSION) - 1);
 function request(): MigrationBundle {
   return {
-    version: 2,
+    version: 3,
     action: 'migrate-verification-key',
     minaNetwork: 'testnet',
     contractAddress: 'vault',
@@ -31,6 +31,7 @@ describe('deploy-key VK migration request', () => {
     const summary = renderMigrationSummary(request());
     expect(summary).toContain('Installed VK hash: 123');
     expect(summary).toContain('Replacement VK hash: 456');
+    expect(summary).toContain('Fee: 0.1 MINA');
     expect(summary).toContain('bypasses owner voting');
   });
 
@@ -57,5 +58,10 @@ describe('deploy-key VK migration request', () => {
     const swapped = request();
     swapped.accounts.vault.verificationKey!.hash = '999';
     expect(() => validateMigrationBundle(swapped)).toThrow('matching vault and fee payer snapshots');
+  });
+
+  it('rejects version 2 migration requests', () => {
+    const old = { ...request(), version: 2 } as unknown as MigrationBundle;
+    expect(() => validateMigrationBundle(old)).toThrow('Unsupported migration format');
   });
 });

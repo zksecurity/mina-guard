@@ -31,7 +31,7 @@ try {
     const w = window as any;
     w.Worker = class { addEventListener() {} };
     w.policies = 0; w.exports = 0; w.completed = 0; w.builds = 0; w.expected = '1'; w.eligibility = { status: 'eligible' };
-    w.tx = () => JSON.stringify({ feePayer: { body: { publicKey: 'owner' } }, accountUpdates: [{ body: {
+    w.tx = () => JSON.stringify({ feePayer: { body: { publicKey: 'owner', fee: '20000000' } }, accountUpdates: [{ body: {
       publicKey: 'vault', tokenId: '1', preconditions: { account: { state: [w.expected], isNew: false } }, update: { appState: [null] },
     } }] });
     w.workerApi = { setConfig() {}, setPreflightCheck(fn: any) { w.check = fn; }, assessRetry: async () => w.eligibility };
@@ -106,6 +106,9 @@ try {
   rootValue = '2';
   const file = await page.evaluate(() => JSON.stringify({ version: 1, type: 'offline-signed-tx', action: 'execute', contractAddress: 'vault', proposalHash: '42', transaction: (window as any).tx() }));
   await page.locator('input[type=file]').setInputFiles({ name: 'signed.json', mimeType: 'application/json', buffer: Buffer.from(file) });
+  await expect(page.getByText('Signed transaction fee: 0.02 MINA.')).toBeVisible();
+  expect(broadcasts).toBe(0);
+  await page.getByRole('button', { name: 'Broadcast signed transaction' }).click();
   await expect(page.getByRole('heading', { name: 'This transaction needs a new proof' })).toBeVisible();
   expect(broadcasts).toBe(0);
   const download = page.waitForEvent('download');
@@ -115,6 +118,9 @@ try {
   expect(broadcasts).toBe(0);
   rootValue = '1';
   await page.locator('input[type=file]').setInputFiles({ name: 'signed.json', mimeType: 'application/json', buffer: Buffer.from(file) });
+  await expect(page.getByText('Signed transaction fee: 0.02 MINA.')).toBeVisible();
+  expect(broadcasts).toBe(0);
+  await page.getByRole('button', { name: 'Broadcast signed transaction' }).click();
   await expect(page.getByText('Transaction broadcast successfully.')).toBeVisible();
   expect(broadcasts).toBe(1);
   expect(await page.evaluate(() => (window as any).policies)).toBe(2);

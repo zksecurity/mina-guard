@@ -5,6 +5,7 @@
  * real UI, rendered from the seeded DB instead of a live chain.
  */
 import { test, expect, type Page } from '@playwright/test';
+import { BACKEND_URL } from '../playwright.ui.config';
 import { connectWallet, navigateTo, openVault, statusTab } from './ui-helpers';
 import {
   TREASURY,
@@ -158,26 +159,23 @@ test('unsafe CREATE_CHILD target blocks online and offline approval', async ({ p
   // Re-shape the pending fixture as a remote CREATE_CHILD proposal while
   // leaving the indexed parent canonical. This models the finding's malicious
   // creator deploying an unsafe child outside the supported client.
+  const source = await page.request.get(`${BACKEND_URL}/api/contracts/${TREASURY}/proposals?limit=200&offset=0`);
+  expect(source.ok()).toBeTruthy();
+  const proposals = (await source.json()) as Array<Record<string, unknown>>;
+  const modifiedProposals = proposals.map((proposal) =>
+    proposal.proposalHash === PROPOSALS.pendingTransfer
+      ? {
+          ...proposal,
+          txType: 'createChild',
+          destination: 'remote',
+          childAccount: OPS_CHILD,
+          receivers: [],
+        }
+      : proposal,
+  );
   await page.route(
     new RegExp(`/api/contracts/${TREASURY}/proposals(?:\\?.*)?$`),
-    async (route) => {
-      const response = await route.fetch();
-      const proposals = (await response.json()) as Array<Record<string, unknown>>;
-      await route.fulfill({
-        response,
-        json: proposals.map((proposal) =>
-          proposal.proposalHash === PROPOSALS.pendingTransfer
-            ? {
-                ...proposal,
-                txType: 'createChild',
-                destination: 'remote',
-                childAccount: OPS_CHILD,
-                receivers: [],
-              }
-            : proposal,
-        ),
-      });
-    },
+    (route) => route.fulfill({ json: modifiedProposals }),
   );
   await page.route(
     `**/api/contracts/${TREASURY}/proposals/${PROPOSALS.pendingTransfer}/approvals`,

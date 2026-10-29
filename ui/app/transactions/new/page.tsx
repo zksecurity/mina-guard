@@ -170,6 +170,7 @@ function NewTransactionPageInner() {
   const [mode, setMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
   const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
+  const [exportedFee, setExportedFee] = useState<number | null>(null);
   const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
   const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
 
@@ -391,7 +392,7 @@ function NewTransactionPageInner() {
                     <OfflineSigningFlow
                       action="propose"
                       label="Propose"
-                      onExported={setExportedBundleName}
+                      onExported={(filename, fee) => { setExportedBundleName(filename); setExportedFee(fee); }}
                       cliBinaryName={cliBinaryName}
                       onBuildBundle={async () => {
                         assertValidMinaAddress(offlineFeePayerAddress);
@@ -422,8 +423,9 @@ function NewTransactionPageInner() {
                     />
                     <UploadSignedResponse
                       acceptActions={['propose']}
+                      expectedFees={exportedFee === null ? undefined : { propose: exportedFee }}
                       expectedContractAddress={multisig!.address}
-                      onComplete={(response, txHash) => {
+                      onComplete={(response, txHash, feePayer) => {
                         const hash = response.proposalHash;
                         if (hash && multisig) {
                           const input = getFormInputRef.current?.();
@@ -437,7 +439,7 @@ function NewTransactionPageInner() {
                             contractAddress: multisig.address,
                             proposalHash: hash,
                             txHash,
-                            signerPubkey: offlineFeePayerAddress,
+                            signerPubkey: feePayer,
                             createdAt: new Date().toISOString(),
                             summary: input ? {
                               txType: input.txType,

@@ -20,7 +20,7 @@ import { openSync, readSync, writeSync, closeSync } from 'fs';
 import {
   normalizeTxType,
   EMPTY_PUBKEY_B58,
-  ZKAPP_TX_FEE,
+  resolveBundleFee,
   type TxType,
   type OfflineBundle,
   type OfflineProposeBundle,
@@ -229,8 +229,7 @@ function renderHeader(
   }
   out.push(line('Contract', bundle.contractAddress));
   out.push(line('Fee payer', bundle.feePayerAddress));
-  // TODO: change this to bundle fee once fee selection logic is in place
-  out.push(line('Fee', `${formatMina(String(ZKAPP_TX_FEE))} MINA`));
+  out.push(line('Fee', `${formatMina(String(resolveBundleFee(bundle)))} MINA`));
   if (extra.nonce != null && extra.nonce !== '') out.push(line('Nonce', extra.nonce));
   out.push(line('Memo', extra.memo && extra.memo.length ? extra.memo : '(none)'));
   if (extra.memoHash !== undefined) out.push(line('Memo check', memoCheck(extra.memo ?? '', extra.memoHash)));

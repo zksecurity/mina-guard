@@ -13,14 +13,14 @@ At that time, the producer tests exercised offline request v2 with those checks.
 This records historical local checks, not deployment or auditor retest status.
 The validation sections below retain the format names and VK hashes tested then;
 current file formats and signing requirements are documented in the
-[offline audit guide](offline-audit-guide.md#bundle-format-reference-requests-version-1-signed-responses-version-1).
+[offline audit guide](offline-audit-guide.md#bundle-format-reference-requests-version-3-owner-signed-responses-version-1).
 
 ## Behavior and compatibility
 
 - The worker persists public owner, approval and nullifier stores, resumes from later blocks, and verifies all roots against the Mina node. Corruption, stale checkpoints and reorgs cause one full replay; a second mismatch stops the operation.
 - Cursor pagination was split into [issue #143](https://github.com/zksecurity/mina-guard/issues/143). The client uses the existing `fromBlock` filter and offset pages, rejects failed reads, and fails closed before requesting an offset above 50,000. Oversized initial or recovery ranges remain unsupported pending that issue.
 - Offline requests carry a complete leaf snapshot instead of the target vault's full event history. The CLI reconstructs its roots and compares them with the supplied account snapshot. Requests and responses use v1; requests require checkpoints and do not support full-event replay.
-- Distribute matching CLI, UI/desktop, backend, and verification keys together. Discard earlier signing files and follow the [offline migration requirements](offline-audit-guide.md#bundle-format-reference-requests-version-1-signed-responses-version-1).
+- Distribute matching CLI, UI/desktop, backend, and verification keys together. Discard earlier signing files and follow the [offline migration requirements](offline-audit-guide.md#bundle-format-reference-requests-version-3-owner-signed-responses-version-1).
 - Initial sync still reads full history. Cold restore rehashes saved leaves; warm requests still copy/save existing stores. Child execution maps and child reservation configuration still use child history. Lifetime map growth is not bounded by this change. Off-chain pruning alone would contradict the on-chain roots.
 
 ## Original checkpoint validation (2026-09-26)
