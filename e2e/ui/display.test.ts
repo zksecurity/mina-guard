@@ -232,6 +232,7 @@ test('unsafe parent blocks the dedicated SubVault creation wizard', async ({ pag
   );
 
   await navigateTo(page, `/accounts/new?parent=${TREASURY}`);
+  await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
 
   await expect(page.getByText(/unsafe parent vault/i)).toBeVisible();

@@ -255,7 +255,7 @@ function NewTransactionPageInner() {
 
   return (
     <div>
-      <BetaProposalDialog />
+      {(deleteMode || rawType !== 'createChild') && <BetaProposalDialog />}
       <div className="p-6 max-w-2xl">
         <button
           type="button"

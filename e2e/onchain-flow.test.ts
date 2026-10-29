@@ -137,7 +137,8 @@ async function gotoWithWallet(
     await navigateTo(page, path);
   }
 
-  if (path.split('?')[0] === '/transactions/new') {
+  if (path.split('?')[0] === '/transactions/new' ||
+      (path.split('?')[0] === '/accounts/new' && new URL(path, 'http://localhost').searchParams.has('parent'))) {
     await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
   }
 

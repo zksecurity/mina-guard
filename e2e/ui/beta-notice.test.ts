@@ -41,4 +41,16 @@ test('proposal creation warns on each visit, including when the banner is dismis
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Beta product notice' })).toHaveCount(0);
+
+  await navigateTo(page, `/accounts/new?parent=${TREASURY}`);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeVisible();
+
+  await navigateTo(page, `/accounts/${TREASURY}`);
+  await page.evaluate(() => (window as any).__e2eNavigate('/transactions/new?type=createChild'));
+  await expect(page).toHaveURL(new RegExp(`/accounts/new\\?parent=${TREASURY}`));
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Continue' }).click();
+  await expect(dialog).not.toBeVisible();
 });
