@@ -221,7 +221,8 @@ a substitute for the initial live browser, proof, signing and restore tests.
 
 ### Release from production
 
-Open a reviewed PR from `main` into protected `production`. The production check
+Keep `main` protected and open a reviewed PR from `main` into protected
+`production`. The production check
 reads Git objects without running the PR code and requires the proposed merge
 tree to match the current `main` tree, including file modes and submodules.
 Require that check and human review, require an up-to-date base, allow merge or

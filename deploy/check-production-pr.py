@@ -77,6 +77,12 @@ def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
             raise ValueError("production PR must have a conflict-free merge result")
         return pr
 
+    def protected_main() -> str:
+        branch = api("branches/main")
+        if branch.get("name") != "main" or branch.get("protected") is not True:
+            raise ValueError("main must be protected while approving production")
+        return sha(branch.get("commit", {}).get("sha"))
+
     for attempt in range(10):
         pr = check_refs()
         if pr.get("mergeable") is True and pr.get("merge_commit_sha"):
@@ -86,7 +92,7 @@ def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
     else:
         raise ValueError("GitHub has not computed a merge result; rerun this check")
     merge_sha = sha(pr.get("merge_commit_sha"))
-    main_sha = sha(api("git/ref/heads/main").get("object", {}).get("sha"))
+    main_sha = protected_main()
     if main_sha != head_sha:
         raise ValueError("production PR must use the current main commit")
     if tree(merge_sha) != tree(main_sha):
@@ -94,7 +100,7 @@ def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
     latest = check_refs()
     if latest.get("mergeable") is not True or latest.get("merge_commit_sha") != merge_sha:
         raise ValueError("production merge result changed during the check")
-    if sha(api("git/ref/heads/main").get("object", {}).get("sha")) != main_sha:
+    if protected_main() != main_sha:
         raise ValueError("main changed during this check; refresh the production PR")
     return {"headSha": head_sha, "baseSha": base_sha, "mergeSha": merge_sha}
 

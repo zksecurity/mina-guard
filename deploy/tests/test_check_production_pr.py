@@ -30,8 +30,8 @@ class ProductionCheckTest(unittest.TestCase):
         self.calls.append(path)
         if path == 'pulls/171':
             return copy.deepcopy(self.pr)
-        if path == 'git/ref/heads/main':
-            return {'object': {'sha': HEAD}}
+        if path == 'branches/main':
+            return {'name': 'main', 'protected': True, 'commit': {'sha': HEAD}}
         if path.startswith('git/commits/'):
             return {'tree': {'sha': path.rsplit('/', 1)[-1]}}
         if path.startswith('git/trees/'):
@@ -45,7 +45,7 @@ class ProductionCheckTest(unittest.TestCase):
 
     def test_main_to_production_accepts_matching_merge_tree(self):
         self.assertEqual(self.check()['mergeSha'], MERGE)
-        self.assertEqual(self.calls.count('git/ref/heads/main'), 2)
+        self.assertEqual(self.calls.count('branches/main'), 2)
         self.assertEqual(self.calls.count('pulls/171'), 2)
 
     def test_rejects_partial_merge_extra_file_mode_and_submodule_changes(self):
@@ -85,7 +85,7 @@ class ProductionCheckTest(unittest.TestCase):
             self.pr[field] = previous
 
     def test_rejects_movement_during_check(self):
-        for ref in ['pulls/171', 'git/ref/heads/main']:
+        for ref in ['pulls/171', 'branches/main']:
             self.calls.clear()
             def api(path):
                 value = self.api(path)
@@ -93,10 +93,19 @@ class ProductionCheckTest(unittest.TestCase):
                     if path.startswith('pulls/'):
                         value['merge_commit_sha'] = OTHER
                     else:
-                        value['object']['sha'] = OTHER
+                        value['commit']['sha'] = OTHER
                 return value
             with self.subTest(ref=ref), self.assertRaises(ValueError):
                 self.check(api)
+
+    def test_main_must_remain_protected(self):
+        def api(path):
+            result = self.api(path)
+            if path == 'branches/main':
+                result['protected'] = False
+            return result
+        with self.assertRaises(ValueError):
+            self.check(api)
 
     def test_rejects_incomplete_tree_and_invalid_entries(self):
         for kind in ['truncated', 'duplicate', 'mode']:
