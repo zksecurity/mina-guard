@@ -16,7 +16,7 @@ BASE, HEAD, MERGE, OTHER = (char * 40 for char in 'abcd')
 class ProductionCheckTest(unittest.TestCase):
     def setUp(self):
         repository = {'full_name': checker.REPOSITORY}
-        self.pr = {'state': 'open', 'mergeable': True, 'merge_commit_sha': MERGE,
+        self.pr = {'state': 'open', 'mergeable': True, 'merge_commit_sha': MERGE, 'body': f'Release-main: {HEAD}',
                    'head': {'sha': HEAD, 'ref': 'main', 'repo': repository},
                    'base': {'sha': BASE, 'ref': 'production', 'repo': repository}}
         self.entries = [
@@ -45,8 +45,15 @@ class ProductionCheckTest(unittest.TestCase):
 
     def test_main_to_production_accepts_matching_merge_tree(self):
         self.assertEqual(self.check()['mergeSha'], MERGE)
-        self.assertEqual(self.calls.count('branches/main'), 2)
-        self.assertEqual(self.calls.count('pulls/171'), 2)
+        self.assertEqual(self.check()['selectedMainSha'], HEAD)
+        self.assertEqual(self.calls.count('branches/main'), 4)
+        self.assertEqual(self.calls.count('pulls/171'), 4)
+
+    def test_requires_one_explicit_current_main_commit_in_pr_body(self):
+        for body in ['', f'Release-main: {OTHER}', f'Release-main: {HEAD}\nRelease-main: {HEAD}']:
+            self.pr['body'] = body
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                self.check()
 
     def test_release_branch_accepts_exact_main_tree(self):
         self.pr['head']['ref'] = 'release-sync'

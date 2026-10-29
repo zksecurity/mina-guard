@@ -63,6 +63,15 @@ def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
     sha(head_sha)
     sha(base_sha)
 
+    def selected_main(pr: dict) -> str:
+        body = pr.get("body")
+        if not isinstance(body, str):
+            raise ValueError("PR must identify the reviewed main commit")
+        matches = re.findall(r"(?m)^Release-main: ([0-9a-f]{40})\s*$", body)
+        if len(matches) != 1:
+            raise ValueError("PR must contain exactly one Release-main: <full commit SHA> line")
+        return matches[0]
+
     def check_refs() -> dict:
         pr = api(f"pulls/{number}")
         if (pr.get("state") != "open"
@@ -93,16 +102,18 @@ def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
         raise ValueError("GitHub has not computed a merge result; rerun this check")
     merge_sha = sha(pr.get("merge_commit_sha"))
     main_sha = protected_main()
+    if selected_main(pr) != main_sha:
+        raise ValueError("PR must select the current protected main commit when checked")
     if tree(head_sha) != tree(main_sha):
         raise ValueError("production PR must contain exactly the current main tree")
     if tree(merge_sha) != tree(main_sha):
         raise ValueError("production merge result must exactly match main")
     latest = check_refs()
-    if latest.get("mergeable") is not True or latest.get("merge_commit_sha") != merge_sha:
+    if latest.get("mergeable") is not True or latest.get("merge_commit_sha") != merge_sha or selected_main(latest) != main_sha:
         raise ValueError("production merge result changed during the check")
     if protected_main() != main_sha:
         raise ValueError("main changed during this check; refresh the production PR")
-    return {"headSha": head_sha, "baseSha": base_sha, "mergeSha": merge_sha}
+    return {"headSha": head_sha, "baseSha": base_sha, "mergeSha": merge_sha, "selectedMainSha": main_sha}
 
 
 def main() -> int:

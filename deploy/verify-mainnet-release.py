@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 
 REPOSITORY = "zksecurity/mina-guard"
+REPOSITORY_ID = "1165883593"
 WORKFLOW_IDENTITY = (
     "https://github.com/zksecurity/mina-guard/.github/workflows/"
     "mainnet-image-build.yml@refs/heads/production"
@@ -168,7 +169,7 @@ def check_mina_network(endpoint: str) -> None:
         raise ValueError("Mina endpoint did not report mainnet")
 
 
-def verify_attestation(subject: str, approved_sha: str, label: str) -> None:
+def verify_attestation(subject: str, approved_sha: str, label: str, bundle: Path | None = None) -> None:
     command = [
         "gh", "attestation", "verify", subject,
         "--repo", REPOSITORY,
@@ -180,6 +181,10 @@ def verify_attestation(subject: str, approved_sha: str, label: str) -> None:
         "--deny-self-hosted-runners",
         "--format", "json",
     ]
+    if bundle is not None:
+        if bundle.is_symlink() or not bundle.is_file() or bundle.stat().st_size > 8 * 1024 * 1024:
+            raise ValueError(f"{label} attestation bundle is missing or invalid")
+        command.extend(["--bundle", str(bundle)])
     try:
         result = subprocess.run(
             command, text=True, capture_output=True, check=False, timeout=120
@@ -194,6 +199,12 @@ def verify_attestation(subject: str, approved_sha: str, label: str) -> None:
         raise ValueError(f"{label} attestation returned invalid verification output") from error
     if not isinstance(verified, list) or not verified:
         raise ValueError(f"{label} attestation returned no verified result")
+    if bundle is not None and not any(
+        isinstance(item, dict)
+        and item.get("verificationResult", {}).get("signature", {}).get("certificate", {}).get("sourceRepositoryIdentifier") == REPOSITORY_ID
+        for item in verified
+    ):
+        raise ValueError(f"{label} attestation belongs to a different repository")
 
 
 def read_small(path: Path, label: str, limit: int) -> bytes:
@@ -204,13 +215,13 @@ def read_small(path: Path, label: str, limit: int) -> bytes:
     return raw
 
 
-def verify_file_bytes(raw: bytes, name: str, approved_sha: str, label: str) -> None:
+def verify_file_bytes(raw: bytes, name: str, approved_sha: str, label: str, bundle: Path | None = None) -> None:
     # The staged file is identical to the bytes parsed above, so replacing the
     # input path during verification cannot change what was approved.
     with tempfile.TemporaryDirectory(prefix="minaguard-release-") as directory:
         staged = Path(directory) / name
         staged.write_bytes(raw)
-        verify_attestation(str(staged), approved_sha, label)
+        verify_attestation(str(staged), approved_sha, label, bundle)
 
 
 def main() -> int:
@@ -219,6 +230,7 @@ def main() -> int:
     parser.add_argument("--approved-sha", required=True)
     parser.add_argument("--approved-manifest-sha256", required=True)
     parser.add_argument("--content-manifest", type=Path)
+    parser.add_argument("--bundle-dir", type=Path, help="directory of saved build attestation bundles")
     args = parser.parse_args()
 
     try:
@@ -231,11 +243,14 @@ def main() -> int:
         if actual_manifest_sha256 != args.approved_manifest_sha256:
             raise ValueError("manifest bytes do not match the approved SHA-256 hash")
         manifest = validate_manifest(raw, args.approved_sha)
-        verify_file_bytes(raw, "mainnet-images.json", args.approved_sha, "manifest")
+        bundles = args.bundle_dir
+        verify_file_bytes(raw, "mainnet-images.json", args.approved_sha, "manifest",
+                          bundles / "manifest.attestation.jsonl" if bundles else None)
 
         for name in ("backend", "frontend"):
             verify_attestation(
-                "oci://" + str(manifest[name]), args.approved_sha, name
+                "oci://" + str(manifest[name]), args.approved_sha, name,
+                bundles / f"{name}.attestation.jsonl" if bundles else None,
             )
 
         if args.content_manifest is not None:
@@ -247,7 +262,7 @@ def main() -> int:
             )
             verify_file_bytes(
                 content_raw, "mainnet-content.json", args.approved_sha,
-                "content manifest",
+                "content manifest", bundles / "content.attestation.jsonl" if bundles else None,
             )
             manifest["content_manifest_verified"] = True
 

@@ -86,6 +86,19 @@ class PromotionTest(unittest.TestCase):
             files.assert_not_called()
             images.assert_not_called()
 
+        preview_calls = []
+        def preview(args, **kwargs):
+            if len(args) > 1 and args[1].endswith('mainnet-content-integrity.py'):
+                preview_calls.append(args)
+                self.assertEqual(args[-2:], ['--base-url', 'https://app.minaguard.com'])
+                return ''
+            return gh(args, **kwargs)
+        with patch.object(promotion, 'command', side_effect=preview), \
+             patch.object(promotion.verifier, 'verify_file_bytes'), \
+             patch.object(promotion.verifier, 'verify_attestation'):
+            self.assertEqual(promotion.verify_candidate(RECORD, check_preview=True), MANIFEST)
+        self.assertEqual(len(preview_calls), 1)
+
         for change in [{"headBranch": "main"}, {"event": "pull_request"},
                        {"workflowName": "other"}, {"conclusion": "failure"}]:
             def bad_run(args, **_kwargs):

@@ -210,7 +210,8 @@ python3 deploy/verify-mainnet-release.py \
   --manifest release/mainnet-images.json \
   --content-manifest release/mainnet-content.json \
   --approved-sha "$APPROVED_SHA" \
-  --approved-manifest-sha256 "$APPROVED_MANIFEST_SHA256" > release/verified.json
+  --approved-manifest-sha256 "$APPROVED_MANIFEST_SHA256" \
+  --bundle-dir release/ > release/verified.json
 ```
 
 The verifier requires the exact `mainnet-image-build.yml@refs/heads/production`
@@ -225,7 +226,10 @@ Keep `main` protected and open a reviewed PR into protected `production` whose
 files match the current `main`. The production check
 reads Git objects without running the PR code and requires the proposed merge
 and PR head trees to match the current `main` tree, including file modes and
-submodules.
+submodules. The PR body must include exactly one `Release-main: <full SHA>`
+line identifying the selected `main` commit. Reviewers approve that explicit
+snapshot; the check does not promise it remains the latest if main advances
+after the check finishes.
 Require that check and human review, require an up-to-date base, allow merge or
 squash merges (not rebase merges), and disallow direct pushes and bypasses.
 These settings keep the checked merge tree aligned with the merged tree. After
@@ -236,9 +240,9 @@ current protected production commit, then deploys its verified digest-pinned ima
 first manual launch and explicit automation setup. If a build fails or the
 production branch advances, the ops workflow must not substitute a build of
 another commit. Automatic rollout accepts only the production push's build;
-manual dispatch is for operator use. After a deployment attempt, a rebuild of
-the same commit with different manifest bytes is rejected until a new reviewed
-production commit is merged. Before opening traffic, the app host rechecks the production
+manual dispatch is for operator use. Once the current commit was deployed, a
+rebuild does not replace it; a new reviewed production commit is required to
+deploy changed images. Before opening traffic, the app host rechecks the production
 head and refuses an older release. A merge just after that check can still race
 with activation; the next serialized poll handles the newer commit.
 
@@ -254,7 +258,8 @@ cd ../mina-guard-release
 git read-tree --reset -u origin/main
 git commit -m "Release current main to production"
 git push -u origin release/my-release
-gh pr create --base production --head release/my-release
+gh pr create --base production --head release/my-release \
+  --body "Release-main: $(git rev-parse origin/main)"
 ```
 
 Use a new branch and worktree path for each release. `git read-tree --reset -u`
@@ -266,9 +271,23 @@ The initial production branch must first be bootstrapped from a reviewed commit
 containing this workflow and checker, before making the check required. During
 bootstrap the check may fail because the current production base does not yet
 contain its checker; it is not a required check until bootstrap completes.
-If main changes after the check, update or rerun the PR before merging.
+If main changes after the check, the PR still selects its explicit commit.
+If the newer changes are desired, update the release branch and the selected
+SHA and rerun the check before approving and merging.
 
 ### Watch the content served to owners
+
+Before first public launch, the normal scheduled watcher has no deployment
+receipt yet and cannot reach an IP-restricted preview. From a trusted machine
+outside AWS at the configured preview IP, authenticate GitHub and the GHCR
+registry, then create a reviewed record containing `version: 1`, `sourceSha`,
+`runId` (a string), and `manifestSha256` for the exact successful build. Run
+`python3 deploy/production-promotion.py --record <record.json> --check-preview`.
+It verifies the build, manifest and image attestations, then checks the real
+production-origin preview using the same content checker as the watcher. Test
+the alert channel separately; this preview check does not exercise the scheduled
+watcher's receipt resolution or alert delivery. After activation and the first
+ops receipt, verify the scheduled watcher runs successfully.
 
 After the verified release is serving at `https://app.minaguard.com`, set the
 repository variable `MAINNET_OPS_BOT_ACTOR_ID` to the numeric ID of the ops
@@ -276,7 +295,7 @@ GitHub App actor and `MAINNET_WATCH_ENABLED=true`. Set the Actions secret
 `MAINNET_WATCHER_ALERT_WEBHOOK` to an HTTPS endpoint that accepts a JSON `text`
 field. Test the webhook and run
 `Mainnet public-content watch` manually once. Its GitHub-hosted runner then
-checks about every 15 minutes: it downloads that exact run's release artifact,
+checks about every 15 minutes: it downloads that exact run's saved release evidence,
 verifies its attestations and image digests, and compares public HTML for `/`,
 `/transactions`, `/transactions/new`, `/accounts/new`, `/settings`, and `/guide`
 plus every Next static asset from the approved frontend image. A changed inline
@@ -290,10 +309,18 @@ the deployed production SHA, run ID, and manifest hash. The watcher does not inf
 approval from the latest build or the `production` branch alone. Set
 `MAINNET_WATCH_ENABLED=false` while the site is intentionally offline; a missing
 receipt or invalid App actor ID fails the check and alerts.
-Keep the release artifact available while that digest is live: an expired or
-missing artifact causes a failed check and alert. Before Actions artifact
-retention expires, deploy a newly reviewed release or move the signed JSON
-files into durable storage and update the watcher to retrieve them from there.
+The build also publishes the two manifests and their image/file attestation
+bundles as a GitHub Release named `mainnet-build-<source-sha>-<run-id>`.
+The separate publishing job has repository contents write permission; the image
+build job has contents read only. A failed or incomplete evidence publication
+fails the build workflow and prevents automatic deployment.
+If publication was interrupted and left an incomplete draft release, inspect
+and remove that draft before rerunning the build; reruns never overwrite a
+published release's evidence.
+The watcher and app boot reverify these saved proofs even after workflow run
+retention expires. Protect these releases and GHCR images against deletion;
+missing evidence or images fails closed. A repository administrator can still
+delete a release, so this is durable storage, not an immutable backup.
 This monitor runs outside the
 app host, but it shares the repository's GitHub trust boundary. It can detect
 changes visible to its fetches; it does not prevent first exposure, cover the
