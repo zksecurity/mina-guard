@@ -9,6 +9,7 @@ import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import AppFooter from '@/components/AppFooter';
+import BetaNotice from '@/components/BetaNotice';
 import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
@@ -202,6 +203,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             </span>
           </div>
         )}
+        <BetaNotice />
         <div className="flex flex-1 min-h-0">
           {pathname !== '/' && pathname !== '/accounts/new' && (
             <Sidebar

@@ -1,5 +1,9 @@
 # Desktop App (Electron) — Architecture & Security Notes
 
+**Beta status:** the packaged UI displays the same persistent beta notice and
+user-guide precautions as the web app, on both Testnet and Mainnet. Bugs could
+cause loss of funds. See [the UI notice](./ui-audit-guide.md#beta-product-notice).
+
 The shared online UI also checks for an already-created proposal and offers View proposal. Propose/approve recheck state after the owner signature before building; this uses the same runtime node access as the existing checks.
 
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.

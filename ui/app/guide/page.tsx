@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, createContext, useContext, type ReactNode } from 'react';
 import CubeLogo from '@/components/CubeLogo';
+import BetaNotice from '@/components/BetaNotice';
 
 // Public screenshots live under /public/guide. Unlike next/link and _next
 // assets, a raw <img src> is NOT rewritten with the deployment's basePath, so
@@ -19,6 +20,7 @@ const NAV = [
     group: 'Start here',
     items: [
       { id: 'overview', label: 'Overview' },
+      { id: 'beta', label: 'Beta product' },
       { id: 'how', label: 'How it works' },
       { id: 'terms', label: 'Key terms' },
     ],
@@ -316,6 +318,7 @@ export default function GuidePage() {
         </div>
       </div>
     </header>
+    <BetaNotice />
     <div className="px-6 md:px-10 py-10 md:py-14">
       <div className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_216px] xl:gap-14">
         {/* ---------- CONTENT ---------- */}
@@ -365,6 +368,21 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               alt="A MinaGuard vault dashboard"
               caption="A vault's dashboard: owners, threshold, SubVaults, and recent proposals."
             />
+          </section>
+
+          <section id="beta" className="scroll-mt-24">
+            <Eyebrow>Before you use MinaGuard</Eyebrow>
+            <h2 className="mt-3 text-2xl md:text-3xl font-bold tracking-tight text-white">MinaGuard is in beta</h2>
+            <p className="mt-4 text-safe-text leading-relaxed">
+              The software is still under active development. Bugs could cause loss of funds.
+              Beta describes the product&apos;s maturity, not the network you use: MinaGuard
+              is beta on both Testnet and Mainnet. Mainnet funds are real.
+            </p>
+            <ul className="mt-4 list-disc space-y-2 pl-5 text-safe-text leading-relaxed">
+              <li>Keep vault balances to amounts you can afford to lose.</li>
+              <li>Review the network, vault, recipient, amount, and action before approving or signing, online or offline.</li>
+              <li>Start with a small test transfer before moving larger amounts.</li>
+            </ul>
           </section>
 
           {/* HOW IT WORKS */}

@@ -19,6 +19,19 @@ the self-contained desktop build of this same UI in
 
 ---
 
+## Beta product notice
+
+MinaGuard is in beta on every supported network, including Mainnet. Bugs could
+cause loss of funds; users should keep balances to amounts they can afford to lose.
+`components/BetaNotice.tsx` displays a non-dismissible notice below the header
+(and below a network-mismatch warning, when present) on every app route. The
+standalone `/guide` renders the same notice and links to its `#beta` section,
+which explains the risk and precautions. The notice wraps on narrow screens
+and is included in the shared UI packaged by the desktop app.
+
+This disclosure does not enforce balance limits or verify a transaction's safety.
+Existing network checks and signing confirmations still apply.
+
 ## General overview
 
 The online UI is the main interface for users to interact with the MinaGuard contract
