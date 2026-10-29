@@ -1,0 +1,43 @@
+name: Check mainnet production promotion
+
+# This workflow runs trusted production-branch code. Never check out or execute
+# the proposed PR head; it supplies only one JSON release pointer.
+on:
+  pull_request_target:
+    branches: [production]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+  packages: read
+  attestations: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Accept only an in-repository release pointer
+        run: |
+          set -euo pipefail
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename' > "$RUNNER_TEMP/changed-files"
+          test "$(cat "$RUNNER_TEMP/changed-files")" = 'deploy/production-release.json'
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/$GITHUB_REPOSITORY/contents/deploy/production-release.json?ref=$HEAD_SHA" \
+            > "$RUNNER_TEMP/production-release.json"
+      - name: Verify the selected build and exact manifest
+        run: |
+          set -euo pipefail
+          python3 deploy/production-promotion.py \
+            --record "$RUNNER_TEMP/production-release.json"
