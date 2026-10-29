@@ -69,7 +69,7 @@ def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
                 or pr.get("base", {}).get("ref") != "production"
                 or pr.get("base", {}).get("repo", {}).get("full_name") != REPOSITORY
                 or pr.get("head", {}).get("repo", {}).get("full_name") != REPOSITORY
-                or pr.get("head", {}).get("ref") != "main"
+                or not isinstance(pr.get("head", {}).get("ref"), str)
                 or pr.get("head", {}).get("sha") != head_sha
                 or pr.get("base", {}).get("sha") != base_sha):
             raise ValueError("PR repository, head, or production base changed; refresh the PR check")
@@ -93,8 +93,8 @@ def check_pr(number: str, head_sha: str, base_sha: str) -> dict:
         raise ValueError("GitHub has not computed a merge result; rerun this check")
     merge_sha = sha(pr.get("merge_commit_sha"))
     main_sha = protected_main()
-    if main_sha != head_sha:
-        raise ValueError("production PR must use the current main commit")
+    if tree(head_sha) != tree(main_sha):
+        raise ValueError("production PR must contain exactly the current main tree")
     if tree(merge_sha) != tree(main_sha):
         raise ValueError("production merge result must exactly match main")
     latest = check_refs()

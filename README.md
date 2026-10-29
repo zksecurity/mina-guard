@@ -154,7 +154,7 @@ PR's cache.
 
 ### Mainnet image preparation
 
-A reviewed PR from `main` into `production` selects the code to release. Once
+A reviewed PR into `production` containing the current `main` code selects the release. Once
 merged, `.github/workflows/mainnet-image-build.yml` builds that exact production
 commit on GitHub-hosted runners and publishes the frontend and backend images to
 GHCR. The workflow signs the image digests and frontend content baseline. It

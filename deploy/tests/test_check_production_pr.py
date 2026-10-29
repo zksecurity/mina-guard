@@ -48,6 +48,22 @@ class ProductionCheckTest(unittest.TestCase):
         self.assertEqual(self.calls.count('branches/main'), 2)
         self.assertEqual(self.calls.count('pulls/171'), 2)
 
+    def test_release_branch_accepts_exact_main_tree(self):
+        self.pr['head']['ref'] = 'release-sync'
+        self.assertEqual(self.check()['mergeSha'], MERGE)
+
+    def test_release_branch_rejects_tree_different_from_main(self):
+        self.pr['head']['ref'] = 'release-sync'
+        self.trees[OTHER] = self.entries + [
+            {'path': 'extra', 'type': 'blob', 'mode': '100644', 'sha': OTHER}]
+        def api(path):
+            result = self.api(path)
+            if path == 'branches/main':
+                result['commit']['sha'] = OTHER
+            return result
+        with self.assertRaises(ValueError):
+            self.check(api)
+
     def test_rejects_partial_merge_extra_file_mode_and_submodule_changes(self):
         for replacement in [
             self.entries[:1],
@@ -74,7 +90,7 @@ class ProductionCheckTest(unittest.TestCase):
             self.check()
         self.pr['merge_commit_sha'] = MERGE
         for field, values in [
-            ('head', {'ref': 'other'}), ('head', {'sha': OTHER}),
+            ('head', {'ref': None}), ('head', {'sha': OTHER}),
             ('head', {'repo': {'full_name': 'other/repo'}}),
             ('base', {'ref': 'main'}), ('base', {'sha': OTHER}),
         ]:

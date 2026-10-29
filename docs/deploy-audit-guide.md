@@ -221,22 +221,46 @@ a substitute for the initial live browser, proof, signing and restore tests.
 
 ### Release from production
 
-Keep `main` protected and open a reviewed PR from `main` into protected
-`production`. The production check
+Keep `main` protected and open a reviewed PR into protected `production` whose
+files match the current `main`. The production check
 reads Git objects without running the PR code and requires the proposed merge
-tree to match the current `main` tree, including file modes and submodules.
+and PR head trees to match the current `main` tree, including file modes and
+submodules.
 Require that check and human review, require an up-to-date base, allow merge or
 squash merges (not rebase merges), and disallow direct pushes and bypasses.
 These settings keep the checked merge tree aligned with the merged tree. After
 the PR merges, the exact merge
 commit triggers the gated build. No `production-release.json` PR is needed.
-The ops workflow polls for a successful build of the current protected
-production commit and deploys its verified digest-pinned images after the
+The ops workflow waits for successful CI, E2E and image-build runs of the
+current protected production commit, then deploys its verified digest-pinned images after the
 first manual launch and explicit automation setup. If a build fails or the
 production branch advances, the ops workflow must not substitute a build of
-another commit. Before opening traffic, the app host rechecks the production
+another commit. Automatic rollout accepts only the production push's build;
+manual dispatch is for operator use. After a deployment attempt, a rebuild of
+the same commit with different manifest bytes is rejected until a new reviewed
+production commit is merged. Before opening traffic, the app host rechecks the production
 head and refuses an older release. A merge just after that check can still race
 with activation; the next serialized poll handles the newer commit.
+
+A direct PR from `main` works when it is up to date with `production`. After a
+release merge, those branches can have different history even when their files
+match. To satisfy the up-to-date rule without merging production back into main,
+create a release branch from production and copy the current main tree into it:
+
+```sh
+git fetch origin main production
+git worktree add -b release/my-release ../mina-guard-release origin/production
+cd ../mina-guard-release
+git read-tree --reset -u origin/main
+git commit -m "Release current main to production"
+git push -u origin release/my-release
+gh pr create --base production --head release/my-release
+```
+
+Use a new branch and worktree path for each release. `git read-tree --reset -u`
+replaces the worktree files, so run it only in the newly created clean worktree.
+If main advances, recreate or update the release branch before merging. The
+release PR remains the human approval; no separate release-info PR is needed.
 
 The initial production branch must first be bootstrapped from a reviewed commit
 containing this workflow and checker, before making the check required. During
