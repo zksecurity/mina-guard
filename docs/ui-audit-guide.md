@@ -214,7 +214,8 @@ reclaimable.
   attest the browser bundle or establish the indexer's network identity. The
   separate mainnet release workflow attests the built frontend image and its
   content baseline; its external watcher is described in the deployment audit
-  guide and only runs after the approved release is configured.
+  guide and only runs after an ops-authored successful deployment receipt and
+  the watch gate are configured.
 
 ---
 

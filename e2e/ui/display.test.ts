@@ -23,6 +23,12 @@ test.beforeEach(async ({ page }) => {
   await connectWallet(page);
 });
 
+test.afterEach(async ({ page }) => {
+  // Polling can leave a route.fetch() handler reading its response when the
+  // assertions finish. Drain handlers before Playwright disposes the context.
+  await page.unrouteAll({ behavior: 'wait' });
+});
+
 async function openProposal(page: Page, hash: string): Promise<void> {
   await openVault(page, TREASURY);
   await navigateTo(page, `/transactions/${hash}`);
