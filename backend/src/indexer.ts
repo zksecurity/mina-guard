@@ -73,6 +73,8 @@ export interface IndexerStatus {
   latestSlot: number;
   indexedHeight: number;
   lastError: string | null;
+  /** Latest recovery warning; retained across successful ticks until restart. */
+  lastWarning: string | null;
   discoveredContracts: number;
   indexerMode: 'full' | 'lite';
 }
@@ -107,6 +109,7 @@ export class MinaGuardIndexer {
     latestSlot: 0,
     indexedHeight: 0,
     lastError: null,
+    lastWarning: null,
     discoveredContracts: 0,
   };
 
@@ -230,7 +233,7 @@ export class MinaGuardIndexer {
       const toHeight = latestHeight;
       // A transiently shorter pending chain must not move the cursor backward
       // without rolling back the rows derived above it. Reorg detection above
-      // performs that rollback when it has a proved fork point.
+      // performs that rollback when it finds a stored-header mismatch.
       if (toHeight < indexedHeight || toHeight < fromHeight) {
         throw new Error(
           `Archive tip ${toHeight} is below indexed height ${indexedHeight} or replay start ${fromHeight}; ` +
@@ -304,11 +307,12 @@ export class MinaGuardIndexer {
         }
       }
 
-      // Rescan contracts that haven't yet seen a MinaGuard event. Runs
-      // every tick until events land; syncSingleContract flips ready=true
+      // Rescan contracts that haven't yet seen a MinaGuard event. The first
+      // complete scan covers their history; later ticks replay recent blocks.
+      // syncSingleContract flips ready=true
       // on first ingestion, after which the contract joins the forward
       // sweep below.
-      await this.rescanUnreadyContracts(latestHeight);
+      await this.rescanUnreadyContracts(fromHeight, latestHeight);
 
       if (toHeight >= fromHeight) {
         await this.syncKnownContracts(fromHeight, toHeight);
@@ -337,7 +341,9 @@ export class MinaGuardIndexer {
 
   /** Instance wrapper around {@link detectAndRollbackReorg} for use inside tick(). */
   private async detectAndRollbackReorg(): Promise<number | null> {
-    return detectAndRollbackReorg(this.config);
+    return detectAndRollbackReorg(this.config, (warning) => {
+      this.status.lastWarning = warning;
+    });
   }
 
   /**
@@ -454,21 +460,19 @@ export class MinaGuardIndexer {
   }
 
   /**
-   * Re-scans every unready contract over its persisted lower bound
-   * (`discoveredAtBlock`) up to the current chain tip. The subscribe
-   * route records `discoveredAtBlock` at insert time; the tick rescans
-   * that range each run until `syncSingleContract` ingests a first event
-   * and flips `ready=true`. This is what makes subscribe-before-deploy
-   * self-healing: the first tick after the deploy lands (and the archive
-   * indexes it) picks up the events.
+   * Scans an unready contract's full history once, then replays the same recent
+   * window as ready contracts. Missing accounts and failed scans do not stamp
+   * lastSyncedAt, so subscribe-before-deploy still gets a full first scan.
    */
-  private async rescanUnreadyContracts(latestHeight: number): Promise<void> {
+  private async rescanUnreadyContracts(fromHeight: number, latestHeight: number): Promise<void> {
     const unready = await prisma.contract.findMany({
       where: { ready: false },
-      select: { id: true, address: true, discoveredAtBlock: true },
+      select: { id: true, address: true, discoveredAtBlock: true, lastSyncedAt: true },
     });
     for (const c of unready) {
-      const from = c.discoveredAtBlock ?? this.config.indexStartHeight;
+      const from = c.lastSyncedAt === null
+        ? (c.discoveredAtBlock ?? this.config.indexStartHeight)
+        : Math.max(c.discoveredAtBlock ?? 0, fromHeight);
       if (from > latestHeight) continue;
       await this.syncSingleContract(c.id, c.address, from, latestHeight);
     }
@@ -1616,12 +1620,15 @@ function asNullableAddress(value: string | null): string | null {
  * On mismatch, rolls back all history above the fork point and returns the
  * fork height. Returns null when stored state agrees with the chain, no
  * stored headers overlap the detection window, or the daemon is unreachable.
- * Throws when stored headers disagree but no agreed fork point can be proved,
- * so the tick cannot ingest events from both sides of a fork.
+ * Without an agreed stored predecessor, removes rows from the earliest
+ * mismatching stored height and warns that older history remains unchecked.
  *
  * Exported so tests can drive reorg handling directly without the rest of tick().
  */
-export async function detectAndRollbackReorg(config: BackendConfig): Promise<number | null> {
+export async function detectAndRollbackReorg(
+  config: BackendConfig,
+  onWarning?: (warning: string) => void,
+): Promise<number | null> {
   let headers: Awaited<ReturnType<typeof fetchBestChainHeaders>>;
   try {
     headers = await fetchBestChainHeaders(config, REORG_DETECTION_WINDOW);
@@ -1651,6 +1658,7 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
   // may have a run of mismatches before hitting the last agreed height below.
   let forkHeight: number | null = null;
   let highestMismatch: { height: number; stored: string; chain: string } | null = null;
+  let lowestMismatchHeight: number | null = null;
   for (let i = stored.length - 1; i >= 0; i--) {
     const s = stored[i];
     const c = chainByHeight.get(s.height);
@@ -1662,6 +1670,7 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
     if (highestMismatch === null) {
       highestMismatch = { height: s.height, stored: s.blockHash, chain: c.blockHash };
     }
+    lowestMismatchHeight = s.height;
   }
 
   if (highestMismatch === null) {
@@ -1671,21 +1680,25 @@ export async function detectAndRollbackReorg(config: BackendConfig): Promise<num
   }
 
   if (forkHeight === null) {
-    // Sparse stored headers can leave no agreed predecessor even for a shallow
-    // reorg. Do not replay or advance the cursor while old-branch rows remain.
-    throw new Error(
-      `Unresolved chain reorg at height ${highestMismatch.height}: no matching stored header ` +
-      `in the last ${REORG_DETECTION_WINDOW} blocks. Indexing paused until the chain ` +
-      'matches stored history or an operator reindexes from a trusted point.',
+    // Every event-derived row has a header at its height. With sparse headers,
+    // remove all rows from the earliest known mismatch before replaying; there
+    // are no event rows in the gap between the window root and that mismatch.
+    forkHeight = lowestMismatchHeight! - 1;
+    const warning =
+      `Reorg recovery without an agreed stored predecessor: rolling back to ${forkHeight} ` +
+      `before earliest mismatch ${lowestMismatchHeight}. History older than the ` +
+      `${REORG_DETECTION_WINDOW}-block detection window is unverified; a deeper fork ` +
+      'requires investigation and reindexing.';
+    console.warn(`[indexer] ${warning}`);
+    onWarning?.(warning);
+  } else {
+    console.warn(
+      `[indexer] reorg detected: highest mismatch at ${highestMismatch.height} ` +
+      `(stored=${highestMismatch.stored} chain=${highestMismatch.chain}); ` +
+      `rolling back to last agreed height ${forkHeight}`,
     );
   }
-
-  console.warn(
-    `[indexer] reorg detected: highest mismatch at ${highestMismatch.height} ` +
-    `(stored=${highestMismatch.stored} chain=${highestMismatch.chain}); ` +
-    `rolling back to last agreed height ${forkHeight}`,
-  );
-  await rollbackAboveFork(forkHeight);
+  await rollbackAboveFork(forkHeight, config.indexerMode);
   return forkHeight;
 }
 
@@ -1706,10 +1719,14 @@ export async function deleteContract(contractId: number): Promise<void> {
 
 /**
  * Atomically deletes all append-only history rows above `forkHeight` and
- * rewinds the indexer cursor. The next tick resumes syncing from fork + 1.
+ * rewinds the indexer cursor. The next tick replays from the rewound cursor's
+ * recent-history window.
  * Exported for testing.
  */
-export async function rollbackAboveFork(forkHeight: number): Promise<void> {
+export async function rollbackAboveFork(
+  forkHeight: number,
+  indexerMode: BackendConfig['indexerMode'] = 'full',
+): Promise<void> {
   await prisma.$transaction([
     prisma.blockHeader.deleteMany({ where: { height: { gt: forkHeight } } }),
     prisma.eventRaw.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
@@ -1718,7 +1735,15 @@ export async function rollbackAboveFork(forkHeight: number): Promise<void> {
     prisma.proposalExecution.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
     prisma.approval.deleteMany({ where: { blockHeight: { gt: forkHeight } } }),
     prisma.proposal.deleteMany({ where: { createdAtBlock: { gt: forkHeight } } }),
-    prisma.contract.deleteMany({ where: { discoveredAtBlock: { gt: forkHeight } } }),
+    // A lite subscription is user intent. Preserve it even if its deploy was
+    // orphaned; full-mode discovery can recreate deleted contract rows.
+    ...(indexerMode === 'lite' ? [] : [
+      prisma.contract.deleteMany({ where: { discoveredAtBlock: { gt: forkHeight } } }),
+    ]),
+    prisma.contract.updateMany({
+      where: { events: { none: {} } },
+      data: { ready: false, permissionsVerified: false },
+    }),
     prisma.indexerCursor.upsert({
       where: { key: 'indexed_height' },
       create: { key: 'indexed_height', value: String(forkHeight) },

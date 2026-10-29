@@ -75,6 +75,14 @@ On launch (`src/main.ts`):
    (`POST /api/subscribe`) are indexed: "add existing account" backfills from
    block 0 via the archive endpoint, while the auto-subscribe right after a
    deploy starts a few blocks below the current height.
+
+   Empty, deployed vaults complete that initial history scan once, then use the
+   shared indexer's recent replay window. Reorg rollback preserves desktop
+   subscriptions and hides vaults left with no events until their live checks
+   and event ingestion succeed again. A missing deploy continues to be polled.
+   Sparse-header recovery warnings remain in `/api/indexer/status.lastWarning`
+   until restart; see [backend reorg handling](backend-audit-guide.md#reorg-handling)
+   for the limit on history older than the detection window.
 3. A **Next.js standalone server** (the pre-built `ui/` app) is forked as a
    child process on `127.0.0.1:5051`.
 4. A **front HTTP server** on `127.0.0.1:5050` multiplexes everything:
