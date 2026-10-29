@@ -26,7 +26,7 @@ test('proposal creation warns on each visit, including when the banner is dismis
   await openVault(page, TREASURY);
   await navigateTo(page, '/transactions/new?type=transfer');
 
-  const dialog = page.getByRole('dialog', { name: 'MinaGuard is in beta' });
+  const dialog = page.getByRole('dialog', { name: 'Before you create a proposal' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('You could lose funds');
   await expect(dialog).toContainText('including on Mainnet');

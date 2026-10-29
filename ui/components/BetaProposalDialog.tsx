@@ -22,7 +22,7 @@ export default function BetaProposalDialog() {
       className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-safe-border bg-safe-dark p-6 text-white shadow-2xl backdrop:bg-black/70"
     >
       <span className="inline-flex rounded-full bg-safe-green px-2 py-px text-[11px] font-semibold tracking-wide text-safe-dark">BETA</span>
-      <h2 id="beta-proposal-title" className="mt-4 text-xl font-semibold">MinaGuard is in beta</h2>
+      <h2 id="beta-proposal-title" className="mt-4 text-xl font-semibold">Before you create a proposal</h2>
       <p id="beta-proposal-description" className="mt-3 text-sm leading-relaxed text-safe-text">
         <BetaRiskMessage />
       </p>

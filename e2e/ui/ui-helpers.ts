@@ -46,7 +46,7 @@ export async function openProposalForm(
 ): Promise<void> {
   await openVault(page, vault);
   await navigateTo(page, `/transactions/new?type=${type}`);
-  await page.getByRole('dialog', { name: 'MinaGuard is in beta' }).getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
 }
 
 /** Fills the recipients section via its Bulk mode (`address,amount` lines). */
