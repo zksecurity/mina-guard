@@ -175,6 +175,8 @@ after its approved release run, source SHA, manifest hash, and alert webhook
 are configured. These checks do not
 deploy the app or start monitoring by themselves; see the
 [deployment audit guide](docs/deploy-audit-guide.md) for setup and limits.
+The watcher avoids naming itself in its User-Agent, but selective delivery to
+particular visitors can still evade its checks.
 
 These settings have distinct jobs: the Mina and archive URLs choose which
 chain services the app talks to; the network name selects the wallet network;

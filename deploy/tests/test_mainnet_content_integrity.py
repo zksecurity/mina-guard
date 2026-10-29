@@ -48,17 +48,23 @@ class ContentServer:
         self.bodies = bodies
         self.redirects = {}
         self.gzip_paths = set()
+        self.user_agents = []
+        self.legacy_checker_bodies = {}
 
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                user_agent = self.headers.get("User-Agent", "")
+                owner.user_agents.append(user_agent)
                 if self.path in owner.redirects:
                     self.send_response(302)
                     self.send_header("Location", owner.redirects[self.path])
                     self.end_headers()
                     return
                 data = owner.bodies.get(self.path)
+                if user_agent == "MinaGuard-content-integrity/1":
+                    data = owner.legacy_checker_bodies.get(self.path, data)
                 if data is None:
                     self.send_error(404)
                     return
@@ -133,6 +139,22 @@ class ContentIntegrityTests(unittest.TestCase):
         with ContentServer(self.bodies.copy()) as server:
             server.bodies["/_next/static/chunks/worker.js"] = b"postMessage('evil');"
             self.assertIn("/_next/static/chunks/worker.js: content hash mismatch", self.check(server))
+
+    def test_checker_does_not_announce_itself_in_requests(self):
+        with ContentServer(self.bodies.copy()) as server:
+            self.assertEqual(self.check(server), [])
+            self.assertEqual(len(server.user_agents), len(self.manifest["routes"]) + len(self.manifest["assets"]))
+            for user_agent in server.user_agents:
+                self.assertTrue(user_agent.startswith("Mozilla/5.0 "))
+                self.assertNotIn("MinaGuard", user_agent)
+                self.assertNotIn("Python-urllib", user_agent)
+
+    def test_server_hiding_changes_from_the_legacy_checker_is_detected(self):
+        path = "/_next/static/chunks/worker.js"
+        with ContentServer(self.bodies.copy()) as server:
+            server.legacy_checker_bodies[path] = server.bodies[path]
+            server.bodies[path] = b"postMessage('changed');"
+            self.assertIn(f"{path}: content hash mismatch", self.check(server))
 
     def test_gzip_transport_keeps_same_content_hash(self):
         with ContentServer(self.bodies.copy()) as server:

@@ -33,6 +33,12 @@ MAX_MANIFEST_BYTES = 10 * 1024 * 1024
 MAX_ASSETS = 10_000
 MAX_FAILURES = 5
 MAX_CHECK_SECONDS = 300
+# Do not advertise the checker by name. This does not hide its IP, request
+# pattern, or other HTTP-client characteristics from a selective server.
+PUBLIC_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+)
 
 
 class IntegrityError(Exception):
@@ -210,7 +216,7 @@ def _public_hash(opener, url: str, timeout: float, deadline: float) -> str:
         "Accept-Encoding": "identity",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
-        "User-Agent": "MinaGuard-content-integrity/1",
+        "User-Agent": PUBLIC_USER_AGENT,
     })
     try:
         with opener.open(request, timeout=timeout) as response:

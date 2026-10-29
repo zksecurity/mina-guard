@@ -266,7 +266,11 @@ This monitor runs outside the
 app host, but it shares the repository's GitHub trust boundary. It can detect
 changes visible to its fetches; it does not prevent first exposure, cover the
 HTML of dynamic `/accounts/<address>` or `/transactions/<id>` pages, or prove
-what every visitor received. A successful image
+what every visitor received. Requests use a browser-like User-Agent rather than
+announcing the integrity checker. This is still an HTTP client, not a real
+browser; its public behavior, fixed headers, and runner IPs can identify it.
+A compromised server can selectively return approved bytes to the watcher and
+different code to other visitors. A successful image
 build or monitor run alone does not establish that mainnet account creation is
 ready. GitHub may delay or skip a scheduled run, so a separate check of the
 watcher's run cadence is needed if a missed run must also alert. Each run
