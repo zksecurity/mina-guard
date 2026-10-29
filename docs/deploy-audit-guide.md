@@ -182,7 +182,10 @@ browser-reachable HTTPS services before enabling the build:
 | `MAINNET_API_BASE_URL` | Indexer/API origin or base URL |
 | `MAINNET_MINA_ENDPOINT` | Mina mainnet GraphQL endpoint |
 | `MAINNET_ARCHIVE_ENDPOINT` | Mainnet archive GraphQL endpoint |
-| `MAINNET_BLOCK_EXPLORER_URL` | Mainnet transaction/address links |
+
+Transaction and address links use `https://minascan.io/mainnet`, pinned in the
+reviewed workflow and independently enforced by ops. Changing the explorer
+requires reviewed changes in both repositories.
 
 The workflow refuses missing, non-HTTPS, local, or visibly testnet/devnet/trail
 URLs, URLs with credentials or query strings, and a nonempty base path. These
@@ -277,17 +280,19 @@ SHA and rerun the check before approving and merging.
 
 ### Watch the content served to owners
 
-Before first public launch, the normal scheduled watcher has no deployment
-receipt yet and cannot reach an IP-restricted preview. From a trusted machine
-outside AWS at the configured preview IP, authenticate GitHub and the GHCR
-registry, then create a reviewed record containing `version: 1`, `sourceSha`,
-`runId` (a string), and `manifestSha256` for the exact successful build. Run
-`python3 deploy/production-promotion.py --record <record.json> --check-preview`.
-It verifies the build, manifest and image attestations, then checks the real
-production-origin preview using the same content checker as the watcher. Test
-the alert channel separately; this preview check does not exercise the scheduled
-watcher's receipt resolution or alert delivery. After activation and the first
-ops receipt, verify the scheduled watcher runs successfully.
+Before first public launch, use the ops `Approve mainnet preview for independent
+watcher` workflow with the reviewed production SHA, successful push build ID,
+and manifest hash. It creates a separate `mainnet-preview` receipt; the normal
+production watcher never consumes that environment. Run `Mainnet public-content
+watch` with mode `preview`. It reports its runner IPv4 address and sends a test
+alert to the configured channel. While the job waits, use the ops `preview`
+command to change the existing restricted preview to that runner's address.
+The job resolves the preview receipt, verifies the same saved release evidence,
+and checks the real production-origin response. Confirm the test alert and job
+success before opening public traffic. The operator can restore their own IP
+with the same preview command. After activation, enable the scheduled watcher
+and confirm its first production receipt and run. The manual
+`production-promotion.py --check-preview` remains an additional local check.
 
 After the verified release is serving at `https://app.minaguard.com`, set the
 repository variable `MAINNET_OPS_BOT_ACTOR_ID` to the numeric ID of the ops

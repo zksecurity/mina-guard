@@ -130,6 +130,19 @@ class PromotionTest(unittest.TestCase):
         ]), self.assertRaises(ValueError):
             resolver.resolve(9)
 
+    def test_preview_receipts_use_a_separate_environment(self):
+        deployment = {'id': 1, 'creator': {'id': 9}, 'ref': SHA, 'payload': RECORD}
+        def api(path):
+            if 'deployments?environment=mainnet-preview' in path:
+                return [deployment]
+            if '/1/statuses' in path:
+                return [{'state': 'success', 'creator': {'id': 9}}]
+            raise AssertionError(path)
+        with patch.object(resolver, 'api', side_effect=api):
+            self.assertEqual(resolver.resolve(9, 'mainnet-preview'), RECORD)
+        with self.assertRaises(ValueError):
+            resolver.resolve(9, 'other')
+
 
 if __name__ == "__main__":
     unittest.main()

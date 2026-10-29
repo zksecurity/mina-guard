@@ -160,7 +160,7 @@ commit on GitHub-hosted runners and publishes the frontend and backend images to
 GHCR. The workflow signs the image digests and frontend content baseline. It
 runs a separate publishing job to preserve the signed release evidence in a
 GitHub Release; that job can write repository release metadata. It
-runs only when `MAINNET_BUILD_ENABLED=true`; the four public `MAINNET_*` URL
+runs only when `MAINNET_BUILD_ENABLED=true`; the three public `MAINNET_*` URL
 variables must also be configured. The separate ops workflow verifies the images
 and deploys them only when automatic rollout has been enabled after first-launch
 acceptance.
