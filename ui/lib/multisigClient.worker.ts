@@ -2,6 +2,7 @@
 // Runs o1js compilation and proof generation off the main thread.
 
 import './disable-wasm-finalizers';
+import { createContractCompiler } from './contract-compiler';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
 import { classifyDeployTarget, receiverExists } from './deploy-target';
 import { requireUnregisteredProposal } from './proposal-preparation';
@@ -99,8 +100,6 @@ let configResolve: ((cfg: RuntimeConfig) => void) | null = null;
 const configReady: Promise<RuntimeConfig> = new Promise((resolve) => {
   configResolve = resolve;
 });
-
-let compilePromise: Promise<void> | null = null;
 
 // -- E2E test mode --------------------------------------------------------
 // When a test private key is set, the worker signs and sends transactions
@@ -202,7 +201,6 @@ async function configureNetwork() {
   Mina.setActiveInstance(network);
 }
 
-let compileSucceeded = false;
 let idbCache: Awaited<ReturnType<typeof import('./idb-compile-cache').createIndexedDBCache>> | null = null;
 
 /** The verification key this build's circuit must compile to — the same
@@ -240,45 +238,26 @@ async function assertExpectedVerificationKey(actualHash: string): Promise<void> 
   );
 }
 
-async function compileContract(): Promise<boolean> {
-  if (compileSucceeded) return true;
-
-  // The Lightnet E2E build runs its daemon with PROOF_LEVEL=none and replaces
-  // lazy proofs with o1js dummy proofs. Compiling the real circuit here adds no
-  // proof-verification coverage and can exhaust the small shared runner after
-  // the circuit grows. Its Compose stack instead pins the matching dummy VK;
-  // check-vk-hash separately compiles and verifies the real network VKs.
-  if (skipProofs && process.env.NEXT_PUBLIC_E2E_TEST === 'true') {
-    console.log('[MultisigWorker] Skipping circuit compile in proofless E2E mode');
-    return true;
+// Keep successful compilation shared, but let callers see failures and retry.
+const compileOnce = createContractCompiler(async () => {
+  console.log('[MultisigWorker] MinaGuard.compile() starting');
+  const t0 = performance.now();
+  await configureNetwork();
+  if (!idbCache) {
+    const { createIndexedDBCache } = await import('./idb-compile-cache');
+    idbCache = await createIndexedDBCache();
   }
+  const { verificationKey } = await MinaGuard.compile({ cache: idbCache });
+  await assertExpectedVerificationKey(verificationKey.hash.toString());
+  const { getCompileCacheSize } = await import('./idb-compile-cache');
+  const size = await getCompileCacheSize();
+  console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s — cache: ${(size.bytes / 1024 / 1024).toFixed(0)}MB (${size.entries} entries)`);
+});
 
-  if (!compilePromise) {
-    compilePromise = (async () => {
-      console.log('[MultisigWorker] MinaGuard.compile() starting');
-      const t0 = performance.now();
-      await configureNetwork();
-      if (!idbCache) {
-        const { createIndexedDBCache } = await import('./idb-compile-cache');
-        idbCache = await createIndexedDBCache();
-      }
-      const { verificationKey } = await MinaGuard.compile({ cache: idbCache });
-      await assertExpectedVerificationKey(verificationKey.hash.toString());
-      const { getCompileCacheSize } = await import('./idb-compile-cache');
-      const size = await getCompileCacheSize();
-      console.log(`[MultisigWorker] MinaGuard.compile() done in ${((performance.now() - t0) / 1000).toFixed(1)}s — cache: ${(size.bytes / 1024 / 1024).toFixed(0)}MB (${size.entries} entries)`);
-    })();
-  }
-
-  try {
-    await compilePromise;
-    compileSucceeded = true;
-    return true;
-  } catch (error) {
-    console.error('[MultisigWorker] Contract compile failed', error);
-    compilePromise = null;
-    return false;
-  }
+async function compileContract(): Promise<void> {
+  // Only the proofless E2E build may bypass real compilation.
+  if (skipProofs && process.env.NEXT_PUBLIC_E2E_TEST === 'true') return;
+  await compileOnce();
 }
 
 async function fetchContractState(
@@ -914,8 +893,7 @@ const workerApi = {
     const vaultTarget = classifyDeployTarget(await fetchAccount({ publicKey: zkAppAddress }));
 
     progressFn('Compiling contract...');
-    const ok = await compileContract();
-    if (!ok) return null;
+    await compileContract();
 
     progressFn('Building transaction...');
     const zkApp = new MinaGuard(zkAppAddress);
@@ -976,8 +954,7 @@ const workerApi = {
   ): Promise<{ proposalHash: string; txHash: string } | null> {
     progressFn('Compiling contract...');
     await configureNetwork();
-    const ok = await compileContract();
-    if (!ok) return null;
+    await compileContract();
 
     const isCreateChild = params.input.txType === 'createChild';
 
@@ -1146,8 +1123,7 @@ const workerApi = {
   ): Promise<string | null> {
     progressFn('Compiling contract...');
     await configureNetwork();
-    const ok = await compileContract();
-    if (!ok) return null;
+    await compileContract();
 
     progressFn('Fetching on-chain state...');
     const contractState = await fetchContractState(params.contractAddress);
@@ -1223,8 +1199,7 @@ const workerApi = {
   ): Promise<string | null> {
     progressFn('Compiling contract...');
     await configureNetwork();
-    const ok = await compileContract();
-    if (!ok) return null;
+    await compileContract();
 
     progressFn('Fetching on-chain state...');
     const contractState = await fetchContractState(params.contractAddress);
@@ -1345,8 +1320,7 @@ const workerApi = {
   ): Promise<string | null> {
     progressFn('Compiling contract...');
     await configureNetwork();
-    const ok = await compileContract();
-    if (!ok) return null;
+    await compileContract();
 
     progressFn('Rebuilding parent stores...');
     const { approvalStore } = await rebuildVerifiedParentApprovals(params.parentAddress);
@@ -1440,8 +1414,7 @@ const workerApi = {
   ): Promise<string | null> {
     progressFn('Compiling contract...');
     await configureNetwork();
-    const ok = await compileContract();
-    if (!ok) return null;
+    await compileContract();
 
     const txType = normalizeTxType(params.proposal.txType);
     if (

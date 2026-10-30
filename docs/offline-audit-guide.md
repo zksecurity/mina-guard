@@ -18,6 +18,15 @@ its threat model) and [`desktop-audit-guide.md`](./desktop-audit-guide.md).
 
 ---
 
+## Reviewing batch payments
+
+The user guide directs operators to check the network, vault, action, every
+recipient and amount, recipient count, and total in the CLI summary. The existing
+`y/N` confirmation applies once per transaction, including batch payments and
+non-payment actions; operators do not retype amounts. The summary and explicit
+confirmation still occur before key use. Request/response formats and signing
+behavior are unchanged. A Mina node is not a substitute for the offline signer.
+
 ## General overview
 
 Owners who keep a key on an air-gapped machine can participate in the full

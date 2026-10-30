@@ -16,6 +16,12 @@ Prepared transactions are checked against current on-chain state before broadcas
 
 MinaGuard is a multisig wallet zkApp for Mina built with o1js, plus a Next.js UI and an Express indexer API.
 
+The user guide (`/guide`) explains wallet connection,
+on-chain proposal stages, the nine-recipient contract limit, parent/SubVault
+funding and reclaim, offline batch review, and the absence of incoming-payment
+alerts. It includes GitHub source and issue links. Contract compilation failures
+now reach the operation banner with their cause and can be retried.
+
 ## Packages
 
 - `contracts/` - MinaGuard smart contract, stores, and tests.

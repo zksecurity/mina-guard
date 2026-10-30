@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback, createContext, useContext, type ReactNode } from 'react';
+import { MAX_RECEIVERS } from '@/lib/constants';
 import CubeLogo from '@/components/CubeLogo';
 import BetaNotice from '@/components/BetaNotice';
 
@@ -44,6 +45,8 @@ const NAV = [
     group: 'Reference',
     items: [
       { id: 'wallets', label: 'Wallets and networks' },
+      { id: 'payments', label: 'Incoming payments and alerts' },
+      { id: 'support', label: 'Source and support' },
     ],
   },
 ];
@@ -390,7 +393,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             id="how"
             eyebrow="Start here"
             title="The propose, approve, execute lifecycle"
-            intro={<>Every action follows the same three stages. Nothing is committed on-chain until the final stage.</>}
+            intro={<>Each stage is a separate on-chain transaction. Proposing records the action and first approval; approving records another approval; execution performs the approved action.</>}
           >
             <div className="relative">
               <div className="absolute left-[21px] top-3 bottom-6 w-0.5 bg-safe-green/30" aria-hidden="true" />
@@ -420,7 +423,8 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               <p className="text-sm text-white leading-relaxed">
                 Owners sign a proposal <b className="text-safe-green">hash</b>, not a readable form. This is
                 known as blind signing. Before signing, MinaGuard recomputes the hash from on-chain state
-                and verifies it matches, so the app&apos;s display corresponds to what is signed.
+                and verifies it matches. A compromised app could still show misleading details;
+                use independently verified offline tooling to review high-value actions.
               </p>
             </div>
           </Section>
@@ -436,7 +440,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               <Term term="Vault">A wallet holding MINA and a list of owners. On-chain, a multisig smart contract.</Term>
               <Term term="Owner">An address permitted to propose and approve. Your connected wallet is marked <Tok>You</Tok>; a vault you do not own is shown as <Tok>View-only</Tok>.</Term>
               <Term term="Threshold">The number of approvals a proposal requires before it can execute. Shown in Settings as <Tok>Required Confirmations</Tok>.</Term>
-              <Term term="Proposal">A drafted action awaiting approvals.</Term>
+              <Term term="Proposal">A proposed vault action, such as a payment, delegation, or owner change. It is recorded on-chain and needs enough approvals before a separate execution transaction performs it.</Term>
               <Term term="Confirmations">The approvals collected so far, displayed as a checklist of owners.</Term>
               <Term term="Nonce">A per-vault counter that orders executions and prevents replays. The form supplies the next value.</Term>
               <Term term="Delegate">The block producer the vault&apos;s stake supports. Setting or clearing it moves no funds.</Term>
@@ -490,6 +494,10 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p>When the threshold is met, select <Tok>Execute Proposal</Tok>. Any party can execute. If the vault balance is insufficient, execution is blocked.</p>
               </Step>
             </ol>
+            <div id="owner-approval-changes" className="scroll-mt-24 mt-5 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-safe-text leading-relaxed">
+              <h3 className="font-semibold text-white mb-2">Pending owner or required-approval changes</h3>
+              <p>Adding or removing an owner, or changing the required approvals, changes the vault&apos;s configuration version (config nonce) when executed. Pending proposals made under the old version then become invalid, including payments and delegation. Review and propose the action again under the new configuration. Setting a delegate does not itself change this version.</p>
+            </div>
           </Section>
 
           {/* WHAT YOU CAN DO */}
@@ -503,13 +511,14 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               Vault actions<span className="flex-1 h-px bg-safe-border" />
             </div>
             <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-              <ActionCard code="transfer" title="Send MINA" desc="Send MINA to up to nine recipients." chips={<Chip>LOCAL</Chip>} />
+              <ActionCard code="transfer" title="Send MINA" desc={`Send MINA to up to ${MAX_RECEIVERS} recipients per proposal. Split larger batches into separate proposals.`} chips={<Chip>LOCAL</Chip>} />
               <ActionCard code="addOwner" title="Add Owner" desc="Add a signer to the owner set." chips={<><Chip>LOCAL</Chip><Chip tone="config">Changes config</Chip></>} />
               <ActionCard code="removeOwner" title="Remove Owner" desc="Remove a signer. Blocked if it would drop the owner count below the threshold." chips={<><Chip>LOCAL</Chip><Chip tone="config">Changes config</Chip></>} />
               <ActionCard code="changeThreshold" title="Change Threshold" desc="Change the number of approvals required." chips={<><Chip>LOCAL</Chip><Chip tone="config">Changes config</Chip></>} />
               <ActionCard code="setDelegate" title="Set Delegate" desc="Set or clear the block-producer delegate. Moves no funds." chips={<Chip>LOCAL</Chip>} />
             </div>
 
+            <p className="mt-4 text-sm text-safe-text leading-relaxed">The recipient limit is enforced by the contract; it cannot be increased in Settings.</p>
             <div className="font-mono text-xs uppercase tracking-[0.14em] text-safe-text/60 flex items-center gap-3 mt-7 mb-3.5">
               SubVault actions · from a top-level Vault<span className="flex-1 h-px bg-safe-border" />
             </div>
@@ -521,7 +530,8 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               <ActionCard code="enableChildMultiSig" title="Toggle SubVault Multi-sig" desc="Enable or disable a SubVault running its own proposals." chips={<Chip tone="accent">REMOTE</Chip>} />
               <div className="sm:col-span-2 lg:col-span-3 bg-safe-dark border border-dashed border-safe-border rounded-xl p-4 text-sm text-safe-text leading-relaxed">
                 <b className="text-white">Deleting a proposal</b> is not a separate action. The app creates a
-                zero-effect proposal that reuses the target nonce, cancelling the original once approved. Not
+                zero-effect proposal that reuses the target nonce. Once that replacement is approved and executed,
+                the original can no longer execute. Not
                 available for Create SubVault.
               </div>
             </div>
@@ -539,7 +549,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p>On a top-level vault, open <Tok>SubVaults</Tok> and select <Tok>Create SubVault</Tok>. Owners and threshold are prefilled from the Vault. Propose it, have the Vault owners approve, then execute to initialize the SubVault.</p>
               </Step>
               <Step n={2} title="Fund and reclaim" img="/guide/action-allocateChild.png" imgAlt="Allocate to SubVaults">
-                <p><Tok>Allocate to SubVaults</Tok> sends MINA to SubVaults. <Tok>Reclaim from SubVault</Tok> returns an amount to the Vault, capped at the SubVault balance.</p>
+                <p>After the Vault and SubVaults are initialized, send MINA to the parent Vault&apos;s address using an ordinary wallet transfer. Then propose <Tok>Allocate to SubVaults</Tok> on the parent, collect approvals, and execute to move funds to its SubVaults. To return funds, propose <Tok>Reclaim from SubVault</Tok> on the parent, collect approvals, and execute. Reclaim is capped at the SubVault balance.</p>
               </Step>
               <Step n={3} title="Autonomy" img="/guide/action-enableChildMultiSig.png" imgAlt="Toggle SubVault Multi-sig">
                 <p><Tok>Toggle SubVault Multi-sig</Tok> controls whether a SubVault can run its own proposals. When disabled, the SubVault is controlled only by its Vault; Vault-authorized actions still apply.</p>
@@ -572,7 +582,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <div className="font-mono text-sm bg-safe-dark border border-safe-border rounded-lg px-3.5 py-3 overflow-x-auto text-white">
                   <span className="text-safe-green">MINA_PRIVATE_KEY</span>=EK… ./mina-guard-cli bundle.json <span className="text-safe-text/60">{'> signed.json'}</span>
                 </div>
-                <p>The CLI prints a readable summary and requires you to type <Tok>y</Tok> before signing.</p>
+                <p>The CLI prints the network, vault, action, and signing details. For payments, review every recipient and amount, the recipient count, and the total before typing <Tok>y</Tok> to sign. A batch needs one confirmation for the transaction; you do not retype each amount. Non-payment actions use the same confirmation.</p>
               </Step>
               <Step n={5} title="Broadcast">
                 <p>Return <Tok>signed.json</Tok> to an online machine and upload it. The app verifies it is bound to the correct vault and proposal, then broadcasts it.</p>
@@ -590,6 +600,12 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             eyebrow="Reference"
             title="Wallets and networks"
           >
+            <ol className="list-decimal pl-5 mb-6 space-y-3 text-sm text-safe-text leading-relaxed">
+              <li><b className="text-white">Auro Wallet:</b> install the Auro browser extension, create or unlock your wallet, and select the network shown by MinaGuard. Select <Tok>Connect Auro Wallet</Tok> and approve the site&apos;s connection request in Auro. Connecting shares your public address; each transaction still requires signing.</li>
+              <li><b className="text-white">Ledger:</b> connect your device by USB, unlock it, open the Mina app, and select <Tok>Connect Ledger</Tok> in a browser supporting WebHID. Choose the account index (default 0) and confirm the address on the device.</li>
+              <li><b className="text-white">Offline key:</b> use the Offline tab and the <a href="#offline" className="underline underline-offset-2">air-gapped CLI flow</a>. No connected wallet is needed for exporting a request.</li>
+            </ol>
+            <p className="mb-6 text-sm text-safe-text leading-relaxed">A Mina node supplies blockchain data and accepts signed transactions. Running your own node does not replace a wallet or signing key. The desktop app can be configured to use your own Mina and archive endpoints.</p>
             <div className="grid gap-3.5 sm:grid-cols-3">
               {[
                 { h: 'Auro', b: 'browser', p: <>The Auro browser extension. The standard option; its network follows the extension.</> },
@@ -618,6 +634,14 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
               ))}
             </div>
 
+          </Section>
+
+          <Section id="payments" eyebrow="Reference" title="Incoming payments and alerts">
+            <p className="text-safe-text leading-relaxed">Anyone can send MINA to an initialized Vault&apos;s public address using an ordinary wallet transfer; the Vault does not need to propose or approve receiving it. Allow time for chain inclusion and the balance display to refresh. MinaGuard does not currently send incoming-payment email or push alerts. Check the Vault balance and transaction on a Mina explorer; any wallet or explorer notifications depend on that service.</p>
+          </Section>
+
+          <Section id="support" eyebrow="Reference" title="Source and support">
+            <p className="text-safe-text leading-relaxed">View the <a href="https://github.com/zksecurity/mina-guard" target="_blank" rel="noopener noreferrer" className="text-safe-green underline underline-offset-2">source on GitHub</a> or <a href="https://github.com/zksecurity/mina-guard/issues" target="_blank" rel="noopener noreferrer" className="text-safe-green underline underline-offset-2">report a problem</a>. Include your browser, network, the step that failed, and the displayed error. Never share a seed phrase, private key, or downloaded deploy key.</p>
             <div className="mt-10 pt-6 border-t border-safe-border text-sm text-safe-text/70">
               <p className="font-mono text-safe-text">MinaGuard User Guide</p>
               <p className="mt-1.5 max-w-[60ch]">
