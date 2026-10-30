@@ -23,6 +23,10 @@ describe('classifyDeployTarget', () => {
   it('refuses to guess when the node fails for any other reason', () => {
     expect(() => classifyDeployTarget({ error: { statusCode: 500, statusText: 'upstream timeout' } }))
       .toThrow('Could not check the vault address: upstream timeout');
+    expect(() => classifyDeployTarget({ error: { statusCode: 429, statusText: '' } }))
+      .toThrow('Could not check the vault address: too many requests (HTTP 429)');
+    expect(() => classifyDeployTarget({ error: { statusCode: 503, statusText: '' } }))
+      .toThrow('Could not check the vault address: HTTP 503');
     expect(() => classifyDeployTarget({ error: {} })).toThrow('Could not check the vault address');
   });
 });
@@ -38,6 +42,8 @@ describe('receiverExists', () => {
   it('refuses to guess when the node fails for any other reason', () => {
     expect(() => receiverExists({ error: { statusCode: 500, statusText: 'upstream timeout' } }))
       .toThrow('Could not check a receiver address: upstream timeout');
+    expect(() => receiverExists({ error: { statusCode: 429, statusText: '' } }))
+      .toThrow('Could not check a receiver address: too many requests (HTTP 429)');
     expect(() => receiverExists({ error: {} })).toThrow('Could not check a receiver address');
   });
 });
