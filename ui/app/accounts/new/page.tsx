@@ -1,6 +1,7 @@
 'use client';
 
 import TransactionPreflightPanel from '@/components/TransactionPreflightPanel';
+import BetaProposalDialog from '@/components/BetaProposalDialog';
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -359,6 +360,7 @@ function CreateAccountWizard() {
 
   return (
     <div>
+      {isSubaccount && <BetaProposalDialog />}
       <TransactionPreflightPanel />
       <div className="p-6 max-w-3xl mx-auto w-full">
         {!wallet.connected ? (
