@@ -1,7 +1,9 @@
-name: Mainnet images (manual build and attest; no deploy)
+name: Mainnet images (build and attest; no deploy)
 
 # This release identity is separate from the Mesa Trail testnet workflow.
 on:
+  push:
+    branches: [production]
   workflow_dispatch: {}
 
 concurrency:
@@ -13,14 +15,13 @@ permissions:
 
 jobs:
   vk-hashes:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/production' && vars.MAINNET_BUILD_ENABLED == 'true'
     uses: ./.github/workflows/vk-hashes.yml
 
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/production' && vars.MAINNET_BUILD_ENABLED == 'true'
     needs: vk-hashes
     runs-on: ubuntu-latest
-    environment: Production
     permissions:
       contents: read
       packages: write
@@ -34,10 +35,12 @@ jobs:
       NEXT_PUBLIC_API_BASE_URL: ${{ vars.MAINNET_API_BASE_URL }}
       NEXT_PUBLIC_MINA_ENDPOINT: ${{ vars.MAINNET_MINA_ENDPOINT }}
       NEXT_PUBLIC_ARCHIVE_ENDPOINT: ${{ vars.MAINNET_ARCHIVE_ENDPOINT }}
-      NEXT_PUBLIC_BLOCK_EXPLORER_URL: ${{ vars.MAINNET_BLOCK_EXPLORER_URL }}
+      NEXT_PUBLIC_BLOCK_EXPLORER_URL: https://minascan.io/mainnet
       NEXT_PUBLIC_POLL_INTERVAL_MS: '1000'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Download VK manifest for this commit
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -179,3 +182,74 @@ jobs:
             mainnet-images.json
             mainnet-content.json
           if-no-files-found: error
+
+  archive-evidence:
+    if: github.ref == 'refs/heads/production' && vars.MAINNET_BUILD_ENABLED == 'true'
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+      attestations: read
+    env:
+      IMAGE_PREFIX: ghcr.io/zksecurity/mina-guard/mainnet
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mainnet-images-${{ github.sha }}
+          path: evidence
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Preserve signed release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/mainnet-evidence"
+          mkdir -p "$evidence"
+          cp evidence/mainnet-images.json evidence/mainnet-content.json "$evidence/"
+          cd "$evidence"
+          mapfile -t digests < <(python3 - <<'PY'
+          import json, os, re
+          with open('mainnet-images.json', encoding='utf-8') as source:
+              value = json.load(source)
+          if value.get('sha') != os.environ['GITHUB_SHA'] or value.get('network') != 'mainnet':
+              raise SystemExit('Unexpected release identity')
+          for kind in ('frontend', 'backend'):
+              match = re.fullmatch(re.escape(os.environ['IMAGE_PREFIX'] + '-' + kind) + r'@(sha256:[0-9a-f]{64})', value.get(kind, ''))
+              if not match:
+                  raise SystemExit('Unexpected image reference')
+              print(match.group(1))
+          PY
+          )
+          test "${#digests[@]}" = 2
+          FRONTEND_DIGEST="${digests[0]}"
+          BACKEND_DIGEST="${digests[1]}"
+          for entry in "manifest:mainnet-images.json" "content:mainnet-content.json" \
+                       "frontend:oci://${IMAGE_PREFIX}-frontend@${FRONTEND_DIGEST}" \
+                       "backend:oci://${IMAGE_PREFIX}-backend@${BACKEND_DIGEST}"; do
+            label="${entry%%:*}"
+            subject="${entry#*:}"
+            if [[ "$subject" == oci://* ]]; then digest="${subject##*@}"; else digest="sha256:$(sha256sum "$subject" | cut -d ' ' -f 1)"; fi
+            gh attestation download "$subject" --repo "$GITHUB_REPOSITORY"
+            mv "${digest}.jsonl" "${label}.attestation.jsonl"
+          done
+          tag="mainnet-build-${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = false
+            test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)" = "$GITHUB_SHA"
+            existing="$RUNNER_TEMP/existing-evidence"
+            mkdir -p "$existing"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$existing"
+            cmp mainnet-images.json "$existing/mainnet-images.json"
+            cmp mainnet-content.json "$existing/mainnet-content.json"
+            for label in manifest content frontend backend; do test -s "$existing/$label.attestation.jsonl"; done
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --latest=false \
+              --title "Mainnet build $GITHUB_SHA ($GITHUB_RUN_ID)" --notes 'Signed mainnet build evidence.' \
+              mainnet-images.json mainnet-content.json *.attestation.jsonl
+          fi

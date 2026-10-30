@@ -154,25 +154,20 @@ PR's cache.
 
 ### Mainnet image preparation
 
-`.github/workflows/mainnet-image-build.yml` is a manual build and attestation
-workflow for the `main` branch. It publishes separate `mainnet-*` GHCR images;
-it does not deploy them to AWS. Set the public GitHub Actions variables
-`MAINNET_API_BASE_URL`, `MAINNET_MINA_ENDPOINT`,
-`MAINNET_ARCHIVE_ENDPOINT`, and `MAINNET_BLOCK_EXPLORER_URL` to the intended
-HTTPS URLs before dispatching it. The workflow rejects missing or obviously
-non-mainnet URLs, selects the `mainnet` entry from the VK manifest for that
-commit, and passes both `MINA_NETWORK_DOMAIN=mainnet` and
-`NEXT_PUBLIC_MINA_NETWORK=mainnet` to the builds. The existing Trail release
-remains a separate testnet build.
+A reviewed PR into `production` containing the current `main` code selects the release. Once
+merged, `.github/workflows/mainnet-image-build.yml` builds that exact production
+commit on GitHub-hosted runners and publishes the frontend and backend images to
+GHCR. The workflow signs the image digests and frontend content baseline. It
+runs a separate publishing job to preserve the signed release evidence in a
+GitHub Release; that job can write repository release metadata. It
+runs only when `MAINNET_BUILD_ENABLED=true`; the three public `MAINNET_*` URL
+variables must also be configured. The separate ops workflow verifies the images
+and deploys them only when automatic rollout has been enabled after first-launch
+acceptance.
 
-The release also attests its digest manifest and records the approved frontend
-HTML and static asset hashes from the exact frontend image. Before AWS starts a
-release, run `deploy/verify-mainnet-release.py` with an independently approved
-source commit; the future AWS deploy path must require its verified digest
-output. `deploy/mainnet-content-integrity.py` compares the public site with the
+`deploy/mainnet-content-integrity.py` compares the public site with the
 approved bytes. The GitHub-hosted watch workflow can run it every 15 minutes
-after its approved release run, source SHA, manifest hash, and alert webhook
-are configured. These checks do not
+after the ops App actor ID, watch gate, and alert webhook are configured. These checks do not
 deploy the app or start monitoring by themselves; see the
 [deployment audit guide](docs/deploy-audit-guide.md) for setup and limits.
 The watcher avoids naming itself in its User-Agent, but selective delivery to

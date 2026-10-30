@@ -25,7 +25,7 @@ BACKEND = "ghcr.io/zksecurity/mina-guard/mainnet-backend@sha256:" + "b" * 64
 FRONTEND = "ghcr.io/zksecurity/mina-guard/mainnet-frontend@sha256:" + "c" * 64
 IDENTITY = (
     "https://github.com/zksecurity/mina-guard/.github/workflows/"
-    "mainnet-image-build.yml@refs/heads/main"
+    "mainnet-image-build.yml@refs/heads/production"
 )
 
 
@@ -132,7 +132,7 @@ class MainnetReleaseVerifierTest(unittest.TestCase):
             self.assertEqual(call[:2], ["attestation", "verify"])
             self.assertEqual(call[call.index("--repo") + 1], "zksecurity/mina-guard")
             self.assertEqual(call[call.index("--cert-identity") + 1], IDENTITY)
-            self.assertEqual(call[call.index("--source-ref") + 1], "refs/heads/main")
+            self.assertEqual(call[call.index("--source-ref") + 1], "refs/heads/production")
             self.assertEqual(call[call.index("--source-digest") + 1], SHA)
             self.assertEqual(
                 call[call.index("--predicate-type") + 1],
@@ -229,6 +229,23 @@ class MainnetReleaseVerifierTest(unittest.TestCase):
     def test_zero_verified_results_fail_closed(self):
         self.assert_rejected(self.run_verifier(env_changes={"GH_RESULT": "[]"}))
         self.assertEqual(len(self.calls()), 1)
+
+    def test_saved_bundle_requires_the_expected_repository_id(self):
+        bundle = self.directory / 'manifest.attestation.jsonl'
+        bundle.write_text('test bundle')
+        identity = {'verificationResult': {'signature': {'certificate': {
+            'sourceRepositoryIdentifier': MODULE.REPOSITORY_ID}}}}
+        with patch.dict(os.environ, {'PATH': f"{self.directory}:{os.environ.get('PATH', '')}",
+                                     'GH_LOG': str(self.log_path), 'GH_RESULT': json.dumps([identity])}):
+            MODULE.verify_attestation(str(self.manifest_path), SHA, 'manifest', bundle)
+            self.assertIn('--bundle', self.calls()[-1])
+        identity['verificationResult']['signature']['certificate']['sourceRepositoryIdentifier'] = '123'
+        with patch.dict(os.environ, {'PATH': f"{self.directory}:{os.environ.get('PATH', '')}",
+                                     'GH_LOG': str(self.log_path), 'GH_RESULT': json.dumps([identity])}), \
+             self.assertRaises(ValueError):
+            MODULE.verify_attestation(str(self.manifest_path), SHA, 'manifest', bundle)
+        with self.assertRaises(ValueError):
+            MODULE.verify_attestation(str(self.manifest_path), SHA, 'manifest', self.directory / 'missing')
 
     def test_signed_content_baseline_is_linked_to_approved_frontend(self):
         self.content_path = self.directory / "downloaded-baseline.json"
