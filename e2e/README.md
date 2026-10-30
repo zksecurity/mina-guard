@@ -245,7 +245,7 @@ This is a packaging smoke, not a Ledger or live-chain transaction test.
 Run `bun test e2e/browser/` from the repository root after installing dependencies
 and Playwright Chromium. The preflight tests cover stable polling results,
 unavailable-data retries, changed inputs, and timer cleanup. The adaptive polling
-test checks the mainnet idle and pending intervals, hidden and offline pauses,
-and immediate refresh on return. These render the real React hooks in Chromium,
+test checks the mainnet idle and pending intervals, hidden-tab pauses, visible
+retries when the browser reports offline, and immediate refresh on return. These render the real React hooks in Chromium,
 need no database or Mina network, and run in UI CI after Chromium is installed.
 They live outside `unit/` so `bun run --filter e2e test:unit` remains browser-free.

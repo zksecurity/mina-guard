@@ -24,9 +24,8 @@ beforeAll(async () => {
         import { flushSync } from ${JSON.stringify(Bun.resolveSync('react-dom', ui))};
         import { useAdaptivePolling } from ${JSON.stringify(resolve(ui, 'hooks/useAdaptivePolling.ts'))};
         let visible = true;
-        let online = true;
         Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visible ? 'visible' : 'hidden' });
-        Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => online });
+        Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
         window.refreshCount = 0;
         function Harness({ busy }) {
           useAdaptivePolling(() => { window.refreshCount++; }, { busy });
@@ -38,10 +37,6 @@ beforeAll(async () => {
           visible = value;
           document.dispatchEvent(new Event('visibilitychange'));
         };
-        window.setOnline = value => {
-          online = value;
-          window.dispatchEvent(new Event(value ? 'online' : 'offline'));
-        };
       ` }));
     } }],
   });
@@ -52,7 +47,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await browser?.close(); });
 
-test('mainnet polling pauses in hidden or offline tabs and resumes at the right cadence', async () => {
+test('mainnet polling pauses in hidden tabs but keeps trying a reachable backend when browser reports offline', async () => {
   const page = await browser.newPage();
   try {
     await page.clock.install();
@@ -70,17 +65,16 @@ test('mainnet polling pauses in hidden or offline tabs and resumes at the right 
     await page.evaluate(() => (window as any).setVisible(true));
     expect(await count()).toBe(2);
 
-    await page.evaluate(() => (window as any).setOnline(false));
     await page.clock.runFor(30_000);
-    expect(await count()).toBe(2);
-    await page.evaluate(() => (window as any).setOnline(true));
     expect(await count()).toBe(3);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    expect(await count()).toBe(4);
 
     await page.evaluate(() => (window as any).renderPolling(true));
     await page.clock.runFor(5_000);
-    expect(await count()).toBe(4);
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     expect(await count()).toBe(5);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    expect(await count()).toBe(6);
   } finally {
     await page.close();
   }

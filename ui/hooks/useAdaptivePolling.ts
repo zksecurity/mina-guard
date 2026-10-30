@@ -16,8 +16,8 @@ interface AdaptivePollingOptions {
   busyMs?: number;
 }
 
-/** Polls `refresh` on a configurable interval while the tab is visible and
- *  online. Refreshes immediately when the tab regains focus or connectivity.
+/** Polls `refresh` on a configurable interval while the tab is visible.
+ *  Refreshes immediately when the tab regains focus or connectivity.
  *
  *  Intended for backend-poll loops where the cadence should accelerate while
  *  the user is waiting on something specific (a pending tx, a deploy) and
@@ -36,7 +36,7 @@ export function useAdaptivePolling(
   refreshRef.current = refresh;
 
   const refreshIfVisible = useCallback(() => {
-    if (document.visibilityState === 'visible' && navigator.onLine) {
+    if (document.visibilityState === 'visible') {
       void refreshRef.current();
     }
   }, []);
