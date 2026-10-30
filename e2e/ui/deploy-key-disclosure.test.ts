@@ -5,6 +5,11 @@ import { TREASURY } from './fixtures';
 for (const kind of ['vault', 'subvault'] as const) {
   test(`${kind} creation explains deploy-key choices and requires acknowledgment`, async ({ page }) => {
     await connectWallet(page);
+    // The SubVault wizard also shows the beta warning when that feature is enabled.
+    await page.addLocatorHandler(
+      page.getByRole('dialog', { name: 'Before you create a proposal' }),
+      async (dialog) => { await dialog.getByRole('button', { name: 'Continue' }).click(); },
+    );
     await page.goto(kind === 'vault' ? '/accounts/new' : `/accounts/new?parent=${TREASURY}`);
     await page.getByRole('button', { name: 'Next', exact: true }).click();
 
