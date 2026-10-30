@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchContract, fetchContracts, fetchIndexerStatus, fetchOwners } from '@/lib/api';
+import { fetchContract, fetchContractOwnerMap, fetchContracts, fetchIndexerStatus, fetchOwners } from '@/lib/api';
 import { ContractSummary, IndexerStatus, OwnerRecord } from '@/lib/types';
 import {
   clearUiStorage,
@@ -58,15 +58,7 @@ export function useMultisig(walletAddress: string | null) {
     setContracts(contractRows);
     setIndexerStatus(status);
 
-    const ownerResults = await Promise.all(
-      contractRows.map((c) =>
-        fetchOwners(c.address).then((rows) => [c.address, rows] as const)
-      )
-    );
-    const ownerMap = new Map<string, string[]>();
-    for (const [addr, rows] of ownerResults) {
-      ownerMap.set(addr, rows.filter((o) => o.active).map((o) => o.address));
-    }
+    const ownerMap = await fetchContractOwnerMap(contractRows);
     setAllContractOwners(ownerMap);
 
     return { contractRows, ownerMap };

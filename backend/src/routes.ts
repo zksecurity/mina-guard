@@ -155,11 +155,14 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
     const enriched = await Promise.all(
       contracts.map(async (contract) => {
-        const [config, ownerCount] = await Promise.all([
+        const [config, activeOwners] = await Promise.all([
           latestContractConfig(contract.id),
-          currentOwnerCount(contract.id),
+          listOwners(contract.id, true),
         ]);
-        return decorateContract(contract, config, ownerCount);
+        return {
+          ...decorateContract(contract, config, activeOwners.length),
+          activeOwnerAddresses: activeOwners.map((owner) => owner.address),
+        };
       })
     );
 

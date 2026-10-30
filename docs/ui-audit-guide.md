@@ -19,6 +19,22 @@ the self-contained desktop build of this same UI in
 
 ---
 
+## Beta product notice
+
+MinaGuard is in beta on every supported network, including Mainnet. Bugs could
+cause loss of funds; users should keep balances to amounts they can afford to lose.
+`components/BetaNotice.tsx` displays a dismissible notice below the header
+(and below a network-mismatch warning, when present) on every app route. The
+standalone `/guide` renders the same warning without the link back to itself;
+its `#beta` section explains the risk and precautions. Dismissing the notice
+hides it for the current browser tab session. The shared web and desktop UI
+also shows the warning in a dialog each time the proposal-creation page or the
+SubVault proposal wizard opens, before online creation or offline request export.
+The dialog can be dismissed with Continue or Escape; it does not create a transaction.
+
+This disclosure does not enforce balance limits or verify a transaction's safety.
+Existing network checks and signing confirmations still apply.
+
 ## General overview
 
 The online UI is the main interface for users to interact with the MinaGuard contract
@@ -135,6 +151,12 @@ reclaimable.
   └──────────────┘                     └──────────────┘
 ```
 
+The vault list API includes each vault's current active owner addresses, so
+`useMultisig` builds the ownership map without a separate browser request per
+vault. When paired with an older backend that lacks this field, the UI falls
+back to the per-vault owners API. These indexed owners determine displayed and
+selected vaults; the separate node checks below still govern sensitive actions.
+
 - **The UI does not persist signing keys.** Owner keys live in Auro or on the
   Ledger. The UI generates a zkApp deploy key in-browser and offers a creation-time
   local download before creation. The creator may retain that key for recovery;
@@ -203,6 +225,13 @@ reclaimable.
   endpoints and networkId can be supplied at runtime by the desktop shell
   (`window.__minaGuardConfig`), but the worker rejects a networkId different
   from its compiled domain. The circuit domain itself is fixed at build time.
+  The mainnet image checks the backend every 30 seconds while idle and every
+  5 seconds while a transaction is pending. Hidden tabs do not poll; they
+  refresh when visible again. Visible tabs still retry when the browser reports
+  offline, because that signal cannot establish backend reachability. An online
+  event also triggers an immediate refresh. Address lookups fail closed on
+  an HTTP 429 and show a retry message instead of treating an unavailable
+  account as a fresh address.
 
 - **Vault creation uses the configured network.** The name step displays the effective
   deployment network as read-only. A mainnet build shows Mainnet only when its explicit
@@ -443,8 +472,16 @@ The only private key the UI holds is the in-browser zkApp deploy key
 (`generateKeypair`). It is not persisted by the app. Before root creation or
 CREATE_CHILD submission, the creator can optionally download it locally and must
 acknowledge the trust risk. Regenerating the key resets the acknowledgement.
+The creation screen presents the consequences of saving or not saving the key
+side by side, with the first-update recovery race visible. An expandable section
+explains the no-op update and migration order. The same disclosure and gate
+apply to root Vault and SubVault creation; existing owner notices are unchanged.
 The file contains plaintext secret material, so a creator who downloads it must
-move it to secure offline storage and remove unprotected Downloads copies.
+move it to secure offline storage and remove unprotected Downloads copies. The
+download, storage reminder, and acknowledgment are grouped in a backup panel;
+the expanded recovery explanation also warns about unprotected cloud copies and
+that MinaGuard cannot recover the key. It links to Mina's zkApp upgrade guide
+in a new browser tab; the first-update race remains explained in MinaGuard.
 Proof-authorized `setup()` (root) or `reserveForParent()` (child) overwrites
 the signed deployment update with the canonical permission vector and seals
 `setPermissions` in the same transaction. The UI must never broadcast

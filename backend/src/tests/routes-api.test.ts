@@ -389,6 +389,21 @@ describe('route param validation', () => {
   });
 });
 
+describe('GET /api/contracts', () => {
+  test('includes only current active owners in each listed contract', async () => {
+    const res = await get('/api/contracts');
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.find((contract: { address: string }) => contract.address === contractAddress))
+      .toMatchObject({ activeOwnerAddresses: [ownerA], _count: { owners: 1 } });
+    expect(body.find((contract: { address: string }) => contract.address === otherContractAddress))
+      .toMatchObject({ activeOwnerAddresses: [ownerC], _count: { owners: 1 } });
+    expect(body.some((contract: { address: string }) => contract.address === unverifiedChildAddress))
+      .toBe(false);
+  });
+});
+
 describe('GET /api/contracts/:address/owners', () => {
   test('filters active owners when active=true', async () => {
     const res = await get(`/api/contracts/${contractAddress}/owners?active=true`);

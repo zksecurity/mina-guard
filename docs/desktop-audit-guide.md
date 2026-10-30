@@ -1,5 +1,10 @@
 # Desktop App (Electron) — Architecture & Security Notes
 
+**Beta status:** the packaged UI displays the same dismissible beta notice,
+proposal-creation warning, and user-guide precautions as the web app, on both
+Testnet and Mainnet. Bugs could cause loss of funds. See
+[the UI notice](./ui-audit-guide.md#beta-product-notice).
+
 The shared online UI also checks for an already-created proposal and offers View proposal. Propose/approve recheck state after the owner signature before building; this uses the same runtime node access as the existing checks.
 
 Initial verified-store mismatches show “Vault data isn’t up to date” with **Retry / Cancel**. Retry restarts online preparation or offline request export from current state and indexed stores; it never bypasses root validation or retries automatically. Network and unrelated errors are not classified as store mismatches.
@@ -19,6 +24,9 @@ air-gapped path is documented in [`offline-audit-guide.md`](./offline-audit-guid
 
 The shared creation wizard offers the deploy key as a local plaintext download
 and warns about its signature fallback after a Mina transaction-version upgrade.
+It presents both backup choices and an expandable explanation of the recovery
+race, and requires acknowledgment before creating a Vault or proposing a SubVault.
+The recovery details link to Mina's upgrade documentation in the OS browser.
 The desktop shell does not separately store, encrypt, or recover that file.
 For an older stored transaction version with an unchanged reviewed VK, the
 shared Vault detail page guides an ordinary proved action and an on-chain

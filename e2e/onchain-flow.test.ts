@@ -137,6 +137,11 @@ async function gotoWithWallet(
     await navigateTo(page, path);
   }
 
+  if (path.split('?')[0] === '/transactions/new' ||
+      (path.split('?')[0] === '/accounts/new' && new URL(path, 'http://localhost').searchParams.has('parent'))) {
+    await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
+  }
+
   // On devnet the indexer discovers old contracts from previous runs,
   // so the sidebar dropdown may default to the wrong one.
   if (contractAddress && netConfig.mode === 'devnet') {
@@ -391,9 +396,9 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   // Threshold defaults to blank — fill 1 (single owner = 1/1).
   log('Filling threshold...');
   await page.locator('input[type="number"]').first().fill('1');
-  await expect(page.getByText('Hard fork recovery and deploy key risk')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Save the deploy key?' })).toBeVisible();
   await expect(page.getByRole('button', { name: /deploy vault/i })).toBeDisabled();
-  await page.getByRole('checkbox', { name: /I understand that keeping this key/ }).check();
+  await page.getByRole('checkbox', { name: /I understand the risks of saving or not saving/ }).check();
 
   log('Clicking Deploy account...');
   await page.getByRole('button', { name: /deploy vault/i }).click();
@@ -489,9 +494,9 @@ test('3. Propose CREATE_CHILD on parent', async () => { const page = sharedPage;
 
   log('Filling threshold...');
   await page.locator('input[type="number"]').first().fill('1');
-  await expect(page.getByText('Hard fork recovery and deploy key risk')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Save the deploy key?' })).toBeVisible();
   await expect(page.getByRole('button', { name: /propose subvault/i })).toBeDisabled();
-  await page.getByRole('checkbox', { name: /I understand that keeping this key/ }).check();
+  await page.getByRole('checkbox', { name: /I understand the risks of saving or not saving/ }).check();
 
   log('Clicking Propose subaccount...');
   await page.getByRole('button', { name: /propose subvault/i }).click();
@@ -636,6 +641,7 @@ test('5. Propose transfer then delete it', async () => { const page = sharedPage
     () => window.location.search.includes('mode=delete'),
     { timeout: 10_000 }
   );
+  await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
 
   // Verify delete mode UI
   await expect(page.locator('text=Delete pending proposal')).toBeVisible({ timeout: 5_000 });
