@@ -57,6 +57,9 @@ without changing the circuit or signed-response format.
 Where it lives in the UI: proposal creation (`app/transactions/new`) has an
 **Online / Offline** toggle for *propose*; the proposal detail page
 (`app/transactions/[id]`) has the same toggle for *approve* and *execute*.
+Opening the proposal-creation page shows the beta risk warning before either
+online creation or offline request export. It does not replace the offline CLI's
+independent transaction summary and confirmation before signing.
 In offline mode the user types the **fee-payer address** (the air-gapped
 owner's public key — no wallet connection is needed); the UI checks it is an
 active owner (and, for approve, has not already approved) before exporting, and

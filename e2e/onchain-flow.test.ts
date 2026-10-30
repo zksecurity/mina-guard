@@ -137,6 +137,11 @@ async function gotoWithWallet(
     await navigateTo(page, path);
   }
 
+  if (path.split('?')[0] === '/transactions/new' ||
+      (path.split('?')[0] === '/accounts/new' && new URL(path, 'http://localhost').searchParams.has('parent'))) {
+    await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
+  }
+
   // On devnet the indexer discovers old contracts from previous runs,
   // so the sidebar dropdown may default to the wrong one.
   if (contractAddress && netConfig.mode === 'devnet') {
@@ -636,6 +641,7 @@ test('5. Propose transfer then delete it', async () => { const page = sharedPage
     () => window.location.search.includes('mode=delete'),
     { timeout: 10_000 }
   );
+  await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
 
   // Verify delete mode UI
   await expect(page.locator('text=Delete pending proposal')).toBeVisible({ timeout: 5_000 });
