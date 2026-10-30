@@ -64,6 +64,8 @@ jobs:
         run: bun run --filter backend prisma:check-schema-sync
       - name: Build contracts
         run: bun run --filter contracts build
+      - name: Check VK compiler network selection
+        run: bun test dev-helpers/commands/vk-hash-compile.test.ts
       - name: Run UI unit tests
         run: bun run --filter ui test
       - name: Run desktop unit tests
