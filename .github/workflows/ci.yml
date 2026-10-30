@@ -3,7 +3,7 @@ env:
   MINA_NETWORK_DOMAIN: testnet
 on:
   push:
-    branches: [main]
+    branches: [main, production]
   pull_request:
   workflow_dispatch: {}
 

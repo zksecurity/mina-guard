@@ -1,4 +1,4 @@
-"""Release promotion must pin one successful attested main-branch build."""
+"""Release metadata must pin one successful attested production build."""
 
 import hashlib
 import importlib.util
@@ -63,7 +63,7 @@ class PromotionTest(unittest.TestCase):
         def gh(args, **_kwargs):
             if args[1:3] == ["run", "view"]:
                 return json.dumps({
-                    "headSha": SHA, "headBranch": "main", "event": "push",
+                    "headSha": SHA, "headBranch": "production", "event": "push",
                     "conclusion": "success", "workflowName": promotion.WORKFLOW,
                 })
             if args[1:3] == ["run", "download"]:
@@ -86,12 +86,25 @@ class PromotionTest(unittest.TestCase):
             files.assert_not_called()
             images.assert_not_called()
 
-        for change in [{"headBranch": "production"}, {"event": "pull_request"},
+        preview_calls = []
+        def preview(args, **kwargs):
+            if len(args) > 1 and args[1].endswith('mainnet-content-integrity.py'):
+                preview_calls.append(args)
+                self.assertEqual(args[-2:], ['--base-url', 'https://app.minaguard.com'])
+                return ''
+            return gh(args, **kwargs)
+        with patch.object(promotion, 'command', side_effect=preview), \
+             patch.object(promotion.verifier, 'verify_file_bytes'), \
+             patch.object(promotion.verifier, 'verify_attestation'):
+            self.assertEqual(promotion.verify_candidate(RECORD, check_preview=True), MANIFEST)
+        self.assertEqual(len(preview_calls), 1)
+
+        for change in [{"headBranch": "main"}, {"event": "pull_request"},
                        {"workflowName": "other"}, {"conclusion": "failure"}]:
             def bad_run(args, **_kwargs):
                 if args[1:3] != ["run", "view"]:
                     raise AssertionError("artifact downloaded before run identity check")
-                return json.dumps({"headSha": SHA, "headBranch": "main", "event": "push",
+                return json.dumps({"headSha": SHA, "headBranch": "production", "event": "push",
                                    "conclusion": "success", "workflowName": promotion.WORKFLOW} | change)
             with self.subTest(change=change), patch.object(promotion, "command", side_effect=bad_run), \
                  self.assertRaises(ValueError):
@@ -116,6 +129,19 @@ class PromotionTest(unittest.TestCase):
             {"id": 1, "creator": {"id": 9}, "ref": "b" * 40, "payload": RECORD}
         ]), self.assertRaises(ValueError):
             resolver.resolve(9)
+
+    def test_preview_receipts_use_a_separate_environment(self):
+        deployment = {'id': 1, 'creator': {'id': 9}, 'ref': SHA, 'payload': RECORD}
+        def api(path):
+            if 'deployments?environment=mainnet-preview' in path:
+                return [deployment]
+            if '/1/statuses' in path:
+                return [{'state': 'success', 'creator': {'id': 9}}]
+            raise AssertionError(path)
+        with patch.object(resolver, 'api', side_effect=api):
+            self.assertEqual(resolver.resolve(9, 'mainnet-preview'), RECORD)
+        with self.assertRaises(ValueError):
+            resolver.resolve(9, 'other')
 
 
 if __name__ == "__main__":

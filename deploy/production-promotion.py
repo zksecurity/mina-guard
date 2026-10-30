@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a reviewed production pointer against one attested mainnet build."""
+"""Check a production release record against one attested mainnet build."""
 
 import argparse
 import hashlib
@@ -54,17 +54,17 @@ def record_from_bytes(raw: bytes) -> dict[str, object]:
     return value
 
 
-def verify_candidate(record: dict[str, object]) -> dict[str, object]:
+def verify_candidate(record: dict[str, object], *, check_preview: bool = False) -> dict[str, object]:
     sha = str(record["sourceSha"])
     run_id = str(record["runId"])
     run = json.loads(command([
         "gh", "run", "view", run_id, "--repo", REPOSITORY,
         "--json", "headSha,headBranch,event,conclusion,workflowName",
     ]))
-    if (not isinstance(run, dict) or run.get("headSha") != sha or run.get("headBranch") != "main"
+    if (not isinstance(run, dict) or run.get("headSha") != sha or run.get("headBranch") != "production"
             or run.get("event") not in ("push", "workflow_dispatch")
             or run.get("conclusion") != "success" or run.get("workflowName") != WORKFLOW):
-        raise ValueError("candidate is not a successful main-branch mainnet build")
+        raise ValueError("candidate is not a successful production-branch mainnet build")
     with tempfile.TemporaryDirectory(prefix="minaguard-promotion-") as directory:
         artifact = Path(directory)
         command([
@@ -87,16 +87,22 @@ def verify_candidate(record: dict[str, object]) -> dict[str, object]:
         verifier.verify_file_bytes(content_raw, "mainnet-content.json", sha, "content manifest")
         for kind in ("backend", "frontend"):
             verifier.verify_attestation("oci://" + str(manifest[kind]), sha, kind)
+        if check_preview:
+            command([sys.executable, str(VERIFIER_PATH.with_name("mainnet-content-integrity.py")),
+                     "check", "--manifest", str(content_path),
+                     "--base-url", "https://app.minaguard.com"], timeout=300)
         return manifest
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record", required=True, type=Path)
+    parser.add_argument("--check-preview", action="store_true",
+                        help="also check the production-origin preview from this machine")
     args = parser.parse_args()
     try:
         record = record_from_bytes(args.record.read_bytes())
-        manifest = verify_candidate(record)
+        manifest = verify_candidate(record, check_preview=args.check_preview)
     except (OSError, ValueError) as error:
         print(f"Production promotion rejected: {error}", file=sys.stderr)
         return 1

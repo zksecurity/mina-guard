@@ -31,8 +31,10 @@ def api(path: str) -> object:
     return json.loads(result.stdout)
 
 
-def resolve(actor_id: int) -> dict[str, object]:
-    deployments = api(f"repos/{REPOSITORY}/deployments?environment=mainnet&per_page=100")
+def resolve(actor_id: int, environment: str = 'mainnet') -> dict[str, object]:
+    if environment not in ('mainnet', 'mainnet-preview'):
+        raise ValueError('unsupported deployment environment')
+    deployments = api(f"repos/{REPOSITORY}/deployments?environment={environment}&per_page=100")
     if not isinstance(deployments, list):
         raise ValueError("unexpected deployment history")
     for deployment in deployments:
@@ -62,11 +64,12 @@ def resolve(actor_id: int) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ops-actor-id", required=True)
+    parser.add_argument('--environment', choices=('mainnet', 'mainnet-preview'), default='mainnet')
     args = parser.parse_args()
     try:
         if not re.fullmatch(r"[1-9][0-9]*", args.ops_actor_id):
             raise ValueError("configure the exact ops GitHub App actor ID")
-        record = resolve(int(args.ops_actor_id))
+        record = resolve(int(args.ops_actor_id), args.environment)
     except (ValueError, OSError) as error:
         print(f"Mainnet watcher has no trusted release: {error}", file=sys.stderr)
         return 1

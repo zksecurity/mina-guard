@@ -160,17 +160,14 @@ authorized manual deploy procedure and verify the served release separately.
 
 ### AWS mainnet image build (preparation only)
 
-`.github/workflows/mainnet-image-build.yml` builds on pushes to `main` when the
-repository variable `MAINNET_BUILD_ENABLED=true`. It can also be dispatched
-manually from `main` with that same gate. It does not modify AWS,
-start a service, or deploy a contract. It publishes backend and frontend images
-under distinct `ghcr.io/zksecurity/mina-guard/mainnet-*` package names, tagged
-with the source commit only, and uploads `mainnet-images-<sha>` with the exact OCI
-digests. That artifact also contains `mainnet-content.json`, a list of hashes
-for the frontend image's pre-rendered HTML and static files. Both JSON files
-and both OCI images receive build-provenance attestations from the same workflow.
-There is no mutable `:main` mainnet tag or mainnet explorer build. Mesa
-Trail's push-triggered testnet release remains separate.
+`.github/workflows/mainnet-image-build.yml` runs on pushes to `production` when
+`MAINNET_BUILD_ENABLED=true`, or can be dispatched from that branch. GitHub's
+workflow builds the exact production commit on GitHub-hosted runners and pushes
+the frontend and backend images to the dedicated `mainnet-*` GHCR packages.
+`mainnet-images-<sha>` records the exact image digests; `mainnet-content.json`
+records frontend HTML and static hashes. The workflow signs both images and
+both manifests. The build does not deploy the app or start Mina. Mesa Trail's
+testnet release remains separate.
 
 The shared backend and frontend Dockerfiles pin the multi-platform `oven/bun:1`
 base image by OCI digest. Review and update that digest deliberately in both
@@ -185,7 +182,10 @@ browser-reachable HTTPS services before enabling the build:
 | `MAINNET_API_BASE_URL` | Indexer/API origin or base URL |
 | `MAINNET_MINA_ENDPOINT` | Mina mainnet GraphQL endpoint |
 | `MAINNET_ARCHIVE_ENDPOINT` | Mainnet archive GraphQL endpoint |
-| `MAINNET_BLOCK_EXPLORER_URL` | Mainnet transaction/address links |
+
+Transaction and address links use `https://minascan.io/mainnet`, pinned in the
+reviewed workflow and independently enforced by ops. Changing the explorer
+requires reviewed changes in both repositories.
 
 The workflow refuses missing, non-HTTPS, local, or visibly testnet/devnet/trail
 URLs, URLs with credentials or query strings, and a nonempty base path. These
@@ -201,88 +201,98 @@ release manifest.
 
 ### Release verification before AWS deployment
 
-Choose the 40-character source commit and exact digest manifest through the
-release review, then download the successful build's
-`mainnet-images-<sha>` artifact. Record the SHA-256 of `mainnet-images.json`
-separately as `sha256:<64 lowercase hex>`; it pins both image digests and the
-public build configuration. For example, use
-`sha256sum release/mainnet-images.json` during review and keep the approved
-result in the release record. Recomputing the value from an unreviewed file
-immediately before deployment is not independent approval. On an operator
-machine with `gh` access to this repository and GHCR, run:
+For the first operator-controlled release, review the successful production
+build, its full source commit, run ID, exact image digests and the SHA-256 of
+`mainnet-images.json`. The separate ops rollout retrieves the same build
+artifact and validates its source commit, workflow identity, both image
+attestations and both signed manifests. On an operator machine with read-only
+GitHub and GHCR access, the verifier can be run explicitly:
 
 ```bash
 python3 deploy/verify-mainnet-release.py \
   --manifest release/mainnet-images.json \
   --content-manifest release/mainnet-content.json \
   --approved-sha "$APPROVED_SHA" \
-  --approved-manifest-sha256 "$APPROVED_MANIFEST_SHA256" > release/verified.json
+  --approved-manifest-sha256 "$APPROVED_MANIFEST_SHA256" \
+  --bundle-dir release/ > release/verified.json
 ```
 
-The command checks the attested bytes of both JSON files and both exact image
-digests against this repository's `mainnet-image-build.yml@refs/heads/main`
-workflow identity, the approved source commit and manifest hash, and
-GitHub-hosted runner policy.
-It also checks the release's mainnet settings and asks the configured Mina
-GraphQL endpoint for `networkID`. Any failure produces no deployment JSON. AWS
-must only start the exact backend and frontend digest references in the verified
-output; it must not substitute a tag or an unverified manifest field. This
-repository has no production AWS deployment entrypoint; the separate private
-ops repository repeats verification on the app host before rolling out.
+The verifier requires the exact `mainnet-image-build.yml@refs/heads/production`
+signer, source commit and manifest bytes, GitHub-hosted attester, the fixed GHCR
+repositories, and a live Mina endpoint reporting mainnet. It verifies the
+signed outputs of the GitHub-hosted build workflow. A successful attestation is not
+a substitute for the initial live browser, proof, signing and restore tests.
 
-### Promote one build to production
+### Release from production
 
-After reviewing a successful build, create a PR into the protected `production`
-branch that changes only `deploy/production-release.json`:
+Keep `main` protected and open a reviewed PR into protected `production` whose
+files match the current `main`. The production check
+reads Git objects without running the PR code and requires the proposed merge
+and PR head trees to match the current `main` tree, including file modes and
+submodules. The PR body must include exactly one `Release-main: <full SHA>`
+line identifying the selected `main` commit. Reviewers approve that explicit
+snapshot; the check does not promise it remains the latest if main advances
+after the check finishes.
+Require that check and human review, require an up-to-date base, allow merge or
+squash merges (not rebase merges), and disallow direct pushes and bypasses.
+These settings keep the checked merge tree aligned with the merged tree. After
+the PR merges, the exact merge
+commit triggers the gated build. No `production-release.json` PR is needed.
+The ops workflow waits for successful CI, E2E and image-build runs of the
+current protected production commit, then deploys its verified digest-pinned images after the
+first manual launch and explicit automation setup. If a build fails or the
+production branch advances, the ops workflow must not substitute a build of
+another commit. Automatic rollout accepts only the production push's build;
+manual dispatch is for operator use. Once the current commit was deployed, a
+rebuild does not replace it; a new reviewed production commit is required to
+deploy changed images. Before opening traffic, the app host rechecks the production
+head and refuses an older release. A merge just after that check can still race
+with activation; the next serialized poll handles the newer commit.
 
-```json
-{"version":1,"sourceSha":"<40 lowercase hex>","runId":"<decimal run ID>","manifestSha256":"sha256:<64 lowercase hex>"}
+A direct PR from `main` works when it is up to date with `production`. After a
+release merge, those branches can have different history even when their files
+match. To satisfy the up-to-date rule without merging production back into main,
+create a release branch from production and copy the current main tree into it:
+
+```sh
+git fetch origin main production
+git worktree add -b release/my-release ../mina-guard-release origin/production
+cd ../mina-guard-release
+git read-tree --reset -u origin/main
+git commit -m "Release current main to production"
+git push -u origin release/my-release
+gh pr create --base production --head release/my-release \
+  --body "Release-main: $(git rev-parse origin/main)"
 ```
 
-`Check mainnet production promotion` checks the exact run, source commit,
-manifest bytes, two signed JSON files, and two attested images using trusted
-code from the base branch. The promotion path logs into GHCR with its read-only
-package permission before checking the image attestations. Require that check
-and human review on `production`, and require PR branches to be up to date;
-disallow direct pushes and bypasses. Bootstrap the branch from a commit that
-already contains this workflow, then set its protection rule before accepting
-the first promotion PR. Merging a reviewed promotion PR changes the pointer;
-the private ops workflow polls that branch and deploys only after its own
-preflight and host verification. The first infrastructure launch and runtime
-preparation remain explicit operator actions in the ops runbook.
+Use a new branch and worktree path for each release. `git read-tree --reset -u`
+replaces the worktree files, so run it only in the newly created clean worktree.
+If main advances, recreate or update the release branch before merging. The
+release PR remains the human approval; no separate release-info PR is needed.
 
-### Update the production checker
-
-Use a separate maintenance PR when the workflows or verification scripts need
-an update. Start its branch from the current `production` branch, copy the full
-tracked file tree from the current `main` commit, and preserve
-`deploy/production-release.json` from `production` byte for byte, including its
-file mode. If production has no release pointer yet, leave it absent. Include
-additions, deletions, renamed files, executable bits, symlinks, and submodule
-commit IDs from `main`; copying just the checker files is not accepted.
-
-The existing production checker reads GitHub's Git objects as data. It never
-checks out or runs the proposed code. It accepts the sync only when every file
-outside the release pointer matches one pinned current `main` commit, and the
-PR head includes the current production base. The run prints that main commit
-ID. It rejects partial trees, changed release pointers, and branches that move
-while it is checking. This allows future checker updates through the same
-required check and human review, without an administrator bypass.
-
-Open the PR into `production` and obtain approval before merging. If `main`
-advances before merge, refresh the copied tree and rerun the check; a successful
-run records main's tip at check time, not a permanent lock on main. If production
-advances, update the PR branch from that base and rerun the check. Keeping the
-release pointer unchanged means this maintenance PR does not select a new app
-release. An app promotion must be a separate PR, with its existing build and
-attestation verification.
-
-Bootstrap production with a reviewed commit containing this maintenance path
-before making the check required. If an older pointer-only checker has already
-been required, it cannot approve its own replacement; an explicitly authorized
-temporary protection change would be needed to install this version first.
+The initial production branch must first be bootstrapped from a reviewed commit
+containing this workflow and checker, before making the check required. During
+bootstrap the check may fail because the current production base does not yet
+contain its checker; it is not a required check until bootstrap completes.
+If main changes after the check, the PR still selects its explicit commit.
+If the newer changes are desired, update the release branch and the selected
+SHA and rerun the check before approving and merging.
 
 ### Watch the content served to owners
+
+Before first public launch, use the ops `Approve mainnet preview for independent
+watcher` workflow with the reviewed production SHA, successful push build ID,
+and manifest hash. It creates a separate `mainnet-preview` receipt; the normal
+production watcher never consumes that environment. Run `Mainnet public-content
+watch` with mode `preview`. It reports its runner IPv4 address and sends a test
+alert to the configured channel. While the job waits, use the ops `preview`
+command to change the existing restricted preview to that runner's address.
+The job resolves the preview receipt, verifies the same saved release evidence,
+and checks the real production-origin response. Confirm the test alert and job
+success before opening public traffic. The operator can restore their own IP
+with the same preview command. After activation, enable the scheduled watcher
+and confirm its first production receipt and run. The manual
+`production-promotion.py --check-preview` remains an additional local check.
 
 After the verified release is serving at `https://app.minaguard.com`, set the
 repository variable `MAINNET_OPS_BOT_ACTOR_ID` to the numeric ID of the ops
@@ -290,7 +300,7 @@ GitHub App actor and `MAINNET_WATCH_ENABLED=true`. Set the Actions secret
 `MAINNET_WATCHER_ALERT_WEBHOOK` to an HTTPS endpoint that accepts a JSON `text`
 field. Test the webhook and run
 `Mainnet public-content watch` manually once. Its GitHub-hosted runner then
-checks about every 15 minutes: it downloads that exact run's release artifact,
+checks about every 15 minutes: it downloads that exact run's saved release evidence,
 verifies its attestations and image digests, and compares public HTML for `/`,
 `/transactions`, `/transactions/new`, `/accounts/new`, `/settings`, and `/guide`
 plus every Next static asset from the approved frontend image. A changed inline
@@ -300,14 +310,22 @@ the run link. The watcher never learns its expected hashes from the public site.
 
 The expected release comes from the latest successful deployment receipt in
 this repository authored by the configured ops App actor. The receipt contains
-the reviewed source SHA, run ID, and manifest hash. The watcher does not infer
+the deployed production SHA, run ID, and manifest hash. The watcher does not infer
 approval from the latest build or the `production` branch alone. Set
 `MAINNET_WATCH_ENABLED=false` while the site is intentionally offline; a missing
 receipt or invalid App actor ID fails the check and alerts.
-Keep the release artifact available while that digest is live: an expired or
-missing artifact causes a failed check and alert. Before Actions artifact
-retention expires, deploy a newly reviewed release or move the signed JSON
-files into durable storage and update the watcher to retrieve them from there.
+The build also publishes the two manifests and their image/file attestation
+bundles as a GitHub Release named `mainnet-build-<source-sha>-<run-id>`.
+The separate publishing job has repository contents write permission; the image
+build job has contents read only. A failed or incomplete evidence publication
+fails the build workflow and prevents automatic deployment.
+If publication was interrupted and left an incomplete draft release, inspect
+and remove that draft before rerunning the build; reruns never overwrite a
+published release's evidence.
+The watcher and app boot reverify these saved proofs even after workflow run
+retention expires. Protect these releases and GHCR images against deletion;
+missing evidence or images fails closed. A repository administrator can still
+delete a release, so this is durable storage, not an immutable backup.
 This monitor runs outside the
 app host, but it shares the repository's GitHub trust boundary. It can detect
 changes visible to its fetches; it does not prevent first exposure, cover the

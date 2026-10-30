@@ -10,9 +10,6 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  actions: read
-  packages: read
-  attestations: read
 
 jobs:
   verify:
@@ -28,21 +25,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - name: Check release promotion or maintenance sync
-        id: change
+      - name: Check production merge matches reviewed main
         run: |
           set -euo pipefail
           python3 deploy/check-production-pr.py --pr-number "$PR_NUMBER" \
-            --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA" \
-            --record-output "$RUNNER_TEMP/production-release.json"
-      - name: Authenticate for release image verification
-        if: steps.change.outputs.kind == 'promotion'
-        env:
-          REGISTRY_USER: ${{ github.actor }}
-        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
-      - name: Verify the selected build and exact manifest
-        if: steps.change.outputs.kind == 'promotion'
-        run: |
-          set -euo pipefail
-          python3 deploy/production-promotion.py \
-            --record "$RUNNER_TEMP/production-release.json"
+            --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA"
