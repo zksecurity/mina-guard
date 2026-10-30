@@ -443,6 +443,10 @@ The only private key the UI holds is the in-browser zkApp deploy key
 (`generateKeypair`). It is not persisted by the app. Before root creation or
 CREATE_CHILD submission, the creator can optionally download it locally and must
 acknowledge the trust risk. Regenerating the key resets the acknowledgement.
+The creation screen presents the consequences of saving or not saving the key
+side by side, with the first-update recovery race visible. An expandable section
+explains the no-op update and migration order. The same disclosure and gate
+apply to root Vault and SubVault creation; existing owner notices are unchanged.
 The file contains plaintext secret material, so a creator who downloads it must
 move it to secure offline storage and remove unprotected Downloads copies.
 Proof-authorized `setup()` (root) or `reserveForParent()` (child) overwrites

@@ -488,7 +488,7 @@ function CreateAccountWizard() {
                         </p>
                         <label className="flex gap-2 text-sm text-safe-text">
                           <input type="checkbox" checked={riskAccepted} onChange={(e) => setRiskAccepted(e.target.checked)} />
-                          <span>I understand that keeping this key may enable recovery but anyone who obtains it could bypass owner approval after a transaction-version upgrade. If I do not keep it, I may need to move funds before the upgrade.</span>
+                          <span>I understand that anyone with this key could bypass owner approval after an upgrade, and that without it funds could become stuck.</span>
                         </label>
                       </div>
                     )}
