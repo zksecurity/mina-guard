@@ -11,6 +11,9 @@ Online creation checks whether the exact proposal already exists before requesti
 
 The shared UI checks transaction state using the configured Mina node before broadcast, with persistent recovery controls. Initial indexed-store mismatches offer Retry / Cancel before preparation can continue. No shared activity backend or reporting login is required. See [transaction preflight](../docs/transaction-coordination-design.md).
 
+The shared Vault creation wizard explains the tradeoff of saving the deploy key,
+offers expandable recovery details, and requires acknowledgment before creation.
+
 Electron wrapper around the MinaGuard Next.js UI + backend. Runs fully local:
 SQLite DB in the user's app-data directory, lite-mode indexer, Auro signing
 bridged through the user's browser. See
