@@ -52,6 +52,14 @@ export default function VaultHardForkNotice({ creating = false }: { creating?: b
               Remove unprotected key copies from Downloads or cloud sync after moving the
               file to secure offline storage. MinaGuard cannot recover this key.
             </p>
+            <a
+              href="https://docs.minaprotocol.com/zkapps/tutorials/upgrading-a-zkapp#the-permission-that-decides"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 font-medium text-amber-50 underline decoration-amber-500/50 underline-offset-4 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-200"
+            >
+              Read Mina’s explanation of transaction versions <span aria-hidden="true">↗</span>
+            </a>
           </div>
         </details>
       </section>

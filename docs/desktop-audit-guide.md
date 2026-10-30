@@ -21,6 +21,7 @@ The shared creation wizard offers the deploy key as a local plaintext download
 and warns about its signature fallback after a Mina transaction-version upgrade.
 It presents both backup choices and an expandable explanation of the recovery
 race, and requires acknowledgment before creating a Vault or proposing a SubVault.
+The recovery details link to Mina's upgrade documentation in the OS browser.
 The desktop shell does not separately store, encrypt, or recover that file.
 For an older stored transaction version with an unchanged reviewed VK, the
 shared Vault detail page guides an ordinary proved action and an on-chain

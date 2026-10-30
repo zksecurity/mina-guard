@@ -22,6 +22,9 @@ for (const kind of ['vault', 'subvault'] as const) {
     await expect(notice.getByText(/Anyone can pay to submit a no-op update/)).toBeVisible();
     await expect(notice.getByText(/migration with the saved deploy key must land/)).toBeVisible();
     await expect(notice.getByText(/MinaGuard cannot recover this key/)).toBeVisible();
+    const minaDocs = notice.getByRole('link', { name: 'Read Mina’s explanation of transaction versions' });
+    await expect(minaDocs).toHaveAttribute('href', 'https://docs.minaprotocol.com/zkapps/tutorials/upgrading-a-zkapp#the-permission-that-decides');
+    await expect(minaDocs).toHaveAttribute('target', '_blank');
 
     const acknowledge = page.getByRole('checkbox', { name: /I understand the risks of saving or not saving/ });
     await expect(page.getByRole('region', { name: 'Deploy key backup' }).getByText(/Store this file securely offline/)).toBeVisible();

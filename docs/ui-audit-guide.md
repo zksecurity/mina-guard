@@ -451,7 +451,8 @@ The file contains plaintext secret material, so a creator who downloads it must
 move it to secure offline storage and remove unprotected Downloads copies. The
 download, storage reminder, and acknowledgment are grouped in a backup panel;
 the expanded recovery explanation also warns about unprotected cloud copies and
-that MinaGuard cannot recover the key.
+that MinaGuard cannot recover the key. It links to Mina's zkApp upgrade guide
+in a new browser tab; the first-update race remains explained in MinaGuard.
 Proof-authorized `setup()` (root) or `reserveForParent()` (child) overwrites
 the signed deployment update with the canonical permission vector and seals
 `setPermissions` in the same transaction. The UI must never broadcast
