@@ -5,6 +5,7 @@ import BetaProposalDialog from '@/components/BetaProposalDialog';
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { useAppContext } from '@/lib/app-context';
 import ProposalForm from '@/components/ProposalForm';
 import {
@@ -345,7 +346,11 @@ function NewTransactionPageInner() {
                     ['addOwner', 'removeOwner', 'changeThreshold'].includes(p.txType)
                 ) && (
                   <div className="rounded-lg px-4 py-3 text-xs bg-yellow-400/10 text-yellow-400 border border-yellow-400/30">
-                    There are pending governance proposals. If one executes before this proposal, the config nonce will change and this proposal will be invalidated.
+                    An owner or required-approval change is pending. If it executes first, this proposal
+                    will become invalid, including transfers and delegation.{' '}
+                    <Link href="/guide#owner-approval-changes" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                      Learn why
+                    </Link>
                   </div>
                 )}
 

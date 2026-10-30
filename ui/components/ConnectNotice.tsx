@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import LedgerConnectModal from './LedgerConnectModal';
 
 interface ConnectNoticeProps {
@@ -43,7 +44,7 @@ export default function ConnectNotice({
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
-          {auroInstalled ? 'Connect Auro' : 'Install Auro'}
+          {auroInstalled ? 'Connect Auro Wallet' : 'Install Auro Wallet'}
         </button>
         {ledgerSupported && (
           <button
@@ -57,6 +58,15 @@ export default function ConnectNotice({
           </button>
         )}
       </div>
+      <Link
+        href="/guide#wallets"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs text-safe-text underline underline-offset-2 hover:text-white"
+        title="Learn how to connect Auro Wallet or Ledger, or sign offline"
+      >
+        How to connect
+      </Link>
       {showLedgerModal && (
         <LedgerConnectModal
           onConfirm={(accountIndex) => {
