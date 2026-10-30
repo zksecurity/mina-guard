@@ -156,7 +156,7 @@ export default function AccountPage() {
           />
         ) : multisig && multisig.address === urlAddress ? (
           <div className="space-y-6">
-            <VaultHardForkNotice />
+            <VaultHardForkNotice key={multisig.address} />
             <VaultVerificationKeyMigration address={multisig.address} walletAddress={wallet.address} />
             {!permissionsVerified && (
               <VaultSecurityNotice
