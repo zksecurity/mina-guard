@@ -1,7 +1,7 @@
 name: Check mainnet production promotion
 
-# This workflow runs trusted production-branch code. Never check out or execute
-# the proposed PR head. Inspect its Git objects as data only.
+# Run the checker from the trusted main commit that supplied this workflow.
+# Inspect the proposed PR's Git objects as data only.
 on:
   pull_request_target:
     branches: [production]
@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
       - name: Check production merge matches reviewed main
         run: |

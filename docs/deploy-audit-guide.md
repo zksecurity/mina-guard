@@ -227,8 +227,9 @@ a substitute for the initial live browser, proof, signing and restore tests.
 
 Keep `main` protected and open a reviewed PR into protected `production` whose
 files match the current `main`. The production check
-reads Git objects without running the PR code and requires the proposed merge
-and PR head trees to match the current `main` tree, including file modes and
+loads its checker from the trusted `main` commit that supplied the workflow,
+using `github.workflow_sha`. It reads Git objects without running the PR code
+and requires the proposed merge and PR head trees to match the current `main` tree, including file modes and
 submodules. The PR body must include exactly one `Release-main: <full SHA>`
 line identifying the selected `main` commit. Reviewers approve that explicit
 snapshot; the check does not promise it remains the latest if main advances
@@ -270,10 +271,10 @@ replaces the worktree files, so run it only in the newly created clean worktree.
 If main advances, recreate or update the release branch before merging. The
 release PR remains the human approval; no separate release-info PR is needed.
 
-The initial production branch must first be bootstrapped from a reviewed commit
-containing this workflow and checker, before making the check required. During
-bootstrap the check may fail because the current production base does not yet
-contain its checker; it is not a required check until bootstrap completes.
+The checker must be merged into protected `main` before the first production
+PR. It does not need to exist on `production` yet: the first production PR runs
+the same checks as later releases. Once a successful check is available, make
+it required on `production` before merging the release PR.
 If main changes after the check, the PR still selects its explicit commit.
 If the newer changes are desired, update the release branch and the selected
 SHA and rerun the check before approving and merging.
