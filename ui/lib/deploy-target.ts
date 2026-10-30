@@ -9,6 +9,14 @@ export interface DeployTargetFetch {
   error?: { statusCode?: number; statusText?: string } | null;
 }
 
+function fetchFailure(error: NonNullable<DeployTargetFetch['error']>): string {
+  if (error.statusCode === 429) {
+    return 'too many requests (HTTP 429). Close other MinaGuard tabs and try again in a minute.';
+  }
+  return error.statusText?.trim() ||
+    (error.statusCode ? `HTTP ${error.statusCode}` : 'node request failed');
+}
+
 /**
  * Decides how to deploy a vault to an address. Anyone can create the bare Mina
  * account first by paying into the address, and a deployment that declares a
@@ -21,7 +29,7 @@ export interface DeployTargetFetch {
 export function classifyDeployTarget(fetched: DeployTargetFetch): 'new' | 'existing' {
   if (fetched.error) {
     if (fetched.error.statusCode === 404) return 'new';
-    throw new Error(`Could not check the vault address: ${fetched.error.statusText ?? 'node request failed'}`);
+    throw new Error(`Could not check the vault address: ${fetchFailure(fetched.error)}`);
   }
   const account = fetched.account;
   if (!account) return 'new';
@@ -42,7 +50,7 @@ export function classifyDeployTarget(fetched: DeployTargetFetch): 'new' | 'exist
 export function receiverExists(fetched: DeployTargetFetch): boolean {
   if (fetched.error) {
     if (fetched.error.statusCode === 404) return false;
-    throw new Error(`Could not check a receiver address: ${fetched.error.statusText ?? 'node request failed'}`);
+    throw new Error(`Could not check a receiver address: ${fetchFailure(fetched.error)}`);
   }
   return !!fetched.account;
 }

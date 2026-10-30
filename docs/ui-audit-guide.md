@@ -219,6 +219,13 @@ reclaimable.
   endpoints and networkId can be supplied at runtime by the desktop shell
   (`window.__minaGuardConfig`), but the worker rejects a networkId different
   from its compiled domain. The circuit domain itself is fixed at build time.
+  The mainnet image checks the backend every 30 seconds while idle and every
+  5 seconds while a transaction is pending. Hidden tabs do not poll; they
+  refresh when visible again. Visible tabs still retry when the browser reports
+  offline, because that signal cannot establish backend reachability. An online
+  event also triggers an immediate refresh. Address lookups fail closed on
+  an HTTP 429 and show a retry message instead of treating an unavailable
+  account as a fresh address.
 
 - **Vault creation uses the configured network.** The name step displays the effective
   deployment network as read-only. A mainnet build shows Mainnet only when its explicit

@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 /** Default cadence when no `PendingTx` is in flight. Picks up
  *  `NEXT_PUBLIC_POLL_INTERVAL_MS` so the preview-env can override. */
 const DEFAULT_IDLE_MS = Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS) || 10_000;
 /** Cadence while something is in flight (PendingTx visible to the user).
  *  Tight enough to make the wait feel responsive without hammering the API. */
-const DEFAULT_BUSY_MS = 2_000;
+const DEFAULT_BUSY_MS = process.env.NEXT_PUBLIC_MINA_NETWORK === 'mainnet' ? 5_000 : 2_000;
 
 interface AdaptivePollingOptions {
   /** When true, polls at `busyMs`; when false, at `idleMs`. */
@@ -16,8 +16,8 @@ interface AdaptivePollingOptions {
   busyMs?: number;
 }
 
-/** Polls `refresh` on a configurable interval and triggers an immediate
- *  refresh whenever the tab regains focus or the network comes back online.
+/** Polls `refresh` on a configurable interval while the tab is visible.
+ *  Refreshes immediately when the tab regains focus or connectivity.
  *
  *  Intended for backend-poll loops where the cadence should accelerate while
  *  the user is waiting on something specific (a pending tx, a deploy) and
@@ -35,26 +35,26 @@ export function useAdaptivePolling(
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
-  useEffect(() => {
-    const intervalMs = busy ? busyMs : idleMs;
-    const handle = setInterval(() => {
+  const refreshIfVisible = useCallback(() => {
+    if (document.visibilityState === 'visible') {
       void refreshRef.current();
-    }, intervalMs);
-    return () => clearInterval(handle);
-  }, [busy, busyMs, idleMs]);
+    }
+  }, []);
 
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void refreshRef.current();
-    };
-    const onOnline = () => {
-      void refreshRef.current();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('online', onOnline);
+    const intervalMs = busy ? busyMs : idleMs;
+    const handle = setInterval(refreshIfVisible, intervalMs);
+    return () => clearInterval(handle);
+  }, [busy, busyMs, idleMs, refreshIfVisible]);
+
+  useEffect(() => {
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    window.addEventListener('focus', refreshIfVisible);
+    window.addEventListener('online', refreshIfVisible);
     return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+      window.removeEventListener('focus', refreshIfVisible);
+      window.removeEventListener('online', refreshIfVisible);
     };
-  }, []);
+  }, [refreshIfVisible]);
 }
