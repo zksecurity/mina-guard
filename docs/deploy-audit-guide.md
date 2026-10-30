@@ -286,8 +286,8 @@ SHA and rerun the check before approving and merging.
 Before first public launch, use the ops `Approve mainnet preview for independent
 watcher` workflow with the reviewed production SHA, successful push build ID,
 and manifest hash. It creates a separate `mainnet-preview` receipt; the normal
-production watcher never consumes that environment. Run `Mainnet public-content
-watch` with mode `preview`. It reports its runner IPv4 address and sends a test
+production watcher never consumes that environment. In `mina-guard-ops`, run
+`Mainnet public-content watch` with mode `preview`. It reports its runner IPv4 address and sends a test
 alert to the configured channel. While the job waits, use the ops `preview`
 command to change the existing restricted preview to that runner's address.
 The job resolves the preview receipt, verifies the same saved release evidence,
@@ -297,11 +297,10 @@ with the same preview command. After activation, enable the scheduled watcher
 and confirm its first production receipt and run. The manual
 `production-promotion.py --check-preview` remains an additional local check.
 
-After the verified release is serving at `https://app.minaguard.com`, set the
-repository variable `MAINNET_OPS_BOT_ACTOR_ID` to the numeric ID of the ops
-GitHub App actor and `MAINNET_WATCH_ENABLED=true`. Set the Actions secret
-`MAINNET_WATCHER_ALERT_WEBHOOK` to an HTTPS endpoint that accepts a JSON `text`
-field. Test the webhook and run
+After the verified release is serving at `https://app.minaguard.com`, configure
+`MAINNET_WATCH_ENABLED=true` in `mina-guard-ops`, along with its registry-read
+credentials and the `Production` environment alert webhook described in the
+ops runtime guide. Test the webhook and run
 `Mainnet public-content watch` manually once. Its GitHub-hosted runner then
 checks about every 15 minutes: it downloads that exact run's saved release evidence,
 verifies its attestations and image digests, and compares public HTML for `/`,
@@ -311,12 +310,12 @@ script, an injected script, a changed worker chunk, a missing file, a failed
 verification, or an unreachable site makes the run fail and sends an alert with
 the run link. The watcher never learns its expected hashes from the public site.
 
-The expected release comes from the latest successful deployment receipt in
-this repository authored by the configured ops App actor. The receipt contains
+The expected release comes from the latest deployment attempt in `mina-guard-ops`,
+which must have a success status authored by the configured personal account. The receipt contains
 the deployed production SHA, run ID, and manifest hash. The watcher does not infer
 approval from the latest build or the `production` branch alone. Set
-`MAINNET_WATCH_ENABLED=false` while the site is intentionally offline; a missing
-receipt or invalid App actor ID fails the check and alerts.
+`MAINNET_WATCH_ENABLED=false` in ops while the site is intentionally offline; a missing,
+failed, or untrusted receipt fails the check and alerts.
 The build also publishes the two manifests and their image/file attestation
 bundles as a GitHub Release named `mainnet-build-<source-sha>-<run-id>`.
 The separate publishing job has repository contents write permission; the image
