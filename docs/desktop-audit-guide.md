@@ -38,6 +38,11 @@ reviewed release and VK hash for a future fork.
 
 ---
 
+The packaged UI shares the wallet-help links, guide explanations, and contract
+compilation error reporting described in [the UI guide](ui-audit-guide.md#guide-and-operation-errors).
+Compilation errors preserve their cause and permit a fresh attempt; canonical
+verification-key validation and network gates still apply.
+
 ## Why it exists
 
 The online threat model ends with a dependency it can't remove: zkApp approvals

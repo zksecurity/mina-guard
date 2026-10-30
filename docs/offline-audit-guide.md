@@ -18,6 +18,15 @@ its threat model) and [`desktop-audit-guide.md`](./desktop-audit-guide.md).
 
 ---
 
+## Reviewing batch payments
+
+The user guide directs operators to check the network, vault, action, every
+recipient and amount, recipient count, and total in the CLI summary. The existing
+`y/N` confirmation applies once per transaction, including batch payments and
+non-payment actions; operators do not retype amounts. The summary and explicit
+confirmation still occur before key use. Request/response formats and signing
+behavior are unchanged. A Mina node is not a substitute for the offline signer.
+
 ## General overview
 
 Owners who keep a key on an air-gapped machine can participate in the full
@@ -60,10 +69,13 @@ Where it lives in the UI: proposal creation (`app/transactions/new`) has an
 Opening the proposal-creation page shows the beta risk warning before either
 online creation or offline request export. It does not replace the offline CLI's
 independent transaction summary and confirmation before signing.
-In offline mode the user types the **fee-payer address** (the air-gapped
-owner's public key — no wallet connection is needed); the UI checks it is an
-active owner (and, for approve, has not already approved) before exporting, and
-for a REMOTE proposal that the backend has indexed the target SubVault.
+The online UI currently requires a connected wallet and selected vault to access
+the transaction page. In offline mode the user types the **fee-payer address**
+(the air-gapped owner's public key); the connected wallet does not sign the
+offline request. For proposals and approvals, the UI checks that the fee payer
+is an active owner; for approvals it also checks that the owner has not already
+approved. For a REMOTE proposal, it checks that the backend has indexed the
+target SubVault.
 One asymmetry to know: **CREATE_CHILD proposals cannot currently be exported**
 — sub-vault creation is wizard-only in the online flow — although the bundle
 format and the CLI fully support them (relevant for hand-built bundles);

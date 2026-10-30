@@ -19,6 +19,27 @@ the self-contained desktop build of this same UI in
 
 ---
 
+## Guide and operation errors
+
+The standalone guide defines a proposal as an on-chain action awaiting approval
+and execution. Each stage is a transaction. The pending owner/approval banner
+links to `#owner-approval-changes`: owner/threshold changes invalidate older
+proposals, including delegation; setting a delegate does not bump the config
+nonce. Cancellation requires execution of the same-nonce replacement.
+
+Wallet controls say “Auro Wallet” and link to connection instructions covering
+Auro, Ledger, offline signing, and the distinction between nodes and signers.
+The guide documents the contract recipient limit, parent funding followed by
+approved allocation/reclaim, current lack of incoming-payment notifications,
+and GitHub source/support links.
+
+`lib/contract-compiler.ts` shares in-flight and successful compilation. A failure
+rejects with its compilation-stage cause instead of returning a null result;
+the worker forwards it through Comlink to the operation banner. A subsequent
+request recompiles. Verification-key checks and network checks still fail closed.
+This improves diagnosis; it does not establish the cause of a reported deploy
+failure or prove production deployment works.
+
 ## Beta product notice
 
 MinaGuard is in beta on every supported network, including Mainnet. Bugs could
@@ -475,7 +496,11 @@ acknowledge the trust risk. Regenerating the key resets the acknowledgement.
 The creation screen presents the consequences of saving or not saving the key
 side by side, with the first-update recovery race visible. An expandable section
 explains the no-op update and migration order. The same disclosure and gate
-apply to root Vault and SubVault creation; existing owner notices are unchanged.
+apply to root Vault and SubVault creation. Existing Vault pages explain the
+separate deploy key and creation-time download option, and allow owners to
+close and reopen the warning. Dismissal is in memory for the current Vault;
+it resets on reload or when opening another Vault, and does not affect the
+creation-time acknowledgment.
 The file contains plaintext secret material, so a creator who downloads it must
 move it to secure offline storage and remove unprotected Downloads copies. The
 download, storage reminder, and acknowledgment are grouped in a backup panel;

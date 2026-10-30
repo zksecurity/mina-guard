@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { truncateAddress, type WalletType } from '@/lib/types';
+import Link from 'next/link';
 import LedgerConnectModal from './LedgerConnectModal';
 
 interface WalletConnectProps {
@@ -159,7 +160,7 @@ export default function WalletConnect({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       <button
         onClick={auroInstalled ? onConnectAuro : onConnect}
         className="flex items-center gap-2 bg-safe-green text-safe-dark font-semibold text-sm rounded-lg px-4 py-2.5 hover:brightness-110 transition-all"
@@ -167,7 +168,7 @@ export default function WalletConnect({
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
-        {auroInstalled ? 'Connect Auro' : 'Install Auro'}
+        {auroInstalled ? 'Connect Auro Wallet' : 'Install Auro Wallet'}
       </button>
       {ledgerSupported && (
         <button
@@ -180,6 +181,15 @@ export default function WalletConnect({
           Connect Ledger
         </button>
       )}
+      <Link
+        href="/guide#wallets"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs text-safe-text underline underline-offset-2 hover:text-white"
+        title="Learn how to connect Auro Wallet or Ledger, or sign offline"
+      >
+        How to connect
+      </Link>
       {showLedgerModal && (
         <LedgerConnectModal
           onConfirm={(accountIndex) => {
