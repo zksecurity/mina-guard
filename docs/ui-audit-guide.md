@@ -135,6 +135,12 @@ reclaimable.
   └──────────────┘                     └──────────────┘
 ```
 
+The vault list API includes each vault's current active owner addresses, so
+`useMultisig` builds the ownership map without a separate browser request per
+vault. When paired with an older backend that lacks this field, the UI falls
+back to the per-vault owners API. These indexed owners determine displayed and
+selected vaults; the separate node checks below still govern sensitive actions.
+
 - **The UI does not persist signing keys.** Owner keys live in Auro or on the
   Ledger. The UI generates a zkApp deploy key in-browser and offers a creation-time
   local download before creation. The creator may retain that key for recovery;

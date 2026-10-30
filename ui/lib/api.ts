@@ -33,6 +33,22 @@ export async function fetchContracts(): Promise<ContractSummary[]> {
   return data.map((item) => toContractSummary(item));
 }
 
+/** Uses owners bundled with the list response; older backends need the per-vault endpoint. */
+export async function fetchContractOwnerMap(contracts: ContractSummary[]): Promise<Map<string, string[]>> {
+  const missing = contracts.filter((contract) => contract.activeOwnerAddresses === undefined);
+  const fallback = await Promise.all(missing.map(async (contract) => [
+    contract.address,
+    (await fetchOwners(contract.address)).filter((owner) => owner.active).map((owner) => owner.address),
+  ] as const));
+  const ownerMap = new Map(fallback);
+  for (const contract of contracts) {
+    if (contract.activeOwnerAddresses !== undefined) {
+      ownerMap.set(contract.address, contract.activeOwnerAddresses);
+    }
+  }
+  return ownerMap;
+}
+
 /** Fetches a single contract record by address. */
 export async function fetchContract(address: string): Promise<ContractSummary | null> {
   const data = await getJson<Record<string, unknown>>(`/api/contracts/${address}`);
@@ -401,8 +417,12 @@ async function getJson<T>(path: string): Promise<T | null> {
 
 /** Normalizes backend contract rows into strict typed frontend summary objects. */
 function toContractSummary(input: Record<string, unknown>): ContractSummary {
+  const activeOwnerAddresses = input.activeOwnerAddresses;
   return {
     address: asString(input.address) ?? '',
+    ...(Array.isArray(activeOwnerAddresses) && activeOwnerAddresses.every((address) => typeof address === 'string')
+      ? { activeOwnerAddresses: activeOwnerAddresses as string[] }
+      : {}),
     permissionsVerified: input.permissionsVerified === true,
     ownersCommitment: asNullableString(input.ownersCommitment),
     threshold: asNullableNumber(input.threshold),
