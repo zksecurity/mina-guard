@@ -475,7 +475,11 @@ acknowledge the trust risk. Regenerating the key resets the acknowledgement.
 The creation screen presents the consequences of saving or not saving the key
 side by side, with the first-update recovery race visible. An expandable section
 explains the no-op update and migration order. The same disclosure and gate
-apply to root Vault and SubVault creation; existing owner notices are unchanged.
+apply to root Vault and SubVault creation. Existing Vault pages explain the
+separate deploy key and creation-time download option, and allow owners to
+close and reopen the warning. Dismissal is in memory for the current Vault;
+it resets on reload or when opening another Vault, and does not affect the
+creation-time acknowledgment.
 The file contains plaintext secret material, so a creator who downloads it must
 move it to secure offline storage and remove unprotected Downloads copies. The
 download, storage reminder, and acknowledgment are grouped in a backup panel;

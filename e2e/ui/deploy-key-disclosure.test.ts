@@ -1,6 +1,24 @@
 import { test, expect } from '@playwright/test';
-import { connectWallet } from './ui-helpers';
-import { TREASURY } from './fixtures';
+import { connectWallet, openVault } from './ui-helpers';
+import { PERSONAL, TREASURY } from './fixtures';
+
+test('vault owners can close and reopen the deploy key warning', async ({ page }) => {
+  await connectWallet(page);
+  await openVault(page, TREASURY);
+  const warning = page.getByRole('region', { name: 'Deploy key and Mina upgrades' });
+  await expect(warning).toBeVisible();
+  await expect(warning.getByText(/MinaGuard now offers the creator an optional download/)).toBeVisible();
+  await expect(warning.getByText(/funds could become stuck/)).toBeVisible();
+  await warning.getByText('Why saving the key may not be enough').click();
+  await expect(warning.getByText(/anyone can pay to send an update/i)).toBeVisible();
+  await warning.getByRole('button', { name: 'Close deploy key warning' }).click();
+  await expect(warning).not.toBeVisible();
+  await page.getByRole('button', { name: 'Show deploy key warning' }).click();
+  await expect(warning).toBeVisible();
+  await warning.getByRole('button', { name: 'Close deploy key warning' }).click();
+  await openVault(page, PERSONAL);
+  await expect(warning).toBeVisible();
+});
 
 for (const kind of ['vault', 'subvault'] as const) {
   test(`${kind} creation explains deploy-key choices and requires acknowledgment`, async ({ page }) => {
