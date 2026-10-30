@@ -1,6 +1,14 @@
-import { Cache } from "o1js";
+import { Cache, Mina } from "o1js";
 import { execSync } from "node:child_process";
 import { resolveNetworkDomain } from '../../contracts/src/network-domain.ts';
+
+/** Match the o1js transaction network to the circuit domain used by clients. */
+export function configureVkNetwork(network: 'mainnet' | 'testnet' | 'devnet'): void {
+  Mina.setActiveInstance(Mina.Network({
+    networkId: network,
+    mina: 'http://localhost:0',
+  }));
+}
 
 /** Compiles MinaGuard and prints its VK hash for an explicitly selected network. */
 export async function runVkHashCompile(): Promise<void> {
@@ -8,6 +16,7 @@ export async function runVkHashCompile(): Promise<void> {
     process.env.NEXT_PUBLIC_MINA_NETWORK,
     process.env.MINA_NETWORK_DOMAIN,
   );
+  configureVkNetwork(network);
 
   // Rebuild from source first — contracts/build is gitignored and can be stale.
   console.log(`Rebuilding contracts (network: ${network})...`);

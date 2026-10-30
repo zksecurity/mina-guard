@@ -150,6 +150,9 @@ and mainnet in parallel when their cached hashes are missing, then publishes a
 testnet circuit. Release and deploy jobs verify the artifact's commit before
 using its network hash for the backend, UI, or desktop bundle. Local builds do
 not need to compile the circuit just to update a committed hash file.
+The hash compiler selects the same o1js network as the circuit domain, as the
+browser and offline signer do; mainnet hashes generated without this setting
+must be regenerated.
 The testnet runner proves parent-state paths and, when present, proposal-signing
 paths in separate steps so each has its own timeout. The mainnet runner proves
 child reservation and setup, plus the proposal expiry lifecycle. The offline

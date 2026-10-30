@@ -98,9 +98,11 @@ writes `contracts/.vk-hash` as a downloadable artifact and derives the
 `devnet=` entry from testnet because both use `Field(2)`. Release and deploy
 jobs download that manifest for the exact source commit and verify it before
 selecting a hash. The backend uses the selected hash to filter contract
-discovery. A local checkout can compile
-either network with `MINA_NETWORK_DOMAIN=<network> bun run dev-helpers/cli.ts vk-hash compile`
-for debugging; local results do not need to be committed.
+discovery. A local checkout can compile either network with
+`MINA_NETWORK_DOMAIN=<network> bun run dev-helpers/cli.ts vk-hash compile`
+for debugging; local results do not need to be committed. The compiler selects
+the corresponding o1js network before compilation. A mainnet hash produced
+using o1js's default devnet setting must not be used as the expected mainnet hash.
 
 - URLs after deploy: `https://mina-trail.duckdns.org/trail/` (app), `/trail/health`, `/trail/graphql`, `/trail/archive`, `/trail/explorer`. The frontend bundle bakes these `mina-trail.duckdns.org/trail` URLs (both the on-box `docker-compose.trail.yml` build args and the pull-based `trail-release.yml` build) — **not** `mina-nodes` (which serves `/app/*`).
 - **Deploy is no longer push-triggered on this box.** During the three-box migration `.github/workflows/deploy-trail.yml` is `workflow_dispatch`-only: the trail box intentionally runs no self-hosted `deploy` runner, so a push-triggered on-box deploy would queue forever with no matching runner. It remains usable for a **manual interim redeploy** (it still supplies `MESA_NODE_HOST`/`ARCHIVE_DB_PASSWORD` from repo secrets and runs `deploy-trail.sh down && up`). `.github/workflows/trail-release.yml` instead **builds, pushes, and attests** the `/trail` GHCR images on pushes to `main` and deploys nothing. The intended phase-2 process pulls and verifies them on the box; check its live status below before relying on it.
