@@ -69,10 +69,13 @@ Where it lives in the UI: proposal creation (`app/transactions/new`) has an
 Opening the proposal-creation page shows the beta risk warning before either
 online creation or offline request export. It does not replace the offline CLI's
 independent transaction summary and confirmation before signing.
-In offline mode the user types the **fee-payer address** (the air-gapped
-owner's public key — no wallet connection is needed); the UI checks it is an
-active owner (and, for approve, has not already approved) before exporting, and
-for a REMOTE proposal that the backend has indexed the target SubVault.
+The online UI currently requires a connected wallet and selected vault to access
+the transaction page. In offline mode the user types the **fee-payer address**
+(the air-gapped owner's public key); the connected wallet does not sign the
+offline request. For proposals and approvals, the UI checks that the fee payer
+is an active owner; for approvals it also checks that the owner has not already
+approved. For a REMOTE proposal, it checks that the backend has indexed the
+target SubVault.
 One asymmetry to know: **CREATE_CHILD proposals cannot currently be exported**
 — sub-vault creation is wizard-only in the online flow — although the bundle
 format and the CLI fully support them (relevant for hand-built bundles);

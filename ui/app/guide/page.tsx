@@ -569,7 +569,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
           >
             <ol className="list-none m-0 p-0">
               <Step n={1} title="Name the signer" img="/guide/step-offline.png" imgAlt="The Offline signing tab">
-                <p>On the Offline tab, enter the <Tok>Signer Address (Fee Payer)</Tok>: the public key of the key held on the offline machine. No wallet connection is required.</p>
+                <p>On the online machine, connect a wallet and select the vault to open the transaction page. On the Offline tab, enter the <Tok>Signer Address (Fee Payer)</Tok>: the public address of the key held on the offline machine. The connected wallet does not sign the offline request.</p>
               </Step>
               <Step n={2} title="Get the CLI">
                 <p>Under <Tok>Instructions</Tok>, download <Tok>mina-guard-cli</Tok> for your platform and verify it against the published <Tok>SHA256SUMS</Tok>.</p>
@@ -603,7 +603,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
             <ol className="list-decimal pl-5 mb-6 space-y-3 text-sm text-safe-text leading-relaxed">
               <li><b className="text-white">Auro Wallet:</b> install the Auro browser extension, create or unlock your wallet, and select the network shown by MinaGuard. Select <Tok>Connect Auro Wallet</Tok> and approve the site&apos;s connection request in Auro. Connecting shares your public address; each transaction still requires signing.</li>
               <li><b className="text-white">Ledger:</b> connect your device by USB, unlock it, open the Mina app, and select <Tok>Connect Ledger</Tok> in a browser supporting WebHID. Choose the account index (default 0) and confirm the address on the device.</li>
-              <li><b className="text-white">Offline key:</b> use the Offline tab and the <a href="#offline" className="underline underline-offset-2">air-gapped CLI flow</a>. No connected wallet is needed for exporting a request.</li>
+              <li><b className="text-white">Offline key:</b> connect a wallet to access the transaction page, then use the Offline tab and the <a href="#offline" className="underline underline-offset-2">air-gapped CLI flow</a> to sign with a key kept offline.</li>
             </ol>
             <p className="mb-6 text-sm text-safe-text leading-relaxed">A Mina node supplies blockchain data and accepts signed transactions. Running your own node does not replace a wallet or signing key. The desktop app can be configured to use your own Mina and archive endpoints.</p>
             <div className="grid gap-3.5 sm:grid-cols-3">
