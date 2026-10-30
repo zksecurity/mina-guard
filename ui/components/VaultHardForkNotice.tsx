@@ -1,5 +1,10 @@
+'use client';
+
+import { useState } from 'react';
+
 /** The account key is a separate authority from the owner voting keys. */
 export default function VaultHardForkNotice({ creating = false }: { creating?: boolean }) {
+  const [closed, setClosed] = useState(false);
   if (creating) {
     return (
       <section aria-labelledby="deploy-key-risk-title" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100 sm:p-5">
@@ -66,35 +71,62 @@ export default function VaultHardForkNotice({ creating = false }: { creating?: b
     );
   }
 
+  if (closed) {
+    return (
+      <button type="button" onClick={() => setClosed(false)}
+        className="text-sm text-amber-200 underline underline-offset-4 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-200">
+        Show deploy key warning
+      </button>
+    );
+  }
+
   return (
-    <div role="alert" className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 text-sm text-amber-100 space-y-2">
-      <p className="font-semibold">Hard fork recovery and deploy key risk</p>
-      <p>
-        If a Mina hard fork raises the transaction version, this Vault&apos;s verification-key
-        permission can temporarily become authorized by its deploy key signature. Whoever
-        holds that key could replace the Vault&apos;s code without owner approval and then
-        bypass its owner rules. This also applies to SubVaults.
-      </p>
-      <p className="font-medium">
-        If the fork also breaks the existing Vault proofs and the deploy key was not backed
-        up, the Vault may become unusable, with its funds stuck. Owner approval alone
-        cannot replace a broken verification key under the current contract rules.
-      </p>
-      <p>
-        Ask the creator whether the deploy key was retained and how it is protected. If you
-        do not accept that trust, coordinate with the owners to move funds out before a
-        transaction-version upgrade. Move SubVault funds before the root Vault balance.
-      </p>
-      <p>
-        A saved key is not a guaranteed recovery plan. Follow Mina hard fork announcements
-        and check the on-chain verification key after any migration. The first applied
-        Vault account update after a version upgrade ends the deploy-key fallback.
-        Because Vault access needs no authorization, anyone can pay to submit a no-op
-        update that ends it. If old proofs no longer work, a compatible verification-key
-        migration with the saved deploy key must land first; otherwise the broken key
-        may remain installed with no saved-key migration path. If proofs still work,
-        use a real proved Vault action to confirm compatibility, not a no-op.
-      </p>
-    </div>
+    <section aria-labelledby="vault-deploy-key-title" className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 text-sm text-amber-100">
+      <div className="flex items-start justify-between gap-4">
+        <h2 id="vault-deploy-key-title" className="font-semibold text-amber-50">Deploy key and Mina upgrades</h2>
+        <button type="button" aria-label="Close deploy key warning" onClick={() => setClosed(true)}
+          className="shrink-0 rounded p-1 text-amber-100 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-200">
+          <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div className="mt-2 space-y-2 leading-relaxed">
+        <p>
+          A deploy key is a private key created for the Vault, separate from the owners&apos; wallet keys.
+          MinaGuard now offers the creator an optional download when creating a Vault or SubVault;
+          it does not keep a copy. Ask the creator whether they saved it and who can access it.
+        </p>
+        <p>
+          After certain Mina upgrades, someone with this key could temporarily change the Vault&apos;s
+          code without owner approval and bypass its owner rules. If an upgrade also breaks the
+          Vault&apos;s existing proofs and the key was not saved, funds could become stuck; owner
+          approval alone cannot replace the broken verification key. These risks also apply to SubVaults.
+        </p>
+        <p>
+          If owners don&apos;t accept the risk, coordinate to move funds before an upgrade. Move
+          SubVault funds before the root Vault balance.
+        </p>
+      </div>
+      <details className="mt-3 border-t border-amber-500/25 pt-3">
+        <summary className="cursor-pointer font-medium text-amber-50 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-200">
+          Why saving the key may not be enough
+        </summary>
+        <div className="mt-2 space-y-2 leading-relaxed">
+          <p>
+            A Mina transaction-version upgrade can briefly allow the saved key to replace the
+            Vault&apos;s verification key. The first applied Vault update closes that opportunity.
+            Anyone can pay to send an update that changes nothing visible and closes it.
+          </p>
+          <p>
+            If old proofs no longer work, a compatible verification-key migration signed with the
+            saved key must land before any other Vault update. Otherwise the broken key may remain
+            installed with no saved-key recovery path. If proofs still work, use a real
+            owner-approved proved Vault action to confirm compatibility, not a no-op. Follow Mina
+            hard fork announcements and check the on-chain verification key after any migration.
+          </p>
+        </div>
+      </details>
+    </section>
   );
 }
