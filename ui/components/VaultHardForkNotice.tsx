@@ -48,6 +48,10 @@ export default function VaultHardForkNotice({ creating = false }: { creating?: b
               Follow Mina hard fork announcements and check the on-chain verification key
               after any migration.
             </p>
+            <p>
+              Remove unprotected key copies from Downloads or cloud sync after moving the
+              file to secure offline storage. MinaGuard cannot recover this key.
+            </p>
           </div>
         </details>
       </section>

@@ -393,7 +393,7 @@ test('1. Deploy MinaGuard contract', async () => { const page = sharedPage;
   await page.locator('input[type="number"]').first().fill('1');
   await expect(page.getByRole('heading', { name: 'Save the deploy key?' })).toBeVisible();
   await expect(page.getByRole('button', { name: /deploy vault/i })).toBeDisabled();
-  await page.getByRole('checkbox', { name: /I understand that anyone with this key/ }).check();
+  await page.getByRole('checkbox', { name: /I understand the risks of saving or not saving/ }).check();
 
   log('Clicking Deploy account...');
   await page.getByRole('button', { name: /deploy vault/i }).click();
@@ -491,7 +491,7 @@ test('3. Propose CREATE_CHILD on parent', async () => { const page = sharedPage;
   await page.locator('input[type="number"]').first().fill('1');
   await expect(page.getByRole('heading', { name: 'Save the deploy key?' })).toBeVisible();
   await expect(page.getByRole('button', { name: /propose subvault/i })).toBeDisabled();
-  await page.getByRole('checkbox', { name: /I understand that anyone with this key/ }).check();
+  await page.getByRole('checkbox', { name: /I understand the risks of saving or not saving/ }).check();
 
   log('Clicking Propose subaccount...');
   await page.getByRole('button', { name: /propose subvault/i }).click();

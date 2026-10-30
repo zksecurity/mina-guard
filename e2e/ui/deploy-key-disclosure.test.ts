@@ -21,8 +21,10 @@ for (const kind of ['vault', 'subvault'] as const) {
     await expect(details).toHaveAttribute('open');
     await expect(notice.getByText(/Anyone can pay to submit a no-op update/)).toBeVisible();
     await expect(notice.getByText(/migration with the saved deploy key must land/)).toBeVisible();
+    await expect(notice.getByText(/MinaGuard cannot recover this key/)).toBeVisible();
 
-    const acknowledge = page.getByRole('checkbox', { name: /I understand that anyone with this key/ });
+    const acknowledge = page.getByRole('checkbox', { name: /I understand the risks of saving or not saving/ });
+    await expect(page.getByRole('region', { name: 'Deploy key backup' }).getByText(/Store this file securely offline/)).toBeVisible();
     const submit = page.getByRole('button', { name: kind === 'vault' ? /deploy vault/i : /propose subvault/i });
     await expect(submit).toBeDisabled();
     await acknowledge.check();

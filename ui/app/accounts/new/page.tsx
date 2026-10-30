@@ -477,19 +477,26 @@ function CreateAccountWizard() {
                     {keypair && (
                       <div className="space-y-3">
                         <VaultHardForkNotice creating />
-                        <button type="button" onClick={downloadDeployKey} disabled={isOperating}
-                          className="rounded-lg border border-amber-500/50 px-3 py-2 text-sm text-amber-100 hover:bg-amber-500/10">
-                          Download deploy key for recovery
-                        </button>
-                        <p className="text-xs text-safe-text">
-                          The file contains a private key. Move it to secure offline storage and remove
-                          unprotected copies from Downloads or cloud sync. If you regenerate the address,
-                          download the new key. MinaGuard cannot recover it.
-                        </p>
-                        <label className="flex gap-2 text-sm text-safe-text">
-                          <input type="checkbox" checked={riskAccepted} onChange={(e) => setRiskAccepted(e.target.checked)} />
-                          <span>I understand that anyone with this key could bypass owner approval after an upgrade, and that without it funds could become stuck.</span>
-                        </label>
+                        <section aria-label="Deploy key backup" className="rounded-xl border border-safe-border bg-safe-dark/40 p-4 sm:p-5">
+                          <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="space-y-1.5">
+                              <h3 className="text-sm font-semibold text-white">Deploy key backup</h3>
+                              <p className="text-xs leading-relaxed text-safe-text">
+                                <strong className="font-medium text-white">Private key:</strong> Store this file securely offline.
+                                Download a new copy if you regenerate the address.
+                              </p>
+                            </div>
+                            <button type="button" onClick={downloadDeployKey} disabled={isOperating}
+                              className="w-full shrink-0 rounded-lg border border-amber-500/50 px-3 py-2.5 text-sm font-medium text-amber-100 hover:bg-amber-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-200 disabled:opacity-50 sm:w-auto">
+                              Download deploy key for recovery
+                            </button>
+                          </div>
+                          <label className="mt-4 flex cursor-pointer items-start gap-3 border-t border-safe-border pt-4 text-sm leading-relaxed text-white/85">
+                            <input type="checkbox" checked={riskAccepted} onChange={(e) => setRiskAccepted(e.target.checked)}
+                              className="mt-1 h-4 w-4 shrink-0 accent-safe-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-safe-green" />
+                            <span>I understand the risks of saving or not saving the deploy key.</span>
+                          </label>
+                        </section>
                       </div>
                     )}
 
