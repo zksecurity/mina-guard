@@ -11,7 +11,11 @@ VALIDATOR = Path(__file__).resolve().parents[1] / "validate-mainnet-build-config
 VALID_ENV = {
     "NEXT_PUBLIC_MINA_NETWORK": "mainnet",
     "MINA_NETWORK_DOMAIN": "mainnet",
-    "NEXT_PUBLIC_MINAGUARD_VK_HASH": "123456789",
+    # Must equal MAINNET_VK_HASH in deploy/verify-mainnet-release.py. Kept as a
+    # literal so a pin change has to touch this test deliberately.
+    "NEXT_PUBLIC_MINAGUARD_VK_HASH": (
+        "11186074123051144955935844547857280472106039209748658876584800516410203862391"
+    ),
     "NEXT_PUBLIC_BASE_PATH": "",
     "NEXT_PUBLIC_API_BASE_URL": "https://app.example.org",
     "NEXT_PUBLIC_MINA_ENDPOINT": "https://node.example.org/graphql",
@@ -50,8 +54,8 @@ class MainnetBuildConfigTest(unittest.TestCase):
             0,
         )
 
-    def test_rejects_missing_or_zero_vk_hash(self):
-        for hash_value in ("", "0", "00123"):
+    def test_rejects_missing_zero_or_unpinned_vk_hash(self):
+        for hash_value in ("", "0", "00123", "123456789"):
             with self.subTest(hash_value=hash_value):
                 self.assertNotEqual(
                     self.run_validator({"NEXT_PUBLIC_MINAGUARD_VK_HASH": hash_value}).returncode,

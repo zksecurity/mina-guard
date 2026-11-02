@@ -35,6 +35,13 @@ PUBLIC_CONFIG_KEYS = frozenset(
 MANIFEST_KEYS = frozenset(
     {"network", "sha", "vk_hash", "backend", "frontend", "public_config"}
 )
+# The reviewed mainnet verification-key hash. The build pipeline derives the
+# hash from a compile (or an Actions cache entry), and attestation only proves
+# the images came from the workflow, not that the hash it was handed is right.
+# Pinning it here means a circuit change must update this constant in the same
+# reviewed commit; a manifest carrying any other value is rejected before the
+# attestation checks run.
+MAINNET_VK_HASH = "11186074123051144955935844547857280472106039209748658876584800516410203862391"
 
 
 def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -103,6 +110,8 @@ def validate_manifest(raw: bytes, approved_sha: str) -> dict[str, object]:
         r"[1-9][0-9]{0,77}", manifest["vk_hash"]
     ):
         raise ValueError("manifest VK hash must be a positive decimal string")
+    if manifest["vk_hash"] != MAINNET_VK_HASH:
+        raise ValueError("manifest VK hash is not the reviewed mainnet verification key")
     for name in ("backend", "frontend"):
         expected = rf"{re.escape(IMAGE_PREFIX)}-{name}@sha256:[0-9a-f]{{64}}"
         if not isinstance(manifest[name], str) or not re.fullmatch(
