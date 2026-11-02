@@ -451,6 +451,16 @@ advisory, and its match against the signed `memoHash` is checked locally.
 
 **4. Concurrency / signer-lock correctness (`hooks/useContractTxLock.ts`,
 `useTransactions.ts`, `lib/storage.ts`).**
+The proposal detail page combines local broadcast and contract-lock notices into
+one submission card, deduplicating repeated transaction hashes. Proposal status
+remains separate from submission progress. The card checks the first displayed
+transaction through `/api/tx-status` every ten seconds while the tab is visible,
+refreshes on focus, and stops requesting after inclusion or failure. Only an
+explicit `included` response advances to “Confirmed. Updating your Vault…”.
+Unknown or unavailable status does not claim network confirmation. These reads
+are informational: the existing reconciliation and contract-lock rules still
+control action availability. There is no fixed block-inclusion countdown.
+
 Each submission rebuilds witnesses from current chain+indexer state, so two
 in-flight txs against one contract collide; the lock serializes them, and
 PR #67 hardened it against dropped transactions wedging a signer. The release

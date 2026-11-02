@@ -22,6 +22,10 @@ applies unchanged inside the desktop shell, because the desktop app runs the
 *same built UI*. This document covers only what the shell adds or changes. The
 air-gapped path is documented in [`offline-audit-guide.md`](./offline-audit-guide.md).
 
+The shared proposal submission card polls transaction confirmation while visible.
+Its network result is informational and does not bypass the existing indexer
+reconciliation or action gates. See [UI tracking](./ui-audit-guide.md).
+
 The shared creation wizard offers the deploy key as a local plaintext download
 and warns about its signature fallback after a Mina transaction-version upgrade.
 It presents both backup choices and an expandable explanation of the recovery
