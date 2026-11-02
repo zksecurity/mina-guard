@@ -506,11 +506,11 @@ acknowledge the trust risk. Regenerating the key resets the acknowledgement.
 The creation screen presents the consequences of saving or not saving the key
 side by side, with the first-update recovery race visible. An expandable section
 explains the no-op update and migration order. The same disclosure and gate
-apply to root Vault and SubVault creation. Existing Vault pages explain the
-separate deploy key and creation-time download option, and allow owners to
-close and reopen the warning. Dismissal is in memory for the current Vault;
-it resets on reload or when opening another Vault, and does not affect the
-creation-time acknowledgment.
+apply to root Vault and SubVault creation. Settings → Security explains the separate deploy key and creation-time download
+option for the selected Vault. Owners can close and reopen this guidance there.
+The dashboard has no general deploy-key notice or reopen link; it shows a short
+attention banner for an older stored transaction version, linking to Security.
+Existing unsafe-permission warnings and action gates remain in place.
 The file contains plaintext secret material, so a creator who downloads it must
 move it to secure offline storage and remove unprotected Downloads copies. The
 download, storage reminder, and acknowledgment are grouped in a backup panel;
@@ -522,14 +522,14 @@ the signed deployment update with the canonical permission vector and seals
 `setPermissions` in the same transaction. The UI must never broadcast
 `deploy()` alone. During the stored transaction version the deploy key cannot
 replace the verification key; a later version upgrade can make that permission
-signature-authorized. Every vault detail page warns owners about this boundary
+signature-authorized. The Security section warns owners about this boundary
 and that a fork which breaks old proofs can leave funds inaccessible if the
 deploy key was not backed up. It also explains the option to evacuate before
 a version upgrade. `lib/storage.ts` holds
 non-secret prefs + pending-tx metadata.
 
 When the node reports an older `setVerificationKey.txnVersion` and the installed
-VK still matches this reviewed release, the Vault detail page shows a
+VK still matches this reviewed release, Settings → Security shows a
 transaction-version update panel. An ordinary owner-authorized proved action
 can refresh the stored version if Mina accepts its proof. The UI and backend
 allow this narrow case when every permission kind is canonical and the only
@@ -542,8 +542,8 @@ vault update refreshes the version and ends the deploy-key fallback even if the
 VK is unchanged; the proved action is advised because it confirms the installed
 circuit still works after the fork.
 
-If the installed VK differs from the release-pinned replacement VK, the detail
-page instead offers deploy-key migration. It displays both hashes, exports a
+If the installed VK differs from the release-pinned replacement VK, Settings → Security
+instead offers deploy-key migration. It displays both hashes, exports a
 version 3 request, and imports the MinaGuard offline CLI's signed response.
 The panel warns that a maintainer must publish a fork-compatible CLI release
 first. The browser does not check release availability or authenticate the
