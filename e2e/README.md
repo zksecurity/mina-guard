@@ -157,6 +157,8 @@ override with `E2E_UI_DATABASE_URL`. The whole suite runs in ~1-2 minutes.
 
 In CI (`CI=true`), the global setup skips starting lightnet, backend, and frontend — those are expected to be running already (e.g. via Docker services or prior workflow steps). The setup still acquires test accounts and waits for services to be healthy.
 
+`.github/workflows/e2e.yml` runs the chain suite on a GitHub-hosted `ubuntu-latest` runner (4 vCPU, 15 GiB RAM, fresh VM per job), so pull-request code never executes on a persistent self-hosted box. The Compose stack from `preview-env/docker-compose.e2e-ci.yml` is built and started inside the job. Measured on 2026-11-02: about 11.5 minutes end to end, of which 4 minutes is the Compose build and 6.5 minutes the Playwright run.
+
 ## Verbose mode
 
 By default, `bun test` inside `e2e/` runs Playwright through the workspace filter which suppresses real-time output. To see full setup logs, test progress, and service output as they happen, run from the **monorepo root**:

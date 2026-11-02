@@ -200,7 +200,7 @@ for the release boundary and remaining AWS setup.
 
 ## PR Preview Environments
 
-Each PR targeting `main` gets an isolated preview stack deployed to the Hetzner server via a self-hosted GitHub Actions runner. Preview URLs follow the pattern `https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/`.
+Each PR targeting `main` could get an isolated preview stack deployed to the Hetzner server via a self-hosted GitHub Actions runner, at `https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/`. The `Preview Environment` workflow has been disabled since 2026-11-02 and its runner deregistered (see the [deployment audit guide](docs/deploy-audit-guide.md)); the section below describes the stack for when it is brought back without a runner on the box.
 
 Each stack includes: lightnet, PostgreSQL, backend, frontend, block explorer, and a Caddy reverse proxy.
 
