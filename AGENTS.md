@@ -54,7 +54,10 @@ These instructions apply to the entire MinaGuard monorepo.
 
 - Changes under `contracts/src/` or to o1js must verify both testnet and mainnet
   verification-key hashes. CI caches each domain's compiled hash by the circuit
-  input fingerprint and recompiles on a cache miss. It publishes a fresh
+  input fingerprint and recompiles on a cache miss, except on `production`,
+  which always compiles. The mainnet hash is pinned as `MAINNET_VK_HASH` in
+  `deploy/verify-mainnet-release.py`; a mainnet circuit change must update that
+  constant and its tests in the same commit. It publishes a fresh
   `contracts/.vk-hash` manifest for each commit; devnet uses the testnet hash.
   Do not commit a locally generated manifest. Release and deploy jobs must
   download the manifest for their exact source commit and verify it before use.
