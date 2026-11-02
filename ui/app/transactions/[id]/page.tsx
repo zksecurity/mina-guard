@@ -1,6 +1,7 @@
 'use client';
 
 import TransactionPreflightPanel from '@/components/TransactionPreflightPanel';
+import SubmissionStatusCard, { type PendingSubmission } from '@/components/SubmissionStatusCard';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -637,6 +638,14 @@ export default function TransactionDetailPage() {
     ? getPendingTx(multisig.address, proposalHash, 'create')?.txHash
     : null;
 
+  const pendingSubmissions: PendingSubmission[] = [];
+  if (isLocalPending) pendingSubmissions.push({ label: 'Proposal', txHash: localPendingCreateTxHash ?? null });
+  if (executeInFlight && proposal.lastExecuteTxHash) pendingSubmissions.push({ label: 'Execution', txHash: proposal.lastExecuteTxHash });
+  if (myPendingApprove) pendingSubmissions.push({ label: 'Your approval', txHash: myPendingApprove.txHash });
+  if (contractLock.locked && !pendingSubmissions.some((item) => item.txHash && item.txHash === contractLock.txHash)) {
+    pendingSubmissions.push({ label: 'Vault transaction', txHash: contractLock.txHash });
+  }
+
   return (
     <div>
       <div className="p-6 max-w-3xl space-y-6">
@@ -649,56 +658,26 @@ export default function TransactionDetailPage() {
           </svg>
           Back to proposals
         </button>
-        <div className={`rounded-xl border p-4 ${statusColors[proposal.status]}`}>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold capitalize">{proposal.status}</span>
-            {proposal.status === 'pending' && !isConfigStale && !isLocalPending && threshold > proposal.approvalCount && (
-              <span className="text-sm opacity-75 ml-2">
-                Needs {threshold - proposal.approvalCount} more approvals
-              </span>
-            )}
+        {pendingSubmissions.length > 0 ? (
+          <>
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              {!isLocalPending && <span className={`rounded px-2 py-1 font-medium capitalize ${statusColors[proposal.status]}`}>{proposal.status}</span>}
+              <span className="text-safe-text">{headerSubline}</span>
+            </div>
+            <SubmissionStatusCard submissions={pendingSubmissions} network={wallet.network ?? null} />
+          </>
+        ) : (
+          <div className={`rounded-xl border p-4 ${statusColors[proposal.status]}`}>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold capitalize">{proposal.status}</span>
+              {proposal.status === 'pending' && !isConfigStale && threshold > proposal.approvalCount && (
+                <span className="text-sm opacity-75 ml-2">
+                  Needs {threshold - proposal.approvalCount} more approvals
+                </span>
+              )}
+            </div>
+            <p className="text-xs opacity-75 mt-1">{headerSubline}</p>
           </div>
-          <p className="text-xs opacity-75 mt-1">{headerSubline}</p>
-        </div>
-
-        {isLocalPending && (
-          <PendingTxBanner
-            tone="creation"
-            title="Submitted — awaiting inclusion"
-            description="Your proposal was broadcast to the network. It should appear here once the next block is produced (~3 min)."
-            txHash={localPendingCreateTxHash ?? null}
-            network={wallet.network ?? null}
-          />
-        )}
-
-        {executeInFlight && proposal.lastExecuteTxHash && (
-          <PendingTxBanner
-            tone="execution"
-            title="Execution in progress"
-            description="Another signer broadcast an execute transaction. New executes will fail on-chain until it lands or fails — buttons are disabled."
-            txHash={proposal.lastExecuteTxHash}
-            network={wallet.network ?? null}
-          />
-        )}
-
-        {myPendingApprove && (
-          <PendingTxBanner
-            tone="approval"
-            title="Your approval is in flight"
-            description="Waiting for the network to include your approval transaction."
-            txHash={myPendingApprove.txHash}
-            network={wallet.network ?? null}
-          />
-        )}
-
-        {contractLock.locked && !executeInFlight && !myPendingApprove && (
-          <PendingTxBanner
-            tone="approval"
-            title="Indexer catching up"
-            description={`${contractLock.reason} New submissions on this contract are blocked until it lands (~3 min).`}
-            txHash={contractLock.txHash}
-            network={wallet.network ?? null}
-          />
         )}
 
         <TransactionPreflightPanel />
@@ -1213,53 +1192,6 @@ export default function TransactionDetailPage() {
         )}
 
       </div>
-    </div>
-  );
-}
-
-/** Inline banner for a tx that's been broadcast but not yet on-chain.
- *  The tx hash links to NEXT_PUBLIC_BLOCK_EXPLORER_URL — same pattern used
- *  by the global "Transaction submitted" toast in `app/layout.tsx`. */
-function PendingTxBanner({
-  tone,
-  title,
-  description,
-  txHash,
-  network,
-}: {
-  tone: 'creation' | 'approval' | 'execution';
-  title: string;
-  description: string;
-  txHash: string | null;
-  network: string | null;
-}) {
-  const palette = tone === 'execution'
-    ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
-    : tone === 'approval'
-      ? 'border-sky-400/30 bg-sky-400/10 text-sky-200'
-      : 'border-yellow-400/30 bg-yellow-400/10 text-yellow-200';
-  const explorerUrl = process.env.NEXT_PUBLIC_BLOCK_EXPLORER_URL ?? '';
-  const truncated = txHash ? truncateAddress(txHash, 8) : null;
-  return (
-    <div className={`rounded-xl border p-4 text-sm space-y-1 ${palette}`}>
-      <p className="font-semibold">{title}</p>
-      <p className="opacity-90">{description}</p>
-      {txHash && truncated && (
-        <p className="text-xs opacity-90 pt-1 font-mono">
-          {explorerUrl ? (
-            <a
-              href={`${explorerUrl}/tx/${txHash}?network=${network ?? ''}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:opacity-100"
-            >
-              {truncated}
-            </a>
-          ) : (
-            truncated
-          )}
-        </p>
-      )}
     </div>
   );
 }
