@@ -20,7 +20,6 @@ import { fetchBalance, fetchChildren } from '@/lib/api';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
 import VaultSecurityNotice from '@/components/VaultSecurityNotice';
-import VaultHardForkNotice from '@/components/VaultHardForkNotice';
 import VaultVerificationKeyMigration from '@/components/VaultVerificationKeyMigration';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import {
@@ -156,8 +155,7 @@ export default function AccountPage() {
           />
         ) : multisig && multisig.address === urlAddress ? (
           <div className="space-y-6">
-            <VaultHardForkNotice key={multisig.address} />
-            <VaultVerificationKeyMigration address={multisig.address} walletAddress={wallet.address} />
+            <VaultVerificationKeyMigration key={multisig.address} address={multisig.address} walletAddress={wallet.address} summaryOnly />
             {!permissionsVerified && (
               <VaultSecurityNotice
                 checking={liveSecurity === null || liveSecurity === 'checking'}

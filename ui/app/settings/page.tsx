@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import OwnerList from '@/components/OwnerList';
 import ThresholdBadge from '@/components/ThresholdBadge';
+import VaultHardForkNotice from '@/components/VaultHardForkNotice';
+import VaultVerificationKeyMigration from '@/components/VaultVerificationKeyMigration';
 import { checkStorageAvailable, clearCompileCache, getCompileCacheSize, setCompileCacheEnabledIDB } from '@/lib/idb-compile-cache';
 import { isCompileCacheEnabled, setCompileCacheEnabled } from '@/lib/storage';
 
-/** Settings page for owner set and threshold governance proposal shortcuts. */
+/** Settings for vault governance, security guidance, and local compilation cache. */
 export default function SettingsPage() {
   const router = useRouter();
   const { wallet, multisig, owners } = useAppContext();
@@ -98,6 +100,15 @@ export default function SettingsPage() {
                 <InfoRow label="Config Nonce" value={String(multisig.configNonce ?? '-')} mono />
               </div>
             </div>
+
+            <section id="security" aria-labelledby="vault-security-title" className="scroll-mt-24 bg-safe-gray border border-safe-border rounded-xl p-6 space-y-4">
+              <h2 id="vault-security-title" className="text-sm font-semibold">Security</h2>
+              <p className="text-xs text-safe-text break-all">Deploy key and upgrade guidance for Vault {multisig.address}.</p>
+              <div key={multisig.address} className="space-y-4">
+                <VaultHardForkNotice />
+                <VaultVerificationKeyMigration address={multisig.address} walletAddress={wallet.address} />
+              </div>
+            </section>
           </>
         ) : (
           <div className="text-center py-20">

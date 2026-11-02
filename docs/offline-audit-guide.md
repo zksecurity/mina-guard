@@ -314,7 +314,8 @@ source for the UI's `OFFLINE_BUNDLE_VERSION`, the CLI's version gate and
 ### Common fields (`BundleBase`)
 
 Verification-key migration uses a separate **version 3 request** and **version 2 response**.
-It is never parsed as an owner proposal despite sharing the version 3 request number. The UI offers it only when
+It is never parsed as an owner proposal despite sharing the version 3 request number.
+The UI offers it in Settings → Security only when
 the vault's stored `setVerificationKey.txnVersion` is older than this release's
 version, the installed VK differs from the reviewed replacement VK, and the
 rest of its permissions are canonical. When the VK already matches, the UI
