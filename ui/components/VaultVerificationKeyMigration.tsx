@@ -27,7 +27,7 @@ function downloadRequest(bundle: OfflineMigrationBundle) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function VaultVerificationKeyMigration({ address, walletAddress }: { address: string; walletAddress: string | null }) {
+export default function VaultVerificationKeyMigration({ address, walletAddress, summaryOnly = false }: { address: string; walletAddress: string | null; summaryOnly?: boolean }) {
   const [status, setStatus] = useState<VaultSecurityStatus | null>(null);
   const [feePayer, setFeePayer] = useState(walletAddress ?? '');
   const [request, setRequest] = useState<OfflineMigrationBundle | null>(null);
@@ -57,7 +57,14 @@ export default function VaultVerificationKeyMigration({ address, walletAddress }
   }, [refresh, targetHash]);
 
   const sameVk = status?.verificationKeyHash === targetHash;
-  if (!targetHash || (!eligible(status) && !txHash && !verified)) return null;
+  if (!eligible(status) && !txHash && !verified) return null;
+  if (summaryOnly) return (
+    <section role="alert" aria-label="Vault needs attention" className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 text-sm text-amber-100">
+      <h2 className="font-semibold">Vault needs attention</h2>
+      <p className="mt-1">This Vault records an older transaction version. Review the upgrade and recovery guidance in <Link href="/settings#security" className="underline underline-offset-2">Settings → Security</Link>.</p>
+    </section>
+  );
+  if (!targetHash) return null;
   if (sameVk && !txHash) return (
     <section className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 space-y-3 text-sm" aria-label="Transaction version update">
       <h2 className="font-semibold">Transaction version update — VK unchanged</h2>
