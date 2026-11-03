@@ -18,8 +18,8 @@ VALID_ENV = {
     ),
     "NEXT_PUBLIC_BASE_PATH": "",
     "NEXT_PUBLIC_API_BASE_URL": "https://app.example.org",
-    "NEXT_PUBLIC_MINA_ENDPOINT": "https://node.example.org/graphql",
-    "NEXT_PUBLIC_ARCHIVE_ENDPOINT": "https://archive.example.org/graphql",
+    "NEXT_PUBLIC_MINA_ENDPOINT": "https://app.example.org/graphql",
+    "NEXT_PUBLIC_ARCHIVE_ENDPOINT": "https://app.example.org/archive",
     "NEXT_PUBLIC_BLOCK_EXPLORER_URL": "https://explorer.example.org/mainnet",
 }
 
@@ -27,6 +27,8 @@ VALID_ENV = {
 class MainnetBuildConfigTest(unittest.TestCase):
     def run_validator(self, changes):
         env = os.environ.copy()
+        # A developer shell may export the E2E flag; the baseline must not.
+        env.pop("NEXT_PUBLIC_E2E_TEST", None)
         env.update(VALID_ENV)
         env.update(changes)
         return subprocess.run(
@@ -41,7 +43,7 @@ class MainnetBuildConfigTest(unittest.TestCase):
         self.assertEqual(self.run_validator({}).returncode, 0)
 
     def test_rejects_missing_or_testnet_endpoint(self):
-        for endpoint in ("", "https://node.example.org/testnet/graphql"):
+        for endpoint in ("", "https://app.example.org/testnet/graphql"):
             with self.subTest(endpoint=endpoint):
                 self.assertNotEqual(
                     self.run_validator({"NEXT_PUBLIC_MINA_ENDPOINT": endpoint}).returncode,
@@ -64,8 +66,8 @@ class MainnetBuildConfigTest(unittest.TestCase):
 
     def test_rejects_secret_bearing_url(self):
         for endpoint in (
-            "https://user:password@node.example.org/graphql",
-            "https://node.example.org/graphql?api_key=secret",
+            "https://user:password@app.example.org/graphql",
+            "https://app.example.org/graphql?api_key=secret",
         ):
             with self.subTest(endpoint=endpoint):
                 self.assertNotEqual(
@@ -83,6 +85,30 @@ class MainnetBuildConfigTest(unittest.TestCase):
                     self.run_validator({"NEXT_PUBLIC_MINA_ENDPOINT": endpoint}).returncode,
                     0,
                 )
+
+    def test_rejects_e2e_test_flag(self):
+        for value in ("true", "1", "false", " "):
+            with self.subTest(value=value):
+                result = self.run_validator({"NEXT_PUBLIC_E2E_TEST": value})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("NEXT_PUBLIC_E2E_TEST", result.stderr)
+
+    def test_rejects_endpoints_on_another_origin(self):
+        # The mainnet page may only connect to its own origin.
+        for name, value in (
+            ("NEXT_PUBLIC_MINA_ENDPOINT", "https://node.example.org/graphql"),
+            ("NEXT_PUBLIC_ARCHIVE_ENDPOINT", "https://app.example.org:8443/archive"),
+            ("NEXT_PUBLIC_API_BASE_URL", "https://api.example.org"),
+        ):
+            with self.subTest(name=name):
+                result = self.run_validator({name: value})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("share one origin", result.stderr)
+
+    def test_accepts_empty_e2e_test_flag(self):
+        # The frontend Dockerfile defaults the build arg to an empty string,
+        # which leaves E2E mode off.
+        self.assertEqual(self.run_validator({"NEXT_PUBLIC_E2E_TEST": ""}).returncode, 0)
 
 
 if __name__ == "__main__":

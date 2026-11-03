@@ -27,6 +27,8 @@ URL_VARS = (
     "NEXT_PUBLIC_ARCHIVE_ENDPOINT",
     "NEXT_PUBLIC_BLOCK_EXPLORER_URL",
 )
+# Endpoints the browser connects to. The block explorer is only linked.
+SAME_ORIGIN_VARS = URL_VARS[:3]
 
 
 def validate_url(name: str, value: str) -> None:
@@ -78,10 +80,28 @@ def main() -> int:
                 "deploy/verify-mainnet-release.py; a circuit change must update that "
                 "pin in the same reviewed commit"
             )
+        # An E2E build trusts the backend's vault security verdict and adds
+        # test-only browser hooks. Only "true" turns that on, but any nonempty
+        # value means a test setting leaked into the release, so refuse it.
+        if os.environ.get("NEXT_PUBLIC_E2E_TEST", ""):
+            raise ValueError("NEXT_PUBLIC_E2E_TEST is a test-only setting and must not be set for mainnet")
         if os.environ.get("NEXT_PUBLIC_BASE_PATH", ""):
             raise ValueError("This AWS mainnet build expects the app at / (no base path)")
         for name in URL_VARS:
             validate_url(name, os.environ.get(name, ""))
+        # The mainnet Content-Security-Policy (ui/content-security-policy.mjs)
+        # only lets the page connect to its own origin. The API, node and
+        # archive must therefore be served from one origin, the app's.
+        origins = {
+            urlsplit(os.environ[name])._replace(path="", query="", fragment="").geturl().lower()
+            for name in SAME_ORIGIN_VARS
+        }
+        if len(origins) != 1:
+            raise ValueError(
+                "NEXT_PUBLIC_API_BASE_URL, NEXT_PUBLIC_MINA_ENDPOINT and NEXT_PUBLIC_ARCHIVE_ENDPOINT "
+                "must share one origin, because the mainnet Content-Security-Policy allows only "
+                "same-origin connections"
+            )
     except ValueError as error:
         print(f"Mainnet build config error: {error}", file=sys.stderr)
         return 1

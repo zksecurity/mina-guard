@@ -601,7 +601,52 @@ on `NEXT_PUBLIC_E2E_TEST` (`worker.ts:701-716`, `multisigClient.ts:119-138`;
 inlines at build time so the branch is dead code in production. Direct test
 submission returns a bare transaction hash, just like Auro and Ledger; the
 caller adds the success-message prefix. Proposal status polling stores and
-queries the bare hash.
+queries the bare hash. The `window.__e2eNavigate` / `window.__e2ePathname`
+helpers that E2E tests use to navigate are also installed only when
+`NEXT_PUBLIC_E2E_TEST` is `true` (`app/layout.tsx`).
+`deploy/validate-mainnet-build-config.py` refuses a mainnet build that sets
+`NEXT_PUBLIC_E2E_TEST` to any nonempty value, because that flag also makes the
+browser trust the backend's vault security verdict (`lib/api.ts`).
+
+**7. Content-Security-Policy (`content-security-policy.mjs`, `next.config.mjs`).**
+Every page is sent `CONTENT_SECURITY_POLICY`:
+
+```
+default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';
+style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self';
+connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none';
+object-src 'none'; base-uri 'none'; form-action 'self'
+```
+
+(one line in the header). It stops other sites from framing the app, and
+stops the page from loading scripts, styles, fonts or images from, or sending
+requests to, any other origin. It does not stop an injected inline script:
+Next.js writes page data as inline scripts that change every build, so
+`'unsafe-inline'` stays until the app moves to per-request nonces. The
+`'wasm-unsafe-eval'` source lets o1js compile its WebAssembly. Images and
+fonts are all served from the app (fonts through `next/font/local`), so
+`data:` and `blob:` are not allowed there. Blob URLs are still used for file
+downloads, which this policy does not limit.
+
+Files under `/_next/static/` are sent `WORKER_CONTENT_SECURITY_POLICY`, the
+same policy plus `'unsafe-eval'`. The transaction worker's script is served
+from there, and a browser applies the policy sent with a worker's own script.
+o1js, which runs only in that worker, starts its compiled core with
+`new Function(...)`, and its thread-pool workers are `blob:` URLs that inherit
+the worker's policy; without `'unsafe-eval'` o1js never starts, so nothing can
+be proved or signed. Pages keep the stricter policy, and the main thread does
+not load o1js. The development server also allows `'unsafe-eval'` on pages,
+because React and webpack development code use eval.
+
+`connect-src 'self'` fits mainnet, where the API, node and archive share the
+app origin (`validate-mainnet-build-config.py` refuses a mainnet build whose
+three endpoints do not share one origin). Other networks add the origins of
+their configured endpoints to `connect-src`. The desktop shell replaces this
+header with its own policy, which allows the user's configured nodes
+(`desktop-audit-guide.md`, focus point 7). On mainnet the gateway must pass
+the header through unchanged on every response, including `/_next/static/`;
+`deploy/mainnet-content-integrity.py` checks that the public HTML pages carry
+exactly `CONTENT_SECURITY_POLICY` (`deploy-audit-guide.md`).
 
 ---
 
@@ -702,6 +747,8 @@ ui/
 ├── package.json                 # Pinned o1js and mina-signer dependencies
 ├── next.config.mjs              # COOP/COEP headers
 │                                #   (COEP: credentialless) for SharedArrayBuffer;
+│                                #   Content-Security-Policy from
+│                                #   content-security-policy.mjs (see below);
 │                                #   minification DISABLED — minifiers mangle o1js
 │                                #   BigInt ops and silently produce wrong tx
 │                                #   commitments
