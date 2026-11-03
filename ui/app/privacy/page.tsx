@@ -29,6 +29,13 @@ export default function PrivacyPage() {
         tracking.
       </p>
 
+      <h2>Bug reports</h2>
+      <p>
+        The &ldquo;Report a bug&rdquo; links open a GitHub issue with your app version, network, page, wallet
+        type and browser filled in. Nothing is sent until you submit it, and you can edit it first. Issues are
+        public, and GitHub&apos;s privacy policy applies to them.
+      </p>
+
       <h2>Wallets</h2>
       <p>Auro Wallet and Ledger are separate products with their own privacy policies.</p>
 

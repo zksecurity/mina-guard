@@ -13,6 +13,7 @@ import BetaNotice from '@/components/BetaNotice';
 import ConnectTermsDialog from '@/components/ConnectTermsDialog';
 import { useTermsAccepted } from '@/hooks/useTermsAccepted';
 import { hasAcceptedTerms, recordTermsAcceptance } from '@/lib/terms-acceptance';
+import { currentBugReportUrl } from '@/lib/bug-report';
 import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
@@ -317,6 +318,16 @@ function AppProvider({ children }: { children: React.ReactNode }) {
                     return operationBanner.message;
                   })()}
                 </span>
+                {operationBanner.type === 'error' && (
+                  <a
+                    href={currentBugReportUrl({ page: pathname, wallet: wallet.type, error: operationBanner.message })}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 text-xs underline underline-offset-2 hover:opacity-70"
+                  >
+                    Report this
+                  </a>
+                )}
                 <button onClick={clearBanner} className="shrink-0 hover:opacity-70 text-lg leading-none">
                   &times;
                 </button>

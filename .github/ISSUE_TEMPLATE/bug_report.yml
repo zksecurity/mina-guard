@@ -1,0 +1,46 @@
+name: Report a bug
+description: Something in MinaGuard did not work as expected.
+labels: ["bug", "from-app"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue is public.** Never paste a recovery phrase, private key or deploy key. MinaGuard never asks for them.
+        Found a security problem? [Report it privately](https://github.com/zksecurity/mina-guard/security/advisories/new) instead.
+        If you opened this from the app, the details at the bottom are filled in. Edit or remove anything you do not want to share.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, and what went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: input
+    id: version
+    attributes:
+      label: App version
+  - type: input
+    id: network
+    attributes:
+      label: Network
+  - type: input
+    id: page
+    attributes:
+      label: Page
+  - type: input
+    id: wallet
+    attributes:
+      label: Wallet
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message
+      render: text
