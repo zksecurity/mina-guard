@@ -240,3 +240,4 @@ tip of the branch they ship on.
 
 Report suspected vulnerabilities privately via GitHub's private vulnerability reporting on this
 repository (Security → Report a vulnerability). Please do not open public issues for security reports.
+See [SECURITY.md](../SECURITY.md) for the email fallback and scope.

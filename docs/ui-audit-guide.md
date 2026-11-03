@@ -742,6 +742,7 @@ ui/
 │   ├── ledger-field.ts          # Field -> 32 device bytes, and the hash text the
 │   │                            #   device shows for it
 │   ├── memo-check.ts            # Memo badge choice + execution memo binding
+│   ├── bug-report.ts            # Prefilled GitHub bug report link (footer, error toasts)
 │   ├── offline-signing.ts       # Offline bundle builders + signed-response validation
 │   │                            #   (cross-reference offline-audit-guide.md)
 │   ├── api.ts                   # Backend read client + response normalization

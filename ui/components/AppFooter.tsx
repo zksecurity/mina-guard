@@ -1,6 +1,10 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useAppContext } from '@/lib/app-context';
+import { currentBugReportUrl } from '@/lib/bug-report';
 
 const REPO = 'https://github.com/zksecurity/mina-guard';
 const VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? '';
@@ -14,11 +18,16 @@ const Dot = () => (
 
 /**
  * Global app footer: copyright, links to the standalone guide and legal pages
- * (new tab), the source repo, and the build stamp. Lives in the app shell, so it never renders
+ * (new tab), a prefilled bug report link, the source repo, and the build stamp. Lives in the app shell, so it never renders
  * on the standalone /guide route.
  */
 export default function AppFooter() {
   const year = new Date().getFullYear();
+  const pathname = usePathname();
+  const { wallet } = useAppContext();
+  // Browser details join the link after hydration, so server and client agree.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   return (
     <footer className="shrink-0 border-t border-safe-border px-6 py-4">
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-safe-text">
@@ -53,6 +62,18 @@ export default function AppFooter() {
         <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="font-medium transition-colors hover:text-white">
           Privacy
         </Link>
+
+        <Dot />
+
+        <a
+          href={currentBugReportUrl({ page: pathname, wallet: wallet.type }, mounted)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium transition-colors hover:text-white"
+          title="Opens a GitHub issue form with your app version, network, page, wallet type and browser filled in. Nothing is posted until you submit."
+        >
+          Report a bug
+        </a>
 
         <Dot />
 

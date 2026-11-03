@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security issue privately
+    url: https://github.com/zksecurity/mina-guard/security/advisories/new
+    about: Vulnerabilities go here, not in public issues. Only the maintainers can see these reports.
+  - name: User guide
+    url: https://app.minaguard.com/guide
+    about: How to create vaults, propose, approve, execute and connect wallets.
