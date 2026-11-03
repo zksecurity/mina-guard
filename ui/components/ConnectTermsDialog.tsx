@@ -12,12 +12,15 @@ const linkClass = 'text-safe-green underline underline-offset-2 hover:text-white
  */
 export default function ConnectTermsDialog({ onAccept, onCancel }: { onAccept: () => void; onCancel: () => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const checkboxRef = useRef<HTMLInputElement>(null);
   const [agreed, setAgreed] = useState(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (!dialog.open) dialog.showModal();
+    // showModal focuses the first link; start on the checkbox instead.
+    checkboxRef.current?.focus();
     return () => { if (dialog.open) dialog.close(); };
   }, []);
 
@@ -36,6 +39,7 @@ export default function ConnectTermsDialog({ onAccept, onCancel }: { onAccept: (
       </p>
       <label className="mt-4 flex items-start gap-3 text-sm leading-relaxed text-safe-text">
         <input
+          ref={checkboxRef}
           type="checkbox"
           checked={agreed}
           onChange={(event) => setAgreed(event.target.checked)}
