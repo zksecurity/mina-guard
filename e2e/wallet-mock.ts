@@ -3,6 +3,14 @@
  * chain e2e suite (helpers.ts) and the UI suite (ui/), which must not import
  * helpers.ts because that module pulls in o1js.
  */
+/**
+ * Marks the current terms as accepted, as for a returning user. Keep the key and
+ * version in sync with ui/lib/terms-acceptance.ts. Runs before page scripts.
+ */
+export const TERMS_ACCEPTED_SCRIPT = `
+  try { localStorage.setItem('minaguard:terms-accepted', 'terms-v1'); } catch {}
+`;
+
 export const MOCK_WALLET_SCRIPT = `
   window.__testActiveAddress = null;
   window.__testEventHandlers = {};

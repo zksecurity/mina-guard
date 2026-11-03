@@ -1,6 +1,13 @@
-import { test, expect } from '@playwright/test';
-import { connectWallet, navigateTo, openVault } from './ui-helpers';
-import { TREASURY } from './fixtures';
+import { test, expect, type Page } from '@playwright/test';
+import { MOCK_WALLET_SCRIPT } from '../wallet-mock';
+import { navigateTo, openVault } from './ui-helpers';
+import { TREASURY, WALLET } from './fixtures';
+
+/** A wallet that reconnects on load, in a browser that never accepted the terms. */
+async function newVisitorWithWallet(page: Page): Promise<void> {
+  await page.addInitScript(MOCK_WALLET_SCRIPT);
+  await page.addInitScript(`window.__testActiveAddress = ${JSON.stringify(WALLET)};`);
+}
 
 test('the beta banner can be dismissed for the current tab', async ({ page, context }) => {
   await page.goto('/');
@@ -19,38 +26,48 @@ test('the beta banner can be dismissed for the current tab', async ({ page, cont
   await otherTab.close();
 });
 
-test('proposal creation warns on each visit, including when the banner is dismissed', async ({ page }) => {
-  await connectWallet(page);
+test('a wallet connects only after the terms and beta risk are accepted, once per browser', async ({ page }) => {
+  await newVisitorWithWallet(page);
   await page.goto('/');
-  await page.getByRole('button', { name: 'Dismiss beta notice' }).click();
-  await openVault(page, TREASURY);
-  await navigateTo(page, '/transactions/new?type=transfer');
 
-  const dialog = page.getByRole('dialog', { name: 'Before you create a proposal' });
+  const dialog = page.getByRole('dialog', { name: 'Before you connect' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('You could lose funds');
   await expect(dialog).toContainText('including on Mainnet');
-  await dialog.getByRole('button', { name: 'Continue' }).click();
+  const accept = dialog.getByRole('button', { name: 'Continue' });
+  await expect(accept).toBeDisabled();
+  await dialog.getByRole('checkbox', { name: /I understand the risks/ }).check();
+  await accept.click();
   await expect(dialog).not.toBeVisible();
-  await page.getByRole('button', { name: 'Offline', exact: true }).click();
-  await expect(page.getByText('Signer Address (Fee Payer)')).toBeVisible();
 
-  await navigateTo(page, '/transactions');
-  await navigateTo(page, '/transactions/new?type=transfer');
-  await expect(dialog).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(dialog).not.toBeVisible();
+  // The full-width banner gives way to the header badge.
   await expect(page.getByRole('complementary', { name: 'Beta product notice' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'BETA' })).toBeVisible();
 
-  await navigateTo(page, `/accounts/new?parent=${TREASURY}`);
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Connect a wallet to see your Vaults.')).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
 
-  await navigateTo(page, `/accounts/${TREASURY}`);
-  await page.evaluate(() => (window as any).__e2eNavigate('/transactions/new?type=createChild'));
-  await expect(page).toHaveURL(new RegExp(`/accounts/new\\?parent=${TREASURY}`));
+  // Accepted once: proposal pages no longer repeat the beta warning.
+  await openVault(page, TREASURY);
+  await navigateTo(page, '/transactions/new?type=transfer');
+  await expect(page.getByRole('button', { name: 'Offline', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Before you create a proposal' })).toHaveCount(0);
+});
+
+test('declining disconnects, and the next connect asks again', async ({ page }) => {
+  await newVisitorWithWallet(page);
+  await page.goto('/');
+
+  const dialog = page.getByRole('dialog', { name: 'Before you connect' });
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByText('Connect a wallet to see your Vaults.').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Connect Auro Wallet' }).click();
   await expect(dialog).toBeVisible();
+  await dialog.getByRole('checkbox', { name: /I understand the risks/ }).check();
   await dialog.getByRole('button', { name: 'Continue' }).click();
   await expect(dialog).not.toBeVisible();
+  await expect(page.getByText('Connect a wallet to see your Vaults.')).toHaveCount(0);
 });

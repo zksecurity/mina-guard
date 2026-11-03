@@ -10,7 +10,7 @@ import {
   fetchAccount,
 } from 'o1js';
 import { getNetworkConfig } from './network-config';
-import { MOCK_WALLET_SCRIPT } from './wallet-mock';
+import { MOCK_WALLET_SCRIPT, TERMS_ACCEPTED_SCRIPT } from './wallet-mock';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -303,6 +303,8 @@ export async function setupTestPage(
   page: Page,
   account: TestAccount
 ): Promise<void> {
+  // A returning user who already accepted the terms in the connect dialog.
+  await page.addInitScript(TERMS_ACCEPTED_SCRIPT);
   await page.addInitScript(MOCK_WALLET_SCRIPT);
   // Set active address before navigation triggers wallet detection
   await page.addInitScript(`window.__testActiveAddress = "${account.publicKey}";`);

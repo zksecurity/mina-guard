@@ -2,9 +2,22 @@
 
 import { useEffect, useRef } from 'react';
 import { BetaRiskMessage } from './BetaNotice';
+import { useTermsAccepted } from '@/hooks/useTermsAccepted';
+import { useAppContext } from '@/lib/app-context';
 
-/** Warn before either online proposal creation or offline request export. */
+/**
+ * Warn before proposal creation or offline request export. A connected wallet
+ * has already accepted the beta risk in the connect dialog, so this shows only
+ * to a visitor who has not accepted it, such as one exporting offline without
+ * connecting.
+ */
 export default function BetaProposalDialog() {
+  const accepted = useTermsAccepted();
+  const { wallet } = useAppContext();
+  return accepted === false && !wallet.connected ? <BetaRiskDialog /> : null;
+}
+
+function BetaRiskDialog() {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {

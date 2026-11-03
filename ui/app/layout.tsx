@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { getPreflightView, subscribePreflight, preflightFailureMessage, PREFLIGHT_CANCELLED } from '@/lib/preflight-flow';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import localFont from 'next/font/local';
 import './globals.css';
@@ -10,6 +10,9 @@ import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import AppFooter from '@/components/AppFooter';
 import BetaNotice from '@/components/BetaNotice';
+import ConnectTermsDialog from '@/components/ConnectTermsDialog';
+import { useTermsAccepted } from '@/hooks/useTermsAccepted';
+import { hasAcceptedTerms, recordTermsAcceptance } from '@/lib/terms-acceptance';
 import { useWallet } from '@/hooks/useWallet';
 import { useMultisig } from '@/hooks/useMultisig';
 import { useTransactions } from '@/hooks/useTransactions';
@@ -51,6 +54,27 @@ function AppProvider({ children }: { children: React.ReactNode }) {
     auroInstalled, ledgerSupported,
     connect, connectAuro, connectLedger, disconnect, networkMismatch, assertSigningNetwork,
   } = useWallet();
+
+  // A wallet connects only after the visitor accepts the current terms and
+  // beta risk once in this browser. A connect request made before that waits
+  // in pendingConnect and runs from the dialog's Continue click, so wallets
+  // that need a user gesture (Ledger over WebHID) still get one.
+  const termsAccepted = useTermsAccepted();
+  const [pendingConnect, setPendingConnect] = useState<(() => void) | null>(null);
+  const requireTerms = useCallback(
+    <A extends unknown[]>(run: (...args: A) => unknown) =>
+      (...args: A) => {
+        if (termsAccepted || hasAcceptedTerms()) { void run(...args); return; }
+        setPendingConnect(() => () => { void run(...args); });
+      },
+    [termsAccepted]
+  );
+  const gatedConnect = useMemo(() => requireTerms(connect), [requireTerms, connect]);
+  const gatedConnectAuro = useMemo(() => requireTerms(connectAuro), [requireTerms, connectAuro]);
+  const gatedConnectLedger = useMemo(() => requireTerms(connectLedger), [requireTerms, connectLedger]);
+  // A wallet that reconnected on load without an acceptance on record (for
+  // example, connected before the terms existed) is asked once as well.
+  const showTerms = pendingConnect !== null || (wallet.connected && termsAccepted === false);
 
   const {
     state: multisig,
@@ -164,9 +188,9 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         proposalsAddress,
         pendingCount,
         indexerStatus,
-        connect,
-        connectAuro,
-        connectLedger,
+        connect: gatedConnect,
+        connectAuro: gatedConnectAuro,
+        connectLedger: gatedConnectLedger,
         disconnect: async () => { await disconnect(); clearBanner(); },
         isLoading: walletLoading,
         walletError,
@@ -192,9 +216,9 @@ function AppProvider({ children }: { children: React.ReactNode }) {
           ledgerSupported={ledgerSupported}
           walletType={wallet.type}
           network={wallet.network}
-          onConnect={connect}
-          onConnectAuro={connectAuro}
-          onConnectLedger={connectLedger}
+          onConnect={gatedConnect}
+          onConnectAuro={gatedConnectAuro}
+          onConnectLedger={gatedConnectLedger}
           onDisconnect={async () => { await disconnect(); clearBanner(); router.push('/'); }}
         />
         {networkMismatch && (
@@ -208,7 +232,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             </span>
           </div>
         )}
-        <BetaNotice />
+        <BetaNotice hideOnceAccepted />
         <div className="flex flex-1 min-h-0">
           {pathname !== '/' && pathname !== '/accounts/new' && (
             <Sidebar
@@ -222,6 +246,22 @@ function AppProvider({ children }: { children: React.ReactNode }) {
         </div>
 
         <AppFooter />
+
+        {showTerms && (
+          <ConnectTermsDialog
+            onAccept={() => {
+              recordTermsAcceptance();
+              const run = pendingConnect;
+              setPendingConnect(null);
+              run?.();
+            }}
+            onCancel={() => {
+              const reconnected = pendingConnect === null;
+              setPendingConnect(null);
+              if (reconnected) { void disconnect(); clearBanner(); }
+            }}
+          />
+        )}
 
         {/* Fixed toast notifications – bottom-right corner */}
         {(isOperating || operationBanner) && (

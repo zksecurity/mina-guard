@@ -44,14 +44,26 @@ failure or prove production deployment works.
 
 MinaGuard is in beta on every supported network, including Mainnet. Bugs could
 cause loss of funds; users should keep balances to amounts they can afford to lose.
+Before a wallet connects, `components/ConnectTermsDialog.tsx` shows the beta
+risk and requires a checkbox accepting the Terms (`/terms`) and Privacy Policy
+(`/privacy`). The app shell wraps every connect handler (header, home page and
+vault page) so a connect request waits for that acceptance, then runs from the
+dialog's Continue click. A wallet that reconnects on load without an acceptance
+on record sees the dialog too, and Cancel disconnects it. Acceptance is stored
+in this browser's `localStorage` under `lib/terms-acceptance.ts`'s
+`TERMS_VERSION`; bumping that version asks everyone again. Nothing is sent to
+the server, so there is no server-side record of acceptance.
+
 `components/BetaNotice.tsx` displays a dismissible notice below the header
-(and below a network-mismatch warning, when present) on every app route. The
-standalone `/guide` renders the same warning without the link back to itself;
-its `#beta` section explains the risk and precautions. Dismissing the notice
-hides it for the current browser tab session. The shared web and desktop UI
-also shows the warning in a dialog each time the proposal-creation page or the
-SubVault proposal wizard opens, before online creation or offline request export.
-The dialog can be dismissed with Continue or Escape; it does not create a transaction.
+(and below a network-mismatch warning, when present) until the terms are
+accepted; after that the header shows a BETA badge linking to the guide
+instead. The standalone `/guide` always renders the notice, without the link
+back to itself; its `#beta` section explains the risk and precautions.
+Dismissing the notice hides it for the current browser tab session. The
+proposal-creation page and the SubVault proposal wizard show the warning in a
+dialog only to a visitor with no connected wallet who has not accepted, such
+as one exporting an offline request; it can be dismissed with Continue or
+Escape and does not create a transaction.
 
 This disclosure does not enforce balance limits or verify a transaction's safety.
 Existing network checks and signing confirmations still apply.
