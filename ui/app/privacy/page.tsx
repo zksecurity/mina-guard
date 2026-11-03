@@ -5,7 +5,7 @@ export const metadata = { title: 'Privacy Policy | MinaGuard' };
 export default function PrivacyPage() {
   return (
     <LegalPage title="Privacy Policy" updated="2026-11-03">
-      <p>This policy explains what the MinaGuard web interface, operated by zkSecurity, collects and why.</p>
+      <p>This policy explains what the MinaGuard web interface, operated by zkSecurity, LLC, collects and why.</p>
 
       <h2>Server logs</h2>
       <p>

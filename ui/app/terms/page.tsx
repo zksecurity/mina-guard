@@ -6,8 +6,9 @@ export default function TermsPage() {
   return (
     <LegalPage title="Terms of Use" updated="2026-11-03">
       <p>
-        These terms cover the MinaGuard web interface operated by zkSecurity. By using the interface or
-        connecting a wallet to it, you agree to them. If you do not agree, do not use the interface.
+        These terms cover the MinaGuard web interface operated by zkSecurity, LLC (&quot;zkSecurity&quot;,
+        &quot;we&quot;). By using the interface or connecting a wallet to it, you agree to them. If you do not agree,
+        do not use the interface.
       </p>
 
       <h2>Beta software</h2>
@@ -18,6 +19,10 @@ export default function TermsPage() {
         MinaGuard is software for operating your own multisig vaults on the Mina blockchain. We never hold
         your private keys, recovery phrases or funds. We cannot recover access, reverse, cancel or freeze
         any transaction. Transactions on Mina are final.
+      </p>
+      <p>
+        Nothing in the interface is financial, legal or tax advice. We do not act as your broker, agent or
+        fiduciary.
       </p>
 
       <h2 id="network-upgrades">Mina network upgrades</h2>
@@ -45,6 +50,13 @@ export default function TermsPage() {
         <li>Use the interface only where it is legal for you to do so.</li>
       </ul>
 
+      <h2>Third-party services</h2>
+      <p>
+        The interface relies on services we do not control, including the Mina network, its nodes and
+        archive services, Auro Wallet and Ledger. We are not responsible for their availability, behavior
+        or security.
+      </p>
+
       <h2>Eligibility</h2>
       <p>
         You must be at least 18 and able to enter a binding agreement. You may not use the interface if you
@@ -53,15 +65,20 @@ export default function TermsPage() {
 
       <h2>No warranty</h2>
       <p>
-        The interface is provided as is and as available, without warranties of any kind. We may change,
-        suspend or stop it at any time.
+        THE INTERFACE AND THE MINAGUARD CONTRACTS ARE PROVIDED &quot;AS IS&quot; AND &quot;AS AVAILABLE&quot;, WITHOUT
+        WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING THE IMPLIED WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. We do not warrant that the interface will be
+        uninterrupted, secure or free of errors. We may change, suspend or stop it at any time.
       </p>
 
       <h2>Limitation of liability</h2>
       <p>
-        To the extent the law allows, zkSecurity is not liable for any loss arising from your use of the
-        interface or the MinaGuard contracts, including software bugs, network failures, lost keys or signed
-        transactions. Nothing in these terms limits liability that cannot be limited by law.
+        TO THE EXTENT THE LAW ALLOWS, ZKSECURITY IS NOT LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+        CONSEQUENTIAL OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF FUNDS, DIGITAL ASSETS, PROFITS OR DATA, ARISING
+        FROM YOUR USE OF THE INTERFACE OR THE MINAGUARD CONTRACTS, INCLUDING SOFTWARE BUGS, NETWORK FAILURES,
+        LOST KEYS OR SIGNED TRANSACTIONS. OUR TOTAL LIABILITY FOR ANY CLAIM RELATED TO THESE TERMS OR THE
+        INTERFACE IS LIMITED TO US$100. Nothing in these terms limits liability that cannot be limited by
+        law.
       </p>
 
       <h2>Open source</h2>
@@ -69,6 +86,13 @@ export default function TermsPage() {
         The MinaGuard source code is available on{' '}
         <a href="https://github.com/zksecurity/mina-guard" target="_blank" rel="noopener noreferrer">GitHub</a>{' '}
         under its own license. These terms cover the hosted interface.
+      </p>
+
+      <h2>Governing law</h2>
+      <p>
+        These terms are governed by the laws of the State of Delaware, without regard to its conflict of
+        law rules. Any dispute arising from these terms or the interface will be resolved exclusively in the
+        state or federal courts located in Delaware.
       </p>
 
       <h2>Changes</h2>
