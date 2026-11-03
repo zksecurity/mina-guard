@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import LedgerConnectModal from './LedgerConnectModal';
+import ConnectTerms from './ConnectTerms';
 
 interface ConnectNoticeProps {
   onConnectAuro: () => void;
@@ -58,12 +59,7 @@ export default function ConnectNotice({
           </button>
         )}
       </div>
-      <p className="mt-4 mb-2 text-xs text-safe-text">
-        By connecting a wallet, you agree to the{' '}
-        <Link href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-white">Terms</Link>{' '}
-        and acknowledge the{' '}
-        <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-white">Privacy Policy</Link>.
-      </p>
+      <ConnectTerms className="mt-4 mb-2" />
       <Link
         href="/guide#wallets"
         target="_blank"

@@ -9,6 +9,7 @@ import LoadMore from '@/components/LoadMore';
 import VaultCard from '@/components/VaultCard';
 import ThresholdBadge from '@/components/ThresholdBadge';
 import AddExistingAccountModal from '@/components/AddExistingAccountModal';
+import ConnectTerms from '@/components/ConnectTerms';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useLoadMore } from '@/hooks/useLoadMore';
 import { useUrlState } from '@/hooks/useUrlState';
@@ -271,6 +272,7 @@ function AccountsListPageInner() {
                   ? "You don't own any MinaGuard Vaults yet."
                   : 'No Vaults match that search.'}
             </p>
+            {!wallet.address && <ConnectTerms />}
             {wallet.address && ownedCount === 0 && (
               <Link
                 href="/accounts/new"
