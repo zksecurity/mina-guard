@@ -15,7 +15,11 @@ import type { MinaGuardIndexer } from '../indexer.js';
 import * as minaClient from '../mina-client.js';
 import type { ZkappCommandUpdate } from '../mina-client.js';
 import { createApiRouter } from '../routes.js';
-import { LOOKUP_DELAYS_MS } from '../submission-check.js';
+import {
+  LOOKUP_DELAYS_MS,
+  MAX_CONCURRENT_SUBMISSION_CHECKS,
+  MAX_SUBMISSION_CHECKS_PER_PROPOSAL,
+} from '../submission-check.js';
 
 const VAULT = PrivateKey.random().toPublicKey().toBase58();
 const CHILD = PrivateKey.random().toPublicKey().toBase58();
@@ -65,6 +69,41 @@ async function post(body: unknown, proposalHash = PROPOSAL) {
     body: JSON.stringify(body),
   });
   return { status: res.status, body: await res.json() as Record<string, unknown> };
+}
+
+// Distinct well-formed transaction hashes for the limit tests.
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const txHash = (i: number) => `5J${'u'.repeat(48)}${BASE58[Math.floor(i / 58)]}${BASE58[i % 58]}`;
+
+/** Makes every pool lookup wait until the returned release is called. */
+function holdLookups(result: ZkappCommandUpdate[] | null = null) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  lookups = spyOn(minaClient, 'fetchPooledZkappCommand').mockImplementation(async () => {
+    await gate;
+    return result;
+  });
+  spyOn(minaClient, 'fetchZkappStates').mockImplementation(
+    async (_config, addresses) => new Map(addresses.map((a) => [a, CURRENT])),
+  );
+  return release;
+}
+
+/** Waits until this many checks have asked the node. */
+async function lookupsStarted(count: number) {
+  for (let i = 0; i < 200 && lookups.mock.calls.length < count; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  expect(lookups.mock.calls.length).toBe(count);
+}
+
+async function addProposals(count: number): Promise<string[]> {
+  const contract = await prisma.contract.findUniqueOrThrow({ where: { address: VAULT } });
+  const hashes = Array.from({ length: count }, (_, i) => String(5000 + i));
+  await prisma.proposal.createMany({
+    data: hashes.map((proposalHash) => ({ contractId: contract.id, proposalHash, createdAtBlock: 1 })),
+  });
+  return hashes;
 }
 
 async function stored() {
@@ -259,18 +298,61 @@ describe('submission reports', () => {
     expect(lookups.mock.calls.length).toBe(0);
   });
 
-  test('caps concurrent checks', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    lookups = spyOn(minaClient, 'fetchPooledZkappCommand').mockImplementation(async () => {
-      await gate;
-      return null;
-    });
-    const pending = Array.from({ length: 8 }, () => post({ action: 'approve', txHash: TX2 }));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect((await post({ action: 'approve', txHash: TX })).status).toBe(429);
-    release();
-    expect((await Promise.all(pending)).map((r) => r.status)).toEqual(Array(8).fill(422));
+  test('the same report sent again while it is checked shares that check', async () => {
+    const release = holdLookups([update(VAULT, true, encode('approval', PROPOSAL))]);
+    try {
+      const pending = Array.from({ length: 5 }, () => post({ action: 'approve', txHash: TX }));
+      await lookupsStarted(1);
+      // Let the repeats reach the check before it finishes.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // The repeats hold one of this proposal's two slots, so another report still fits.
+      const other = post({ action: 'approve', txHash: TX2 });
+      await lookupsStarted(2);
+      release();
+      expect((await Promise.all(pending)).map((r) => r.status)).toEqual(Array(5).fill(200));
+      expect((await other).status).toBe(200);
+      expect(lookups).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+    }
+  });
+
+  test('limits checks per proposal without blocking other proposals', async () => {
+    const [other] = await addProposals(1);
+    const release = holdLookups();
+    try {
+      const pending = Array.from({ length: MAX_SUBMISSION_CHECKS_PER_PROPOSAL }, (_, i) =>
+        post({ action: 'approve', txHash: txHash(i) }));
+      await lookupsStarted(MAX_SUBMISSION_CHECKS_PER_PROPOSAL);
+      expect((await post({ action: 'approve', txHash: txHash(99) })).status).toBe(429);
+      const elsewhere = post({ action: 'approve', txHash: txHash(98) }, other);
+      await lookupsStarted(MAX_SUBMISSION_CHECKS_PER_PROPOSAL + 1);
+      release();
+      expect((await Promise.all(pending)).map((r) => r.status))
+        .toEqual(Array(MAX_SUBMISSION_CHECKS_PER_PROPOSAL).fill(422));
+      expect((await elsewhere).status).toBe(422);
+      // Finished checks free their slots.
+      expect((await post({ action: 'approve', txHash: txHash(99) })).status).toBe(422);
+    } finally {
+      release();
+    }
+  });
+
+  test('caps checks across all proposals', async () => {
+    const perProposal = MAX_SUBMISSION_CHECKS_PER_PROPOSAL;
+    const proposals = await addProposals(MAX_CONCURRENT_SUBMISSION_CHECKS / perProposal + 1);
+    const release = holdLookups();
+    try {
+      const pending = Array.from({ length: MAX_CONCURRENT_SUBMISSION_CHECKS }, (_, i) =>
+        post({ action: 'approve', txHash: txHash(i) }, proposals[Math.floor(i / perProposal)]));
+      await lookupsStarted(MAX_CONCURRENT_SUBMISSION_CHECKS);
+      expect((await post({ action: 'approve', txHash: txHash(200) }, proposals[proposals.length - 1])).status).toBe(429);
+      release();
+      expect((await Promise.all(pending)).map((r) => r.status))
+        .toEqual(Array(MAX_CONCURRENT_SUBMISSION_CHECKS).fill(422));
+    } finally {
+      release();
+    }
   });
 
   test('refuses reports when the router has no node to check with', async () => {

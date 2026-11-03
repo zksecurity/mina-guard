@@ -161,6 +161,15 @@ These instructions apply to the entire MinaGuard monorepo.
 - Do not deploy, publish releases, reset databases, stop shared containers,
   operate preview stacks, or mutate production infrastructure unless the user
   explicitly requests that action.
+- To release `main` to `production`, follow "Release from production" in
+  `docs/deploy-audit-guide.md`. Start a new branch from `origin/production`,
+  copy the current `main` files into it with `git read-tree --reset -u
+  origin/main`, commit, and open the PR from that branch with exactly one
+  `Release-main: <full SHA>` line. Do not open the release PR straight from
+  `main`. `production` only accepts PRs that already contain its latest commit,
+  and `main` never receives production's commits, so a PR from `main` is
+  blocked as out of date and can show conflicts. Merge release PRs with a merge
+  commit or a squash, not a rebase.
 - Treat deployment state as time-sensitive. Inspect the relevant workflows,
   deployment scripts, and live controls before asserting what is active.
 - Some development helpers intentionally stop colliding containers or reset
