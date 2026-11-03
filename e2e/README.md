@@ -209,7 +209,10 @@ API sanity, vault list/dashboard/settings rendering, per-status detail pages
 (action buttons, badges, memo match/mismatch indicators), transactions
 filtering and tab counts, per-tx-type form payload capture, and all
 client-side form validation. Proposal signing coverage includes the committed empty-memo
-display and rejecting unsupported signed-response versions before broadcast. Offline request
+display and rejecting unsupported signed-response versions before broadcast. A proposal whose
+served memo text does not match its approved memo hash shows a blocked Execute button and
+cannot be exported for offline execution; `preflight/worker-preparation.ts` checks that the
+real worker refuses such an execution before building a transaction. Offline request
 export tests cover v3 owner requests with v1 checkpoints and bounded fees; owner signed responses use v1.
 
 Run heavy validation sequentially with the limits in

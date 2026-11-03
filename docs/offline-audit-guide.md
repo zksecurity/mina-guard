@@ -236,7 +236,13 @@ Execute handling mirrors the worker per type: account-creation funding is
 counted **from the hash-bound `proposalStruct.receivers`**, never the raw
 bundle array; CREATE_CHILD executes re-derive the child config hash against
 `proposal.data` and refuse an already-initialized child. The broadcast memo
-on executes is the bundle's advisory `proposal.memo` (see the UI guide).
+on executes is the bundle's `proposal.memo`, and the CLI refuses an execute
+bundle unless that text hashes to the approved `proposal.memoHash`
+(`assertExecuteBundleMemo`; a missing memo counts as the empty memo). The check
+runs before the summary is shown and again inside `handleExecute`, so a
+tampered online backend cannot swap the memo of an approved proposal. The
+online UI applies the same rule before it exports an execute bundle and in its
+own execute paths (see the UI guide).
 
 Child reservation enforces the same governance bounds as initialization and rejects
 self-parenting or a parent without initialized root state. The parent's owners
@@ -441,7 +447,9 @@ action differs, and the distinction is the heart of this design:
 - **Execute bundles.** Execution is permissionless on-chain: anyone can
   submit a fully-approved proposal. The `receiverAccountExists` map drives the
   executor-signed account-creation fee (1 MINA per new receiver slot), counted
-  from the hash-bound `proposalStruct.receivers`.
+  from the hash-bound `proposalStruct.receivers`. The memo text the execution
+  broadcasts must hash to the approved `memoHash`, or the CLI refuses the
+  bundle before the summary.
 - **`childPrivateKey` (createChild propose bundles).** It signs the child's
   *deploy* account update; post-deploy, all child state changes require
   proofs. The UI never exports such a bundle — the field matters only for
@@ -487,7 +495,10 @@ before any signing (`assertRecomputedProposalHash`, `build-tx.ts:438`, called at
 `924`/`1019`) — propose mints a new proposal, so there is no prior hash to check.
 The Memo line is the bundle's advisory plaintext, not the hash-covered
 `memoHash`; the Memo check line below it recomputes the hash from that text
-and prints `MISMATCH` when they differ. The receiver list shows only the first
+and prints `MISMATCH` when they differ. An approve bundle with a mismatch can
+still be signed, because the approval covers only the hash; an execute bundle
+with a mismatch is refused before the summary, because the execution would
+broadcast that text. The receiver list shows only the first
 `MAX_RECEIVERS` rows, the ones the builder signs, with a warning when the bundle
 lists more. The transaction type is never display
 text: `requireTxType` accepts only the ten known names or their numeric codes,

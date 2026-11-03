@@ -143,7 +143,11 @@ Nothing in the circuit ties (2)/(3) to (1), so they can diverge. The browser has
 text itself and compares it with (1); the indexer compares the broadcast memo of the execution;
 `MemoWarningTooltip` shows the result. Takeaway: **only a memo whose displayed
 value matches the on-chain hash was actually approved by the multisig** — the plaintext shown or
-broadcast is advisory. (Mechanics in focus point 3.)
+broadcast is advisory. Execution refuses a memo that does not match: the proposal page offers
+**Execute** (online or as an offline bundle) only after the browser's check passes, and the
+worker and offline CLI check again before they build the transaction, so a tampered server
+cannot swap the memo of an approved proposal (for example an exchange deposit tag).
+(Mechanics in focus point 3.)
 
 **Proposal "deletion" and the `CREATE_CHILD` edge case.** There is no on-chain delete method:
 "deleting" a pending proposal means minting a zero-value proposal that reuses the target's
@@ -448,6 +452,22 @@ shows no badge until that check finishes. The execution-memo flag still comes
 from the indexer, because the browser does not have the executed transaction's
 memo. Net: action paths are contract-anchored; the displayed memo text is
 advisory, and its match against the signed `memoHash` is checked locally.
+
+Execution is bound to the approved memo. Because nothing on chain ties the
+broadcast memo to `memoHash`, the client does it. On the proposal page,
+`canExecute` requires the local memo check to have passed (`localMemoMatch ===
+true`); while the check is pending no Execute button is shown, and a mismatch
+shows a disabled **Execute blocked: memo mismatch** button. The offline execute
+export refuses the same cases. In the worker, every execute path
+(`executeProposalOnchain`, `executeChildLifecycleOnchain`,
+`executeSetupChildOnchain`) calls `assertApprovedMemo` right after the
+recomputed proposal hash check and before any transaction is built: the memo
+text it will broadcast (a missing memo counts as the empty memo) must hash to
+the rebuilt proposal's `memoHash`, or the execution stops with
+`EXECUTION_MEMO_MISMATCH` (`lib/memo-check.ts`). The SubVault setup
+transaction carries no memo, but a mismatch there still means the server data
+is wrong, so it stops too. The offline CLI enforces the same rule
+(`assertExecuteBundleMemo`, see `offline-audit-guide.md`).
 
 **4. Concurrency / signer-lock correctness (`hooks/useContractTxLock.ts`,
 `useTransactions.ts`, `lib/storage.ts`).**
