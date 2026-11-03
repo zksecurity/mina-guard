@@ -6,6 +6,7 @@ import { createContractCompiler } from './contract-compiler';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
 import { classifyDeployTarget, receiverExists } from './deploy-target';
 import { requireUnregisteredProposal } from './proposal-preparation';
+import { assertExecutionMemoMatches } from './memo-check';
 import * as Comlink from 'comlink';
 
 import {
@@ -642,6 +643,18 @@ function buildProposalStruct(
 }
 
 /**
+ * Runs before an execution is built: the memo text the transaction will carry
+ * must hash to the memo hash in the approved proposal. See
+ * assertExecutionMemoMatches in memo-check.ts.
+ */
+function assertApprovedMemo(
+  memo: string | null | undefined,
+  proposalStruct: InstanceType<typeof TransactionProposal>,
+): void {
+  assertExecutionMemoMatches(memo, proposalStruct.memoHash.toString(), (text) => memoToField(text).toString());
+}
+
+/**
  * Ties a rebuilt proposal to the one the user selected. The approve/execute
  * flows reconstruct TransactionProposal from mutable fields and then sign or act
  * on the recomputed hash, so if a tampered backend/bundle supplies a different
@@ -1219,6 +1232,7 @@ const workerApi = {
 
     const proposalHash = proposalStruct.hash();
     assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'execute this proposal');
+    assertApprovedMemo(params.proposal.memo, proposalStruct);
     const approvalWitness = approvalStore.getWitness(proposalHash);
     const approvalCount = approvalStore.getCount(proposalHash);
 
@@ -1354,6 +1368,9 @@ const workerApi = {
     }, params.parentAddress);
     const proposalHash = proposalStruct.hash();
     assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'set up this child');
+    // No memo is sent on this transaction, but a memo that does not match the
+    // approved hash means the server data is wrong, so stop here as well.
+    assertApprovedMemo(params.proposal.memo, proposalStruct);
     const approvalWitness = approvalStore.getWitness(proposalHash);
     const approvalCount = approvalStore.getCount(proposalHash);
 
@@ -1440,6 +1457,7 @@ const workerApi = {
     }, params.parentAddress);
     const proposalHash = proposalStruct.hash();
     assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'execute this child action');
+    assertApprovedMemo(params.proposal.memo, proposalStruct);
     const approvalWitness = approvalStore.getWitness(proposalHash);
     const approvalCount = approvalStore.getCount(proposalHash);
     const childExecutionWitness = childExecutionMap.getWitness(proposalHash);

@@ -145,6 +145,11 @@ async function startHttpServer(
           headers: req.headers,
         },
         (up) => {
+          // The web build sends its own Content-Security-Policy, which only
+          // allows the endpoints baked in at build time. Drop it so the policy
+          // set above, which allows the user's configured nodes, is the one
+          // the window enforces.
+          delete up.headers['content-security-policy'];
           res.writeHead(up.statusCode ?? 502, up.headers);
           up.pipe(res);
         },

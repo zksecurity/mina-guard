@@ -48,7 +48,7 @@ inner Caddy.
 | `Caddyfile.trail` | Inner-Caddy routes for the trail stack (`/trail/*`), including cross-host proxies to the node-stack box |
 | `trail-pull-deploy.sh` | Box-side pull agent (phase 2): pulls the latest signed `/trail` images, verifies each build-provenance attestation with `gh attestation verify`, rolling-`up -d`s on digest change |
 | `systemd/trail-pull-deploy.{service,timer}` | User-level systemd oneshot + 2-minute timer that drives `trail-pull-deploy.sh` |
-| `validate-mainnet-build-config.py` | Rejects incomplete or visibly non-mainnet public URLs before a mainnet image build |
+| `validate-mainnet-build-config.py` | Rejects incomplete or visibly non-mainnet public URLs, endpoints on more than one origin, and the test-only `NEXT_PUBLIC_E2E_TEST` flag before a mainnet image build |
 | `.env.example` | Template for `deploy/.env` (gitignored), sourced by `deploy-trail.sh` |
 
 Both scripts expect to be run from the repo root.
@@ -190,7 +190,12 @@ reviewed workflow and independently enforced by ops. Changing the explorer
 requires reviewed changes in both repositories.
 
 The workflow refuses missing, non-HTTPS, local, or visibly testnet/devnet/trail
-URLs, URLs with credentials or query strings, and a nonempty base path. These
+URLs, URLs with credentials or query strings, and a nonempty base path. It also
+refuses an API, node and archive URL that do not share one origin, because the
+mainnet Content-Security-Policy lets the page connect only to its own origin
+(`docs/ui-audit-guide.md`, focus point 7), and any nonempty
+`NEXT_PUBLIC_E2E_TEST`, a test-only flag that makes the browser trust the
+backend's vault security verdict and adds test hooks. These
 values are **baked into public JavaScript**; never put a secret or API token in
 them. The `vk-hashes` job generates a manifest tied to the checked-out commit;
 the release verifies that source SHA and selects the **mainnet** VK hash with
@@ -315,6 +320,20 @@ plus every Next static asset from the approved frontend image. A changed inline
 script, an injected script, a changed worker chunk, a missing file, a failed
 verification, or an unreachable site makes the run fail and sends an alert with
 the run link. The watcher never learns its expected hashes from the public site.
+
+Each of those HTML pages must also carry the approved security headers, or the
+run fails the same way: exactly one `Content-Security-Policy` equal to
+`EXPECTED_CONTENT_SECURITY_POLICY` in `mainnet-content-integrity.py`,
+`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and
+`Strict-Transport-Security` with `includeSubDomains` and a `max-age` of at
+least one year. A page whose bytes match but whose headers were dropped could
+be framed by another site or lose its script and connection limits. The app
+sends the policy (`ui/content-security-policy.mjs`), and the gateway adds the
+frame and HSTS headers. A deploy test fails if the watcher's copy of the policy
+differs from the app's. The ops watcher runs this script from a pinned
+mina-guard commit, so these checks start only after ops moves that pin to a
+release that includes them, and only once the deployed gateway passes the
+policy through and sends the other headers.
 
 The expected release comes from the latest deployment attempt in `mina-guard-ops`,
 which must have a success status authored by the configured personal account. The receipt contains

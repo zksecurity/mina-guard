@@ -452,6 +452,12 @@ directly, and `'self'` only before the first save. `script-src` allows
 `'unsafe-eval'`/`'wasm-unsafe-eval'` and `worker-src` allows `blob:`, both
 required by o1js proving; `default-src 'self'` with
 `object-src`/`frame-src`/`frame-ancestors 'none'` cover the rest.
+The packaged Next.js server also sends the web build's own
+Content-Security-Policy (`ui/content-security-policy.mjs`), which allows only
+the endpoints baked in at build time. The proxy to the Next child deletes that
+upstream header before writing the response, so the window enforces only the
+desktop policy above; otherwise the upstream value would replace it and block
+the user's configured nodes.
 
 ---
 

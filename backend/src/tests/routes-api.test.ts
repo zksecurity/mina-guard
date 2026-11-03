@@ -402,6 +402,54 @@ describe('GET /api/contracts', () => {
     expect(body.some((contract: { address: string }) => contract.address === unverifiedChildAddress))
       .toBe(false);
   });
+
+  test('lists each vault as the one-vault routes describe it, newest first', async () => {
+    // An older snapshot must not win over the latest one.
+    const other = await prisma.contract.findUniqueOrThrow({ where: { address: otherContractAddress } });
+    const older = await prisma.contractConfig.create({
+      data: { contractId: other.id, validFromBlock: 3, threshold: 9, nonce: 9 },
+    });
+    let body: Array<Record<string, unknown>>;
+    try {
+      body = await (await get('/api/contracts')).json() as Array<Record<string, unknown>>;
+    } finally {
+      await prisma.contractConfig.delete({ where: { id: older.id } });
+    }
+    expect(body.find((c) => c.address === otherContractAddress)).toMatchObject({ threshold: null, nonce: 0 });
+    const expected = await prisma.contract.findMany({
+      where: { ready: true, permissionsVerified: true },
+      select: { address: true },
+    });
+    expect(body.map((c) => c.address).sort()).toEqual(expected.map((c) => c.address).sort());
+    // The seeded vaults share discovery times, so check the order, not the exact sequence.
+    const discovered = body.map((c) => Date.parse(String(c.discoveredAt)));
+    expect(discovered).toEqual([...discovered].sort((a, b) => b - a));
+    // Covers a vault with a removed owner, and vaults with no config or owners.
+    expect(body.some((c) => c.threshold === null && c.nonce === null)).toBe(true);
+    for (const { activeOwnerAddresses, ...listed } of body) {
+      const one = await (await get(`/api/contracts/${listed.address}`)).json();
+      expect(listed).toEqual(one);
+      const owners = await (await get(`/api/contracts/${listed.address}/owners?active=true`)).json();
+      expect(activeOwnerAddresses).toEqual(owners.map((o: { address: string }) => o.address));
+    }
+  });
+
+  test('reads configs and owners for all vaults in one query each', async () => {
+    // Prisma middleware sees every model call. It cannot be removed, so it
+    // records only during this request.
+    const queries: string[] = [];
+    let recording = true;
+    prisma.$use(async (params, next) => {
+      if (recording) queries.push(`${params.model}.${params.action}`);
+      return next(params);
+    });
+    try {
+      expect((await get('/api/contracts')).status).toBe(200);
+    } finally {
+      recording = false;
+    }
+    expect(queries.sort()).toEqual(['Contract.findMany', 'ContractConfig.findMany', 'OwnerMembership.findMany']);
+  });
 });
 
 describe('GET /api/contracts/:address/owners', () => {

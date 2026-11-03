@@ -31,7 +31,7 @@ import {
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig, resolveBundleFee } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig, assertExecuteBundleMemo, resolveBundleFee } from '../build-tx.ts';
 import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
@@ -243,6 +243,44 @@ describe('offline-cli', () => {
     expect(result.stderr).toContain('missing the SubVault owner list');
     expect(result.stderr).not.toContain('====');
   }, 30_000);
+
+  describe('execute memo binding', () => {
+    const approvedMemo = 'deposit tag 1001';
+    const memoHash = memoToField(approvedMemo).toString();
+    const executeBundle = (proposal: Record<string, unknown>) => ({
+      version: 3, action: 'execute', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000, accounts: {}, events: [], receiverAccountExists: {},
+      proposal: { proposalHash: '1', txType: 'transfer', receivers: [], memoHash, memo: approvedMemo, ...proposal },
+    }) as any;
+
+    it('accepts the memo the owners approved', () => {
+      expect(() => assertExecuteBundleMemo(executeBundle({}))).not.toThrow();
+      const empty = executeBundle({ memo: '', memoHash: memoToField('').toString() });
+      expect(() => assertExecuteBundleMemo(empty)).not.toThrow();
+      // A missing memo is the empty memo, which is what the transaction carries.
+      const missing = executeBundle({ memo: undefined, memoHash: memoToField('').toString() });
+      expect(() => assertExecuteBundleMemo(missing)).not.toThrow();
+    });
+
+    it('rejects a swapped, missing or uncommitted memo', () => {
+      expect(() => assertExecuteBundleMemo(executeBundle({ memo: 'deposit tag 6666' })))
+        .toThrow('does not match the memo the owners approved');
+      expect(() => assertExecuteBundleMemo(executeBundle({ memo: null })))
+        .toThrow('does not match the memo the owners approved');
+      expect(() => assertExecuteBundleMemo(executeBundle({ memoHash: null })))
+        .toThrow('missing its memo commitment');
+    });
+
+    it('refuses a swapped execute memo before rendering a summary or signing', async () => {
+      const bundlePath = join(tmpDir, 'swapped-memo.json');
+      writeFileSync(bundlePath, JSON.stringify(executeBundle({ memo: 'deposit tag 6666' })));
+      const result = await runCLI(bundlePath, PrivateKey.random().toBase58());
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('does not match the memo the owners approved');
+      expect(result.stderr).not.toContain('====');
+      expect(result.stdout).toBe('');
+    }, 30_000);
+  });
 
   describe('createChild approval config', () => {
     const ownerA = PrivateKey.random().toPublicKey();
