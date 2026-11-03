@@ -76,7 +76,7 @@ export default function TermsPage() {
 
       <h2>Contact</h2>
       <p>
-        <a href="mailto:hello@zksecurity.xyz">hello@zksecurity.xyz</a>
+        <a href="mailto:minaguard@zksecurity.xyz">minaguard@zksecurity.xyz</a>
       </p>
     </LegalPage>
   );

@@ -41,7 +41,7 @@ export default function PrivacyPage() {
       <h2>Your rights</h2>
       <p>
         You can ask us to access or delete log data about you, where the law gives you that right. Contact us
-        at <a href="mailto:hello@zksecurity.xyz">hello@zksecurity.xyz</a>.
+        at <a href="mailto:minaguard@zksecurity.xyz">minaguard@zksecurity.xyz</a>.
       </p>
 
       <h2>Changes</h2>
