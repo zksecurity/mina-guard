@@ -37,8 +37,11 @@ function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { warmupWorker(); }, []);
 
-  // Expose client-side navigation for e2e tests (avoids full reload / worker restart)
+  // Expose client-side navigation for e2e tests (avoids full reload / worker
+  // restart). Only builds made with NEXT_PUBLIC_E2E_TEST=true define these
+  // globals; the mainnet build config check refuses that flag.
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_E2E_TEST !== 'true') return;
     (window as any).__e2eNavigate = (path: string) => router.push(path);
     (window as any).__e2ePathname = () => pathname;
   }, [router, pathname]);
@@ -68,9 +71,11 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   // Ledger signing popup state
   const [ledgerSigning, setLedgerSigning] = useState(false);
   const [ledgerContext, setLedgerContext] = useState<LedgerSigningContext>('signing');
-  useEffect(() => onLedgerSigningChange((signing, context) => {
+  const [ledgerHash, setLedgerHash] = useState<string | undefined>(undefined);
+  useEffect(() => onLedgerSigningChange((signing, context, hash) => {
     setLedgerSigning(signing);
     if (context) setLedgerContext(context);
+    setLedgerHash(signing ? hash : undefined);
   }), []);
 
   // Global operation state for worker-based transactions
@@ -279,7 +284,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             )}
           </div>
         )}
-        {ledgerSigning && <LedgerSigningModal context={ledgerContext} />}
+        {ledgerSigning && <LedgerSigningModal context={ledgerContext} hash={ledgerHash} />}
       </div>
     </AppContext.Provider>
   );

@@ -4,6 +4,7 @@ import TransportWebHID from '@ledgerhq/hw-transport-webhid';
 import type Transport from '@ledgerhq/hw-transport';
 import { MinaApp } from '@zondax/ledger-mina-js';
 import { getMinaGuardConfig } from '@/lib/endpoints';
+import { fieldToBytes } from '@/lib/ledger-field';
 
 let transport: Transport | null = null;
 let app: MinaApp | null = null;
@@ -165,15 +166,6 @@ export async function signTransaction(
   }
   assertLedgerSuccess(result);
   return result.signature!;
-}
-
-/** Converts a bigint field element to a 32-byte little-endian Uint8Array for Ledger signing. */
-function fieldToBytes(value: bigint): Uint8Array {
-  const bytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    bytes[i] = Number((value >> BigInt(i * 8)) & 0xffn);
-  }
-  return bytes;
 }
 
 /** Signs the fee payer commitment of a zkApp transaction using the Ledger device.

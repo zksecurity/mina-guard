@@ -57,6 +57,76 @@ function sameField(a: string, b: string): boolean {
   return DECIMAL.test(a) && DECIMAL.test(b) && BigInt(a) === BigInt(b);
 }
 
+/** At most this many checks run at once for one proposal. Two lets two owners
+ *  report approvals of the same proposal at the same moment. */
+export const MAX_SUBMISSION_CHECKS_PER_PROPOSAL = 2;
+
+/** At most this many checks run at once in total, to bound the load on the
+ *  Mina node. With two per proposal, filling every slot takes junk reports
+ *  against at least eight proposals at about 2.3 a second (each junk check
+ *  lasts about 7 seconds), which is more than the production gateway lets one
+ *  address send (120 a minute). */
+export const MAX_CONCURRENT_SUBMISSION_CHECKS = 16;
+
+/**
+ * Limits how many submission checks run at once. Each check asks the Mina
+ * node several times over about 7 seconds, and anyone can ask for one.
+ *
+ * - The same report (proposal, action and hash) sent again while its check
+ *   runs waits for that check instead of starting another.
+ * - A proposal gets at most `perProposal` checks at once, so junk reports
+ *   against one proposal cannot use up the slots other proposals need.
+ * - All proposals together get at most `total` checks at once.
+ *
+ * The backend cannot tell callers apart: the production gateway sends it no
+ * caller address, so every request appears to come from the gateway. The
+ * per-proposal limit stands in for a per-caller one. Someone who targets one
+ * proposal can still keep its two slots busy; that proposal's honest reports
+ * are then refused, and the reporting tab falls back to its own 20-minute lock.
+ *
+ * `run` returns null when a limit refuses the check.
+ */
+export function createSubmissionCheckLimiter(
+  limits: { total: number; perProposal: number } = {
+    total: MAX_CONCURRENT_SUBMISSION_CHECKS,
+    perProposal: MAX_SUBMISSION_CHECKS_PER_PROPOSAL,
+  },
+) {
+  const running = new Map<string, Promise<boolean>>();
+  const perProposal = new Map<number, number>();
+  let total = 0;
+
+  return {
+    run(
+      report: { proposalId: number; action: string; txHash: string },
+      check: () => Promise<boolean>,
+    ): Promise<boolean> | null {
+      const key = `${report.proposalId}:${report.action}:${report.txHash}`;
+      const same = running.get(key);
+      if (same) return same;
+
+      const forProposal = perProposal.get(report.proposalId) ?? 0;
+      if (total >= limits.total || forProposal >= limits.perProposal) return null;
+
+      total++;
+      perProposal.set(report.proposalId, forProposal + 1);
+      const result = Promise.resolve().then(check).finally(() => {
+        total--;
+        const left = (perProposal.get(report.proposalId) ?? 1) - 1;
+        if (left > 0) perProposal.set(report.proposalId, left);
+        else perProposal.delete(report.proposalId);
+        running.delete(key);
+      });
+      running.set(key, result);
+      return result;
+    },
+    /** Checks running now, for tests. */
+    inFlight(): number {
+      return total;
+    },
+  };
+}
+
 /**
  * Checks that a reported transaction is a pending approval or execution of
  * the proposal: the node's pool holds it, one of the given accounts (the

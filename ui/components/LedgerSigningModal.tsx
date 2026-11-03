@@ -2,7 +2,14 @@
 
 import type { LedgerSigningContext } from '@/lib/multisigClient';
 
-export default function LedgerSigningModal({ context = 'signing' }: { context?: LedgerSigningContext }) {
+/**
+ * Blocks the page while the Ledger is in use. When signing, MinaGuard sends
+ * the device a single 32-byte value (a hash of the approval or of the whole
+ * transaction), so the device cannot show recipients, amounts, fee or memo.
+ * The modal says so and shows the same hash the device shows, so the user can
+ * check that the device is signing what this screen prepared.
+ */
+export default function LedgerSigningModal({ context = 'signing', hash }: { context?: LedgerSigningContext; hash?: string }) {
   const isConnecting = context === 'connecting';
 
   return (
@@ -21,11 +28,24 @@ export default function LedgerSigningModal({ context = 'signing' }: { context?: 
           {isConnecting ? 'Connecting to Ledger' : 'Check Your Ledger'}
         </h3>
 
-        <p className="text-sm text-safe-text">
-          {isConnecting
-            ? 'Reading address from your Ledger device...'
-            : 'Please review and confirm the transaction on your Ledger device.'}
-        </p>
+        {isConnecting ? (
+          <p className="text-sm text-safe-text">Reading address from your Ledger device...</p>
+        ) : (
+          <>
+            <p className="text-sm text-safe-text">
+              Your Ledger shows only a hash, not the recipients, amounts, fee or memo. Check those details on this
+              page before you sign. On the device, confirm only if the hash it shows matches the one below.
+            </p>
+            {hash && (
+              <div className="text-left space-y-1">
+                <p className="text-xs text-safe-text/70">Hash your Ledger should show:</p>
+                <code data-testid="ledger-hash" className="block font-mono text-xs text-white break-all bg-safe-gray border border-safe-border rounded-lg px-3 py-2">
+                  {hash}
+                </code>
+              </div>
+            )}
+          </>
+        )}
 
         <p className="text-xs text-safe-text/70">
           This may take a few seconds to process.

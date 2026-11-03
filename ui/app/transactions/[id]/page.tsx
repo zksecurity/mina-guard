@@ -35,7 +35,7 @@ import {
   computeMemoHash,
   validateAddOwnerProposalData,
 } from '@/lib/multisigClient';
-import { memoBadge } from '@/lib/memo-check';
+import { EXECUTION_MEMO_MISMATCH, memoBadge } from '@/lib/memo-check';
 import {
   PENDING_TXS_CHANGED,
   getPendingTx,
@@ -388,7 +388,7 @@ export default function TransactionDetailPage() {
   // hash to the signed proposal.data. Indexer lag is a reason to wait, not to
   // approve a configuration nobody has seen.
   const canApprove = canApproveExceptConfig && (!pendingCreateChild || childConfigStatus === 'match');
-  const canExecute =
+  const canExecuteExceptMemo =
     !!proposal &&
     !isLocalPending &&
     proposal.status === 'pending' &&
@@ -400,6 +400,9 @@ export default function TransactionDetailPage() {
     !executeInFlight &&
     !contractLock.locked &&
     !insufficientBalance;
+  // The memo text must hash to the approved memo hash in this browser before
+  // execution is offered; the worker checks it again before building.
+  const canExecute = canExecuteExceptMemo && localMemoMatch === true;
   const canDelete =
     !!proposal &&
     !isLocalPending &&
@@ -1013,6 +1016,15 @@ export default function TransactionDetailPage() {
                       Approve blocked — cannot execute
                     </button>
                   )}
+                  {canExecuteExceptMemo && localMemoMatch === false && (
+                    <button
+                      disabled
+                      title="The memo text from the server does not hash to the memo hash the owners approved"
+                      className="flex-1 border border-safe-green/40 text-safe-green/40 font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
+                    >
+                      Execute blocked: memo mismatch
+                    </button>
+                  )}
                   {canExecute && (
                     <button
                       onClick={handleExecute}
@@ -1116,6 +1128,13 @@ export default function TransactionDetailPage() {
                           cliBinaryName={cliBinaryName}
                           onBuildBundle={async () => {
                             assertValidMinaAddress(offlineFeePayerAddress);
+                            // The offline signer checks this again; stop here first so a
+                            // bundle with a swapped memo is never exported.
+                            if (localMemoMatch !== true) {
+                              throw new Error(localMemoMatch === false
+                                ? EXECUTION_MEMO_MISMATCH
+                                : 'The memo has not been checked against the approved memo hash yet. Try again in a moment.');
+                            }
                             const p = proposal!;
                             await assertProposalVaultSecurity(
                               multisig!.address,
