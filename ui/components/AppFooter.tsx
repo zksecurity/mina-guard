@@ -13,8 +13,8 @@ const Dot = () => (
 );
 
 /**
- * Global app footer: copyright, a link to the standalone guide (new tab), the
- * source repo, and the build stamp. Lives in the app shell, so it never renders
+ * Global app footer: copyright, links to the standalone guide and legal pages
+ * (new tab), the source repo, and the build stamp. Lives in the app shell, so it never renders
  * on the standalone /guide route.
  */
 export default function AppFooter() {
@@ -40,6 +40,18 @@ export default function AppFooter() {
           <svg className="h-3 w-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14 5h5m0 0v5m0-5L10 14M9 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-3" />
           </svg>
+        </Link>
+
+        <Dot />
+
+        <Link href="/terms" target="_blank" rel="noopener noreferrer" className="font-medium transition-colors hover:text-white">
+          Terms
+        </Link>
+
+        <Dot />
+
+        <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="font-medium transition-colors hover:text-white">
+          Privacy
         </Link>
 
         <Dot />

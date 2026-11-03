@@ -658,8 +658,10 @@ ui/
 │   ├── layout.tsx               # Root provider: wires wallet + indexer state, global
 │   │                            #   operation banner, Ledger signing modal (the
 │   │                            #   AppContext every page trusts — except the
-│   │                            #   standalone /guide route, rendered outside it)
+│   │                            #   standalone /guide, /terms and /privacy routes,
+│   │                            #   rendered outside it)
 │   ├── page.tsx                 # Landing / connect
+│   ├── terms/page.tsx  privacy/page.tsx  # Static legal pages (LegalPage layout)
 │   ├── globals.css
 │   ├── accounts/
 │   │   ├── new/page.tsx         # Vault + sub-vault creation wizard. Generates the

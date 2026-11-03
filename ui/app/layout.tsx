@@ -290,6 +290,8 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+const STANDALONE_ROUTES = new Set(['/guide', '/terms', '/privacy']);
+
 /** App router root layout entrypoint. */
 export default function RootLayout({
   children,
@@ -297,13 +299,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  // The guide is standalone reference documentation: render it bare — no app
-  // header, sidebar, footer, or wallet wiring — so it stands on its own and
-  // opens cleanly in its own tab, disconnected from the app shell.
+  // The guide and the legal pages are standalone: render them bare (no app
+  // header, sidebar, footer, or wallet wiring) so they stand on their own and
+  // open cleanly in their own tab, disconnected from the app shell.
   return (
     <html lang="en" className={inter.variable}>
       <body>
-        {pathname === '/guide' ? children : <AppProvider>{children}</AppProvider>}
+        {STANDALONE_ROUTES.has(pathname) ? children : <AppProvider>{children}</AppProvider>}
       </body>
     </html>
   );
