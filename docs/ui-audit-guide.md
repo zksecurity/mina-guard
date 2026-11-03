@@ -305,7 +305,16 @@ Assuming that the frontend (UI) is not compromised, the interactions are the fol
     responses, and pools without usable fee samples select the previous fixed
     0.1 MINA fee. This conservative fallback does not measure congestion or
     guarantee inclusion. Due to interface restrictions,
-    signatures are again blind.
+    signatures are again blind: each Ledger request sends one 32-byte field
+    (the approval digest or the transaction commitment) through the device's
+    "sign field element" command, which needs blind signing turned on. The
+    device shows only that value, under "hash", as 64 hex digits; it cannot
+    show recipients, amounts, fee or memo. `LedgerSigningModal` says this and
+    shows the same hash, formatted the way the device formats it
+    (`lib/ledger-field.ts`: the little-endian bytes sent, read back
+    big-endian), so the user can check that the device is signing what the
+    page prepared. Matching hashes do not prove the page itself is honest; a
+    tampered UI could show and send the same wrong hash.
   - **Offline-CLI.** Used for signing with a key on a different device (e.g. air-gapped). A bundle is exported
     with the same bounded fee, shown in the online export UI and again in the
     CLI summary before signing. The bundle travels through an *untrusted* medium. Documented in
@@ -626,7 +635,8 @@ ui/
 │   │                            #   no switcher — the Ledger network dropdown was removed, #119)
 │   ├── WalletConnect.tsx        # Auro/Ledger connect entry point
 │   ├── LedgerConnectModal.tsx   # Ledger address retrieval UX
-│   ├── LedgerSigningModal.tsx   # "Confirm on device" blocking modal
+│   ├── LedgerSigningModal.tsx   # Blocking modal while the Ledger signs: says the
+│   │                            #   device shows only a hash, and shows that hash
 │   ├── OfflineSigningFlow.tsx   # Export bundle / import signed response (bridge to
 │   │                            #   the air-gapped path — see offline-audit-guide.md).
 │   │                            #   CLI download links point at a GitHub release
@@ -670,6 +680,9 @@ ui/
 │   │                            #   at line ~77)
 │   ├── ledgerWallet.ts          # Ledger WebHID: signFields, signFeePayer, address,
 │   │                            #   network id (on-device signing)
+│   ├── ledger-field.ts          # Field -> 32 device bytes, and the hash text the
+│   │                            #   device shows for it
+│   ├── memo-check.ts            # Memo badge choice + execution memo binding
 │   ├── offline-signing.ts       # Offline bundle builders + signed-response validation
 │   │                            #   (cross-reference offline-audit-guide.md)
 │   ├── api.ts                   # Backend read client + response normalization

@@ -68,9 +68,11 @@ function AppProvider({ children }: { children: React.ReactNode }) {
   // Ledger signing popup state
   const [ledgerSigning, setLedgerSigning] = useState(false);
   const [ledgerContext, setLedgerContext] = useState<LedgerSigningContext>('signing');
-  useEffect(() => onLedgerSigningChange((signing, context) => {
+  const [ledgerHash, setLedgerHash] = useState<string | undefined>(undefined);
+  useEffect(() => onLedgerSigningChange((signing, context, hash) => {
     setLedgerSigning(signing);
     if (context) setLedgerContext(context);
+    setLedgerHash(signing ? hash : undefined);
   }), []);
 
   // Global operation state for worker-based transactions
@@ -279,7 +281,7 @@ function AppProvider({ children }: { children: React.ReactNode }) {
             )}
           </div>
         )}
-        {ledgerSigning && <LedgerSigningModal context={ledgerContext} />}
+        {ledgerSigning && <LedgerSigningModal context={ledgerContext} hash={ledgerHash} />}
       </div>
     </AppContext.Provider>
   );
