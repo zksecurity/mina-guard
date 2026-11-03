@@ -8,6 +8,7 @@ import type { WorkerApi } from './multisigClient.worker';
 import type { NewProposalInput, Proposal, WalletType } from '@/lib/types';
 import { getAuroAccounts, getAuroNetwork, getAuroSignFields, sendTransaction } from '@/lib/auroWallet';
 import { signFields as ledgerSignFields, signFeePayer, checkLedgerReady } from '@/lib/ledgerWallet';
+import { ledgerHashDisplay } from '@/lib/ledger-field';
 import { getMinaGuardConfig } from '@/lib/endpoints';
 import { fetchProposal, fetchVaultSecurityStatus, isCanonicalVaultSecurity } from './api';
 import { preflightBeforeSend, preflightGeneration, withStoreRecovery, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD, type PreflightContext, type RetryEligibility } from './preflight-flow';
@@ -27,11 +28,16 @@ export type OnProgress = (step: string) => void;
 /** Context for the Ledger signing modal: 'connecting' for address retrieval, 'signing' for tx signing. */
 export type LedgerSigningContext = 'connecting' | 'signing';
 
-/** Listener called when Ledger signing state changes. */
-let ledgerSigningListener: ((signing: boolean, context?: LedgerSigningContext) => void) | null = null;
+/**
+ * Listener called when Ledger signing state changes. While signing, `hash` is
+ * the value the device shows under "hash", formatted the same way, so the
+ * modal can show it for comparison.
+ */
+type LedgerSigningListener = (signing: boolean, context?: LedgerSigningContext, hash?: string) => void;
+let ledgerSigningListener: LedgerSigningListener | null = null;
 
 /** Registers a callback that fires when Ledger device interaction starts/stops. */
-export function onLedgerSigningChange(fn: (signing: boolean, context?: LedgerSigningContext) => void): () => void {
+export function onLedgerSigningChange(fn: LedgerSigningListener): () => void {
   ledgerSigningListener = fn;
   return () => { ledgerSigningListener = null; };
 }
@@ -135,7 +141,7 @@ function proxiedSendTx(signer?: SignerConfig) {
 function proxiedSignFeePayer(signer?: SignerConfig) {
   if (signer?.type !== 'ledger') return undefined;
   return Comlink.proxy(async (commitment: string) => {
-    ledgerSigningListener?.(true, 'signing');
+    ledgerSigningListener?.(true, 'signing', ledgerHashDisplay(commitment));
     try {
       return await signFeePayer(commitment, signer.ledgerAccountIndex);
     } finally {
@@ -148,7 +154,8 @@ function proxiedSignFeePayer(signer?: SignerConfig) {
 function proxiedSignFields(signer?: SignerConfig) {
   if (signer?.type === 'ledger') {
     return Comlink.proxy(async (fields: Array<string>) => {
-      ledgerSigningListener?.(true, 'signing');
+      // The device signs only fields[0]; show that value.
+      ledgerSigningListener?.(true, 'signing', ledgerHashDisplay(fields[0]));
       try {
         return await ledgerSignFields(fields, signer.ledgerAccountIndex);
       } finally {

@@ -67,6 +67,41 @@ expect(signingRequests).toBe(2);
 expect(broadcasts).toBe(0);
 console.log('PASS: real worker catches a root change during proposal signing; duplicate retry stops before another signature or broadcast; fresh intent remains available (proofless local ledger).');
 
+// Execution must carry the memo the owners approved. The server supplies the
+// memo text, so a swapped memo (for example a different deposit tag) under
+// the same approved proposal is refused before any transaction is built.
+const { EXECUTION_MEMO_MISMATCH } = await import('../../ui/lib/memo-check');
+const approvedProposal = {
+  proposalHash: sameProposal.hash().toString(),
+  txType: 'addOwner',
+  receivers: [{ address: newOwner.toBase58(), amount: '0' }],
+  tokenId: sameProposal.tokenId.toString(),
+  data: sameProposal.data.toString(),
+  memoHash: sameProposal.memoHash.toString(),
+  memo: input.memo,
+  nonce: sameProposal.nonce.toString(),
+  configNonce: sameProposal.configNonce.toString(),
+  expirySlot: sameProposal.expirySlot.toString(),
+  guardAddress: params.contractAddress,
+  destination: 'local',
+  childAccount: null,
+} as unknown as import('../../ui/lib/types').Proposal;
+const executeError = async (proposal: typeof approvedProposal) => {
+  try {
+    await api!.executeProposalOnchain({ contractAddress: params.contractAddress, executorAddress: params.proposerAddress, proposal }, send, () => {});
+  } catch (error) { return error instanceof Error ? error.message : String(error); }
+  return null;
+};
+for (const memo of ['deposit tag 6666', '', null]) {
+  expect(await executeError({ ...approvedProposal, memo })).toBe(EXECUTION_MEMO_MISMATCH);
+}
+// The approved memo passes this check; the execution then stops on its own
+// because the proposal has one approval and the threshold is two.
+const approvedMemoError = await executeError(approvedProposal);
+expect(approvedMemoError).toContain('Insufficient approvals');
+expect(broadcasts).toBe(0);
+console.log('PASS: execution refuses a memo that does not match the approved memo hash, before building a transaction.');
+
 // Direct E2E signing must return the hash used by proposal status polling,
 // without the banner prefix that the UI adds to its own success messages.
 let directPreflightChecks = 0;

@@ -2,7 +2,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
-import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
+import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD } from 'next/constants.js';
+import { contentSecurityPolicies } from './content-security-policy.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,19 +70,34 @@ const nextConfig = {
     }
     return config;
   },
-  // Headers for SharedArrayBuffer (required by o1js WASM)
-  async headers() {
-    return [
-      {
-        source: '/(.*)',
-        headers: [
-          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
-        ],
-      },
-    ];
-  },
 };
+
+/**
+ * Response headers for every route. COOP and COEP make the page
+ * cross-origin isolated, which o1js needs for SharedArrayBuffer. The
+ * Content-Security-Policy comes from content-security-policy.mjs: pages get
+ * the strict policy, and files under /_next/static get the worker policy,
+ * because the transaction worker's script is served from there and o1js in
+ * that worker needs 'unsafe-eval'. When two rules set the same header, Next.js
+ * uses the later one, so the static rule must stay last.
+ */
+function securityHeaders(phase) {
+  const csp = contentSecurityPolicies({ dev: phase === PHASE_DEVELOPMENT_SERVER });
+  return async () => [
+    {
+      source: '/(.*)',
+      headers: [
+        { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+        { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
+        { key: 'Content-Security-Policy', value: csp.page },
+      ],
+    },
+    {
+      source: '/_next/static/(.*)',
+      headers: [{ key: 'Content-Security-Policy', value: csp.worker }],
+    },
+  ];
+}
 
 export default function configForPhase(phase) {
   if (phase === PHASE_PRODUCTION_BUILD) {
@@ -106,5 +122,5 @@ export default function configForPhase(phase) {
       }
     }
   }
-  return nextConfig;
+  return { ...nextConfig, headers: securityHeaders(phase) };
 }

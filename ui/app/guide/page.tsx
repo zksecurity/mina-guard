@@ -624,7 +624,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
 
             <div className="mt-5 space-y-3">
               {[
-                { l: 'Blind signing', v: <>Auro and Ledger sign only the proposal <b className="text-white">hash</b>. Confirm the action in the app first; it recomputes and verifies the hash before signing.</> },
+                { l: 'Blind signing', v: <>Auro and Ledger sign only the proposal <b className="text-white">hash</b>. Confirm the action in the app first; it recomputes and verifies the hash before signing. A Ledger shows only that hash, never the recipients, amounts, fee or memo; check that it matches the hash shown in the app.</> },
                 { l: 'Networks', v: <>The app shows the network configured for this deployment. Confirm that your wallet is on that network before signing.</> },
               ].map((f) => (
                 <div key={f.l} className="flex flex-col sm:flex-row sm:gap-3 text-sm text-safe-text leading-relaxed">

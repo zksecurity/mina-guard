@@ -3,6 +3,7 @@
 import importlib.util
 import gzip
 import json
+import re
 import tempfile
 import threading
 import unittest
@@ -17,6 +18,16 @@ spec.loader.exec_module(integrity)
 
 DIGEST = "sha256:" + "a" * 64
 SOURCE_SHA = "b" * 40
+UI_POLICY_MODULE = Path(__file__).resolve().parents[2] / "ui" / "content-security-policy.mjs"
+
+# Headers the live mainnet site sends on HTML pages once the app sets the
+# policy and the gateway adds frame and HSTS headers.
+GOOD_PAGE_HEADERS = {
+    "Content-Security-Policy": integrity.EXPECTED_CONTENT_SECURITY_POLICY,
+    "X-Frame-Options": "DENY",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+}
 
 
 def fixture(next_root: Path) -> dict[str, bytes]:
@@ -50,6 +61,9 @@ class ContentServer:
         self.gzip_paths = set()
         self.user_agents = []
         self.legacy_checker_bodies = {}
+        # Header name -> list of values sent on HTML route responses. Static
+        # assets get none, which the checker must accept.
+        self.page_headers = {name: [value] for name, value in GOOD_PAGE_HEADERS.items()}
 
         owner = self
 
@@ -72,6 +86,10 @@ class ContentServer:
                     data = gzip.compress(data)
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(data)))
+                if self.path in integrity.DEFAULT_ROUTES:
+                    for name, values in owner.page_headers.items():
+                        for value in values:
+                            self.send_header(name, value)
                 if self.path in owner.gzip_paths:
                     self.send_header("Content-Encoding", "gzip")
                 self.end_headers()
@@ -170,6 +188,47 @@ class ContentIntegrityTests(unittest.TestCase):
         with ContentServer(self.bodies.copy()) as server:
             server.redirects["/"] = "https://evil.example/"
             self.assertIn("/: HTTP redirect rejected", self.check(server))
+
+    def test_missing_or_weakened_page_headers_are_detected(self):
+        weaker_csp = integrity.EXPECTED_CONTENT_SECURITY_POLICY.replace("frame-ancestors 'none'", "frame-ancestors *")
+        cases = {
+            "Content-Security-Policy": ([], "Expected exactly one Content-Security-Policy header, got 0"),
+            "X-Frame-Options": (["SAMEORIGIN"], "X-Frame-Options is not DENY"),
+            "X-Content-Type-Options": ([], "Expected exactly one X-Content-Type-Options header, got 0"),
+        }
+        for name, (values, message) in cases.items():
+            with self.subTest(header=name), ContentServer(self.bodies.copy()) as server:
+                server.page_headers[name] = values
+                self.assertIn(f"/: {message}", self.check(server))
+        with ContentServer(self.bodies.copy()) as server:
+            server.page_headers["Content-Security-Policy"] = [weaker_csp]
+            self.assertIn("/: Content-Security-Policy differs from the approved policy", self.check(server))
+
+    def test_a_second_policy_header_is_rejected(self):
+        # Browsers enforce every policy they receive, so an extra header can
+        # only add limits, but it means something other than the approved
+        # release is shaping the page.
+        with ContentServer(self.bodies.copy()) as server:
+            server.page_headers["Content-Security-Policy"] = [integrity.EXPECTED_CONTENT_SECURITY_POLICY] * 2
+            self.assertIn("/: Expected exactly one Content-Security-Policy header, got 2", self.check(server))
+
+    def test_hsts_must_cover_subdomains_for_a_year(self):
+        for value in ("max-age=31536000", "max-age=86400; includeSubDomains", "includeSubDomains"):
+            with self.subTest(hsts=value), ContentServer(self.bodies.copy()) as server:
+                server.page_headers["Strict-Transport-Security"] = [value]
+                failures = self.check(server)
+                self.assertTrue(any(f.startswith("/: Strict-Transport-Security must") for f in failures), failures)
+        with ContentServer(self.bodies.copy()) as server:
+            server.page_headers["Strict-Transport-Security"] = ["max-age=63072000; includeSubDomains; preload"]
+            self.assertEqual(self.check(server), [])
+
+    def test_watcher_policy_matches_the_ui_policy(self):
+        # The app sends CONTENT_SECURITY_POLICY from this module; the watcher
+        # must expect the same bytes or every check would fail after a change.
+        source = UI_POLICY_MODULE.read_text(encoding="utf-8")
+        match = re.search(r'^export const CONTENT_SECURITY_POLICY = "([^"\n]+)";$', source, re.MULTILINE)
+        self.assertIsNotNone(match, "CONTENT_SECURITY_POLICY must stay a one-line double-quoted string")
+        self.assertEqual(match.group(1), integrity.EXPECTED_CONTENT_SECURITY_POLICY)
 
     def test_manifest_rejects_missing_route_and_bad_asset_url(self):
         broken = json.loads(json.dumps(self.manifest))

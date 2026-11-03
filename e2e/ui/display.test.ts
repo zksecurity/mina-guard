@@ -29,6 +29,10 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: 'wait' });
 });
 
+/** The page's memo check runs in the worker, which may be busy compiling, so
+ *  waits on its result allow more than the default timeout. */
+const MEMO_CHECK_TIMEOUT = 60_000;
+
 async function openProposal(page: Page, hash: string): Promise<void> {
   await openVault(page, TREASURY);
   await navigateTo(page, `/transactions/${hash}`);
@@ -140,13 +144,46 @@ test('executed proposal has no action buttons and shows memo match', async ({ pa
     /delete proposal/i,
   ]);
   await expect(page.locator(`text=${MEMOS.executedTransfer}`)).toBeVisible();
-  await expect(page.getByText('✓', { exact: true })).toBeVisible(); // memo-match indicator
+  await expect(page.getByText('✓', { exact: true })).toBeVisible({ timeout: MEMO_CHECK_TIMEOUT }); // memo-match indicator
 });
 
 test('executed proposal with stripped memo shows mismatch indicator', async ({ page }) => {
   await openProposal(page, PROPOSALS.executedMemoMismatch);
   await expect(page.getByText('executed', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText('✗', { exact: true })).toBeVisible(); // memo-mismatch indicator
+  await expect(page.getByText('✗', { exact: true })).toBeVisible({ timeout: MEMO_CHECK_TIMEOUT }); // memo-mismatch indicator
+});
+
+test('execution is offered when the memo matches the approved memo hash', async ({ page }) => {
+  await openProposal(page, PROPOSALS.pendingAddOwner);
+  await expect(page.getByRole('button', { name: /^execute proposal$/i })).toBeVisible({ timeout: MEMO_CHECK_TIMEOUT });
+  await expect(page.getByRole('button', { name: /execute blocked: memo mismatch/i })).not.toBeVisible();
+});
+
+test('a memo that does not match the approved memo hash blocks online and offline execution', async ({ page }) => {
+  // The server keeps the approved proposal but swaps its memo text, as a
+  // tampered backend could do to change an exchange deposit tag.
+  await page.route(
+    new RegExp(`/api/contracts/${TREASURY}/proposals(?:\\?.*)?$`),
+    async (route) => {
+      const response = await route.fetch();
+      const proposals = (await response.json()) as Array<Record<string, unknown>>;
+      await route.fulfill({
+        response,
+        json: proposals.map((proposal) =>
+          proposal.proposalHash === PROPOSALS.pendingAddOwner ? { ...proposal, memo: 'deposit tag 6666' } : proposal,
+        ),
+      });
+    },
+  );
+
+  await openProposal(page, PROPOSALS.pendingAddOwner);
+  await expect(page.getByRole('button', { name: /execute blocked: memo mismatch/i })).toBeDisabled({ timeout: MEMO_CHECK_TIMEOUT });
+  await expect(page.getByRole('button', { name: /^execute proposal$/i })).not.toBeVisible();
+
+  await page.getByRole('button', { name: 'Offline', exact: true }).click();
+  await page.getByPlaceholder('B62q...').fill(OWNER_2);
+  await page.getByRole('button', { name: /export execute bundle/i }).click();
+  await expect(page.getByText(/does not match the memo the owners approved/i)).toBeVisible();
 });
 
 test('invalidated proposal has no action buttons', async ({ page }) => {

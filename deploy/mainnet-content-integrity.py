@@ -4,7 +4,8 @@
 The baseline command reads an extracted Next.js build, never the live site.
 The caller must extract it from the approved OCI digest and protect the
 resulting manifest as part of that release. The check command can then run
-outside the app host and exit nonzero for alerting when public content differs.
+outside the app host and exit nonzero for alerting when public content differs,
+or when a public HTML page is missing its approved security headers.
 """
 
 from __future__ import annotations
@@ -39,6 +40,17 @@ PUBLIC_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 )
+# Security headers every public HTML page must carry. The policy must equal
+# CONTENT_SECURITY_POLICY in ui/content-security-policy.mjs; a deploy test
+# fails when the two copies differ. The app sends the policy, and the gateway
+# adds X-Frame-Options and HSTS.
+EXPECTED_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; "
+    "connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; "
+    "object-src 'none'; base-uri 'none'; form-action 'self'"
+)
+MIN_HSTS_MAX_AGE = 31536000
 
 
 class IntegrityError(Exception):
@@ -211,7 +223,35 @@ def _check_base_url(base_url: str, allow_http_for_tests: bool = False) -> str:
     return base_url.rstrip("/")
 
 
-def _public_hash(opener, url: str, timeout: float, deadline: float) -> str:
+def _single_header(headers, name: str) -> str:
+    values = headers.get_all(name) or []
+    if len(values) != 1:
+        raise IntegrityError(f"Expected exactly one {name} header, got {len(values)}")
+    return values[0].strip()
+
+
+def check_security_headers(headers) -> None:
+    """Raise unless an HTML response carries the approved security headers.
+
+    A missing or weakened header means the page can be framed by another site
+    or has lost its script and connection limits, even if its bytes match.
+    """
+    if _single_header(headers, "Content-Security-Policy") != EXPECTED_CONTENT_SECURITY_POLICY:
+        raise IntegrityError("Content-Security-Policy differs from the approved policy")
+    if _single_header(headers, "X-Frame-Options").upper() != "DENY":
+        raise IntegrityError("X-Frame-Options is not DENY")
+    if _single_header(headers, "X-Content-Type-Options").lower() != "nosniff":
+        raise IntegrityError("X-Content-Type-Options is not nosniff")
+    hsts = [part.strip().lower() for part in _single_header(headers, "Strict-Transport-Security").split(";")]
+    max_age = next((part[len("max-age="):].strip('"') for part in hsts if part.startswith("max-age=")), "")
+    if not max_age.isdigit() or int(max_age) < MIN_HSTS_MAX_AGE or "includesubdomains" not in hsts:
+        raise IntegrityError(
+            f"Strict-Transport-Security must have max-age of at least {MIN_HSTS_MAX_AGE} and includeSubDomains"
+        )
+
+
+def _public_hash(opener, url: str, timeout: float, deadline: float,
+                 check_headers: bool = False) -> str:
     request = Request(url, headers={
         "Accept-Encoding": "identity",
         "Cache-Control": "no-cache",
@@ -222,6 +262,8 @@ def _public_hash(opener, url: str, timeout: float, deadline: float) -> str:
         with opener.open(request, timeout=timeout) as response:
             if response.status != 200 or response.geturl() != url:
                 raise IntegrityError("Unexpected HTTP status or response URL")
+            if check_headers:
+                check_security_headers(response.headers)
             encoding = response.headers.get("Content-Encoding", "identity").lower()
             if encoding not in ("identity", "gzip"):
                 raise IntegrityError("Unsupported content encoding")
@@ -258,12 +300,16 @@ def check_public(manifest: dict, base_url: str, timeout: float = 15,
     opener = build_opener(_RejectRedirect())
     failures = []
     deadline = time.monotonic() + MAX_CHECK_SECONDS
-    for path, expected in sorted({**manifest["routes"], **manifest["assets"]}.items()):
+    routes = manifest["routes"]
+    for path, expected in sorted({**routes, **manifest["assets"]}.items()):
         if time.monotonic() > deadline:
             failures.append("Overall check time limit exceeded")
             break
         try:
-            actual = _public_hash(opener, origin + path, min(timeout, max(0.1, deadline - time.monotonic())), deadline)
+            actual = _public_hash(
+                opener, origin + path, min(timeout, max(0.1, deadline - time.monotonic())), deadline,
+                check_headers=path in routes,
+            )
             if actual != expected:
                 failures.append(f"{path}: content hash mismatch")
         except IntegrityError as error:

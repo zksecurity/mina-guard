@@ -143,7 +143,11 @@ Nothing in the circuit ties (2)/(3) to (1), so they can diverge. The browser has
 text itself and compares it with (1); the indexer compares the broadcast memo of the execution;
 `MemoWarningTooltip` shows the result. Takeaway: **only a memo whose displayed
 value matches the on-chain hash was actually approved by the multisig** — the plaintext shown or
-broadcast is advisory. (Mechanics in focus point 3.)
+broadcast is advisory. Execution refuses a memo that does not match: the proposal page offers
+**Execute** (online or as an offline bundle) only after the browser's check passes, and the
+worker and offline CLI check again before they build the transaction, so a tampered server
+cannot swap the memo of an approved proposal (for example an exchange deposit tag).
+(Mechanics in focus point 3.)
 
 **Proposal "deletion" and the `CREATE_CHILD` edge case.** There is no on-chain delete method:
 "deleting" a pending proposal means minting a zero-value proposal that reuses the target's
@@ -301,7 +305,16 @@ Assuming that the frontend (UI) is not compromised, the interactions are the fol
     responses, and pools without usable fee samples select the previous fixed
     0.1 MINA fee. This conservative fallback does not measure congestion or
     guarantee inclusion. Due to interface restrictions,
-    signatures are again blind.
+    signatures are again blind: each Ledger request sends one 32-byte field
+    (the approval digest or the transaction commitment) through the device's
+    "sign field element" command, which needs blind signing turned on. The
+    device shows only that value, under "hash", as 64 hex digits; it cannot
+    show recipients, amounts, fee or memo. `LedgerSigningModal` says this and
+    shows the same hash, formatted the way the device formats it
+    (`lib/ledger-field.ts`: the little-endian bytes sent, read back
+    big-endian), so the user can check that the device is signing what the
+    page prepared. Matching hashes do not prove the page itself is honest; a
+    tampered UI could show and send the same wrong hash.
   - **Offline-CLI.** Used for signing with a key on a different device (e.g. air-gapped). A bundle is exported
     with the same bounded fee, shown in the online export UI and again in the
     CLI summary before signing. The bundle travels through an *untrusted* medium. Documented in
@@ -449,6 +462,22 @@ from the indexer, because the browser does not have the executed transaction's
 memo. Net: action paths are contract-anchored; the displayed memo text is
 advisory, and its match against the signed `memoHash` is checked locally.
 
+Execution is bound to the approved memo. Because nothing on chain ties the
+broadcast memo to `memoHash`, the client does it. On the proposal page,
+`canExecute` requires the local memo check to have passed (`localMemoMatch ===
+true`); while the check is pending no Execute button is shown, and a mismatch
+shows a disabled **Execute blocked: memo mismatch** button. The offline execute
+export refuses the same cases. In the worker, every execute path
+(`executeProposalOnchain`, `executeChildLifecycleOnchain`,
+`executeSetupChildOnchain`) calls `assertApprovedMemo` right after the
+recomputed proposal hash check and before any transaction is built: the memo
+text it will broadcast (a missing memo counts as the empty memo) must hash to
+the rebuilt proposal's `memoHash`, or the execution stops with
+`EXECUTION_MEMO_MISMATCH` (`lib/memo-check.ts`). The SubVault setup
+transaction carries no memo, but a mismatch there still means the server data
+is wrong, so it stops too. The offline CLI enforces the same rule
+(`assertExecuteBundleMemo`, see `offline-audit-guide.md`).
+
 **4. Concurrency / signer-lock correctness (`hooks/useContractTxLock.ts`,
 `useTransactions.ts`, `lib/storage.ts`).**
 The proposal detail page combines local broadcast and contract-lock notices into
@@ -572,7 +601,52 @@ on `NEXT_PUBLIC_E2E_TEST` (`worker.ts:701-716`, `multisigClient.ts:119-138`;
 inlines at build time so the branch is dead code in production. Direct test
 submission returns a bare transaction hash, just like Auro and Ledger; the
 caller adds the success-message prefix. Proposal status polling stores and
-queries the bare hash.
+queries the bare hash. The `window.__e2eNavigate` / `window.__e2ePathname`
+helpers that E2E tests use to navigate are also installed only when
+`NEXT_PUBLIC_E2E_TEST` is `true` (`app/layout.tsx`).
+`deploy/validate-mainnet-build-config.py` refuses a mainnet build that sets
+`NEXT_PUBLIC_E2E_TEST` to any nonempty value, because that flag also makes the
+browser trust the backend's vault security verdict (`lib/api.ts`).
+
+**7. Content-Security-Policy (`content-security-policy.mjs`, `next.config.mjs`).**
+Every page is sent `CONTENT_SECURITY_POLICY`:
+
+```
+default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';
+style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self';
+connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none';
+object-src 'none'; base-uri 'none'; form-action 'self'
+```
+
+(one line in the header). It stops other sites from framing the app, and
+stops the page from loading scripts, styles, fonts or images from, or sending
+requests to, any other origin. It does not stop an injected inline script:
+Next.js writes page data as inline scripts that change every build, so
+`'unsafe-inline'` stays until the app moves to per-request nonces. The
+`'wasm-unsafe-eval'` source lets o1js compile its WebAssembly. Images and
+fonts are all served from the app (fonts through `next/font/local`), so
+`data:` and `blob:` are not allowed there. Blob URLs are still used for file
+downloads, which this policy does not limit.
+
+Files under `/_next/static/` are sent `WORKER_CONTENT_SECURITY_POLICY`, the
+same policy plus `'unsafe-eval'`. The transaction worker's script is served
+from there, and a browser applies the policy sent with a worker's own script.
+o1js, which runs only in that worker, starts its compiled core with
+`new Function(...)`, and its thread-pool workers are `blob:` URLs that inherit
+the worker's policy; without `'unsafe-eval'` o1js never starts, so nothing can
+be proved or signed. Pages keep the stricter policy, and the main thread does
+not load o1js. The development server also allows `'unsafe-eval'` on pages,
+because React and webpack development code use eval.
+
+`connect-src 'self'` fits mainnet, where the API, node and archive share the
+app origin (`validate-mainnet-build-config.py` refuses a mainnet build whose
+three endpoints do not share one origin). Other networks add the origins of
+their configured endpoints to `connect-src`. The desktop shell replaces this
+header with its own policy, which allows the user's configured nodes
+(`desktop-audit-guide.md`, focus point 7). On mainnet the gateway must pass
+the header through unchanged on every response, including `/_next/static/`;
+`deploy/mainnet-content-integrity.py` checks that the public HTML pages carry
+exactly `CONTENT_SECURITY_POLICY` (`deploy-audit-guide.md`).
 
 ---
 
@@ -606,7 +680,8 @@ ui/
 │   │                            #   no switcher — the Ledger network dropdown was removed, #119)
 │   ├── WalletConnect.tsx        # Auro/Ledger connect entry point
 │   ├── LedgerConnectModal.tsx   # Ledger address retrieval UX
-│   ├── LedgerSigningModal.tsx   # "Confirm on device" blocking modal
+│   ├── LedgerSigningModal.tsx   # Blocking modal while the Ledger signs: says the
+│   │                            #   device shows only a hash, and shows that hash
 │   ├── OfflineSigningFlow.tsx   # Export bundle / import signed response (bridge to
 │   │                            #   the air-gapped path — see offline-audit-guide.md).
 │   │                            #   CLI download links point at a GitHub release
@@ -650,6 +725,9 @@ ui/
 │   │                            #   at line ~77)
 │   ├── ledgerWallet.ts          # Ledger WebHID: signFields, signFeePayer, address,
 │   │                            #   network id (on-device signing)
+│   ├── ledger-field.ts          # Field -> 32 device bytes, and the hash text the
+│   │                            #   device shows for it
+│   ├── memo-check.ts            # Memo badge choice + execution memo binding
 │   ├── offline-signing.ts       # Offline bundle builders + signed-response validation
 │   │                            #   (cross-reference offline-audit-guide.md)
 │   ├── api.ts                   # Backend read client + response normalization
@@ -669,6 +747,8 @@ ui/
 ├── package.json                 # Pinned o1js and mina-signer dependencies
 ├── next.config.mjs              # COOP/COEP headers
 │                                #   (COEP: credentialless) for SharedArrayBuffer;
+│                                #   Content-Security-Policy from
+│                                #   content-security-policy.mjs (see below);
 │                                #   minification DISABLED — minifiers mangle o1js
 │                                #   BigInt ops and silently produce wrong tx
 │                                #   commitments

@@ -296,6 +296,27 @@ export function canonicalizeBundleTxType(bundle: OfflineBundle): TxType {
 }
 
 /**
+ * Refuses an execute bundle whose memo text does not hash to the memo hash in
+ * the approved proposal. Owners approve only the hash; the memo text comes
+ * from the online backend and is what the signed transaction will carry. A
+ * tampered backend could otherwise keep the approved proposal, swap the memo
+ * (for example an exchange deposit tag), and still get a valid proof. A
+ * missing memo counts as the empty memo, which is what the transaction would
+ * carry. The CLI runs this before the summary, and handleExecute runs it again
+ * for direct callers.
+ */
+export function assertExecuteBundleMemo(bundle: Pick<OfflineExecuteBundle, 'proposal'>): void {
+  const { memo, memoHash } = bundle.proposal;
+  if (memoHash == null) throw new Error('Proposal is missing its memo commitment');
+  if (memoToField(memo ?? '').toString() !== memoHash) {
+    throw new Error(
+      'The memo in this bundle does not match the memo the owners approved. ' +
+      'Refusing to sign an execution with a different memo.',
+    );
+  }
+}
+
+/**
  * Checks the SubVault configuration a CREATE_CHILD approve or execute bundle
  * carries, before the summary shows it. The owner list and threshold must be
  * well formed and, in the reserved slot order, hash to the proposal data the
@@ -1103,6 +1124,7 @@ export async function handleExecute(
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
   assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'execute this proposal');
+  assertExecuteBundleMemo(bundle);
   log(`Proposal hash: ${hashStr}`);
 
   const approvalWitness = approvalStore.getWitness(proposalHash);
