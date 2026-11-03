@@ -4,6 +4,7 @@ import { PublicKey, fetchAccount } from 'o1js';
 import { GUARD_PERMISSION_KINDS } from 'contracts';
 
 import { prisma } from './db.js';
+import type { OwnerMembership } from './generated/prisma/index.js';
 import { deleteContract, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
 import {
@@ -26,6 +27,7 @@ import {
   optionalBooleanQuerySchema,
   optionalNonEmptyStringQuerySchema,
   addressParamsSchema,
+  minaTxHashSchema,
   proposalParamsSchema,
   addressParamsMiddleware,
   proposalParamsMiddleware,
@@ -34,7 +36,7 @@ import {
   validateQuery,
 } from './request-validation.js';
 import { wrapAsyncRoute } from './route-utils.js';
-import { verifySubmittedTransaction } from './submission-check.js';
+import { createSubmissionCheckLimiter, verifySubmittedTransaction } from './submission-check.js';
 
 const ownersQuerySchema = z.object({
   active: optionalBooleanQuerySchema,
@@ -55,13 +57,8 @@ const eventsQuerySchema = z.object({
 
 const submissionBodySchema = z.object({
   action: z.enum(['approve', 'execute']),
-  // Mina transaction hashes are base58 (52 characters for zkApp commands).
-  txHash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{40,64}$/),
+  txHash: minaTxHashSchema,
 });
-
-// Each submission check queries the Mina node up to four times, so cap how
-// many run at once; an over-cap report is refused and the UI simply skips it.
-const MAX_CONCURRENT_SUBMISSION_CHECKS = 8;
 
 type OwnersQuery = z.infer<typeof ownersQuerySchema>;
 type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
@@ -69,7 +66,9 @@ type EventsQuery = z.infer<typeof eventsQuerySchema>;
 
 /** Creates the read-only API router bound to shared indexer status and Prisma data. */
 export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfig): Router {
-  let submissionChecksInFlight = 0;
+  // Each submission check queries the Mina node up to four times, so limit how
+  // many run at once; a refused report is answered 429 and the UI skips it.
+  const submissionChecks = createSubmissionCheckLimiter();
   const router = Router();
   const safe = wrapAsyncRoute();
   router.use(requestLoggerMiddleware());
@@ -88,13 +87,19 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
    *  UI to detect failed/dropped pending CREATE proposals (which have no
    *  Proposal row yet, so `pollPendingSubmissions` can't surface their state). */
   router.get('/api/tx-status', safe(async (req, res) => {
-    if (!config) {
-      res.status(503).json({ error: 'Backend config unavailable' });
-      return;
-    }
     const hash = typeof req.query.hash === 'string' ? req.query.hash.trim() : '';
     if (!hash) {
       res.status(400).json({ error: 'Missing or empty hash query param' });
+      return;
+    }
+    // Each lookup scans the node's recent blocks, so refuse anything that is
+    // not a transaction hash before asking the node.
+    if (!minaTxHashSchema.safeParse(hash).success) {
+      res.status(400).json({ error: 'Invalid transaction hash' });
+      return;
+    }
+    if (!config) {
+      res.status(503).json({ error: 'Backend config unavailable' });
       return;
     }
     const result = await fetchZkappTxStatus(config, hash);
@@ -153,18 +158,20 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       },
     });
 
-    const enriched = await Promise.all(
-      contracts.map(async (contract) => {
-        const [config, activeOwners] = await Promise.all([
-          latestContractConfig(contract.id),
-          listOwners(contract.id, true),
-        ]);
-        return {
-          ...decorateContract(contract, config, activeOwners.length),
-          activeOwnerAddresses: activeOwners.map((owner) => owner.address),
-        };
-      })
-    );
+    // One query each for every listed vault's configs and owners, instead of
+    // two queries per vault.
+    const ids = contracts.map((contract) => contract.id);
+    const [configs, owners] = await Promise.all([
+      latestContractConfigs(ids),
+      listOwnersByContract(ids, true),
+    ]);
+    const enriched = contracts.map((contract) => {
+      const activeOwners = owners.get(contract.id) ?? [];
+      return {
+        ...decorateContract(contract, configs.get(contract.id) ?? null, activeOwners.length),
+        activeOwnerAddresses: activeOwners.map((owner) => owner.address),
+      };
+    });
 
     res.json(enriched);
   }));
@@ -206,12 +213,9 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       orderBy: { discoveredAt: 'asc' },
     });
 
-    const enriched = await Promise.all(
-      children.map(async (child) => {
-        const config = await latestContractConfig(child.id);
-        return decorateContract(child, config, null);
-      })
-    );
+    const configs = await latestContractConfigs(children.map((child) => child.id));
+    const enriched = children.map((child) =>
+      decorateContract(child, configs.get(child.id) ?? null, null));
 
     res.json(enriched);
   }));
@@ -406,21 +410,19 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
         res.status(503).json({ error: 'Submission checks are unavailable' });
         return;
       }
-      if (submissionChecksInFlight >= MAX_CONCURRENT_SUBMISSION_CHECKS) {
+      // A remote execution emits its event on the SubVault, not the vault.
+      const accounts = action === 'execute' && proposal.childAccount
+        ? [address, proposal.childAccount]
+        : [address];
+      const check = submissionChecks.run(
+        { proposalId: proposal.id, action, txHash },
+        () => verifySubmittedTransaction(config, { txHash, action, proposalHash, accounts }),
+      );
+      if (!check) {
         res.status(429).json({ error: 'Too many submission checks in progress' });
         return;
       }
-      submissionChecksInFlight++;
-      let verified: boolean;
-      try {
-        // A remote execution emits its event on the SubVault, not the vault.
-        const accounts = action === 'execute' && proposal.childAccount
-          ? [address, proposal.childAccount]
-          : [address];
-        verified = await verifySubmittedTransaction(config, { txHash, action, proposalHash, accounts });
-      } finally {
-        submissionChecksInFlight--;
-      }
+      const verified = await check;
       if (!verified) {
         res.status(422).json({ error: `Transaction is not a known ${action} of this proposal` });
         return;
@@ -626,10 +628,17 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
 
       res.json(result);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Failed to acquire funded account';
-      const status = error instanceof LightnetAcquireError ? 502 : 500;
-      res.status(status).json({ error: message });
+      // The details can name internal hosts or echo upstream replies, so they
+      // go to the server log only.
+      console.error(
+        `[api:${getRequestId(res)}] !! POST /api/fund`,
+        error instanceof Error ? error.stack ?? error.message : error
+      );
+      if (error instanceof LightnetAcquireError) {
+        res.status(502).json({ error: 'Failed to acquire funded account' });
+      } else {
+        res.status(500).json({ error: 'Funding failed' });
+      }
     }
   }));
 
@@ -802,9 +811,9 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       return;
     }
 
-    const message =
-      error instanceof Error ? error.message : 'Unknown backend error';
-    res.status(500).json({ error: message });
+    // The details (upstream GraphQL errors, host names) are logged above,
+    // not sent to the caller.
+    res.status(500).json({ error: 'Internal server error', requestId });
   });
 
   return router;
@@ -858,12 +867,35 @@ function compactMeta(input: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
+/** Newest config snapshot first. The id breaks ties, so the one-contract
+ *  and many-contract lookups below always pick the same row. */
+const LATEST_CONFIG_FIRST = [
+  { validFromBlock: 'desc' },
+  { eventOrder: 'desc' },
+  { id: 'desc' },
+] as const;
+
 /** Returns the latest ContractConfig snapshot for a contract, or null. */
 async function latestContractConfig(contractId: number) {
   return prisma.contractConfig.findFirst({
     where: { contractId },
-    orderBy: [{ validFromBlock: 'desc' }, { eventOrder: 'desc' }],
+    orderBy: [...LATEST_CONFIG_FIRST],
   });
+}
+
+/** Returns the latest ContractConfig snapshot of each given contract, in one
+ *  query. A contract with no snapshot has no entry. */
+async function latestContractConfigs(contractIds: number[]) {
+  const latest = new Map<number, NonNullable<Awaited<ReturnType<typeof latestContractConfig>>>>();
+  if (contractIds.length === 0) return latest;
+  const rows = await prisma.contractConfig.findMany({
+    where: { contractId: { in: contractIds } },
+    orderBy: [...LATEST_CONFIG_FIRST],
+  });
+  for (const row of rows) {
+    if (!latest.has(row.contractId)) latest.set(row.contractId, row);
+  }
+  return latest;
 }
 
 /** Projects a ContractConfig row (or null) to the slim shape the proposal
@@ -926,16 +958,7 @@ async function buildChildStateMap(
   });
   if (childContracts.length === 0) return new Map();
 
-  const configs = await prisma.contractConfig.findMany({
-    where: { contractId: { in: childContracts.map((c) => c.id) } },
-    orderBy: [{ validFromBlock: 'desc' }, { eventOrder: 'desc' }],
-  });
-
-  // Pick the first (latest) row per contract — configs is already sorted desc.
-  const latestByContractId = new Map<number, typeof configs[number]>();
-  for (const row of configs) {
-    if (!latestByContractId.has(row.contractId)) latestByContractId.set(row.contractId, row);
-  }
+  const latestByContractId = await latestContractConfigs(childContracts.map((c) => c.id));
 
   const result = new Map<string, ContractState>();
   for (const child of childContracts) {
@@ -981,6 +1004,13 @@ function decorateContract<T extends ContractRow & { _count?: Record<string, numb
   };
 }
 
+/** Newest membership change first. */
+const LATEST_MEMBERSHIP_FIRST = [
+  { validFromBlock: 'desc' },
+  { eventOrder: 'desc' },
+  { id: 'desc' },
+] as const;
+
 /**
  * Returns current owners for a contract by collapsing OwnerMembership history
  * to the latest row per address. If `active` is defined, filters to `added`
@@ -989,9 +1019,36 @@ function decorateContract<T extends ContractRow & { _count?: Record<string, numb
 async function listOwners(contractId: number, active?: boolean) {
   const memberships = await prisma.ownerMembership.findMany({
     where: { contractId },
-    orderBy: [{ validFromBlock: 'desc' }, { eventOrder: 'desc' }, { id: 'desc' }],
+    orderBy: [...LATEST_MEMBERSHIP_FIRST],
   });
+  return collapseOwners(memberships, active);
+}
 
+/** `listOwners` for many contracts in one query, keyed by contract id. A
+ *  contract with no matching owners has no entry. */
+async function listOwnersByContract(contractIds: number[], active?: boolean) {
+  const byContract = new Map<number, ReturnType<typeof collapseOwners>>();
+  if (contractIds.length === 0) return byContract;
+  const memberships = await prisma.ownerMembership.findMany({
+    where: { contractId: { in: contractIds } },
+    orderBy: [...LATEST_MEMBERSHIP_FIRST],
+  });
+  // Grouping keeps each contract's rows in the newest-first order collapseOwners needs.
+  const grouped = new Map<number, OwnerMembership[]>();
+  for (const m of memberships) {
+    const rows = grouped.get(m.contractId);
+    if (rows) rows.push(m);
+    else grouped.set(m.contractId, [m]);
+  }
+  for (const [contractId, rows] of grouped) {
+    byContract.set(contractId, collapseOwners(rows, active));
+  }
+  return byContract;
+}
+
+/** Collapses one contract's membership history, sorted newest first, to the
+ *  latest row per address, ordered by owner index. */
+function collapseOwners(memberships: OwnerMembership[], active?: boolean) {
   const latestByAddress = new Map<string, typeof memberships[number]>();
   for (const m of memberships) {
     if (!latestByAddress.has(m.address)) latestByAddress.set(m.address, m);

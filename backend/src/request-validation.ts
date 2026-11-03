@@ -23,6 +23,14 @@ export const proposalHashParamSchema = z.string().regex(
   'Must be a numeric string'
 );
 
+/** Mina transaction hash: base58 text (52 characters for zkApp commands).
+ *  Submission reports and transaction status lookups both refuse anything
+ *  else before they ask the Mina node. */
+export const minaTxHashSchema = z.string().regex(
+  /^[1-9A-HJ-NP-Za-km-z]{40,64}$/,
+  'Invalid transaction hash'
+);
+
 /** Zod query schema that preserves existing bounded integer parsing semantics. */
 export function clampedIntQuerySchema(
   fallback: number,
