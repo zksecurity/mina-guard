@@ -72,3 +72,19 @@ test('declining disconnects, and the next connect asks again', async ({ page }) 
   await expect(dialog).not.toBeVisible();
   await expect(page.getByText('Connect a wallet to see your Vaults.')).toHaveCount(0);
 });
+
+test('accepting in one tab clears the dialog in other open tabs', async ({ context }) => {
+  const first = await context.newPage();
+  const second = await context.newPage();
+  for (const page of [first, second]) {
+    await newVisitorWithWallet(page);
+    await page.goto('/');
+  }
+  const dialogIn = (page: Page) => page.getByRole('dialog', { name: 'Before you connect' });
+  await expect(dialogIn(second)).toBeVisible();
+
+  await dialogIn(first).getByRole('checkbox', { name: /I understand the risks/ }).check();
+  await dialogIn(first).getByRole('button', { name: 'Continue' }).click();
+  await expect(dialogIn(second)).toHaveCount(0);
+  await expect(second.getByRole('link', { name: 'BETA' })).toBeVisible();
+});
