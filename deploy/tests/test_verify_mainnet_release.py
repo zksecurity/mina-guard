@@ -33,7 +33,7 @@ def valid_manifest():
     return {
         "network": "mainnet",
         "sha": SHA,
-        "vk_hash": "123456789",
+        "vk_hash": "11186074123051144955935844547857280472106039209748658876584800516410203862391",
         "backend": BACKEND,
         "frontend": FRONTEND,
         "public_config": {
@@ -148,6 +148,7 @@ class MainnetReleaseVerifierTest(unittest.TestCase):
             ({"vk_hash": "0"}, SHA),
             ({"vk_hash": "00123"}, SHA),
             ({"vk_hash": 123}, SHA),
+            ({"vk_hash": "123456789"}, SHA),
             ({"extra": "unexpected"}, SHA),
         ]:
             with self.subTest(changes=changes, approved=approved):

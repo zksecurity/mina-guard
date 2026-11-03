@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 """Reject missing or testnet build inputs before publishing mainnet images."""
 
+import importlib.util
 import ipaddress
 import os
 import re
 import sys
+from pathlib import Path
 from urllib.parse import urlsplit
+
+
+def reviewed_mainnet_vk_hash() -> str:
+    """Read the pinned hash from the release verifier so both checks share one value."""
+    path = Path(__file__).resolve().with_name("verify-mainnet-release.py")
+    spec = importlib.util.spec_from_file_location("mainnet_release_verifier", path)
+    if spec is None or spec.loader is None:
+        raise ValueError("deploy/verify-mainnet-release.py is missing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return str(module.MAINNET_VK_HASH)
 
 
 URL_VARS = (
@@ -59,6 +72,12 @@ def main() -> int:
         hash_value = os.environ.get("NEXT_PUBLIC_MINAGUARD_VK_HASH", "")
         if not re.fullmatch(r"[1-9][0-9]{0,77}", hash_value):
             raise ValueError("NEXT_PUBLIC_MINAGUARD_VK_HASH must be a positive decimal mainnet VK hash")
+        if hash_value != reviewed_mainnet_vk_hash():
+            raise ValueError(
+                "NEXT_PUBLIC_MINAGUARD_VK_HASH does not match MAINNET_VK_HASH in "
+                "deploy/verify-mainnet-release.py; a circuit change must update that "
+                "pin in the same reviewed commit"
+            )
         if os.environ.get("NEXT_PUBLIC_BASE_PATH", ""):
             raise ValueError("This AWS mainnet build expects the app at / (no base path)")
         for name in URL_VARS:

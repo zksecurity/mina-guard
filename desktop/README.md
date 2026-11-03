@@ -13,6 +13,11 @@ The shared UI checks transaction state using the configured Mina node before bro
 
 The shared Vault creation wizard explains the tradeoff of saving the deploy key,
 offers expandable recovery details, and requires acknowledgment before creation.
+Existing vaults keep this guidance and recovery controls in Settings → Security;
+the dashboard links there when it detects an older stored transaction version.
+
+The shared proposal submission card distinguishes network confirmation from the
+Vault update; the existing reconciliation rules still control when actions unlock.
 
 Electron wrapper around the MinaGuard Next.js UI + backend. Runs fully local:
 SQLite DB in the user's app-data directory, lite-mode indexer, Auro signing

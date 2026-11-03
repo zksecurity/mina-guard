@@ -25,7 +25,9 @@ SHA = "a" * 40
 BACKEND = "ghcr.io/zksecurity/mina-guard/mainnet-backend@sha256:" + "b" * 64
 FRONTEND = "ghcr.io/zksecurity/mina-guard/mainnet-frontend@sha256:" + "c" * 64
 MANIFEST = {
-    "network": "mainnet", "sha": SHA, "vk_hash": "123", "backend": BACKEND,
+    "network": "mainnet", "sha": SHA,
+    "vk_hash": "11186074123051144955935844547857280472106039209748658876584800516410203862391",
+    "backend": BACKEND,
     "frontend": FRONTEND, "public_config": {
         "api_base_url": "https://app.minaguard.com",
         "mina_endpoint": "https://app.minaguard.com/graphql",

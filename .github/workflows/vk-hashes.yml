@@ -23,8 +23,12 @@ jobs:
           set -euo pipefail
           fingerprint="$(bash contracts/scripts/vk-input-fingerprint.sh)"
           echo "value=$fingerprint" >> "$GITHUB_OUTPUT"
+      # Release builds always compile. A cache entry can be written by any job
+      # that runs in default-branch scope, so a production build must not take
+      # the hash that ends up in an attested image from one.
       - name: Reuse VK hash for unchanged inputs
         id: vk-cache
+        if: github.ref != 'refs/heads/production'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: vk-parts/${{ matrix.network }}.txt

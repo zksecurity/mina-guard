@@ -1,11 +1,17 @@
 import { test, expect } from '@playwright/test';
-import { connectWallet, openVault } from './ui-helpers';
+import { connectWallet, navigateTo, openVault } from './ui-helpers';
 import { PERSONAL, TREASURY } from './fixtures';
+import { GUARD_PERMISSION_KINDS, GUARD_SET_VERIFICATION_KEY_TXN_VERSION } from 'contracts/guard-permission-policy';
 
-test('vault owners can close and reopen the deploy key warning', async ({ page }) => {
+test('deploy key guidance lives in Settings Security instead of the vault dashboard', async ({ page }) => {
   await connectWallet(page);
   await openVault(page, TREASURY);
   const warning = page.getByRole('region', { name: 'Deploy key and Mina upgrades' });
+  await expect(warning).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show deploy key warning' })).not.toBeVisible();
+  await expect(page.getByRole('alert', { name: 'Vault needs attention' })).not.toBeVisible();
+  await navigateTo(page, '/settings');
+  await expect(page.getByRole('region', { name: 'Security', exact: true })).toContainText(TREASURY);
   await expect(warning).toBeVisible();
   await expect(warning.getByText(/MinaGuard now offers the creator an optional download/)).toBeVisible();
   await expect(warning.getByText(/funds could become stuck/)).toBeVisible();
@@ -17,7 +23,35 @@ test('vault owners can close and reopen the deploy key warning', async ({ page }
   await expect(warning).toBeVisible();
   await warning.getByRole('button', { name: 'Close deploy key warning' }).click();
   await openVault(page, PERSONAL);
+  await expect(warning).not.toBeVisible();
+  await navigateTo(page, '/settings');
+  await expect(page.getByRole('region', { name: 'Security', exact: true })).toContainText(PERSONAL);
   await expect(warning).toBeVisible();
+});
+
+test('an older vault transaction version links to Security without showing recovery controls on the dashboard', async ({ page }) => {
+  await connectWallet(page);
+  await page.route(`**/api/accounts/${TREASURY}/security`, (route) => route.fulfill({
+    json: {
+      accountFound: true,
+      verificationKeyHash: 'canonical-vk',
+      verificationKeyMatches: true,
+      setVerificationKeyTxnVersion: String(BigInt(GUARD_SET_VERIFICATION_KEY_TXN_VERSION) - 1n),
+      permissionKinds: GUARD_PERMISSION_KINDS,
+      expectedPermissionKinds: GUARD_PERMISSION_KINDS,
+      permissionMismatches: ['setVerificationKey'],
+      safe: true,
+    },
+  }));
+  await openVault(page, TREASURY);
+  const banner = page.getByRole('alert', { name: 'Vault needs attention' });
+  await expect(banner).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Deploy key and Mina upgrades' })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check on-chain version' })).not.toBeVisible();
+  await banner.getByRole('link', { name: 'Settings → Security' }).click();
+  await expect(page).toHaveURL(/\/settings#security$/);
+  await expect(page.getByRole('region', { name: 'Security', exact: true })).toContainText(TREASURY);
+  await expect(page.getByRole('region', { name: 'Deploy key and Mina upgrades' })).toBeVisible();
 });
 
 for (const kind of ['vault', 'subvault'] as const) {
