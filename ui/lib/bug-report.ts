@@ -1,8 +1,11 @@
 /**
  * Builds a link to a new GitHub issue from .github/ISSUE_TEMPLATE/bug_report.yml
- * with the details a maintainer would otherwise have to ask for. The reporter
- * sees and can edit every field before submitting; nothing is sent until then.
+ * with the details a maintainer would otherwise have to ask for. Opening the
+ * link sends these details to GitHub to fill in the form; the reporter can
+ * edit them, and nothing is posted until they submit.
  */
+import { getMinaGuardConfig } from './endpoints';
+
 const NEW_ISSUE = 'https://github.com/zksecurity/mina-guard/issues/new';
 const MAX_ERROR = 1000;
 
@@ -34,13 +37,29 @@ export function bugReportUrl(context: BugReportContext): string {
   return `${NEW_ISSUE}?${params}`;
 }
 
-/** The current build and browser details, for use in client components. */
-export function currentBugReportUrl(details: { page: string; wallet?: string | null; error?: string | null }): string {
+/** The network this UI talks to: the desktop app injects its runtime choice. */
+function activeNetwork(): string | undefined {
+  try {
+    return getMinaGuardConfig().networkId;
+  } catch {
+    return process.env.NEXT_PUBLIC_MINA_NETWORK;
+  }
+}
+
+/**
+ * The current build details. Browser-only details (the runtime network and the
+ * user agent) are added only when `inBrowser` is true, so a server render and
+ * the first client render produce the same link.
+ */
+export function currentBugReportUrl(
+  details: { page: string; wallet?: string | null; error?: string | null },
+  inBrowser = true,
+): string {
   return bugReportUrl({
     version: process.env.NEXT_PUBLIC_APP_VERSION,
     commit: process.env.NEXT_PUBLIC_COMMIT_SHA,
-    network: process.env.NEXT_PUBLIC_MINA_NETWORK,
-    browser: typeof navigator === 'undefined' ? undefined : navigator.userAgent,
+    network: inBrowser ? activeNetwork() : process.env.NEXT_PUBLIC_MINA_NETWORK,
+    browser: inBrowser ? navigator.userAgent : undefined,
     ...details,
   });
 }

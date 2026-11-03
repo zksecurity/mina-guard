@@ -7,7 +7,7 @@ body:
       value: |
         **This issue is public.** Never paste a recovery phrase, private key or deploy key. MinaGuard never asks for them.
         Found a security problem? [Report it privately](https://github.com/zksecurity/mina-guard/security/advisories/new) instead.
-        If you opened this from the app, the details at the bottom are filled in. Edit or remove anything you do not want to share.
+        If you opened this from the app, the details at the bottom are filled in. Edit or remove anything you do not want to post.
   - type: textarea
     id: what-happened
     attributes:

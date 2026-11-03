@@ -31,9 +31,10 @@ export default function PrivacyPage() {
 
       <h2>Bug reports</h2>
       <p>
-        The &ldquo;Report a bug&rdquo; links open a GitHub issue with your app version, network, page, wallet
-        type and browser filled in. Nothing is sent until you submit it, and you can edit it first. Issues are
-        public, and GitHub&apos;s privacy policy applies to them.
+        The &ldquo;Report a bug&rdquo; links open a GitHub issue form. Opening one sends your app version,
+        network, page, wallet type, browser and, from an error message, that error to GitHub to fill in the
+        form. You can edit or remove them, and nothing is posted until you submit. Issues are public, and
+        GitHub&apos;s privacy policy applies to them.
       </p>
 
       <h2>Wallets</h2>
