@@ -34,6 +34,7 @@ test('a wallet connects only after the terms and beta risk are accepted, once pe
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('You could lose funds');
   await expect(dialog).toContainText('including on Mainnet');
+  await expect(dialog).toContainText('Mina network upgrades can also affect vaults');
   const accept = dialog.getByRole('button', { name: 'Continue' });
   await expect(accept).toBeDisabled();
   await dialog.getByRole('checkbox', { name: /I understand the risks/ }).check();

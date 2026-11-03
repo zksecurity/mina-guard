@@ -20,6 +20,24 @@ export default function TermsPage() {
         any transaction. Transactions on Mina are final.
       </p>
 
+      <h2 id="network-upgrades">Mina network upgrades</h2>
+      <p>Mina can change its protocol through network upgrades. An upgrade can change how existing vaults behave:</p>
+      <ul>
+        <li>
+          After an upgrade, whoever holds a vault&apos;s deploy key may be able to replace the vault&apos;s
+          verification key without the owners&apos; approval. If you do not trust the vault creator with that
+          key, move funds out before an upgrade.
+        </li>
+        <li>
+          If an upgrade breaks a vault&apos;s existing proofs and its deploy key was not saved, the vault may
+          stop working and its funds may be stuck.
+        </li>
+      </ul>
+      <p>
+        MinaGuard does not alert you to upgrades, migrate vaults automatically, or guarantee that a future
+        upgrade will be supported.
+      </p>
+
       <h2>Your responsibilities</h2>
       <ul>
         <li>Check every proposal and transaction before you approve or sign it. A Ledger device shows only a hash, not the transaction details.</li>

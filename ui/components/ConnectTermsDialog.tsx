@@ -30,7 +30,9 @@ export default function ConnectTermsDialog({ onAccept, onCancel }: { onAccept: (
     >
       <h2 id="connect-terms-title" className="text-xl font-semibold">Before you connect</h2>
       <p className="mt-3 text-sm leading-relaxed text-safe-text">
-        <BetaRiskMessage /> Use only amounts you can afford to lose.
+        <BetaRiskMessage /> Use only amounts you can afford to lose. Mina network upgrades can also affect
+        vaults; see the{' '}
+        <Link href="/terms#network-upgrades" target="_blank" rel="noopener noreferrer" className={linkClass}>Terms</Link>.
       </p>
       <label className="mt-4 flex items-start gap-3 text-sm leading-relaxed text-safe-text">
         <input
