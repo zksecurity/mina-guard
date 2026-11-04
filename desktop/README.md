@@ -164,16 +164,38 @@ before a public release.
 ### Releasing via CI
 
 `.github/workflows/desktop-release.yml` builds all three platforms on native
-runners and uploads to a GitHub Release.
+runners, checksums and attests the installers, and publishes them to a GitHub
+Release.
 
-- **Cut a release:** push a tag matching `desktop-v*` (e.g. `desktop-v0.1.0`).
-  Each runner builds its platform's installers and publishes them to a
-  **draft** GitHub Release (configured via `publish.releaseType: "draft"` in
-  `package.json`). Review the draft, then publish it manually.
+- **Cut a release:** push a tag matching `desktop-v*` (e.g. `desktop-v0.1.0`)
+  at a commit on `production`, the reviewed branch the hosted mainnet images
+  are built from (see *Release from production* in
+  `docs/deploy-audit-guide.md`); the workflow refuses a tag that points
+  anywhere else, including a commit that is only on `main`.
+  Each runner builds its platform's installers and uploads them as CI
+  artifacts. One release job then collects them, writes `SHA256SUMS`, attaches
+  `minaguard-vk-hash.txt` (the CI VK manifest for the tagged commit), signs a
+  build-provenance attestation for every file, and creates a **draft** GitHub
+  Release. Review the draft, then publish it manually. CI does not use
+  electron-builder's GitHub publisher; the `publish` block in `package.json`
+  is unused there.
 - **Dry run:** trigger the workflow manually (`workflow_dispatch`) with no
   tag. It builds all three platforms and uploads the installers as CI
   artifacts (7-day retention) instead of publishing — use this to smoke-test
   the build before tagging.
+- **Preflight checks** run before any platform build: the tag check above,
+  the VK manifest must belong to the tagged commit, `BUILD_NETWORK_DOMAIN` in
+  `src/config-store.ts` must be `mainnet`, and the inputs baked by `build:ui`
+  are validated by `deploy/validate-mainnet-build-config.py --desktop`:
+  network `mainnet`, HTTPS node, archive and explorer URLs on public hosts
+  that do not name a test network, the API base URL equal to the embedded
+  backend's loopback address, no E2E flag, and the `mainnet=` VK hash equal to
+  `MAINNET_VK_HASH` in `deploy/verify-mainnet-release.py`. A circuit change
+  therefore cannot ship in an installer unless the reviewed pin moves in the
+  same commit.
+- **Pinned toolchain:** Bun `1.3.10` (`BUN_VERSION` in the workflow, the same
+  pin as the offline CLI release and the VK compile) and every action pinned
+  to a commit SHA. Only the release job holds write permissions.
 - **Audit gate:** every leg runs `bun audit --audit-level=critical` right after
   install and stops before packaging if any dependency has a critical advisory.
 - **Packaged-version check:** electron-builder's `afterPack` hook
@@ -183,13 +205,27 @@ runners and uploads to a GitHub Release.
   support ends (Next 16: 2027-10-21, Electron 43: 2027-01-05). Local
   `electron-builder` runs check too.
 
-The `owner`/`repo` in the `publish` block must match the GitHub repo the
-release should land on.
+**Verifying a download.** Check the installer against `SHA256SUMS`, then
+check its attestation, which binds the file to this repository, this workflow
+and the tagged commit:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS   # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+gh attestation verify MinaGuard-<version>-<platform>.<ext> --repo zksecurity/mina-guard \
+  --signer-workflow zksecurity/mina-guard/.github/workflows/desktop-release.yml \
+  --source-ref refs/tags/desktop-v<version>
+```
+
+`SHA256SUMS` alone only shows a download is the file the release job had; the
+attestation is what ties it to the tagged source. Enable **immutable
+releases** in the repository settings so a published release's assets cannot
+be replaced afterwards.
 
 ### Signing (not done yet)
 
-Released artifacts are **unsigned** (no Developer ID / Authenticode).
-Consequences for users:
+Released artifacts are **unsigned** (no Developer ID / Authenticode). The
+checksums and attestation above prove where an installer came from, not who
+the publisher is to the operating system. Consequences for users:
 
 - **macOS:** the packed app is **ad-hoc signed** by the `afterPack` hook
   (`scripts/adhoc-sign.mjs`). Without it, electron-builder's repack breaks the

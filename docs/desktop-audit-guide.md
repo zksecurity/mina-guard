@@ -439,7 +439,8 @@ bundle, `schema.sql` (run through `$executeRawUnsafe`), `.vk-hash`, and
 Prisma's native engines — the latter three `asarUnpack`ed as plain files under
 the install's `resources/`. The producing pipeline is `scripts/stage.mjs` +
 `scripts/bundle-backend.mjs` and `.github/workflows/desktop-release.yml`
-(draft releases, unsigned artifacts).
+(preflight input checks, draft releases, checksummed and attested but unsigned
+artifacts).
 
 **6. Network consistency across the Auro bridge.**
 The desktop trusts `config.networkId`; the external browser's Auro has its own
@@ -507,7 +508,7 @@ desktop/
 ├── packaging-stage/         # Build output: backend bundle + generated Prisma client
 ├── ui-standalone/           # Build output: staged Next standalone server + static
 ├── package.json             # Scripts + electron-builder config (targets, asarUnpack,
-│                            #   unsigned mac identity, GitHub draft publish)
+│                            #   unsigned mac identity; `publish` block unused by CI)
 ├── README.md                # Build pipeline, packaging, signing status, troubleshooting
 └── ARCHITECTURE.md          # Pointer to this document
 ```
@@ -552,11 +553,28 @@ All steps run from `desktop/` (`bun run build` chains them; details in
    NSIS for Windows). Prisma query engines for darwin (x64/arm64), windows,
    debian- and rhel-flavored Linux are bundled and `asarUnpack`ed together
    with `dist/assets/**`.
-7. CI: `.github/workflows/desktop-release.yml` builds all three platforms on
-   native runners for `desktop-v*` tags and uploads to a **draft** GitHub
-   release; artifacts are **unsigned** on every platform (macOS bundles get an
-   ad-hoc signature from the `afterPack` hook so downloaded copies remain
-   launchable).
+7. CI: `.github/workflows/desktop-release.yml` runs for `desktop-v*` tags and
+   manual dry runs. A preflight job rejects a tag that does not point at a
+   commit on `production` (the reviewed branch the hosted mainnet images are
+   built from), verifies that the CI VK manifest belongs to the commit,
+   requires `BUILD_NETWORK_DOMAIN` to be `mainnet`, and runs
+   `deploy/validate-mainnet-build-config.py --desktop` on the inputs baked by
+   `build:ui`: the `mainnet=` VK hash must equal the reviewed `MAINNET_VK_HASH`
+   pin in `deploy/verify-mainnet-release.py`, the network must be mainnet, the
+   node, archive and explorer URLs must be HTTPS on public hosts, and the API
+   base URL must be the embedded backend's loopback address. Three native
+   runners then build with a pinned Bun and SHA-pinned actions, package with
+   `--publish never`, and upload the installers as artifacts. For tag builds a
+   release job with the only write permissions collects them, writes
+   `SHA256SUMS`, attaches `minaguard-vk-hash.txt`, signs a build-provenance
+   attestation for every file (verify with `gh attestation verify <file>
+   --repo zksecurity/mina-guard --signer-workflow
+   zksecurity/mina-guard/.github/workflows/desktop-release.yml --source-ref
+   refs/tags/<tag>`, which pins the signing workflow and the tag), and creates
+   a **draft** release for manual review. Artifacts are **unsigned** on every
+   platform (macOS bundles get an ad-hoc signature from the `afterPack` hook so
+   downloaded copies remain launchable); the attestation, not a code
+   signature, is what ties an installer to the tagged source.
 
 ## Dependencies
 

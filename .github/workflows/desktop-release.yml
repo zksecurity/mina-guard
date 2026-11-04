@@ -1,7 +1,8 @@
 name: Desktop release
 
-# Builds the MinaGuard desktop app (Electron) for macOS, Linux and Windows and
-# uploads the installers to a GitHub Release.
+# Builds the MinaGuard desktop app (Electron) for macOS, Linux and Windows,
+# checksums and attests the installers, and publishes them to a DRAFT GitHub
+# Release for manual review.
 #
 # Artifacts are UNSIGNED (no Developer ID / Authenticode). macOS bundles are
 # ad-hoc signed by the afterPack hook (desktop/scripts/adhoc-sign.mjs) so
@@ -9,12 +10,17 @@ name: Desktop release
 # prompt (System Settings → Privacy & Security → Open Anyway) instead of the
 # dead-end "damaged" dialog. Windows users get a SmartScreen "unknown
 # publisher" prompt. Real code signing / notarization is intentionally left
-# out of this pass — see the "Signing" section in desktop/README.md.
+# out of this pass — see the "Signing" section in desktop/README.md. Until
+# then, SHA256SUMS plus the signed build-provenance attestation are what tie a
+# downloaded installer to this workflow and the tagged commit.
 #
 # Triggers:
-#   * push of a tag matching `desktop-v*` (e.g. desktop-v0.1.0) → real release
+#   * push of a tag matching `desktop-v*` (e.g. desktop-v0.1.0). The tag must
+#     point at a commit on `production`, the reviewed branch the hosted
+#     mainnet images are built from. Builds all three platforms and publishes
+#     a DRAFT release; review and publish it manually.
 #   * manual `workflow_dispatch` → dry run that builds all three platforms and
-#     uploads to a draft release, without needing a tag.
+#     uploads the installers as CI artifacts, without a release.
 on:
   push:
     tags:
@@ -27,15 +33,102 @@ concurrency:
   group: desktop-release-${{ github.ref }}
   cancel-in-progress: false
 
+# Read-only by default. Only the release job may write, and only what it
+# needs: the Release itself and the build-provenance attestations. Every
+# third-party action below is pinned to a commit SHA, not a tag, because a
+# moved tag would run someone else's code with these permissions.
 permissions:
-  contents: write # required to create/update the GitHub Release
+  contents: read
+
+# Exact Bun toolchain for every job here, the same pin as the offline CLI
+# release and the VK compile. A floating `@v2` would let the compiler change
+# under us between runs. Bump intentionally; the release notes echo this so
+# the published installers record what built them.
+env:
+  BUN_VERSION: 1.3.10
 
 jobs:
   vk-hashes:
     uses: ./.github/workflows/vk-hashes.yml
 
-  build:
+  # Fails before any platform build starts when the release inputs are wrong:
+  # a tag that is not on production, a VK manifest for another commit, or
+  # mainnet build inputs that do not match the reviewed pin.
+  preflight:
+    name: Check release inputs
     needs: vk-hashes
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # A release ships the code at the tag, and anyone with write access can
+      # push a tag, so the tagged commit must already be on `production`: the
+      # branch that only accepts reviewed release PRs from main and that the
+      # hosted mainnet images are built from (docs/deploy-audit-guide.md,
+      # "Release from production"). GitHub's compare endpoint reports the
+      # commit as "identical" to or "behind" production exactly when
+      # production contains it; a commit on main alone reads as "diverged".
+      - name: Require the tag to point at a commit on production
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/production...${GITHUB_SHA}" --jq .status)"
+          echo "production...${GITHUB_SHA}: ${status}"
+          case "$status" in
+            identical|behind) ;;
+            *)
+              echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on production (compare status: ${status})"
+              exit 1 ;;
+          esac
+
+      - name: Download VK manifest for this commit
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: minaguard-vk-manifest
+          path: contracts
+      - name: Verify VK manifest source
+        run: bash contracts/scripts/verify-vk-manifest.sh
+
+      # The desktop bakes its mainnet inputs in the `build:ui` script of
+      # desktop/package.json, so this step reads them from there rather than
+      # restating them, and validates them the way the mainnet image build
+      # validates its own inputs. The VK hash is the manifest line that script
+      # bakes; the validator rejects it unless it equals MAINNET_VK_HASH in
+      # deploy/verify-mainnet-release.py, so a circuit change cannot reach an
+      # installer unless the reviewed pin moves in the same commit. The
+      # endpoint check in desktop/src/config-store.ts must agree with the UI's
+      # network, or the app would accept test-network nodes for mainnet proofs.
+      - name: Validate mainnet build inputs against the reviewed VK pin
+        run: |
+          set -euo pipefail
+          script="$(python3 -c 'import json; print(json.load(open("desktop/package.json"))["scripts"]["build:ui"])')"
+          baked() { printf '%s\n' "$script" | tr ' ' '\n' | sed -n "s/^$1=//p" | head -n 1; }
+          for name in NEXT_PUBLIC_MINA_NETWORK NEXT_PUBLIC_API_BASE_URL NEXT_PUBLIC_MINA_ENDPOINT NEXT_PUBLIC_ARCHIVE_ENDPOINT NEXT_PUBLIC_BLOCK_EXPLORER_URL; do
+            value="$(baked "$name")"
+            echo "${name}=${value}"
+            export "${name}=${value}"
+          done
+          case "$script" in
+            *"grep -m1 '^mainnet=' ../contracts/.vk-hash"*) ;;
+            *)
+              echo "::error::desktop/package.json build:ui does not bake the mainnet line of contracts/.vk-hash"
+              exit 1 ;;
+          esac
+          grep -q "^export const BUILD_NETWORK_DOMAIN: 'mainnet' | 'testnet' = 'mainnet';" desktop/src/config-store.ts || {
+            echo "::error::BUILD_NETWORK_DOMAIN in desktop/src/config-store.ts is not mainnet"
+            exit 1
+          }
+          NEXT_PUBLIC_MINAGUARD_VK_HASH="$(contracts/scripts/read-vk-hash.sh mainnet)" \
+            python3 deploy/validate-mainnet-build-config.py --desktop
+
+  build:
+    needs: [vk-hashes, preflight]
     name: Build (${{ matrix.os }})
     timeout-minutes: 60
     strategy:
@@ -46,13 +139,17 @@ jobs:
 
     steps:
       - name: Install Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Git checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Download VK manifest for this commit
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: minaguard-vk-manifest
           path: contracts
@@ -60,16 +157,18 @@ jobs:
         shell: bash
         run: bash contracts/scripts/verify-vk-manifest.sh
 
-      # --frozen-lockfile pins bun.lock exactly for this signed release, bun
-      # does not freeze in CI by default.
+      # --frozen-lockfile pins bun.lock exactly for this release; bun does not
+      # freeze in CI by default. Lifecycle scripts stay enabled, unlike the CLI
+      # release: the `electron` package downloads its runtime in its install
+      # script, and there is nothing to package without it.
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       # Release gate: refuse to package while any dependency has a known
-      # critical advisory. Runs on every leg, since each leg publishes its own
+      # critical advisory. Runs on every leg, since each leg builds its own
       # installers. The packaged Next.js and Electron versions are checked
       # later, by electron-builder's afterPack hook (desktop/scripts/after-pack.mjs),
-      # before any installer is built or published.
+      # before any installer is built.
       - name: Audit dependencies
         run: bun audit --audit-level=critical
 
@@ -86,43 +185,132 @@ jobs:
         shell: bash
         run: bun run build
 
-      # electron-builder reads the `build` block + `publish` config from
-      # desktop/package.json. `--publish always` uploads to the GitHub draft
-      # release configured there. GH_TOKEN authenticates the upload.
-      #
-      # On workflow_dispatch (no tag) there is no release version tag, so we
-      # only build the installers and upload them as CI artifacts instead of
-      # publishing — see the two variants below.
-      - name: Package & publish (tag build)
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
-        working-directory: desktop
-        shell: bash
-        run: bunx electron-builder --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Explicitly no code signing in this pass.
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
-      - name: Package only (manual dry run)
-        if: ${{ !startsWith(github.ref, 'refs/tags/desktop-v') }}
+      # electron-builder reads the `build` block from desktop/package.json.
+      # Nothing is published from here: the release job below collects every
+      # leg's installers, checksums them once and creates the draft release,
+      # so the legs never need a token that can write to the repository.
+      - name: Package installers
         working-directory: desktop
         shell: bash
         run: bunx electron-builder --publish never
         env:
+          # Explicitly no code signing in this pass.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      # For the manual dry run, surface the installers as downloadable CI
+      # electron-builder also writes auto-update metadata (latest*.yml and
+      # *.blockmap). The app has no updater, so only the installers ship.
+      - name: Collect installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(desktop/release/*.dmg desktop/release/*.zip desktop/release/*.AppImage desktop/release/*.deb desktop/release/*.exe)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no installers found under desktop/release"
+            exit 1
+          fi
+          mkdir -p installers
+          cp "${files[@]}" installers/
+          ls -lh installers
+
+      # Tag builds hand these to the release job; dry runs keep them as CI
       # artifacts so they can be smoke-tested before ever cutting a tag.
-      - name: Upload installers as CI artifacts (dry run)
-        if: ${{ !startsWith(github.ref, 'refs/tags/desktop-v') }}
-        uses: actions/upload-artifact@v4
+      - name: Upload installers
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: minaguard-desktop-${{ matrix.os }}
           if-no-files-found: error
           retention-days: 7
-          path: |
-            desktop/release/*.dmg
-            desktop/release/*.zip
-            desktop/release/*.AppImage
-            desktop/release/*.deb
-            desktop/release/*.exe
+          path: installers/*
+
+  # Tag builds only: collect the three legs' installers, checksum them once,
+  # and publish everything to a draft release. A single aggregation job
+  # (instead of per-leg uploads) avoids release-creation races and yields one
+  # canonical SHA256SUMS covering every artifact.
+  release:
+    name: Publish draft release
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: [build, vk-hashes]
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the draft Release and upload its assets
+      id-token: write # sign the provenance attestations with this run's OIDC identity
+      attestations: write # store them on the repo for `gh attestation verify`
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Collect installers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: minaguard-desktop-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download VK manifest for this commit
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: minaguard-vk-manifest
+          path: contracts
+      - name: Verify VK manifest source
+        run: bash contracts/scripts/verify-vk-manifest.sh
+
+      # The app bundles this manifest and bakes its mainnet line into the UI;
+      # attach it so users can check which circuit the installer proves for.
+      - name: Attach VK hash + checksums
+        run: |
+          set -euo pipefail
+          cp contracts/.vk-hash dist/minaguard-vk-hash.txt
+          cd dist
+          sha256sum MinaGuard-* minaguard-vk-hash.txt > SHA256SUMS
+          cat SHA256SUMS
+
+      # SHA256SUMS only proves a download is the file this job had; it is
+      # written here, so an installer tampered with earlier in the run would
+      # get a matching checksum. The signed provenance attestation binds each
+      # file's digest to this repository, workflow, run and tagged commit.
+      # Verifiers must pin the signing workflow and the tag (the release notes
+      # below give the exact command): `--repo` alone accepts any attestation
+      # this repository ever produced, including other workflows' and older
+      # tags'.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/MinaGuard-*
+            dist/SHA256SUMS
+            dist/minaguard-vk-hash.txt
+
+      # Record the exact toolchain in the release body so a rebuild of the
+      # same tag can match it. The VK hash was checked against the reviewed
+      # pin in the preflight job before anything was built.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --title "Desktop $GITHUB_REF_NAME" \
+            --notes "$(cat <<EOF
+          MinaGuard desktop app, a **mainnet** build. **BETA: bugs could cause loss of funds; use only amounts you can afford to lose.** Setup, usage and security model: \`desktop/README.md\` and \`docs/desktop-audit-guide.md\`.
+
+          **Verify your download** before installing. Check it against \`SHA256SUMS\`, then check its signed build provenance, pinned to this repository's release workflow and to this tag:
+
+          \`\`\`
+          gh attestation verify MinaGuard-<version>-<platform>.<ext> --repo ${GITHUB_REPOSITORY} \\
+            --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/desktop-release.yml \\
+            --source-ref refs/tags/${GITHUB_REF_NAME}
+          \`\`\`
+
+          **Circuit compatibility:** the app bundles the MinaGuard circuit's verification-key hashes listed in \`minaguard-vk-hash.txt\`; the \`mainnet=\` line is the hash this build proves against.
+
+          **The installers are not code-signed.** macOS: after the "Apple could not verify" prompt, open the app once via System Settings → Privacy & Security → Open Anyway. Windows: SmartScreen → More info → Run anyway.
+
+          **Built with** Bun \`${BUN_VERSION}\` (pin it to reproduce this build from source).
+          EOF
+          )" \
+            dist/*
