@@ -25,6 +25,13 @@ describe('offline CLI network domain', () => {
     expect(domainWith({ MINA_NETWORK_DOMAIN: 'devnet' }).out).toBe('devnet');
   });
 
+  it('rejects an inherited UI network that differs from the default', () => {
+    const result = domainWith({ NEXT_PUBLIC_MINA_NETWORK: 'testnet' });
+    expect(result.out).toBe('');
+    expect(result.err).toContain('disagree');
+    expect(domainWith({ NEXT_PUBLIC_MINA_NETWORK: 'mainnet' }).out).toBe('mainnet');
+  });
+
   it('still rejects an invalid explicit domain', () => {
     const result = domainWith({ MINA_NETWORK_DOMAIN: 'mainnnet' });
     expect(result.out).toBe('');
