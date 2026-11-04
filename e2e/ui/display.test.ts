@@ -186,6 +186,43 @@ test('a memo that does not match the approved memo hash blocks online and offlin
   await expect(page.getByText(/does not match the memo the owners approved/i)).toBeVisible();
 });
 
+test('approval is offered to an owner when the memo matches the memo hash', async ({ page }) => {
+  // OWNER_3 has not approved the pending transfer yet (WALLET has).
+  await page.addInitScript(`window.__testActiveAddress = ${JSON.stringify(OWNER_3)};`);
+  await openProposal(page, PROPOSALS.pendingTransfer);
+  await expect(page.getByRole('button', { name: /^approve proposal$/i })).toBeVisible({ timeout: MEMO_CHECK_TIMEOUT });
+  await expect(page.getByRole('button', { name: /approve blocked: memo mismatch/i })).not.toBeVisible();
+});
+
+test('a memo that does not match the memo hash blocks online and offline approval', async ({ page }) => {
+  // Approvers sign only the memo hash. A tampered server could show them one
+  // memo, collect approvals, and serve the committed memo at execution, where
+  // the execute-side check would pass. So approval is refused here as well.
+  await page.addInitScript(`window.__testActiveAddress = ${JSON.stringify(OWNER_3)};`);
+  await page.route(
+    new RegExp(`/api/contracts/${TREASURY}/proposals(?:\\?.*)?$`),
+    async (route) => {
+      const response = await route.fetch();
+      const proposals = (await response.json()) as Array<Record<string, unknown>>;
+      await route.fulfill({
+        response,
+        json: proposals.map((proposal) =>
+          proposal.proposalHash === PROPOSALS.pendingTransfer ? { ...proposal, memo: 'deposit tag 6666' } : proposal,
+        ),
+      });
+    },
+  );
+
+  await openProposal(page, PROPOSALS.pendingTransfer);
+  await expect(page.getByRole('button', { name: /approve blocked: memo mismatch/i })).toBeDisabled({ timeout: MEMO_CHECK_TIMEOUT });
+  await expect(page.getByRole('button', { name: /^approve proposal$/i })).not.toBeVisible();
+
+  await page.getByRole('button', { name: 'Offline', exact: true }).click();
+  await page.getByPlaceholder('B62q...').fill(OWNER_3);
+  await page.getByRole('button', { name: /export approve bundle/i }).click();
+  await expect(page.getByText(/does not match the memo hash this proposal commits to/i)).toBeVisible();
+});
+
 test('invalidated proposal has no action buttons', async ({ page }) => {
   await openProposal(page, PROPOSALS.invalidatedTransfer);
   await expect(page.getByText('invalidated', { exact: true }).first()).toBeVisible({ timeout: 10_000 });

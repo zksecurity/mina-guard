@@ -6,7 +6,7 @@ import { createContractCompiler } from './contract-compiler';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
 import { classifyDeployTarget, receiverExists } from './deploy-target';
 import { requireUnregisteredProposal } from './proposal-preparation';
-import { assertExecutionMemoMatches } from './memo-check';
+import { APPROVAL_MEMO_MISMATCH, assertExecutionMemoMatches } from './memo-check';
 import * as Comlink from 'comlink';
 
 import {
@@ -650,8 +650,9 @@ function buildProposalStruct(
 function assertApprovedMemo(
   memo: string | null | undefined,
   proposalStruct: InstanceType<typeof TransactionProposal>,
+  message?: string,
 ): void {
-  assertExecutionMemoMatches(memo, proposalStruct.memoHash.toString(), (text) => memoToField(text).toString());
+  assertExecutionMemoMatches(memo, proposalStruct.memoHash.toString(), (text) => memoToField(text).toString(), message);
 }
 
 /**
@@ -1159,6 +1160,9 @@ const workerApi = {
     const proposalHash = proposalStruct.hash();
     const hashStr = proposalHash.toString();
     assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'approve this proposal');
+    // Approvers sign the memo hash, so the memo text they were shown must be
+    // the one it commits to; the page checks this before offering Approve.
+    assertApprovedMemo(params.proposal.memo, proposalStruct, APPROVAL_MEMO_MISMATCH);
 
     progressFn(testPrivateKey ? 'Signing proposal authorization...' : 'Awaiting wallet signature...');
     const signature = await signProposalAuthorization(hashStr, 'approve', signFn);
