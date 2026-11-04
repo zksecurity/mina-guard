@@ -155,10 +155,11 @@ Nothing in the circuit ties (2)/(3) to (1), so they can diverge. The browser has
 text itself and compares it with (1); the indexer compares the broadcast memo of the execution;
 `MemoWarningTooltip` shows the result. Takeaway: **only a memo whose displayed
 value matches the on-chain hash was actually approved by the multisig** — the plaintext shown or
-broadcast is advisory. Execution refuses a memo that does not match: the proposal page offers
-**Execute** (online or as an offline bundle) only after the browser's check passes, and the
-worker and offline CLI check again before they build the transaction, so a tampered server
-cannot swap the memo of an approved proposal (for example an exchange deposit tag).
+broadcast is advisory. Approval and execution both refuse a memo that does not match: the
+proposal page offers **Approve** and **Execute** (online or as an offline bundle) only after the
+browser's check passes, and the worker and offline CLI check again before they build the
+transaction. So a tampered server can neither collect approvals on a memo other than the
+committed one nor swap the memo of an approved proposal (for example an exchange deposit tag).
 (Mechanics in focus point 3.)
 
 **Proposal "deletion" and the `CREATE_CHILD` edge case.** There is no on-chain delete method:
