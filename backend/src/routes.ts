@@ -56,9 +56,23 @@ const CONTRACTS_PAGE_LIMIT = 200;
  *  them through `offset`. */
 const DERIVED_STATUS_SCAN_LIMIT = 1_000;
 
+/** Optional page cursor value; anything unparsable counts as absent, so a
+ *  bad cursor reads the first page instead of failing. */
+const optionalCursorDateSchema = z.any().transform((input) => {
+  if (input instanceof Date) return input;
+  if (typeof input !== 'string' || input.length === 0) return undefined;
+  const date = new Date(input);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+});
+const optionalCursorIdSchema = z.any().transform((input) => {
+  const value = typeof input === 'number' ? input : typeof input === 'string' && /^\d+$/.test(input) ? Number(input) : NaN;
+  return Number.isSafeInteger(value) ? value : undefined;
+});
+
 const contractsQuerySchema = z.object({
   limit: clampedIntQuerySchema(CONTRACTS_PAGE_LIMIT, 1, CONTRACTS_PAGE_LIMIT),
-  offset: clampedIntQuerySchema(0, 0, 10_000),
+  beforeDiscoveredAt: optionalCursorDateSchema,
+  beforeId: optionalCursorIdSchema,
 });
 
 const ownersQuerySchema = z.object({
@@ -173,17 +187,30 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   );
 
   /** Lists tracked contracts with derived config + aggregate counts, one page
-   *  at a time. Query: `limit` (1 to 200, default 200) and `offset`. */
+   *  at a time, newest first. Query: `limit` (1 to 200, default 200), and for
+   *  every page after the first, the previous page's last row as
+   *  `beforeDiscoveredAt` (its `discoveredAt`) and `beforeId` (its `id`).
+   *
+   *  The cursor names a position, not a count, so a vault discovered or
+   *  removed while a client reads the pages does not shift the later pages:
+   *  no vault already past the cursor is skipped or repeated. */
   router.get('/api/contracts', validateQuery(contractsQuerySchema), safe(async (req, res) => {
-    const { limit, offset } = contractsQuerySchema.parse(req.query) as ContractsQuery;
+    const { limit, beforeDiscoveredAt, beforeId } = contractsQuerySchema.parse(req.query) as ContractsQuery;
+    const cursor = beforeDiscoveredAt !== undefined && beforeId !== undefined
+      ? {
+          OR: [
+            { discoveredAt: { lt: beforeDiscoveredAt } },
+            { discoveredAt: beforeDiscoveredAt, id: { lt: beforeId } },
+          ],
+        }
+      : {};
 
     const contracts = await prisma.contract.findMany({
-      where: { ready: true, permissionsVerified: true },
-      // The id breaks ties between vaults discovered in the same tick, so
-      // consecutive pages neither repeat nor skip a vault.
+      where: { ready: true, permissionsVerified: true, ...cursor },
+      // The id breaks ties between vaults discovered in the same tick and is
+      // the second half of the cursor.
       orderBy: [{ discoveredAt: 'desc' }, { id: 'desc' }],
       take: limit,
-      skip: offset,
       include: {
         _count: {
           select: {
@@ -335,8 +362,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
           p.childAccount ? childStateByAddress.get(p.childAccount) ?? null : null,
         ),
       );
-      // A status that is not one of the four never matches anything.
-      res.json(status && !pageIds ? serialized.filter((s) => s.status === status) : serialized);
+      // A status that is not one of the four never matches anything. The
+      // windowed path checks again too: the indexer can record an execution
+      // between the ID scan and the row load, and such a row is dropped from
+      // this page rather than returned under the wrong status.
+      res.json(status ? serialized.filter((s) => s.status === status) : serialized);
     })
   );
 

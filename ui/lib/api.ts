@@ -28,23 +28,27 @@ export async function fetchIndexerStatus(): Promise<IndexerStatus | null> {
 
 /** The backend serves the vault list in pages of at most this many. */
 const CONTRACTS_PAGE_LIMIT = 200;
-/** The backend's highest offset; vaults past it are not listed. */
-const CONTRACTS_MAX_OFFSET = 10_000;
+/** Most pages read per refresh, so a misbehaving backend cannot keep the
+ *  loop going; at 200 a page this is about 10,000 vaults. */
+const CONTRACTS_MAX_PAGES = 50;
 
 /** Fetches all discovered contracts from backend, one page at a time, until a
- *  short page or the backend's offset cap. A failed page ends the list with
- *  the pages already read; a failed first page gives an empty list, as a
- *  failed single read did before.
+ *  short page or the page cap. A failed page ends the list with the pages
+ *  already read; a failed first page gives an empty list, as a failed single
+ *  read did before.
  *
- *  Vaults are kept once by address. Offsets shift when discovery adds a vault
- *  between page reads, so a page can repeat the previous page's last rows. An
- *  older backend ignores `limit` and returns the whole list at once; a page
- *  longer than the limit, or one with no new vault, is taken as the end. */
+ *  Each later page starts after the previous page's last row (its
+ *  `discoveredAt` and `id`), so vaults discovered or removed between reads do
+ *  not shift the pages. Vaults are still kept once by address. An older
+ *  backend ignores the paging parameters and returns the whole list at once;
+ *  a page longer than the limit, one with no new vault, or one whose last row
+ *  carries no cursor is taken as the end. */
 export async function fetchContracts(): Promise<ContractSummary[]> {
   const contracts = new Map<string, ContractSummary>();
-  for (let offset = 0; offset <= CONTRACTS_MAX_OFFSET; offset += CONTRACTS_PAGE_LIMIT) {
+  let cursor = '';
+  for (let page = 0; page < CONTRACTS_MAX_PAGES; page++) {
     const data = await getJson<Array<Record<string, unknown>>>(
-      `/api/contracts?limit=${CONTRACTS_PAGE_LIMIT}&offset=${offset}`,
+      `/api/contracts?limit=${CONTRACTS_PAGE_LIMIT}${cursor}`,
     );
     if (!data) break;
     const before = contracts.size;
@@ -53,6 +57,9 @@ export async function fetchContracts(): Promise<ContractSummary[]> {
       if (!contracts.has(contract.address)) contracts.set(contract.address, contract);
     }
     if (data.length !== CONTRACTS_PAGE_LIMIT || contracts.size === before) break;
+    const last = data[data.length - 1];
+    if (typeof last.discoveredAt !== 'string' || typeof last.id !== 'number') break;
+    cursor = `&beforeDiscoveredAt=${encodeURIComponent(last.discoveredAt)}&beforeId=${last.id}`;
   }
   return [...contracts.values()];
 }

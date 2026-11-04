@@ -19,26 +19,42 @@ test('uses active owners bundled with the contract list without per-vault reques
   expect(owners.get('vault-a')).toEqual(['owner-a']);
   expect(owners.get('vault-b')).toEqual([]);
   expect(calls).toHaveLength(1);
-  expect(calls[0]).toEndWith('/api/contracts?limit=200&offset=0');
+  expect(calls[0]).toEndWith('/api/contracts?limit=200');
 });
 
-test('reads the vault list page by page until a short page', async () => {
+test('reads the vault list page by page, each after the last row of the one before', async () => {
   const calls: string[] = [];
-  const vault = (n: number) => ({ address: `vault-${n}`, activeOwnerAddresses: [] });
+  // Newest first: vault-449 down to vault-0, all discovered at one instant so
+  // the id breaks the tie.
+  const at = '2026-07-01T12:00:00.000Z';
+  const vault = (n: number) => ({ id: n, discoveredAt: at, address: `vault-${n}`, activeOwnerAddresses: [] });
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
     calls.push(url.search);
-    const offset = Number(url.searchParams.get('offset'));
     const limit = Number(url.searchParams.get('limit'));
-    const total = 450;
-    return Response.json(Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) => vault(offset + i)));
+    const beforeId = url.searchParams.has('beforeId') ? Number(url.searchParams.get('beforeId')) : 450;
+    expect(url.searchParams.has('beforeId')).toBe(url.searchParams.get('beforeDiscoveredAt') === at);
+    const ids = Array.from({ length: beforeId }, (_, i) => beforeId - 1 - i).slice(0, limit);
+    return Response.json(ids.map(vault));
   }) as typeof fetch;
 
   const contracts = await fetchContracts();
   expect(contracts).toHaveLength(450);
-  expect(contracts[0].address).toBe('vault-0');
-  expect(contracts[449].address).toBe('vault-449');
-  expect(calls).toEqual(['?limit=200&offset=0', '?limit=200&offset=200', '?limit=200&offset=400']);
+  expect(contracts[0].address).toBe('vault-449');
+  expect(contracts[449].address).toBe('vault-0');
+  const cursor = (id: number) => `&beforeDiscoveredAt=${encodeURIComponent(at)}&beforeId=${id}`;
+  expect(calls).toEqual(['?limit=200', `?limit=200${cursor(250)}`, `?limit=200${cursor(50)}`]);
+});
+
+test('stops when a full page carries no cursor', async () => {
+  let calls = 0;
+  globalThis.fetch = (async (_input: RequestInfo | URL) => {
+    calls++;
+    return Response.json(Array.from({ length: 200 }, (_, i) => ({ address: `vault-${calls}-${i}` })));
+  }) as typeof fetch;
+
+  expect(await fetchContracts()).toHaveLength(200);
+  expect(calls).toBe(1);
 });
 
 test('stops after one read when an older backend returns the whole list unpaged', async () => {
@@ -52,13 +68,13 @@ test('stops after one read when an older backend returns the whole list unpaged'
   expect(calls).toBe(1);
 });
 
-test('lists each vault once when discovery shifts the pages between reads', async () => {
-  const vault = (n: number) => ({ address: `vault-${n}`, activeOwnerAddresses: [] });
+test('lists each vault once if a page repeats rows of the one before', async () => {
+  const vault = (n: number) => ({ id: 1000 - n, discoveredAt: '2026-07-01T12:00:00.000Z', address: `vault-${n}`, activeOwnerAddresses: [] });
   let page = 0;
   globalThis.fetch = (async (_input: RequestInfo | URL) => {
     page++;
-    // A vault discovered after the first read pushes the old row 199 to the
-    // start of the second page.
+    // A backend that pages by offset repeats the old row 199 when a vault is
+    // discovered between reads.
     if (page === 1) return Response.json(Array.from({ length: 200 }, (_, i) => vault(i)));
     return Response.json([vault(199), ...Array.from({ length: 50 }, (_, i) => vault(200 + i))]);
   }) as typeof fetch;
@@ -72,7 +88,7 @@ test('stops when a full page adds no new vault', async () => {
   let calls = 0;
   globalThis.fetch = (async (_input: RequestInfo | URL) => {
     calls++;
-    return Response.json(Array.from({ length: 200 }, (_, i) => ({ address: `vault-${i}` })));
+    return Response.json(Array.from({ length: 200 }, (_, i) => ({ id: 200 - i, discoveredAt: '2026-07-01T12:00:00.000Z', address: `vault-${i}` })));
   }) as typeof fetch;
 
   expect(await fetchContracts()).toHaveLength(200);
@@ -83,7 +99,7 @@ test('keeps the pages read before a failed one', async () => {
   let page = 0;
   globalThis.fetch = (async (_input: RequestInfo | URL) => {
     page++;
-    if (page === 1) return Response.json(Array.from({ length: 200 }, (_, i) => ({ address: `vault-${i}` })));
+    if (page === 1) return Response.json(Array.from({ length: 200 }, (_, i) => ({ id: 200 - i, discoveredAt: '2026-07-01T12:00:00.000Z', address: `vault-${i}` })));
     return new Response('down', { status: 503 });
   }) as typeof fetch;
 

@@ -32,6 +32,8 @@ export type TxStatusCache = {
 const DEFAULT_TTL_MS = 5_000;
 const DEFAULT_MAX_ENTRIES = 1_000;
 
+/** `expiresAt` stays infinite while the lookup runs, so every caller shares a
+ *  slow lookup however long it takes; the TTL starts when it settles. */
 type Entry = { expiresAt: number; result: Promise<TxStatusResult> };
 
 /** Creates an in-process cache. An `unknown` answer means the node lookup
@@ -51,7 +53,7 @@ export function createTxStatusCache(options: TxStatusCacheOptions = {}): TxStatu
       if (cached && cached.expiresAt > now()) return cached.result;
       if (cached) entries.delete(hash);
 
-      const entry: Entry = { expiresAt: now() + ttlMs, result: lookup() };
+      const entry: Entry = { expiresAt: Number.POSITIVE_INFINITY, result: lookup() };
       entries.set(hash, entry);
       while (entries.size > maxEntries) {
         const oldest = entries.keys().next().value;
@@ -61,7 +63,11 @@ export function createTxStatusCache(options: TxStatusCacheOptions = {}): TxStatu
 
       try {
         const result = await entry.result;
-        if (result.status === 'unknown' && entries.get(hash) === entry) entries.delete(hash);
+        if (result.status === 'unknown') {
+          if (entries.get(hash) === entry) entries.delete(hash);
+        } else {
+          entry.expiresAt = now() + ttlMs;
+        }
         return result;
       } catch (error) {
         if (entries.get(hash) === entry) entries.delete(hash);

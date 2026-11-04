@@ -39,6 +39,28 @@ describe('createTxStatusCache', () => {
     expect(calls).toBe(1);
   });
 
+  test('keeps sharing a lookup that outlasts the TTL, then starts the TTL', async () => {
+    let clock = 1_000;
+    const cache = createTxStatusCache({ ttlMs: 5_000, now: () => clock });
+    let calls = 0;
+    let release: (result: TxStatusResult) => void = () => undefined;
+    const lookup = () => new Promise<TxStatusResult>((resolve) => { calls++; release = resolve; });
+    const first = cache.get('a', lookup);
+    clock += 60_000;
+    const late = cache.get('a', lookup);
+    expect(calls).toBe(1);
+    release({ status: 'included' });
+    expect(await Promise.all([first, late])).toEqual([{ status: 'included' }, { status: 'included' }]);
+    clock += 4_999;
+    await cache.get('a', lookup);
+    expect(calls).toBe(1);
+    clock += 1;
+    const next = cache.get('a', lookup);
+    release({ status: 'included' });
+    await next;
+    expect(calls).toBe(2);
+  });
+
   test('does not remember an unknown answer or a rejected lookup', async () => {
     const cache = createTxStatusCache();
     const unknown = counter({ status: 'unknown' });
