@@ -1,8 +1,8 @@
 # Desktop App (Electron) — Architecture & Security Notes
 
 **Beta status:** the packaged UI displays the same dismissible beta notice,
-proposal-creation warning, and user-guide precautions as the web app, on both
-Testnet and Mainnet. Bugs could cause loss of funds. See
+proposal-creation warning, and user-guide precautions as the web app. The
+desktop app is a mainnet build, so funds are real. Bugs could cause loss of funds. See
 [the UI notice](./ui-audit-guide.md#beta-product-notice).
 
 The shared online UI also checks for an already-created proposal and offers View proposal. Propose/approve recheck state after the owner signature before building; this uses the same runtime node access as the existing checks.
@@ -311,8 +311,8 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
   whether real event rows carry authorization values. The network id must be
   explicitly reported in the node's `networkID` field; URL names are never
   used to guess it. A node whose proof domain doesn't match this
-  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet versus the shared
-  testnet/devnet proof domain) is rejected at save time — the bundled circuit
+  build's compile-time `BUILD_NETWORK_DOMAIN` (`mainnet` for released builds,
+  versus the shared testnet/devnet proof domain) is rejected at save time, because the bundled circuit
   can only prove against one domain.
 - **Changing endpoints wipes the local DB and relaunches**
   (`changeEndpointsAndRelaunch`, `src/main.ts:349-363`): the local index is
@@ -530,10 +530,14 @@ All steps run from `desktop/` (`bun run build` chains them; details in
 3. `build:ui` — builds `../ui` in Next standalone mode with
    `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
    `NEXT_PUBLIC_INDEXER_MODE=lite` and
-   `NEXT_PUBLIC_MINA_NETWORK=testnet` baked in (plus anything from the
+   `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the minascan mainnet endpoints and
+   explorer URL, and the `mainnet=` line of `contracts/.vk-hash` baked in. The
+   endpoints satisfy the mainnet check in `ui/next.config.mjs` and are only a
+   fallback: the preload injects the endpoints saved at setup, and the desktop
+   proxy replaces the UI's Content-Security-Policy with one built from them (plus anything from the
    git-ignored `desktop/.env`). The network domain must match
-   `BUILD_NETWORK_DOMAIN` in `config-store.ts` — the two flip together to cut
-   a mainnet build.
+   `BUILD_NETWORK_DOMAIN` in `config-store.ts`; the two flip together to cut
+   a testnet build.
 4. `stage` — `stage.mjs` copies the standalone tree into `ui-standalone/`
    resolving every bun-store symlink to a real file (Windows can't ship
    symlinks; naive dereferencing breaks Node module resolution — the script
