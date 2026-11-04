@@ -74,9 +74,10 @@ you obtained, once" (see the supply-chain notes below).
 On launch (`src/main.ts`):
 
 1. **First run:** a setup window asks for a Mina GraphQL endpoint and an
-   archive endpoint (pre-filled with minascan mainnet defaults — never used
-   silently). Save probes both endpoints, detects the node's network ID, and
-   checks that the archive reports a valid pending height and accepts a bounded
+   archive endpoint (pre-filled with the `app.minaguard.com` `/graphql` and
+   `/archive` routes, never used silently). Save probes both endpoints, detects
+   the node's network ID, checks that the archive's pending height is within
+   290 blocks of the node's best chain height, and that the archive accepts a bounded
    one-block event query selecting the fields the indexer needs, including
    `transactionInfo.authorizationKind` (Archive-Node-API v0.0.8+). HTTP or
    GraphQL errors, missing fields, and nodes without an explicit supported
@@ -305,7 +306,8 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
 - **Endpoints are probed before persisting** (`verifyEndpoints`,
   `src/config-store.ts`): both must answer GraphQL POSTs within 10 s without
   HTTP or GraphQL errors. The archive's pending height must be a nonnegative
-  safe integer, and a one-block `events(input:{from,to})` query must return an
+  safe integer no more than 290 blocks below the node's `bestChain(maxLength: 1)`
+  height (a lagging archive returns empty event lists, not errors), and a one-block `events(input:{from,to})` query must return an
   events list while selecting the indexer's authorization and block fields.
   This checks schema compatibility, not the configured event-range cap or
   whether real event rows carry authorization values. The network id must be
@@ -406,7 +408,8 @@ allowlist, and the id rides a URL handed to the OS browser
 
 **3. Endpoint lifecycle & network-id detection (`src/config-store.ts`).**
 Probing requires both endpoints to answer GraphQL queries without errors. The
-archive must report a valid pending height and accept a bounded event query
+archive must report a valid pending height within 290 blocks of the node's best
+chain height and accept a bounded event query
 with the fields used by the local indexer; the one-block probe cannot verify
 that the server accepts the required 5,000-block range or that its history is
 complete. The node-reported network ID must match the build's exact proof domain
@@ -530,8 +533,8 @@ All steps run from `desktop/` (`bun run build` chains them; details in
 3. `build:ui` — builds `../ui` in Next standalone mode with
    `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
    `NEXT_PUBLIC_INDEXER_MODE=lite` and
-   `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the minascan mainnet endpoints and
-   explorer URL, and the `mainnet=` line of `contracts/.vk-hash` baked in. The
+   `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the `app.minaguard.com` endpoints, the
+   minascan explorer URL, and the `mainnet=` line of `contracts/.vk-hash` baked in. The
    endpoints satisfy the mainnet check in `ui/next.config.mjs` and are only a
    fallback: the preload injects the endpoints saved at setup, and the desktop
    proxy replaces the UI's Content-Security-Policy with one built from them (plus anything from the

@@ -9,6 +9,7 @@ import {
   configureNetwork,
   discoverCandidateAddresses,
   discoverCandidateAddressesFromArchive,
+  EVENT_QUERY_BLOCK_SPAN,
   fetchBestChainHeaders,
   fetchDecodedContractEvents,
   fetchGenesisConstants,
@@ -116,9 +117,19 @@ type ContractConfigFields = {
 /** Partial change set for a config-mutating event. Fields left undefined are copied from the latest row. */
 type ContractConfigChanges = Partial<ContractConfigFields>;
 
+/** Each first-scan step is one archive events request. A tick takes at most
+ *  this many steps across all unready vaults, so importing an old vault paces
+ *  itself (about 40 requests a minute at the default 15 s poll) instead of
+ *  tripping an endpoint's rate limit. */
+const FIRST_SCAN_STEPS_PER_TICK = 10;
+
 /** Polling indexer that discovers MinaGuard contracts and ingests lifecycle events. */
 export class MinaGuardIndexer {
   private readonly config: BackendConfig;
+  /** First-scan progress of unready vaults, by contract id. Kept across ticks
+   *  so a long history resumes where it stopped instead of restarting. A
+   *  process restart only repeats work: event ingestion is idempotent. */
+  private readonly firstScans = new Map<number, { start: number; next: number; ingested: boolean }>();
   private intervalHandle: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
@@ -489,18 +500,48 @@ export class MinaGuardIndexer {
    * Scans an unready contract's full history once, then replays the same recent
    * window as ready contracts. Missing accounts and failed scans do not stamp
    * lastSyncedAt, so subscribe-before-deploy still gets a full first scan.
+   * The first scan advances one archive request at a time and resumes from
+   * its last completed step after a failure or when the tick's step budget
+   * runs out.
    */
   private async rescanUnreadyContracts(fromHeight: number, latestHeight: number): Promise<void> {
     const unready = await prisma.contract.findMany({
       where: { ready: false },
       select: { id: true, address: true, discoveredAtBlock: true, lastSyncedAt: true },
     });
+    const pending = new Set(unready.filter((c) => c.lastSyncedAt === null).map((c) => c.id));
+    for (const id of this.firstScans.keys()) if (!pending.has(id)) this.firstScans.delete(id);
+    let steps = FIRST_SCAN_STEPS_PER_TICK;
     for (const c of unready) {
-      const from = c.lastSyncedAt === null
-        ? (c.discoveredAtBlock ?? this.config.indexStartHeight)
-        : Math.max(c.discoveredAtBlock ?? 0, fromHeight);
-      if (from > latestHeight) continue;
-      await this.syncSingleContract(c.id, c.address, from, latestHeight);
+      if (c.lastSyncedAt !== null) {
+        const from = Math.max(c.discoveredAtBlock ?? 0, fromHeight);
+        if (from > latestHeight) continue;
+        await this.syncSingleContract(c.id, c.address, from, latestHeight);
+        continue;
+      }
+      const start = c.discoveredAtBlock ?? this.config.indexStartHeight;
+      if (start > latestHeight) continue;
+      let scan = this.firstScans.get(c.id);
+      if (!scan || scan.start !== start) {
+        scan = { start, next: start, ingested: false };
+        this.firstScans.set(c.id, scan);
+      }
+      while (steps > 0) {
+        steps -= 1;
+        const to = Math.min(scan.next + EVENT_QUERY_BLOCK_SPAN - 1, latestHeight);
+        const finish = to === latestHeight;
+        const ingested = await this.syncSingleContract(c.id, c.address, scan.next, to, {
+          finish, ingestedEarlier: scan.ingested,
+        });
+        // A missing or refused account: retry the same step next tick.
+        if (ingested === null) break;
+        if (finish) {
+          this.firstScans.delete(c.id);
+          break;
+        }
+        scan.ingested ||= ingested;
+        scan.next = to + 1;
+      }
     }
   }
 
@@ -530,13 +571,19 @@ export class MinaGuardIndexer {
    * Fetches, stores, and applies decoded events for a single contract address.
    * Public so tests can drive the event-apply pipeline with mocked chain data
    * (used by the reorg-reconstruction test).
+   *
+   * Returns whether an event was applied, or null when the account is missing
+   * or refused. `finish: false` leaves lastSyncedAt and ready unchanged, for a
+   * first scan that continues past `toHeight`; `ingestedEarlier` carries its
+   * earlier steps' result into the final ready decision.
    */
   async syncSingleContract(
     contractId: number,
     address: string,
     fromHeight: number,
-    toHeight: number
-  ): Promise<void> {
+    toHeight: number,
+    { finish = true, ingestedEarlier = false }: { finish?: boolean; ingestedEarlier?: boolean } = {},
+  ): Promise<boolean | null> {
     const tracked = await prisma.contract.findUnique({
       where: { id: contractId },
       select: { permissionsVerified: true },
@@ -546,7 +593,7 @@ export class MinaGuardIndexer {
         address,
         this.config
       );
-      if (!security.accountFound) return;
+      if (!security.accountFound) return null;
       if (!security.safe) {
         await prisma.contract.update({
           where: { id: contractId },
@@ -561,7 +608,7 @@ export class MinaGuardIndexer {
               : 'verification key mismatch'
           }`
         );
-        return;
+        return null;
       }
       await prisma.contract.update({
         where: { id: contractId },
@@ -605,12 +652,15 @@ export class MinaGuardIndexer {
     // a real, set-up contract. Flipping ready here gates a subscribed-before-
     // deploy contract from appearing in API read routes until its first
     // event actually lands.
-    await prisma.contract.update({
-      where: { id: contractId },
-      data: ingested
-        ? { lastSyncedAt: new Date(), ready: true }
-        : { lastSyncedAt: new Date() },
-    });
+    if (finish) {
+      await prisma.contract.update({
+        where: { id: contractId },
+        data: ingested || ingestedEarlier
+          ? { lastSyncedAt: new Date(), ready: true }
+          : { lastSyncedAt: new Date() },
+      });
+    }
+    return ingested;
   }
 
   /**

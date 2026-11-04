@@ -20,6 +20,7 @@ interface ProbeRequest {
 function nodeReports(
   networkID: unknown,
   archive?: { body?: unknown; status?: number },
+  bestChain: unknown = [{ protocolState: { consensusState: { blockHeight: '100' } } }],
 ): ProbeRequest[] {
   const requests: ProbeRequest[] = [];
   globalThis.fetch = (async (url, init) => {
@@ -27,7 +28,7 @@ function nodeReports(
     requests.push({ url: String(url), body });
     const isNode = body.query.includes('networkID');
     const response = isNode
-      ? { data: { networkID } }
+      ? { data: { networkID, bestChain } }
       : archive?.body ?? { data: {
         networkState: { maxBlockHeight: { pendingMaxBlockHeight: 100 } },
         events: [],
@@ -118,6 +119,36 @@ describe('desktop endpoint network check', () => {
         .rejects.toThrow(`Unsupported ${field}`);
     });
   }
+
+  it('accepts an archive within the finality depth of the node', async () => {
+    nodeReports('mina:mainnet', undefined, [{ protocolState: { consensusState: { blockHeight: '390' } } }]);
+    await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
+      .resolves.toBe('mainnet');
+  });
+
+  it('rejects an archive further behind the node than the finality depth', async () => {
+    nodeReports('mina:mainnet', undefined, [{ protocolState: { consensusState: { blockHeight: '391' } } }]);
+    await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
+      .rejects.toThrow('Archive endpoint is 291 blocks behind the Mina node (100 vs 391)');
+  });
+
+  for (const [name, bestChain] of [
+    ['an empty best chain', []], ['no best chain', null],
+    ['a nonnumeric height', [{ protocolState: { consensusState: { blockHeight: 'soon' } } }]],
+  ] as const) {
+    it(`rejects a node reporting ${name}`, async () => {
+      nodeReports('mina:mainnet', undefined, bestChain);
+      await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
+        .rejects.toThrow('best chain height');
+    });
+  }
+
+  it('asks the node for a bounded best chain', async () => {
+    const requests = nodeReports('mina:mainnet');
+    await verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql');
+    expect(requests.find((request) => request.url.includes(':8080'))?.body.query)
+      .toContain('bestChain(maxLength: 1)');
+  });
 
   it('rejects a non-success archive HTTP response even if it contains GraphQL data', async () => {
     nodeReports('mina:mainnet', { status: 502 });
