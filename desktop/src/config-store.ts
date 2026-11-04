@@ -11,7 +11,7 @@ export type { NetworkId } from './network-id.js';
  *  circuit's NETWORK_DOMAIN is baked in at that build, so a proposal proved here
  *  only verifies against contracts in this proof domain. Testnet and devnet
  *  share Field(2); mainnet uses Field(1). */
-const BUILD_NETWORK_DOMAIN: 'mainnet' | 'testnet' = 'testnet';
+export const BUILD_NETWORK_DOMAIN: 'mainnet' | 'testnet' = 'mainnet';
 
 export interface UserConfig {
   minaEndpoint: string;
@@ -163,7 +163,9 @@ export function readConfig(): UserConfig | null {
     }
     const networkId: NetworkId = parsed.networkId === 'mainnet' || parsed.networkId === 'devnet' || parsed.networkId === 'testnet'
       ? parsed.networkId
-      : 'testnet';
+      // A config written before networkId was saved: assume this build's
+      // network. Startup rechecks the node, so a wrong guess reopens setup.
+      : BUILD_NETWORK_DOMAIN;
     return {
       minaEndpoint: parsed.minaEndpoint,
       archiveEndpoint: parsed.archiveEndpoint,
