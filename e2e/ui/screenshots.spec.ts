@@ -43,7 +43,7 @@ async function stubApis(page: Page): Promise<void> {
         const url = typeof input === 'string' ? input : ((input && input.url) || String(input));
         const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'content-type': 'application/json' } });
         if (url.indexOf('/api/indexer/status') !== -1) {
-          return json({ running: true, lastRunAt: '2026-07-01T12:00:00.000Z', lastSuccessfulRunAt: '2026-07-01T12:00:00.000Z', latestChainHeight: 1000, indexedHeight: 1000, latestSlot: 1000, lastError: null, discoveredContracts: 3, indexerMode: 'full' });
+          return json({ running: true, lastRunAt: '2026-07-01T12:00:00.000Z', lastSuccessfulRunAt: '2026-07-01T12:00:00.000Z', latestChainHeight: 1000, indexedHeight: 1000, latestSlot: 1000, lastRunFailed: false, lastErrorAt: null, lastWarning: null, discoveredContracts: 3, indexerMode: 'full' });
         }
         if (url.indexOf('/api/account/') !== -1 && url.indexOf('/balance') !== -1) {
           return json({ balance: '125000000000' });

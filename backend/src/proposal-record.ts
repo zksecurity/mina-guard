@@ -114,7 +114,7 @@ export function deriveInvalidReason(
  * > `pending`.
  */
 export function deriveStatus(
-  proposal: Proposal,
+  proposal: Pick<Proposal, 'expirySlot'>,
   executed: boolean,
   latestSlot: number,
   invalidReason: InvalidReason | null,

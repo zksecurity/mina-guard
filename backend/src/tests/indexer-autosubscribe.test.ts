@@ -524,6 +524,7 @@ describe('tick: rescanUnreadyContracts', () => {
     });
     const failed = await runSingleTick(liteConfig);
     expect(failed.getStatus().lastError).toContain('archive page unavailable');
+    expect(failed.getStatus().lastErrorAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).lastSyncedAt).toBeNull();
     expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value).toBe('1000');
     fail = false;

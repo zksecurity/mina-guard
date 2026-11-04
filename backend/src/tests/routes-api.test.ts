@@ -450,6 +450,74 @@ describe('GET /api/contracts', () => {
     }
     expect(queries.sort()).toEqual(['Contract.findMany', 'ContractConfig.findMany', 'OwnerMembership.findMany']);
   });
+
+  test('serves the list in pages of at most 200, each after the last row of the one before', async () => {
+    type Row = { address: string; id: number; discoveredAt: string };
+    const all = await (await get('/api/contracts')).json() as Row[];
+    expect(all.length).toBeGreaterThanOrEqual(5);
+    const after = (row: Row) => `&beforeDiscoveredAt=${encodeURIComponent(row.discoveredAt)}&beforeId=${row.id}`;
+    const paged: string[] = [];
+    let cursor = '';
+    for (;;) {
+      const page = await (await get(`/api/contracts?limit=2${cursor}`)).json() as Row[];
+      paged.push(...page.map((c) => c.address));
+      if (page.length < 2) break;
+      cursor = after(page[page.length - 1]);
+    }
+    expect(paged).toEqual(all.map((c) => c.address));
+
+    // Out-of-range values clamp and a bad cursor reads the first page,
+    // instead of failing; the database is never asked for more than one page.
+    const takes: number[] = [];
+    let recording = true;
+    prisma.$use(async (params, next) => {
+      if (recording && params.model === 'Contract' && params.action === 'findMany') takes.push(params.args.take);
+      return next(params);
+    });
+    try {
+      expect(((await (await get('/api/contracts?limit=0')).json()) as unknown[]).length).toBe(1);
+      const bad = await (await get('/api/contracts?limit=100000&beforeDiscoveredAt=nope&beforeId=-1')).json() as Row[];
+      expect(bad.map((c) => c.address)).toEqual(all.map((c) => c.address));
+      expect((await get('/api/contracts?limit=nope&offset=7')).status).toBe(200);
+      // Values the id and date columns cannot hold are ignored, not sent to the database.
+      for (const query of [
+        `beforeDiscoveredAt=${encodeURIComponent(all[0].discoveredAt)}&beforeId=2147483648`,
+        `beforeDiscoveredAt=${encodeURIComponent(all[0].discoveredAt)}&beforeId=99999999999999999999`,
+        'beforeDiscoveredAt=-271821-04-20T00:00:00.000Z&beforeId=5',
+        'beforeDiscoveredAt=%2B275760-09-13T00:00:00.000Z&beforeId=5',
+      ]) {
+        const res = await get(`/api/contracts?limit=200&${query}`);
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as Row[]).map((c) => c.address)).toEqual(all.map((c) => c.address));
+      }
+    } finally {
+      recording = false;
+    }
+    expect(takes).toEqual([1, 200, 200, 200, 200, 200, 200]);
+  });
+
+  test('neither skips nor repeats a vault when one is added or removed between pages', async () => {
+    type Row = { address: string; id: number; discoveredAt: string };
+    const all = await (await get('/api/contracts')).json() as Row[];
+    const first = await (await get('/api/contracts?limit=2')).json() as Row[];
+    const last = first[first.length - 1];
+
+    // Between the reads, a vault is discovered and one from the first page
+    // leaves the list (as a reorg would do).
+    const added = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: true, permissionsVerified: true },
+    });
+    await prisma.contract.update({ where: { address: first[0].address }, data: { ready: false } });
+    try {
+      const rest = await (await get(
+        `/api/contracts?limit=200&beforeDiscoveredAt=${encodeURIComponent(last.discoveredAt)}&beforeId=${last.id}`
+      )).json() as Row[];
+      expect(rest.map((c) => c.address)).toEqual(all.slice(2).map((c) => c.address));
+    } finally {
+      await prisma.contract.delete({ where: { id: added.id } });
+      await prisma.contract.update({ where: { address: first[0].address }, data: { ready: true } });
+    }
+  });
 });
 
 describe('GET /api/contracts/:address/owners', () => {
@@ -502,6 +570,66 @@ describe('GET /api/contracts/:address/proposals', () => {
     const body = await res.json();
     expect(body).toHaveLength(1);
     expect(body[0].proposalHash).toBe(remoteProposalHash);
+  });
+
+  test('pages a derived status filter from a bounded scan of the newest proposals', async () => {
+    // Pending on this contract, newest first: remote (block 50), C (30), A (10).
+    const page = await (await get(
+      `/api/contracts/${contractAddress}/proposals?status=pending&limit=2&offset=1`
+    )).json() as Array<{ proposalHash: string; status: string }>;
+    expect(page.map((p) => p.proposalHash)).toEqual([proposalHashC, proposalHashA]);
+    expect(page.every((p) => p.status === 'pending')).toBe(true);
+    expect(await (await get(
+      `/api/contracts/${contractAddress}/proposals?status=pending&limit=1&offset=3`
+    )).json()).toEqual([]);
+
+    // The scan reads slim rows for a bounded number of proposals; receivers
+    // and counts are loaded for the page's ids only.
+    const calls: Array<Record<string, unknown>> = [];
+    let recording = true;
+    prisma.$use(async (params, next) => {
+      if (recording && params.model === 'Proposal' && params.action === 'findMany') calls.push(params.args);
+      return next(params);
+    });
+    try {
+      expect((await get(`/api/contracts/${contractAddress}/proposals?status=pending&limit=2&offset=1`)).status).toBe(200);
+    } finally {
+      recording = false;
+    }
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ take: 1000, select: { id: true, expirySlot: true, nonce: true } });
+    expect(calls[0].include).toBeUndefined();
+    expect(calls[1]).toMatchObject({ where: { id: { in: [expect.any(Number), expect.any(Number)] } }, include: { receivers: expect.anything() } });
+    expect(calls[1]).not.toHaveProperty('where.contractId');
+  });
+
+  test('drops a row whose derived status changes between the scan and the row load', async () => {
+    const proposal = await prisma.proposal.findFirstOrThrow({
+      where: { proposalHash: proposalHashC, contract: { address: contractAddress } },
+      select: { id: true },
+    });
+    // Records C's execution just after the slim scan, as the indexer could.
+    let armed = true;
+    prisma.$use(async (params, next) => {
+      const result = await next(params);
+      if (armed && params.model === 'Proposal' && params.action === 'findMany' && params.args?.select) {
+        armed = false;
+        await prisma.proposalExecution.create({ data: { proposalId: proposal.id, blockHeight: 31 } });
+      }
+      return result;
+    });
+    try {
+      const page = await (await get(
+        `/api/contracts/${contractAddress}/proposals?status=pending&limit=3`
+      )).json() as Array<{ proposalHash: string; status: string }>;
+      expect(armed).toBe(false);
+      expect(page.map((p) => p.proposalHash)).not.toContain(proposalHashC);
+      expect(page.length).toBe(2);
+      expect(page.every((p) => p.status === 'pending')).toBe(true);
+    } finally {
+      armed = false;
+      await prisma.proposalExecution.deleteMany({ where: { proposalId: proposal.id } });
+    }
   });
 
   test('treats empty status as missing and non-empty status as filter', async () => {
