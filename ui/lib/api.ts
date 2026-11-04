@@ -26,11 +26,26 @@ export async function fetchIndexerStatus(): Promise<IndexerStatus | null> {
   return getJson<IndexerStatus>('/api/indexer/status');
 }
 
-/** Fetches all discovered contracts from backend. */
+/** The backend serves the vault list in pages of at most this many. */
+const CONTRACTS_PAGE_LIMIT = 200;
+/** The backend's highest offset; vaults past it are not listed. */
+const CONTRACTS_MAX_OFFSET = 10_000;
+
+/** Fetches all discovered contracts from backend, one page at a time, until a
+ *  short page or the backend's offset cap. A failed page ends the list with
+ *  the pages already read; a failed first page gives an empty list, as a
+ *  failed single read did before. */
 export async function fetchContracts(): Promise<ContractSummary[]> {
-  const data = await getJson<Array<Record<string, unknown>>>('/api/contracts');
-  if (!data) return [];
-  return data.map((item) => toContractSummary(item));
+  const contracts: ContractSummary[] = [];
+  for (let offset = 0; offset <= CONTRACTS_MAX_OFFSET; offset += CONTRACTS_PAGE_LIMIT) {
+    const data = await getJson<Array<Record<string, unknown>>>(
+      `/api/contracts?limit=${CONTRACTS_PAGE_LIMIT}&offset=${offset}`,
+    );
+    if (!data) break;
+    contracts.push(...data.map((item) => toContractSummary(item)));
+    if (data.length < CONTRACTS_PAGE_LIMIT) break;
+  }
+  return contracts;
 }
 
 /** Uses owners bundled with the list response; older backends need the per-vault endpoint. */

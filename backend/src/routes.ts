@@ -5,14 +5,19 @@ import { GUARD_PERMISSION_KINDS } from 'contracts';
 
 import { prisma } from './db.js';
 import type { OwnerMembership } from './generated/prisma/index.js';
-import { deleteContract, type MinaGuardIndexer } from './indexer.js';
+import { deleteContract, toPublicIndexerStatus, type MinaGuardIndexer } from './indexer.js';
 import type { BackendConfig } from './config.js';
 import {
   fetchLatestBlockHeight,
   fetchVaultSecurityStatus,
   fetchZkappTxStatus,
 } from './mina-client.js';
-import { serializeProposalRecord, type ContractState } from './proposal-record.js';
+import {
+  deriveInvalidReason,
+  deriveStatus,
+  serializeProposalRecord,
+  type ContractState,
+} from './proposal-record.js';
 import {
   acquireLightnetAccount,
   computeFundingAmount,
@@ -37,6 +42,24 @@ import {
 } from './request-validation.js';
 import { wrapAsyncRoute } from './route-utils.js';
 import { createSubmissionCheckLimiter, verifySubmittedTransaction } from './submission-check.js';
+import { createTxStatusCache } from './tx-status-cache.js';
+
+/** Anyone can add a vault to the index for about 1 MINA, so the list is
+ *  paged: at most this many vaults per request. */
+const CONTRACTS_PAGE_LIMIT = 200;
+
+/** A `pending`, `expired` or `invalidated` filter needs each proposal's
+ *  derived status, which the database cannot compute. Only this many of the
+ *  contract's newest proposals are examined for such a filter, so one request
+ *  does bounded work however many proposals a vault has. Older proposals are
+ *  not returned by these filters; an unfiltered or `executed` listing reaches
+ *  them through `offset`. */
+const DERIVED_STATUS_SCAN_LIMIT = 1_000;
+
+const contractsQuerySchema = z.object({
+  limit: clampedIntQuerySchema(CONTRACTS_PAGE_LIMIT, 1, CONTRACTS_PAGE_LIMIT),
+  offset: clampedIntQuerySchema(0, 0, 10_000),
+});
 
 const ownersQuerySchema = z.object({
   active: optionalBooleanQuerySchema,
@@ -60,6 +83,7 @@ const submissionBodySchema = z.object({
   txHash: minaTxHashSchema,
 });
 
+type ContractsQuery = z.infer<typeof contractsQuerySchema>;
 type OwnersQuery = z.infer<typeof ownersQuerySchema>;
 type ProposalsQuery = z.infer<typeof proposalsQuerySchema>;
 type EventsQuery = z.infer<typeof eventsQuerySchema>;
@@ -69,6 +93,9 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
   // Each submission check queries the Mina node up to four times, so limit how
   // many run at once; a refused report is answered 429 and the UI skips it.
   const submissionChecks = createSubmissionCheckLimiter();
+  // Each status lookup scans the node's recent blocks and the UI polls it, so
+  // every client asking about the same hash shares one lookup per TTL.
+  const txStatusCache = createTxStatusCache();
   const router = Router();
   const safe = wrapAsyncRoute();
   router.use(requestLoggerMiddleware());
@@ -78,9 +105,11 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     res.json({ ok: true, now: new Date().toISOString() });
   }));
 
-  /** Returns current polling indexer status and latest sync metadata. */
+  /** Returns current polling indexer status and latest sync metadata. The raw
+   *  error of a failed tick stays in the server log; the caller learns only
+   *  that the last tick failed and when. */
   router.get('/api/indexer/status', safe(async (_req, res) => {
-    res.json({ ...indexer.getStatus(), indexerMode: config?.indexerMode ?? 'full' });
+    res.json({ ...toPublicIndexerStatus(indexer.getStatus()), indexerMode: config?.indexerMode ?? 'full' });
   }));
 
   /** Looks up a submitted zkApp tx hash on the daemon's bestChain. Used by the
@@ -102,7 +131,7 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       res.status(503).json({ error: 'Backend config unavailable' });
       return;
     }
-    const result = await fetchZkappTxStatus(config, hash);
+    const result = await txStatusCache.get(hash, () => fetchZkappTxStatus(config, hash));
     res.json(result);
   }));
 
@@ -143,11 +172,18 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
     })
   );
 
-  /** Lists tracked contracts with derived config + aggregate counts. */
-  router.get('/api/contracts', safe(async (_req, res) => {
+  /** Lists tracked contracts with derived config + aggregate counts, one page
+   *  at a time. Query: `limit` (1 to 200, default 200) and `offset`. */
+  router.get('/api/contracts', validateQuery(contractsQuerySchema), safe(async (req, res) => {
+    const { limit, offset } = contractsQuerySchema.parse(req.query) as ContractsQuery;
+
     const contracts = await prisma.contract.findMany({
       where: { ready: true, permissionsVerified: true },
-      orderBy: { discoveredAt: 'desc' },
+      // The id breaks ties between vaults discovered in the same tick, so
+      // consecutive pages neither repeat nor skip a vault.
+      orderBy: [{ discoveredAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      skip: offset,
       include: {
         _count: {
           select: {
@@ -264,29 +300,31 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
       }
 
       const latestSlot = indexer.getStatus().latestSlot;
+      const parentState = toContractState(await latestContractConfig(contract.id));
 
       // Status is derived at read time from ProposalExecution existence +
-      // expiry + nonce/config staleness vs current ContractConfig. The status
-      // filter passes through to in-memory filtering after serialization.
-      const dbFilter = buildProposalStatusWhere(status);
+      // expiry + nonce/config staleness vs current ContractConfig. Only
+      // `executed` is a database filter; the other statuses are derived here
+      // from a bounded window of the newest proposals, and the page is cut
+      // from that window before the full rows are loaded.
+      const pageIds = needsInMemoryStatusFilter(status)
+        ? await selectProposalIdsByDerivedStatus(contract.id, status, latestSlot, parentState, limit, offset)
+        : null;
 
       const proposals = await prisma.proposal.findMany({
-        where: {
-          contractId: contract.id,
-          ...dbFilter,
-        },
+        where: pageIds
+          ? { id: { in: pageIds } }
+          : { contractId: contract.id, ...buildProposalStatusWhere(status) },
         include: {
           receivers: { orderBy: { idx: 'asc' } },
           executions: { select: { blockHeight: true, txHash: true } },
           _count: { select: { approvals: true } },
         },
-        orderBy: [{ createdAtBlock: 'desc' }, { createdAt: 'desc' }],
-        // Over-fetch when status requires in-memory filtering; clamp after.
-        take: needsInMemoryStatusFilter(status) ? undefined : limit,
-        skip: needsInMemoryStatusFilter(status) ? undefined : offset,
+        orderBy: [...PROPOSALS_NEWEST_FIRST],
+        take: pageIds ? undefined : limit,
+        skip: pageIds ? undefined : offset,
       });
 
-      const parentState = toContractState(await latestContractConfig(contract.id));
       const childStateByAddress = await buildChildStateMap(proposals);
 
       const serialized = proposals.map((p) =>
@@ -297,14 +335,8 @@ export function createApiRouter(indexer: MinaGuardIndexer, config?: BackendConfi
           p.childAccount ? childStateByAddress.get(p.childAccount) ?? null : null,
         ),
       );
-      const filtered = status
-        ? serialized.filter((s) => s.status === status)
-        : serialized;
-      const paged = needsInMemoryStatusFilter(status)
-        ? filtered.slice(offset, offset + limit)
-        : filtered;
-
-      res.json(paged);
+      // A status that is not one of the four never matches anything.
+      res.json(status && !pageIds ? serialized.filter((s) => s.status === status) : serialized);
     })
   );
 
@@ -1074,6 +1106,14 @@ function collapseOwners(memberships: OwnerMembership[], active?: boolean) {
   return shaped.filter((o) => o.active === active);
 }
 
+/** Newest proposal first. The id breaks ties so the window scan and the
+ *  page load below agree on the order. */
+const PROPOSALS_NEWEST_FIRST = [
+  { createdAtBlock: 'desc' },
+  { createdAt: 'desc' },
+  { id: 'desc' },
+] as const;
+
 /**
  * Maps a status filter to a Prisma `where` fragment where possible. Only
  * `executed` is expressible directly via the `executions` relation; `pending`,
@@ -1085,6 +1125,54 @@ function buildProposalStatusWhere(status: string | undefined) {
   return {};
 }
 
-function needsInMemoryStatusFilter(status: string | undefined): boolean {
+/** The statuses only `deriveStatus` can tell apart. */
+type DerivedStatus = 'pending' | 'expired' | 'invalidated';
+
+function needsInMemoryStatusFilter(status: string | undefined): status is DerivedStatus {
   return status === 'pending' || status === 'expired' || status === 'invalidated';
+}
+
+/**
+ * Picks the ids of the proposals on one page of a derived-status listing.
+ * Reads only the columns the status needs for the contract's newest
+ * `DERIVED_STATUS_SCAN_LIMIT` proposals, derives each status exactly as the
+ * serializer does, and cuts the page from the matches, so the receivers and
+ * counts are loaded for the page alone. Ids come back newest first.
+ */
+async function selectProposalIdsByDerivedStatus(
+  contractId: number,
+  status: DerivedStatus,
+  latestSlot: number,
+  parentState: ContractState | null,
+  limit: number,
+  offset: number,
+): Promise<number[]> {
+  const candidates = await prisma.proposal.findMany({
+    where: { contractId },
+    select: {
+      id: true,
+      nonce: true,
+      configNonce: true,
+      expirySlot: true,
+      destination: true,
+      txType: true,
+      childAccount: true,
+      executions: { select: { id: true }, take: 1 },
+    },
+    orderBy: [...PROPOSALS_NEWEST_FIRST],
+    take: DERIVED_STATUS_SCAN_LIMIT,
+  });
+  const childStateByAddress = await buildChildStateMap(candidates);
+
+  const matching: number[] = [];
+  for (const candidate of candidates) {
+    const childState = candidate.childAccount
+      ? childStateByAddress.get(candidate.childAccount) ?? null
+      : null;
+    const invalidReason = deriveInvalidReason(candidate, parentState, childState);
+    const derived = deriveStatus(candidate, candidate.executions.length > 0, latestSlot, invalidReason);
+    if (derived === status) matching.push(candidate.id);
+    if (matching.length === offset + limit) break;
+  }
+  return matching.slice(offset);
 }
