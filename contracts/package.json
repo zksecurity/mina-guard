@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Multisig on Mina, with o1js",
   "author": "",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": [
     "mina-zkapp",
     "mina-zk-app",

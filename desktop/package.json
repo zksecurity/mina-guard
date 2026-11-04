@@ -2,6 +2,7 @@
   "name": "desktop",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "MinaGuard desktop app — local Electron wrapper around the MinaGuard UI and indexer.",
   "author": "zkSecurity <hello@zksecurity.xyz>",
   "homepage": "https://github.com/zksecurity/mina-guard",
