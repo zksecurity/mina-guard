@@ -6,14 +6,13 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: e2e-runner-${{ github.ref }}
+  group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   e2e:
     timeout-minutes: 60
-    # GitHub-hosted runner: a fresh VM per job, so no host-wide lock is
-    # needed and untrusted PR code never touches a persistent box.
+    # GitHub-hosted runner: a fresh VM per job.
     runs-on: ubuntu-latest
 
     steps:
@@ -74,7 +73,7 @@ jobs:
           CI: true
           TMPDIR: ${{ github.workspace }}/.tmp
           # Point the harness at the isolated host ports published by
-          # docker-compose.e2e-ci.yml (1xxxx range avoids runner collisions).
+          # docker-compose.e2e-ci.yml (1xxxx range, see that file).
           E2E_MINA_ENDPOINT: http://127.0.0.1:18080/graphql
           E2E_ARCHIVE_ENDPOINT: http://127.0.0.1:18282
           E2E_ACCOUNT_MANAGER: http://127.0.0.1:18181
