@@ -31,7 +31,7 @@ import {
 
   TxType,
 } from 'contracts';
-import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig, assertBundleMemo, resolveBundleFee } from '../build-tx.ts';
+import { signFeePayer, decodeTxMemo, countNewReceiverAccounts, buildTransferReceivers, EMPTY_PUBKEY_B58, assertBundleNetwork, assertExecutableAddOwnerData, requireTxType, canonicalizeBundleTxType, deployTargetFromSnapshot, assertCreateChildBundleConfig, assertCreateChildProposeConfig, countExecuteNewAccounts, assertBundleMemo, resolveBundleFee } from '../build-tx.ts';
 import { escapeTerminalText } from '../terminal-safe.ts';
 import { renderBundleSummary } from '../summary.ts';
 
@@ -398,52 +398,88 @@ describe('offline-cli', () => {
     expect(escapeTerminalText('rent ✓ ünïcode')).toBe('rent ✓ ünïcode');
   });
 
-  it('rejects createChild propose without childPrivateKey', async () => {
-    const bundlePath = join(tmpDir, 'create-child.json');
-    writeFileSync(bundlePath, JSON.stringify({
-      version: 3,
-      action: 'propose',
-      minaNetwork: 'testnet',
-      contractAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
-      feePayerAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG', fee: 100_000_000,
-      accounts: {},
-      events: [],
-      input: { txType: 'createChild', nonce: 1 },
-      configNonce: 0,
-      networkId: '1',
-    }));
-    const key = PrivateKey.random().toBase58();
-    const result = await runCLI(bundlePath, key);
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain('childPrivateKey');
-  }, 30_000);
+  describe('createChild propose config', () => {
+    // The UI hashes the owners in base58 order (computeCreateChildConfigHash),
+    // and handlePropose reserves them in that order, so the check must too.
+    const ownerKeys = [PrivateKey.random().toPublicKey(), PrivateKey.random().toPublicKey()];
+    const sortedStore = new OwnerStore();
+    for (const owner of ownerKeys) sortedStore.addSorted(owner);
+    const owners = ownerKeys.map((owner) => owner.toBase58());
+    const sortedOwners = sortedStore.owners.map((owner) => owner.toBase58());
+    const configHash = childConfigHash(sortedStore.getCommitment(), Field(1), Field(2)).toString();
+    const CHILD = 'B62qkYgXmsk3R65YGNG41Zqu61hf9X1qBktDPzZkkthkSnukbXLPCAY';
+    const bundle = (input: Record<string, unknown> = {}) => ({
+      version: 3, action: 'propose', minaNetwork: 'testnet', contractAddress: EMPTY_PUBKEY_B58,
+      feePayerAddress: EMPTY_PUBKEY_B58, fee: 100_000_000, accounts: {}, events: [], configNonce: 0,
+      input: {
+        txType: 'createChild', nonce: 0, childAccount: CHILD, createChildConfigHash: configHash,
+        childOwners: owners, childThreshold: 1, ...input,
+      },
+    }) as any;
 
-  it('aborts without touching the key when there is no terminal and no --yes', async () => {
-    // Same bundle as the case above, which with MINA_GUARD_ASSUME_YES gets far
-    // enough into signing to fail on the missing child key. Without it, the
-    // confirmation gate must stop it first: a run with no terminal attached is
-    // not consent, and nothing may be signed.
-    const bundlePath = join(tmpDir, 'no-tty-abort.json');
-    writeFileSync(bundlePath, JSON.stringify({
-      version: 3,
-      action: 'propose',
-      minaNetwork: 'testnet',
-      contractAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
-      feePayerAddress: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG', fee: 100_000_000,
-      accounts: {},
-      events: [],
-      input: { txType: 'createChild', nonce: 1 },
-      configNonce: 0,
-      networkId: '1',
-    }));
-    const key = PrivateKey.random().toBase58();
-    const result = await runCLI(bundlePath, key, { assumeYes: false });
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain('No terminal available to confirm');
-    // Stopped before any key use — never reached the child-key check.
-    expect(result.stderr).not.toContain('childPrivateKey');
-    expect(result.stdout).toBe('');
-  }, 30_000);
+    it('accepts owners and threshold that hash to the bundled config hash, in any listed order', () => {
+      expect(assertCreateChildProposeConfig(bundle())).toEqual({ owners, threshold: 1 });
+      expect(assertCreateChildProposeConfig(bundle({ childOwners: [...owners].reverse() })))
+        .toEqual({ owners: [...owners].reverse(), threshold: 1 });
+      expect(assertCreateChildProposeConfig(bundle({ childOwners: sortedOwners }))).toEqual({ owners: sortedOwners, threshold: 1 });
+      expect(assertCreateChildProposeConfig(bundle({ txType: 'transfer', receivers: [] }))).toBeNull();
+    });
+
+    it('rejects a missing, malformed or swapped config', () => {
+      const check = (input: Record<string, unknown>) => () => assertCreateChildProposeConfig(bundle(input));
+      expect(check({ childOwners: undefined })).toThrow('missing the SubVault owner list');
+      expect(check({ childOwners: [] })).toThrow('missing the SubVault owner list');
+      expect(check({ childThreshold: 0 })).toThrow('invalid SubVault threshold');
+      expect(check({ childThreshold: 3 })).toThrow('invalid SubVault threshold');
+      expect(check({ childOwners: [owners[0], 'not-a-key'] })).toThrow('invalid SubVault owner address');
+      expect(check({ childOwners: [owners[0], EMPTY_PUBKEY_B58] })).toThrow('invalid SubVault owner address');
+      expect(check({ createChildConfigHash: undefined })).toThrow('missing createChildConfigHash');
+      expect(check({ createChildConfigHash: '' })).toThrow('missing createChildConfigHash');
+      // The bundled hash commits to threshold 1 over these two owners.
+      expect(check({ childThreshold: 2 })).toThrow('SubVault config mismatch');
+      expect(check({ childOwners: [owners[0]] })).toThrow('SubVault config mismatch');
+      expect(check({ createChildConfigHash: '5' })).toThrow('SubVault config mismatch');
+    });
+
+    it('refuses a swapped config hash before rendering a summary or signing', async () => {
+      // The owners and threshold shown would be fine, but the proposal would
+      // sign a different configuration: refuse before the operator sees either.
+      const bundlePath = join(tmpDir, 'create-child-swapped-hash.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle({ createChildConfigHash: '5', childPrivateKey: PrivateKey.random().toBase58() })));
+      const result = await runCLI(bundlePath, PrivateKey.random().toBase58());
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('SubVault config mismatch');
+      expect(result.stderr).not.toContain('====');
+      expect(result.stdout).toBe('');
+    }, 30_000);
+
+    it('rejects createChild propose without childPrivateKey', async () => {
+      const bundlePath = join(tmpDir, 'create-child.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle({ nonce: 1 })));
+      const key = PrivateKey.random().toBase58();
+      const result = await runCLI(bundlePath, key);
+      expect(result.code).not.toBe(0);
+      // The config check passed and the summary was shown; the builder stopped on the key.
+      expect(result.stderr).toContain('====');
+      expect(result.stderr).toContain('childPrivateKey');
+    }, 30_000);
+
+    it('aborts without touching the key when there is no terminal and no --yes', async () => {
+      // Same bundle as the case above, which with MINA_GUARD_ASSUME_YES gets far
+      // enough into signing to fail on the missing child key. Without it, the
+      // confirmation gate must stop it first: a run with no terminal attached is
+      // not consent, and nothing may be signed.
+      const bundlePath = join(tmpDir, 'no-tty-abort.json');
+      writeFileSync(bundlePath, JSON.stringify(bundle({ nonce: 1 })));
+      const key = PrivateKey.random().toBase58();
+      const result = await runCLI(bundlePath, key, { assumeYes: false });
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('No terminal available to confirm');
+      // Stopped before any key use: never reached the child-key check.
+      expect(result.stderr).not.toContain('childPrivateKey');
+      expect(result.stdout).toBe('');
+    }, 30_000);
+  });
 
   // -- Store rebuilding (in-process, uses internal logic) --
 
@@ -604,6 +640,46 @@ describe('offline-cli', () => {
       const count = countNewReceiverAccounts(canonical, () => false);
       expect(count).toBe(MAX_RECEIVERS);
       expect(count).toBeLessThanOrEqual(MAX_RECEIVERS);
+    });
+  });
+
+  describe('countExecuteNewAccounts', () => {
+    const addr = () => PrivateKey.random().toPublicKey().toBase58();
+    const existing = addr();
+    const fresh = addr();
+    const rows = [{ address: existing, amount: '1000000000' }, { address: fresh, amount: '1000000000' }];
+    const execute = (overrides: Record<string, unknown> = {}) => ({
+      proposal: { txType: 'transfer', receivers: rows },
+      receiverAccountExists: { [existing]: true },
+      ...overrides,
+    }) as any;
+
+    it('counts the hash-bound receivers the bundle does not mark as existing', () => {
+      expect(countExecuteNewAccounts(execute())).toBe(1);
+      expect(countExecuteNewAccounts(execute({ receiverAccountExists: { [existing]: true, [fresh]: true } }))).toBe(0);
+      // A missing map, a missing entry or a non-true value all mean the executor funds creation.
+      expect(countExecuteNewAccounts(execute({ receiverAccountExists: undefined }))).toBe(2);
+      expect(countExecuteNewAccounts(execute({ receiverAccountExists: {} }))).toBe(2);
+      expect(countExecuteNewAccounts(execute({ receiverAccountExists: { [existing]: 'true', [fresh]: 1 } }))).toBe(2);
+      expect(countExecuteNewAccounts(execute({ receiverAccountExists: 'yes' }))).toBe(2);
+    });
+
+    it('ignores map entries for addresses outside the signed receivers, padding rows and extra rows', () => {
+      const stranger = addr();
+      expect(countExecuteNewAccounts(execute({ receiverAccountExists: { [stranger]: false, [existing]: true } }))).toBe(1);
+      const padded = [...rows, { address: EMPTY_PUBKEY_B58, amount: '0' }];
+      expect(countExecuteNewAccounts(execute({ proposal: { txType: 'transfer', receivers: padded } }))).toBe(1);
+      const extra = Array.from({ length: MAX_RECEIVERS + 5 }, () => ({ address: addr(), amount: '1' }));
+      expect(countExecuteNewAccounts(execute({ proposal: { txType: 'transfer', receivers: extra }, receiverAccountExists: {} })))
+        .toBe(MAX_RECEIVERS);
+    });
+
+    it('is zero for every type other than an ordinary transfer', () => {
+      for (const txType of ['allocateChild', 'addOwner', 'setDelegate', '6']) {
+        expect(countExecuteNewAccounts(execute({ proposal: { txType, receivers: rows }, receiverAccountExists: {} }))).toBe(0);
+      }
+      // the numeric transfer code counts like the name
+      expect(countExecuteNewAccounts(execute({ proposal: { txType: '0', receivers: rows } }))).toBe(1);
     });
   });
 
@@ -893,6 +969,61 @@ describe('offline-cli', () => {
       expect(out).toContain('Total           9 MINA');
       expect(out).not.toContain(`${FEEPAYER}  →`);
     });
+
+    it('states the account-creation charge of an execute before confirmation, from the signed receivers only', () => {
+      // Real keys: the count parses the receivers the way the builder does.
+      const known = PrivateKey.random().toPublicKey().toBase58();
+      const fresh = PrivateKey.random().toPublicKey().toBase58();
+      const stranger = PrivateKey.random().toPublicKey().toBase58();
+      const receivers = [
+        { address: known, amount: '1000000000' },
+        { address: fresh, amount: '1000000000' },
+        { address: EMPTY_PUBKEY_B58, amount: '0' },
+      ];
+      const execute = (receiverAccountExists: unknown, txType = 'transfer') => ({
+        ...base(),
+        action: 'execute' as const,
+        minaNetwork: 'testnet' as const,
+        proposal: { proposalHash: '42', txType, data: '0', nonce: '1', memo: '', memoHash: memoToField('').toString(), receivers },
+        receiverAccountExists,
+      });
+      expect(renderBundleSummary(execute({ [known]: true }) as any))
+        .toContain('New accounts    1 new receiver account(s), 1 MINA charged to the fee payer in addition to the fee');
+      expect(renderBundleSummary(execute({}) as any))
+        .toContain('New accounts    2 new receiver account(s), 2 MINA charged to the fee payer in addition to the fee');
+      expect(renderBundleSummary(execute({ [known]: true, [fresh]: true }) as any))
+        .toContain('New accounts    0 new receiver account(s), no account creation fee');
+      // An entry for an address the proposal does not pay cannot change the count.
+      expect(renderBundleSummary(execute({ [known]: true, [fresh]: true, [stranger]: false }) as any))
+        .toContain('0 new receiver account(s)');
+      // Allocation never creates accounts; approvals and proposals charge none.
+      expect(renderBundleSummary(execute({}, 'allocateChild') as any)).toContain('0 new receiver account(s)');
+      const { receiverAccountExists: _unused, ...approve } = execute({});
+      expect(renderBundleSummary({ ...approve, action: 'approve' } as any)).not.toContain('New accounts');
+    });
+
+    it('prints the account-creation charge to the operator before the confirmation gate', async () => {
+      const known = PrivateKey.random().toPublicKey().toBase58();
+      const fresh = PrivateKey.random().toPublicKey().toBase58();
+      const bundlePath = join(tmpDir, 'execute-creation-fee.json');
+      writeFileSync(bundlePath, JSON.stringify({
+        ...base(),
+        action: 'execute',
+        minaNetwork: 'testnet',
+        proposal: {
+          proposalHash: '42', txType: 'transfer', data: '0', nonce: '1', memo: '', memoHash: memoToField('').toString(),
+          receivers: [{ address: known, amount: '1000000000' }, { address: fresh, amount: '1000000000' }],
+        },
+        receiverAccountExists: { [known]: true },
+      }));
+      const result = await runCLI(bundlePath, PrivateKey.random().toBase58(), { assumeYes: false });
+      expect(result.code).not.toBe(0);
+      const summaryEnd = result.stderr.indexOf('No terminal available to confirm');
+      expect(summaryEnd).toBeGreaterThan(0);
+      expect(result.stderr.slice(0, summaryEnd))
+        .toContain('1 new receiver account(s), 1 MINA charged to the fee payer in addition to the fee');
+      expect(result.stdout).toBe('');
+    }, 60_000);
 
     it('recomputes the memo commitment instead of trusting the bundle text', () => {
       const matches = renderBundleSummary(memoApprove('rent', memoToField('rent').toString()) as any);

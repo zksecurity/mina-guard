@@ -48,6 +48,14 @@ nodeFs.readFileSync = function (p, ...args) {
 // thread gets a fresh evaluation). Write a CJS stub to a real temp-dir path
 // that calls this thunk, and redirect Module._resolveFilename to that stub.
 // The thunk is stored in global so the real-filesystem stub can reach it.
+//
+// The stub is code this process loads, so its path must not be one another
+// local user can predict and plant: a fixed name in the shared temp directory
+// would let them pre-create or replace the file with their own module. Each
+// thread (the main thread and every o1js worker, which re-runs this module)
+// therefore gets a fresh private directory from mkdtemp (random suffix, mode
+// 0700), the stub is created with O_EXCL so an existing file fails instead of
+// being reused, and the directory is removed when the thread exits.
 
 // Detect compiled binary: in $bunfs every bundled module has the same URL.
 const _isBunBinary = import.meta.url.startsWith("file:///$bunfs/");
@@ -59,9 +67,26 @@ global.__kimchiRequire = function () {
 };
 
 if (_isBunBinary) {
-  const _kimchiStubPath =
-    require("os").tmpdir() + "/__mina_guard_kimchi_wasm.cjs";
-  nodeFs.writeFileSync(_kimchiStubPath, "module.exports = global.__kimchiRequire();\n");
+  const _path = require("path");
+  // mkdtemp creates the directory with mode 0700; the chmod makes that explicit
+  // where an unusual umask or platform default could widen it.
+  const _kimchiStubDir = nodeFs.mkdtempSync(
+    _path.join(require("os").tmpdir(), "mina-guard-cli-"),
+  );
+  nodeFs.chmodSync(_kimchiStubDir, 0o700);
+  const _kimchiStubPath = _path.join(_kimchiStubDir, "kimchi_wasm.cjs");
+  nodeFs.writeFileSync(
+    _kimchiStubPath,
+    "module.exports = global.__kimchiRequire();\n",
+    { flag: "wx", mode: 0o600 },
+  );
+  process.on("exit", () => {
+    try {
+      nodeFs.rmSync(_kimchiStubDir, { recursive: true, force: true });
+    } catch {
+      // Best effort: a leftover private directory holds only this stub.
+    }
+  });
 
   const _nodeModule = require("module");
   const _origResolveFilename = _nodeModule._resolveFilename;
