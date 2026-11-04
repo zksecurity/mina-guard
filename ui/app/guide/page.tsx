@@ -572,7 +572,7 @@ A multi-sig wallet, <span className="text-safe-green">enforced on-chain.</span>
                 <p>On the online machine, connect a wallet and select the vault to open the transaction page. On the Offline tab, enter the <Tok>Signer Address (Fee Payer)</Tok>: the public address of the key held on the offline machine. The connected wallet does not sign the offline request.</p>
               </Step>
               <Step n={2} title="Get the CLI">
-                <p>Under <Tok>Instructions</Tok>, download <Tok>mina-guard-cli</Tok> for your platform and verify it against the published <Tok>SHA256SUMS</Tok>.</p>
+                <p>Under <Tok>Instructions</Tok>, download <Tok>mina-guard-cli</Tok> for your platform and verify it against the published <Tok>SHA256SUMS</Tok>. With the GitHub CLI you can also check its signed build provenance: <Tok>gh attestation verify mina-guard-cli-&lt;platform&gt; --repo zksecurity/mina-guard</Tok>.</p>
               </Step>
               <Step n={3} title="Export the bundle">
                 <p>Select <Tok>Export Bundle</Tok>. The app downloads a JSON file describing exactly what will be signed, and warns of any fee-payer balance or account-creation costs.</p>
