@@ -236,13 +236,14 @@ Execute handling mirrors the worker per type: account-creation funding is
 counted **from the hash-bound `proposalStruct.receivers`**, never the raw
 bundle array; CREATE_CHILD executes re-derive the child config hash against
 `proposal.data` and refuse an already-initialized child. The broadcast memo
-on executes is the bundle's `proposal.memo`, and the CLI refuses an execute
-bundle unless that text hashes to the approved `proposal.memoHash`
-(`assertExecuteBundleMemo`; a missing memo counts as the empty memo). The check
-runs before the summary is shown and again inside `handleExecute`, so a
-tampered online backend cannot swap the memo of an approved proposal. The
-online UI applies the same rule before it exports an execute bundle and in its
-own execute paths (see the UI guide).
+on executes is the bundle's `proposal.memo`, and the CLI refuses an approve or
+execute bundle unless that text hashes to the proposal's `proposal.memoHash`
+(`assertBundleMemo`; a missing memo counts as the empty memo). The check runs
+before the summary is shown and again inside `handleApprove` and
+`handleExecute`, so a tampered online backend can neither collect approvals on
+a memo other than the committed one nor swap the memo of an approved proposal.
+The online UI applies the same rule before it exports approve and execute
+bundles and in its own approve and execute paths (see the UI guide).
 
 Child reservation enforces the same governance bounds as initialization and rejects
 self-parenting or a parent without initialized root state. The parent's owners
@@ -438,8 +439,9 @@ action differs, and the distinction is the heart of this design:
   proposal that exists on-chain (`Proposal not found` otherwise). The summary
   renders the rebuilt proposal's fields for out-of-band comparison; its Memo
   line is the bundle's advisory plaintext, not the hash-covered `memoHash`,
-  so a Memo check line recomputes `memoToField` from that text and says
-  whether it matches `memoHash` (see focus point 2). A CREATE_CHILD approve
+  so the CLI refuses the bundle before the summary unless `memoToField` of
+  that text equals `memoHash`, and a Memo check line restates the result
+  (see focus point 2). A CREATE_CHILD approve
   bundle also carries the SubVault owners and threshold; the CLI recomputes
   their commitment and config hash and refuses the bundle unless it equals
   `proposal.data`, so the summary shows the configuration the approval
@@ -470,9 +472,15 @@ come from a **GitHub release** of this repo pinned by
 `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL` (see Build & distribution), so
 provenance rests with the release pipeline (maintainers + GitHub Actions)
 rather than a backend operator, as in the earlier build-on-demand design.
-`SHA256SUMS` ships in the same release as the binaries, and the release's
-`minaguard-vk-hash.txt` identifies the deployment its proofs target. The key
-is read from the `MINA_PRIVATE_KEY` environment variable.
+`SHA256SUMS` ships in the same release as the binaries, each release asset
+carries a signed build-provenance attestation that binds it to this
+repository, the release workflow and the tagged commit (verify with
+`gh attestation verify <file> --repo zksecurity/mina-guard --signer-workflow
+zksecurity/mina-guard/.github/workflows/offline-cli-release.yml --source-ref
+refs/tags/<release tag>`; `--repo` alone would accept any attestation this
+repository ever produced), and the release's `minaguard-vk-hash.txt`
+identifies the deployment its proofs target. The key is read from the
+`MINA_PRIVATE_KEY` environment variable.
 
 #### Suggested focus points
 
@@ -626,8 +634,19 @@ on a three-leg runner matrix (each leg smoke-tests its own-arch binary,
 exercising module init and the embedded WASM), signs the macOS ones, and an
 aggregation job attaches one canonical `SHA256SUMS` plus
 `minaguard-vk-hash.txt` (a copy of the CI-generated `contracts/.vk-hash` for
-the tagged source, one hash per network), publishing everything as a **draft** release for manual review
-(`workflow_dispatch` = dry run, CI artifacts only). The UI's download panel
+the tagged source, one hash per network), signs a build-provenance
+attestation for every asset (`actions/attest-build-provenance`; verify with
+`gh attestation verify <file> --repo zksecurity/mina-guard --signer-workflow
+zksecurity/mina-guard/.github/workflows/offline-cli-release.yml --source-ref
+refs/tags/<release tag>`, which pins the signing workflow and the tag rather
+than accepting any attestation from the repository), and publishes
+everything as a **draft** release for manual review (`workflow_dispatch` =
+dry run, CI artifacts only). `SHA256SUMS` alone only shows a download is the
+file the job had, since the job writes it; the attestation is what ties the
+file to the tagged source and this workflow. The workflow pins every action
+to a commit SHA, installs dependencies with `--ignore-scripts`, and grants
+write permissions (release, OIDC token, attestations) to the publishing job
+only. The UI's download panel
 links the binary and `SHA256SUMS` of the release pinned by
 `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`. There is deliberately **no default
 URL**: `releases/latest` resolves repo-wide (the desktop app releases through

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useTermsAccepted } from '@/hooks/useTermsAccepted';
 
 const DISMISSED_KEY = 'minaguard:beta-notice-dismissed';
 
@@ -15,9 +16,14 @@ export function BetaRiskMessage() {
   );
 }
 
-/** Product status is visible on every network, in the app and standalone guide. */
-export default function BetaNotice({ showGuideLink = true }: { showGuideLink?: boolean }) {
+/**
+ * Product status is visible on every network, in the app and standalone guide.
+ * In the app shell it gives way to the header's BETA badge once the visitor has
+ * accepted the terms and beta risk before connecting.
+ */
+export default function BetaNotice({ showGuideLink = true, hideOnceAccepted = false }: { showGuideLink?: boolean; hideOnceAccepted?: boolean }) {
   const [dismissed, setDismissed] = useState(false);
+  const accepted = useTermsAccepted();
 
   useEffect(() => {
     try {
@@ -36,7 +42,7 @@ export default function BetaNotice({ showGuideLink = true }: { showGuideLink?: b
     }
   };
 
-  if (dismissed) return null;
+  if (dismissed || (hideOnceAccepted && accepted)) return null;
 
   return (
     <aside

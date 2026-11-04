@@ -1,9 +1,13 @@
 import { expect, type Page } from '@playwright/test';
-import { MOCK_WALLET_SCRIPT } from '../wallet-mock';
+import { MOCK_WALLET_SCRIPT, TERMS_ACCEPTED_SCRIPT } from '../wallet-mock';
 import { WALLET } from './fixtures';
 
-/** Injects the mock wallet with the fixture user connected. Call before goto. */
+/**
+ * Injects the mock wallet with the fixture user connected, as a returning user
+ * who already accepted the terms. Call before goto.
+ */
 export async function connectWallet(page: Page, address: string = WALLET): Promise<void> {
+  await page.addInitScript(TERMS_ACCEPTED_SCRIPT);
   await page.addInitScript(MOCK_WALLET_SCRIPT);
   await page.addInitScript(`window.__testActiveAddress = ${JSON.stringify(address)};`);
 }
@@ -46,7 +50,6 @@ export async function openProposalForm(
 ): Promise<void> {
   await openVault(page, vault);
   await navigateTo(page, `/transactions/new?type=${type}`);
-  await page.getByRole('dialog', { name: 'Before you create a proposal' }).getByRole('button', { name: 'Continue' }).click();
 }
 
 /** Fills the recipients section via its Bulk mode (`address,amount` lines). */

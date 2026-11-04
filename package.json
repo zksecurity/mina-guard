@@ -1,6 +1,7 @@
 {
   "name": "mina-guard",
   "private": true,
+  "license": "MIT",
   "workspaces": [
     "contracts",
     "ui",

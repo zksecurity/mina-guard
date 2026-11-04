@@ -1,0 +1,6 @@
+Contact: https://github.com/zksecurity/mina-guard/security/advisories/new
+Contact: mailto:hello@zksecurity.xyz
+Expires: 2027-11-03T00:00:00.000Z
+Policy: https://github.com/zksecurity/mina-guard/blob/main/SECURITY.md
+Canonical: https://app.minaguard.com/.well-known/security.txt
+Preferred-Languages: en
