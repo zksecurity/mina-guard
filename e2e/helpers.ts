@@ -166,9 +166,10 @@ export async function waitForIndexer(
     dots++;
     if (dots % 5 === 0) {
       const status = await getIndexerStatus();
-      const err = status?.lastError;
+      // The API reports only when a tick failed; the error text is in the backend log.
+      const err = status?.lastRunFailed ? `tick failed at ${status.lastErrorAt}` : null;
       if (err && err !== lastError) {
-        log(`  ⚠ Indexer error: ${err}`);
+        log(`  ⚠ Indexer error: ${err} (see the backend log)`);
         lastError = err;
       }
       log(`  Still waiting... (${((Date.now() - start) / 1000).toFixed(0)}s) [height=${status?.indexedHeight ?? '?'}]`);

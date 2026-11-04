@@ -134,7 +134,9 @@ export interface IndexerStatus {
   lastSuccessfulRunAt: string | null;
   latestChainHeight: number;
   indexedHeight: number;
-  lastError: string | null;
+  /** Whether the last indexer tick failed. The error itself is only in the backend log. */
+  lastRunFailed: boolean;
+  lastErrorAt: string | null;
   discoveredContracts: number;
   indexerMode: 'full' | 'lite';
 }

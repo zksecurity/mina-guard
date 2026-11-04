@@ -72,11 +72,33 @@ export interface IndexerStatus {
   /** Current `globalSlotSinceGenesis` derived from wall-clock + genesis constants. */
   latestSlot: number;
   indexedHeight: number;
+  /** Message of the error that failed the last tick, or null after a
+   *  successful tick. It can name database hosts, connection strings or file
+   *  paths, so the status route publishes only `lastErrorAt`; the message is
+   *  logged by the tick. */
   lastError: string | null;
+  /** When `lastError` was recorded; null whenever `lastError` is. */
+  lastErrorAt: string | null;
   /** Latest recovery warning; retained across successful ticks until restart. */
   lastWarning: string | null;
   discoveredContracts: number;
   indexerMode: 'full' | 'lite';
+}
+
+/** The status served by `GET /api/indexer/status`: everything an operator
+ *  needs to see whether the indexer runs, where its cursor is and whether its
+ *  last tick failed, without the raw error text. */
+export type PublicIndexerStatus = Omit<IndexerStatus, 'lastError'> & {
+  lastRunFailed: boolean;
+};
+
+/** Projects the in-memory status to the public shape. `lastError` is replaced
+ *  by `lastRunFailed`; `lastErrorAt` says when the failure happened. */
+export function toPublicIndexerStatus(
+  status: Omit<IndexerStatus, 'indexerMode'>,
+): Omit<PublicIndexerStatus, 'indexerMode'> {
+  const { lastError, ...rest } = status;
+  return { ...rest, lastErrorAt: status.lastErrorAt ?? null, lastRunFailed: lastError !== null };
 }
 
 /** Fields describing a single ContractConfig row — subset used when merging deltas. */
@@ -109,6 +131,7 @@ export class MinaGuardIndexer {
     latestSlot: 0,
     indexedHeight: 0,
     lastError: null,
+    lastErrorAt: null,
     lastWarning: null,
     discoveredContracts: 0,
   };
@@ -220,6 +243,7 @@ export class MinaGuardIndexer {
         this.status.indexedHeight = rolledBackTo;
         this.status.lastSuccessfulRunAt = new Date().toISOString();
         this.status.lastError = null;
+        this.status.lastErrorAt = null;
         return;
       }
 
@@ -326,6 +350,7 @@ export class MinaGuardIndexer {
 
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
+      this.status.lastErrorAt = null;
     } catch (error) {
       // Log the raw thrown value before stringifying: o1js and some driver
       // paths throw non-Error values (plain strings/objects), which otherwise
@@ -334,6 +359,7 @@ export class MinaGuardIndexer {
       this.status.lastError = error instanceof Error
         ? error.message
         : `Non-Error thrown by indexer tick: ${describeThrown(error)}`;
+      this.status.lastErrorAt = new Date().toISOString();
     } finally {
       this.tickInProgress = false;
     }

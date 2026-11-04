@@ -1,7 +1,8 @@
 /**
  * GET /api/tx-status scans the Mina node's recent blocks for a transaction
  * hash. Anyone can call it, so it must refuse anything that is not a
- * transaction hash before it asks the node.
+ * transaction hash before it asks the node, and clients polling the same
+ * hash must share one node lookup per cache TTL.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test';
 import express from 'express';
@@ -13,6 +14,14 @@ import { createApiRouter } from '../routes.js';
 
 const config = { minaEndpoint: 'http://node.invalid', minaFallbackEndpoint: null } as unknown as BackendConfig;
 const TX = '5JtszX5pwB9SMZvwE16ZUxyWJAKLDfgGVzpAgpRHeFC3NDUC8FwQ';
+// The router remembers answers for a few seconds, so each test that expects
+// the node to be asked uses a hash no earlier test has used.
+let nextHash = 1;
+function freshHash(): string {
+  // Base58 has no zero, so the counter is written in digits 1 to 9.
+  const suffix = (nextHash++).toString(9).replace(/\d/g, (d) => String(Number(d) + 1)).padStart(3, '1');
+  return `${TX.slice(0, TX.length - suffix.length)}${suffix}`;
+}
 
 let server: Server;
 let baseUrl = '';
@@ -40,8 +49,8 @@ afterAll(() => {
   server.close();
 });
 
-function stubStatus() {
-  return spyOn(minaClient, 'fetchZkappTxStatus').mockResolvedValue({ status: 'included' });
+function stubStatus(status: 'pending' | 'included' | 'failed' | 'unknown' = 'included') {
+  return spyOn(minaClient, 'fetchZkappTxStatus').mockResolvedValue({ status });
 }
 
 async function get(query: string) {
@@ -52,15 +61,36 @@ async function get(query: string) {
 describe('GET /api/tx-status', () => {
   test('looks up a transaction hash', async () => {
     const lookup = stubStatus();
-    expect(await get(`?hash=${TX}`)).toEqual({ status: 200, body: { status: 'included' } });
+    const hash = freshHash();
+    expect(await get(`?hash=${hash}`)).toEqual({ status: 200, body: { status: 'included' } });
     expect(lookup).toHaveBeenCalledTimes(1);
-    expect(lookup.mock.calls[0][1]).toBe(TX);
+    expect(lookup.mock.calls[0][1]).toBe(hash);
   });
 
   test('ignores spaces around the hash', async () => {
     const lookup = stubStatus();
-    expect((await get(`?hash=%20${TX}%20`)).status).toBe(200);
-    expect(lookup.mock.calls[0][1]).toBe(TX);
+    const hash = freshHash();
+    expect((await get(`?hash=%20${hash}%20`)).status).toBe(200);
+    expect(lookup.mock.calls[0][1]).toBe(hash);
+  });
+
+  test('asks the node once for a hash polled repeatedly, and once per hash', async () => {
+    const lookup = stubStatus('pending');
+    const first = freshHash();
+    const second = freshHash();
+    const answers = await Promise.all([first, first, second, first].map((hash) => get(`?hash=${hash}`)));
+    expect(answers.map((answer) => answer.body)).toEqual(Array(4).fill({ status: 'pending' }));
+    expect(await get(`?hash=${second}`)).toEqual({ status: 200, body: { status: 'pending' } });
+    expect(lookup.mock.calls.map((call) => call[1])).toEqual([first, second]);
+  });
+
+  test('does not remember a failed lookup', async () => {
+    const lookup = stubStatus('unknown');
+    const hash = freshHash();
+    expect(await get(`?hash=${hash}`)).toEqual({ status: 200, body: { status: 'unknown' } });
+    lookup.mockResolvedValue({ status: 'failed', reason: 'Cancelled' });
+    expect(await get(`?hash=${hash}`)).toEqual({ status: 200, body: { status: 'failed', reason: 'Cancelled' } });
+    expect(lookup).toHaveBeenCalledTimes(2);
   });
 
   test('refuses anything that is not a transaction hash, without asking the node', async () => {

@@ -542,9 +542,9 @@ async function waitForIndexedContracts(previewBaseUrl: string, expected: Array<{
   const statusUrl = `${previewBaseUrl}/api/indexer/status`;
 
   await waitForCondition('indexer to discover fixture contracts', async () => {
-    const status = await fetchJson<{ discoveredContracts: number; lastError: string | null }>(statusUrl);
-    if (status.lastError) {
-      log(`Indexer status warning: ${status.lastError}`);
+    const status = await fetchJson<{ discoveredContracts: number; lastRunFailed?: boolean; lastErrorAt?: string | null }>(statusUrl);
+    if (status.lastRunFailed) {
+      log(`Indexer status warning: last run failed at ${status.lastErrorAt}; see the backend log`);
     }
 
     const contracts = await fetchJson<Array<{ address: string }>>(contractsUrl);
