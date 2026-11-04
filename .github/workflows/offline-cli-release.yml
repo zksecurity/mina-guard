@@ -32,8 +32,12 @@ concurrency:
   group: offline-cli-release-${{ github.ref }}
   cancel-in-progress: false
 
+# Read-only by default. Only the release job may write, and only what it
+# needs: the Release itself and the build-provenance attestations. Every
+# third-party action below is pinned to a commit SHA, not a tag, because a
+# moved tag would run someone else's code with these permissions.
 permissions:
-  contents: write # required to create the GitHub Release
+  contents: read
 
 # Exact Bun toolchain for every job here. Provenance of the CLI binary is the
 # whole point of this workflow (see header), so the compiler version must be
@@ -76,17 +80,19 @@ jobs:
       # between runs and make a rebuild of the same tag non-reproducible. The
       # release notes echo this version so the artifact records what built it.
       - name: Install Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Git checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # --frozen-lockfile pins bun.lock exactly for this signed release, bun
-      # does not freeze in CI by default.
+      # does not freeze in CI by default. --ignore-scripts keeps dependency
+      # lifecycle scripts from running inside the release build; nothing the
+      # CLI compiles needs them.
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build contracts
         run: bun run --filter contracts build
@@ -150,7 +156,7 @@ jobs:
           grep -q "Usage:" <<<"$out"
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: offline-cli-${{ matrix.os }}
           if-no-files-found: error
@@ -167,19 +173,23 @@ jobs:
     needs: [build, vk-hashes]
     timeout-minutes: 10
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the draft Release and upload its assets
+      id-token: write # sign the provenance attestations with this run's OIDC identity
+      attestations: write # store them on the repo for `gh attestation verify`
     steps:
       - name: Git checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Collect binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: offline-cli-*
           merge-multiple: true
           path: dist
 
       - name: Download VK manifest for this commit
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: minaguard-vk-manifest
           path: contracts
@@ -196,6 +206,21 @@ jobs:
           sha256sum mina-guard-cli-* minaguard-vk-hash.txt > SHA256SUMS
           cat SHA256SUMS
 
+      # SHA256SUMS only proves a download is the file this job had; it is
+      # written here, so a binary tampered with earlier in the run would get a
+      # matching checksum. The signed provenance attestation binds each file's
+      # digest to this repository, workflow, run and tagged commit. Verifiers
+      # must pin the signing workflow and the tag (the release notes below
+      # give the exact command): `--repo` alone accepts any attestation this
+      # repository ever produced, including other workflows' and older tags'.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/mina-guard-cli-*
+            dist/SHA256SUMS
+            dist/minaguard-vk-hash.txt
+
       # Record the exact toolchain in the release body: reproducing this binary
       # from source (the fallback trust story in docs/offline-audit-guide.md)
       # requires knowing which Bun compiled it. The VK hash was verified against
@@ -211,7 +236,13 @@ jobs:
             --notes "$(cat <<EOF
           Air-gapped signing CLI for MinaGuard. Usage and security model: \`docs/offline-audit-guide.md\`.
 
-          **Verify your download** against \`SHA256SUMS\` before moving it to the air-gapped machine.
+          **Verify your download** before moving it to the air-gapped machine. Check it against \`SHA256SUMS\`, then check its signed build provenance, pinned to this repository's release workflow and to this tag:
+
+          \`\`\`
+          gh attestation verify mina-guard-cli-<platform> --repo ${GITHUB_REPOSITORY} \\
+            --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/offline-cli-release.yml \\
+            --source-ref refs/tags/${GITHUB_REF_NAME}
+          \`\`\`
 
           **Circuit compatibility:** this binary inlines the MinaGuard circuit; it only produces valid proofs for contracts whose verification-key hash matches \`minaguard-vk-hash.txt\`.
 
