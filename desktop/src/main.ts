@@ -28,8 +28,8 @@ const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 // Defaults used only to pre-fill the first-run setup form. The app never runs
 // against these silently — the user must confirm (or override) them on first
 // launch, and the result is persisted to config.json.
-const DEFAULT_MINA_ENDPOINT = 'https://api.minascan.io/node/mainnet/v1/graphql';
-const DEFAULT_ARCHIVE_ENDPOINT = 'https://api.minascan.io/archive/mainnet/v1/graphql';
+const DEFAULT_MINA_ENDPOINT = 'https://app.minaguard.com/graphql';
+const DEFAULT_ARCHIVE_ENDPOINT = 'https://app.minaguard.com/archive';
 
 // All external resources (backend build output, UI build output) are
 // pre-staged inside desktop/packaging-stage/ by the `stage` npm script —
