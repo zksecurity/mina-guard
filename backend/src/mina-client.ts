@@ -672,7 +672,7 @@ const EVENTS_QUERY = `query VaultEvents($input: EventFilterOptionsInput!) {
 // Archive Node API silently shortens wider event ranges. Its default cap is
 // 10,000 blocks; keep each request below that and require a matching or higher
 // BLOCK_RANGE_SIZE on the configured archive endpoint.
-const EVENT_QUERY_BLOCK_SPAN = 5_000;
+export const EVENT_QUERY_BLOCK_SPAN = 5_000;
 
 /** Fetches a vault's raw events over an inclusive range, with authorization kind. */
 export async function fetchArchiveEventBlocks(

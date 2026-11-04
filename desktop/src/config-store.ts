@@ -112,6 +112,22 @@ async function probeGraphql(
   return json.data;
 }
 
+const NODE_PROBE_QUERY =
+  '{ networkID bestChain(maxLength: 1) { protocolState { consensusState { blockHeight } } } }';
+
+// Mina's finality depth. An archive further behind the node than this is
+// missing events the indexer needs, and returns them as an empty list rather
+// than an error, so vaults would never appear.
+const ARCHIVE_MAX_LAG_BLOCKS = 290;
+
+/** A non-negative block height from a GraphQL number or decimal string. */
+function parseHeight(raw: unknown): number | null {
+  const valid = typeof raw === 'number'
+    || (typeof raw === 'string' && /^(0|[1-9][0-9]*)$/.test(raw));
+  const height = Number(raw);
+  return valid && Number.isSafeInteger(height) && height >= 0 ? height : null;
+}
+
 /** Verifies the node network and the archive queries needed by the indexer.
  *  Callers must not persist endpoints when this check fails. */
 export async function verifyEndpoints(
@@ -119,7 +135,7 @@ export async function verifyEndpoints(
   archiveEndpoint: string,
 ): Promise<NetworkId> {
   const [minaData, archiveData] = await Promise.all([
-    probeGraphql('Mina endpoint', minaEndpoint, '{ networkID }'),
+    probeGraphql('Mina endpoint', minaEndpoint, NODE_PROBE_QUERY),
     probeGraphql('Archive endpoint', archiveEndpoint, ARCHIVE_PROBE_QUERY, {
       input: { address: ARCHIVE_PROBE_ADDRESS, tokenId: ARCHIVE_PROBE_TOKEN_ID, from: 0, to: 1 },
     }),
@@ -127,10 +143,8 @@ export async function verifyEndpoints(
   const maxHeight = isRecord(archiveData.networkState)
     ? archiveData.networkState.maxBlockHeight
     : null;
-  const rawHeight = isRecord(maxHeight) ? maxHeight.pendingMaxBlockHeight : null;
-  const validHeight = typeof rawHeight === 'number'
-    || (typeof rawHeight === 'string' && /^(0|[1-9][0-9]*)$/.test(rawHeight));
-  if (!validHeight || !Number.isSafeInteger(Number(rawHeight)) || Number(rawHeight) < 0) {
+  const archiveHeight = parseHeight(isRecord(maxHeight) ? maxHeight.pendingMaxBlockHeight : null);
+  if (archiveHeight === null) {
     throw new Error('Archive endpoint did not report a valid pending block height');
   }
   if (!Array.isArray(archiveData.events)) {
@@ -147,6 +161,19 @@ export async function verifyEndpoints(
       `Network mismatch: this is a ${BUILD_NETWORK_DOMAIN} build, but the node at ` +
       `${minaEndpoint} reports ${detected}. Point it at a ${BUILD_NETWORK_DOMAIN} node, ` +
       `or install the ${detected} build of MinaGuard.`,
+    );
+  }
+  const tip = Array.isArray(minaData.bestChain) ? minaData.bestChain.at(-1) : null;
+  const state = isRecord(tip) && isRecord(tip.protocolState) ? tip.protocolState.consensusState : null;
+  const nodeHeight = parseHeight(isRecord(state) ? state.blockHeight : null);
+  if (nodeHeight === null) {
+    throw new Error('Mina endpoint did not report its best chain height; is the node synced?');
+  }
+  if (nodeHeight - archiveHeight > ARCHIVE_MAX_LAG_BLOCKS) {
+    throw new Error(
+      `Archive endpoint is ${nodeHeight - archiveHeight} blocks behind the Mina node ` +
+      `(${archiveHeight} vs ${nodeHeight}), so recent vault activity would be missing. ` +
+      'Use an archive that is in sync with the node.',
     );
   }
   return detected;
