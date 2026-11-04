@@ -130,6 +130,8 @@ interface OfflineSigningFlowProps {
   action: OfflineAction;
   label: string;
   onBuildBundle: () => Promise<unknown>;
+  /** Called when a new export begins; an earlier export no longer applies. */
+  onExportStart?: () => void;
   onExported?: (filename: string, fee: number) => void;
 }
 
@@ -171,7 +173,7 @@ export function downloadOfflineBundle(action: OfflineAction, bundle: unknown): s
 }
 
 /** Builds and downloads one offline request, with its warnings and errors. */
-export function OfflineSigningFlow({ action, label, onBuildBundle, onExported }: OfflineSigningFlowProps) {
+export function OfflineSigningFlow({ action, label, onBuildBundle, onExportStart, onExported }: OfflineSigningFlowProps) {
   const [building, setBuilding] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -180,6 +182,7 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported }:
     setBuilding(true);
     setExportError(null);
     setWarnings([]);
+    onExportStart?.();
     try {
       const bundle = await withStoreRecovery(onBuildBundle, true);
       setWarnings(extractBundleWarnings(bundle));
@@ -303,24 +306,21 @@ interface OfflineSigningPanelProps {
 export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSigningPanelProps) {
   const [selected, setSelected] = useState<OfflineAction | null>(null);
   const [exports, setExports] = useState<Partial<Record<OfflineAction, { filename: string; fee: number }>>>({});
-  // Step 2 signs the most recent download, which a stale-response rebuild can
-  // make an action other than the one selected.
-  const [latest, setLatest] = useState<OfflineAction | null>(null);
   const [platform, setPlatform] = useState<PlatformInfo>(() => getPlatformInfo('macos-arm64'));
   const [broadcast, setBroadcast] = useState(false);
   useEffect(() => { setPlatform(detectPlatform()); }, []);
 
   const current = actions.find((a) => a.action === selected) ?? actions.at(-1);
   if (!current) return null;
+  // Steps 1 and 2 always describe the same request: the selected action's.
   const exported = exports[current.action];
-  const toSign = latest ? exports[latest] : undefined;
   let network = 'mainnet';
   try { network = getMinaGuardConfig().networkId; } catch { /* The page reports configuration errors. */ }
 
   const recordExport = (action: OfflineAction, filename: string, fee: number) => {
     setExports((prev) => ({ ...prev, [action]: { filename, fee } }));
+    // A stale-response rebuild can download the action that is not selected.
     setSelected(action);
-    setLatest(action);
     onExported?.(action, filename, fee);
   };
 
@@ -349,6 +349,7 @@ export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSign
           action={current.action}
           label={current.label}
           onBuildBundle={current.onBuildBundle}
+          onExportStart={() => setExports(({ [current.action]: _old, ...rest }) => rest)}
           onExported={(filename, fee) => recordExport(current.action, filename, fee)}
         />
         {exported && (
@@ -358,8 +359,8 @@ export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSign
           </p>
         )}
       </Step>
-      <Step n={2} state={toSign ? 'current' : 'pending'} title="Sign on the air-gapped machine">
-        <CopyCommand command={signCommand(platform, network, toSign?.filename ?? `${current.action}-request.json`)} />
+      <Step n={2} state={exported ? 'current' : 'pending'} title="Sign on the air-gapped machine">
+        <CopyCommand command={signCommand(platform, network, exported?.filename ?? `${current.action}-request.json`)} />
         <CliDownload platform={platform} onSelect={setPlatform} />
       </Step>
       <Step n={3} state={broadcast ? 'done' : 'pending'} title="Upload signed.json and broadcast" last>
