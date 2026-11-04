@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { OFFLINE_MAX_FEE_NANOMINA, OFFLINE_MIN_FEE_NANOMINA } from 'contracts/offline-format';
 import type { OfflineSignedTxResponse } from '@/lib/offline-signing';
 import { assertOfflineResponseVersion, signedOwnerFeeNanomina } from '@/lib/offline-format';
@@ -9,6 +9,7 @@ import { assessPreflightRetry } from '@/lib/multisigClient';
 import { countNewRecipientSlotsFromSnapshot } from '@/lib/recipient-account-fee';
 import { fetchProposal } from '@/lib/api';
 import { formatMina } from '@/lib/types';
+import { ALL_PLATFORMS, detectPlatform, getPlatformInfo, signCommand, type PlatformInfo } from '@/lib/offline-cli-command';
 import { preflightBeforeSend, preflightFailureMessage, withStoreRecovery, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD } from '@/lib/preflight-flow';
 
 // CLI binaries are published per release by the offline-cli-release workflow
@@ -41,162 +42,72 @@ export async function broadcastSignedTx(txJson: string): Promise<string> {
   return hash;
 }
 
-interface PlatformInfo {
-  id: string;
-  label: string;
-  filename: string;
-  setupSteps: string[];
-  runCmd: string;
-}
-
-function getPlatformInfo(p: string): PlatformInfo {
-  // Windows release assets carry the .exe suffix bun appends at compile time.
-  const filename = p.startsWith('windows') ? `mina-guard-cli-${p}.exe` : `mina-guard-cli-${p}`;
-  if (p.startsWith('macos')) {
-    const arch = p.includes('arm64') ? 'Apple Silicon' : 'Intel';
-    return {
-      id: p, label: `macOS (${arch})`, filename,
-      setupSteps: [
-        `xattr -d com.apple.quarantine ${filename}`,
-        `chmod +x ${filename}`,
-      ],
-      runCmd: `MINA_PRIVATE_KEY=EK... ./${filename} bundle.json > signed.json`,
-    };
-  }
-  if (p.startsWith('linux')) {
-    const arch = p.includes('arm64') ? 'ARM64' : 'x64';
-    return {
-      id: p, label: `Linux (${arch})`, filename,
-      setupSteps: [`chmod +x ${filename}`],
-      runCmd: `MINA_PRIVATE_KEY=EK... ./${filename} bundle.json > signed.json`,
-    };
-  }
-  return {
-    id: p, label: 'Windows (x64)', filename,
-    setupSteps: [],
-    runCmd: `set MINA_PRIVATE_KEY=EK... && ${filename} bundle.json > signed.json`,
-  };
-}
-
-const ALL_PLATFORMS: PlatformInfo[] = [
-  getPlatformInfo('macos-arm64'),
-  getPlatformInfo('macos-x64'),
-  getPlatformInfo('linux-x64'),
-  getPlatformInfo('linux-arm64'),
-  getPlatformInfo('windows-x64'),
-];
-
-export function DownloadCLILink({ exportedBundleName, onPlatformSelect }: { exportedBundleName?: string | null; onPlatformSelect?: (cliFilename: string) => void }) {
-  const [selected, setSelected] = useState<PlatformInfo | null>(null);
+function CliDownload({ platform, onSelect }: { platform: PlatformInfo; onSelect: (platform: PlatformInfo) => void }) {
   const [open, setOpen] = useState(false);
-
   return (
-    <div className="border border-safe-border rounded-lg p-4 space-y-3">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-sm font-semibold text-safe-green hover:underline"
-      >
-        Instructions
-        <svg
-          className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+    <div className="space-y-3">
+      <p className="text-xs text-safe-text">
+        Need the CLI?{' '}
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          className="inline-flex items-center gap-1 text-safe-green hover:underline"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+          Download for macOS, Linux or Windows
+          <svg className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </p>
       {open && (
-        <div className="space-y-3 text-sm text-safe-text">
-          <p className="font-semibold">1. Choose your platform {!selected && <span className="font-normal text-safe-text/50">— select one to see setup steps</span>}</p>
+        <div className="space-y-3 rounded-lg border border-safe-border bg-safe-dark p-3 text-xs text-safe-text">
           <div className="space-y-2">
-            {(['macOS', 'Linux', 'Windows'] as const).map((os) => {
-              const group = ALL_PLATFORMS.filter((p) => p.label.startsWith(os));
-              if (group.length === 0) return null;
-              return (
-                <div key={os} className="flex items-center gap-2">
-                  <span className="text-xs text-safe-text/50 w-14 shrink-0">{os}</span>
-                  <div className="flex flex-wrap gap-2">
-                    {group.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => { setSelected(p); onPlatformSelect?.(p.filename); }}
-                        className={`px-3 py-1.5 rounded border text-xs font-semibold transition-colors ${
-                          selected?.id === p.id
-                            ? 'bg-safe-green text-safe-dark border-safe-green'
-                            : 'border-safe-green text-safe-green hover:bg-safe-green/10'
-                        }`}
-                      >
-                        {p.label.replace(`${os} `, '').replace(/[()]/g, '')}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {selected && (
-            <>
-              <p className="font-semibold">2. Download the CLI</p>
-              {CLI_RELEASE_DOWNLOAD_BASE ? (
-                <>
-                  <a
-                    href={`${CLI_RELEASE_DOWNLOAD_BASE}/${selected.filename}`}
-                    className="inline-block px-4 py-2 rounded-lg border border-safe-green text-safe-green text-xs font-semibold hover:bg-safe-green/10 transition-colors"
-                  >
-                    Download {selected.filename}
-                  </a>
-                  <p className="text-xs text-safe-text/50">
-                    Verify the download against{' '}
-                    <a
-                      href={`${CLI_RELEASE_DOWNLOAD_BASE}/SHA256SUMS`}
-                      className="underline hover:text-safe-text"
+            {(['macOS', 'Linux', 'Windows'] as const).map((os) => (
+              <div key={os} className="flex items-center gap-2">
+                <span className="w-14 shrink-0 text-safe-text/60">{os}</span>
+                <div className="flex flex-wrap gap-2">
+                  {ALL_PLATFORMS.filter((p) => p.os === os).map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => onSelect(p)}
+                      aria-pressed={platform.id === p.id}
+                      className={`rounded border px-3 py-1 font-semibold transition-colors ${
+                        platform.id === p.id
+                          ? 'border-safe-green bg-safe-green/15 text-safe-green'
+                          : 'border-safe-border text-safe-text hover:border-safe-green/50'
+                      }`}
                     >
-                      SHA256SUMS
-                    </a>{' '}
-                    from the same release before moving it to the air-gapped machine.
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs text-amber-400">
-                  Download{' '}
-                  <code className="bg-safe-dark px-1 rounded">{selected.filename}</code>{' '}
-                  from the{' '}
-                  <a
-                    href="https://github.com/zksecurity/mina-guard/releases"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:text-safe-text"
-                  >
-                    MinaGuard releases page
-                  </a>.
-                </p>
-              )}
-
-              {selected.setupSteps.length > 0 && (
-                <>
-                  <p className="font-semibold">3. Make it executable</p>
-                  <div className="space-y-1">
-                    {selected.setupSteps.map((cmd) => (
-                      <code key={cmd} className="block text-xs bg-safe-dark px-2 py-1.5 rounded">{cmd}</code>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              <p className="font-semibold">{selected.setupSteps.length > 0 ? '4' : '3'}. Export the bundle below and transfer it to the air-gapped machine</p>
-              <p className="text-xs text-safe-text/50">The downloaded file will be named <code className="bg-safe-dark px-1 rounded">{'<action>-<id>-<timestamp>.json'}</code> where id is the first 8 characters of the proposal hash (approve/execute) or contract address (propose)</p>
-
-              <p className="font-semibold">{selected.setupSteps.length > 0 ? '5' : '4'}. Sign on the air-gapped machine</p>
-              <code className="block text-xs bg-safe-dark px-2 py-1.5 rounded">
-                {exportedBundleName
-                  ? selected.runCmd.replace('bundle.json', exportedBundleName)
-                  : selected.runCmd}
-              </code>
-
-              <p className="font-semibold">{selected.setupSteps.length > 0 ? '6' : '5'}. Transfer <code className="text-xs bg-safe-dark px-1 rounded">signed.json</code> back and upload it below</p>
-            </>
+                      {p.arch}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {CLI_RELEASE_DOWNLOAD_BASE ? (
+            <p>
+              <a href={`${CLI_RELEASE_DOWNLOAD_BASE}/${platform.filename}`} className="font-semibold text-safe-green hover:underline">
+                Download {platform.filename}
+              </a>
+              , then check it against{' '}
+              <a href={`${CLI_RELEASE_DOWNLOAD_BASE}/SHA256SUMS`} className="underline hover:text-safe-text">SHA256SUMS</a>{' '}
+              from the same release before moving it to the air-gapped machine.
+            </p>
+          ) : (
+            <p>
+              Download <code className="rounded bg-safe-gray px-1">{platform.filename}</code> from the{' '}
+              <a href="https://github.com/zksecurity/mina-guard/releases" target="_blank" rel="noopener noreferrer" className="text-safe-green hover:underline">
+                MinaGuard releases page
+              </a>.
+            </p>
+          )}
+          {platform.setup && (
+            <div className="space-y-1">
+              <p>Then make it executable:</p>
+              <code className="block break-all rounded bg-safe-gray px-2 py-1.5 font-mono">{platform.setup}</code>
+            </div>
           )}
         </div>
       )}
@@ -213,12 +124,13 @@ function bundleFilename(action: string, bundle: any): string {
   return id ? `${action}-${id}-${ts}.json` : `${action}-${ts}.json`;
 }
 
+type OfflineAction = 'propose' | 'approve' | 'execute';
+
 interface OfflineSigningFlowProps {
-  action: 'propose' | 'approve' | 'execute';
+  action: OfflineAction;
   label: string;
   onBuildBundle: () => Promise<unknown>;
   onExported?: (filename: string, fee: number) => void;
-  cliBinaryName?: string | null;
 }
 
 function extractBundleWarnings(bundle: any): string[] {
@@ -247,7 +159,7 @@ function extractBundleWarnings(bundle: any): string[] {
   return warnings;
 }
 
-export function downloadOfflineBundle(action: 'propose' | 'approve' | 'execute', bundle: unknown): string {
+export function downloadOfflineBundle(action: OfflineAction, bundle: unknown): string {
   const filename = bundleFilename(action, bundle);
   const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a');
@@ -258,19 +170,16 @@ export function downloadOfflineBundle(action: 'propose' | 'approve' | 'execute',
   return filename;
 }
 
-export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, cliBinaryName }: OfflineSigningFlowProps) {
+/** Builds and downloads one offline request, with its warnings and errors. */
+export function OfflineSigningFlow({ action, label, onBuildBundle, onExported }: OfflineSigningFlowProps) {
   const [building, setBuilding] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [exportedFilename, setExportedFilename] = useState<string | null>(null);
-  const [exportedFee, setExportedFee] = useState<number | null>(null);
 
   const handleExport = async () => {
     setBuilding(true);
     setExportError(null);
     setWarnings([]);
-    setExportedFilename(null);
-    setExportedFee(null);
     try {
       const bundle = await withStoreRecovery(onBuildBundle, true);
       setWarnings(extractBundleWarnings(bundle));
@@ -279,9 +188,7 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
           fee < OFFLINE_MIN_FEE_NANOMINA || fee > OFFLINE_MAX_FEE_NANOMINA) {
         throw new Error('The offline request has no valid fee. Nothing was exported.');
       }
-      setExportedFee(fee);
       const filename = downloadOfflineBundle(action, bundle);
-      setExportedFilename(filename);
       onExported?.(filename, fee);
     } catch (err) {
       if (!(err instanceof Error && err.message === PREFLIGHT_CANCELLED)) {
@@ -302,22 +209,6 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
       >
         {building ? 'Building bundle...' : `Export ${label} Bundle`}
       </button>
-      {exportedFilename && (
-        <div className="space-y-1.5">
-          <p className="text-xs text-safe-text/60">
-            Exported <code className="bg-safe-dark px-1.5 py-0.5 rounded text-safe-text/80">{exportedFilename}</code>
-          </p>
-          {exportedFee !== null && (
-            <p className="text-xs text-safe-text/80">
-              Estimated transaction fee: {formatMina(String(exportedFee))} MINA. Confirm this fee in the offline CLI before signing.
-            </p>
-          )}
-          <p className="text-xs text-safe-text/50">Run on the air-gapped machine:</p>
-          <code className="block text-xs bg-safe-dark px-2 py-1.5 rounded text-safe-text/80">
-            MINA_PRIVATE_KEY=EK... ./{cliBinaryName ?? 'mina-guard-cli'} {exportedFilename} &gt; signed.json
-          </code>
-        </div>
-      )}
       {warnings.length > 0 && (
         <div className="space-y-1">
           {warnings.map((w) => (
@@ -328,6 +219,156 @@ export function OfflineSigningFlow({ action, label, onBuildBundle, onExported, c
       {exportError && (
         <p className="text-sm text-red-400">{exportError}</p>
       )}
+    </div>
+  );
+}
+
+type StepState = 'done' | 'current' | 'pending';
+
+function StepMarker({ n, state }: { n: number; state: StepState }) {
+  if (state === 'done') {
+    return (
+      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-safe-green text-safe-dark" aria-label={`Step ${n} done`}>
+        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${
+      state === 'current' ? 'border-safe-green text-safe-green' : 'border-safe-border text-safe-text'
+    }`}>
+      {n}
+    </span>
+  );
+}
+
+function Step({ n, state, title, last, children }: {
+  n: number; state: StepState; title: string; last?: boolean; children: React.ReactNode;
+}) {
+  return (
+    <section className={`grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 py-5 ${last ? '' : 'border-b border-safe-border'}`}>
+      <StepMarker n={n} state={state} />
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold text-white">{title}</h3>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function CopyCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access can be denied; the command stays selectable.
+    }
+  };
+  return (
+    <div className="relative rounded-lg border border-safe-border bg-safe-dark py-2.5 pl-3 pr-20">
+      <code className="block break-all font-mono text-xs leading-relaxed text-safe-text select-all">{command}</code>
+      <button
+        type="button"
+        onClick={copy}
+        className="absolute right-2 top-2 rounded border border-safe-border px-2 py-0.5 text-xs text-safe-text hover:border-safe-green/50 hover:text-white"
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+export interface OfflinePanelAction {
+  action: OfflineAction;
+  label: string;
+  onBuildBundle: () => Promise<unknown>;
+}
+
+interface OfflineSigningPanelProps {
+  /** Actions the signer can export; the last one is selected first. */
+  actions: OfflinePanelAction[];
+  onExported?: (action: OfflineAction, filename: string, fee: number) => void;
+  upload: Omit<UploadSignedResponseProps, 'onRecreate'> & {
+    /** Downloads a fresh request for the same action; returns what it exported. */
+    onRecreate?: (response: OfflineSignedTxResponse) => Promise<{ filename: string; fee: number }>;
+  };
+}
+
+/** Export a request, sign it with the offline CLI, then upload the result. */
+export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSigningPanelProps) {
+  const [selected, setSelected] = useState<OfflineAction | null>(null);
+  const [exports, setExports] = useState<Partial<Record<OfflineAction, { filename: string; fee: number }>>>({});
+  const [platform, setPlatform] = useState<PlatformInfo>(() => getPlatformInfo('macos-arm64'));
+  const [broadcast, setBroadcast] = useState(false);
+  useEffect(() => { setPlatform(detectPlatform()); }, []);
+
+  const current = actions.find((a) => a.action === selected) ?? actions.at(-1);
+  if (!current) return null;
+  const exported = exports[current.action];
+  let network = 'mainnet';
+  try { network = getMinaGuardConfig().networkId; } catch { /* The page reports configuration errors. */ }
+
+  const recordExport = (action: OfflineAction, filename: string, fee: number) => {
+    setExports((prev) => ({ ...prev, [action]: { filename, fee } }));
+    onExported?.(action, filename, fee);
+  };
+
+  return (
+    <div className="rounded-xl border border-safe-border bg-safe-gray px-5">
+      <Step n={1} state={exported ? 'done' : 'current'} title="Export the request">
+        {actions.length > 1 && (
+          <div className="inline-flex rounded-lg border border-safe-border bg-safe-dark p-0.5" role="group" aria-label="Action to sign">
+            {actions.map((a) => (
+              <button
+                key={a.action}
+                type="button"
+                onClick={() => setSelected(a.action)}
+                aria-pressed={a.action === current.action}
+                className={`rounded-md px-4 py-1.5 text-sm transition-colors ${
+                  a.action === current.action ? 'bg-safe-green/15 text-safe-green' : 'text-safe-text hover:text-white'
+                }`}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <OfflineSigningFlow
+          key={current.action}
+          action={current.action}
+          label={current.label}
+          onBuildBundle={current.onBuildBundle}
+          onExported={(filename, fee) => recordExport(current.action, filename, fee)}
+        />
+        {exported && (
+          <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-safe-text">
+            <span>Saved <code className="font-mono text-white">{exported.filename}</code></span>
+            <span>Fee <span className="text-white">{formatMina(String(exported.fee))} MINA</span>, check it matches in the CLI</span>
+          </p>
+        )}
+      </Step>
+      <Step n={2} state={exported ? 'current' : 'pending'} title="Sign on the air-gapped machine">
+        <CopyCommand command={signCommand(platform, network, exported?.filename ?? `${current.action}-request.json`)} />
+        <CliDownload platform={platform} onSelect={setPlatform} />
+      </Step>
+      <Step n={3} state={broadcast ? 'done' : 'pending'} title="Upload signed.json and broadcast" last>
+        <UploadSignedResponse
+          {...upload}
+          onRecreate={upload.onRecreate && (async (response) => {
+            const { filename, fee } = await upload.onRecreate!(response);
+            recordExport(response.action, filename, fee);
+          })}
+          onComplete={(response, txHash, feePayer) => {
+            setBroadcast(true);
+            upload.onComplete?.(response, txHash, feePayer);
+          }}
+        />
+      </Step>
     </div>
   );
 }
@@ -522,7 +563,7 @@ export function UploadSignedResponse({
   return (
     <div className="space-y-3">
       <label
-        className={`flex items-center justify-center border-2 border-dashed rounded-lg px-4 py-4 text-sm cursor-pointer transition-colors ${
+        className={`flex items-center justify-center text-center border-2 border-dashed rounded-lg px-4 py-4 text-sm cursor-pointer transition-colors ${
           dragging
             ? 'border-safe-green bg-safe-green/10 text-safe-green'
             : 'border-safe-border text-safe-text/60 hover:border-safe-green/50 hover:text-safe-text/80'
