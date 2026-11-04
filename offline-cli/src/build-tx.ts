@@ -296,22 +296,23 @@ export function canonicalizeBundleTxType(bundle: OfflineBundle): TxType {
 }
 
 /**
- * Refuses an execute bundle whose memo text does not hash to the memo hash in
- * the approved proposal. Owners approve only the hash; the memo text comes
- * from the online backend and is what the signed transaction will carry. A
- * tampered backend could otherwise keep the approved proposal, swap the memo
- * (for example an exchange deposit tag), and still get a valid proof. A
+ * Refuses an approve or execute bundle whose memo text does not hash to the
+ * memo hash in the proposal. Owners approve only the hash; the memo text comes
+ * from the online backend and is what the signed execution will carry. A
+ * tampered backend could otherwise show approvers one memo (for example an
+ * exchange deposit tag) and execute with another, or keep the approved
+ * proposal and swap the memo at execution, and still get a valid proof. A
  * missing memo counts as the empty memo, which is what the transaction would
- * carry. The CLI runs this before the summary, and handleExecute runs it again
- * for direct callers.
+ * carry. The CLI runs this before the summary, and handleApprove and
+ * handleExecute run it again for direct callers.
  */
-export function assertExecuteBundleMemo(bundle: Pick<OfflineExecuteBundle, 'proposal'>): void {
+export function assertBundleMemo(bundle: Pick<OfflineApproveBundle | OfflineExecuteBundle, 'proposal'>): void {
   const { memo, memoHash } = bundle.proposal;
   if (memoHash == null) throw new Error('Proposal is missing its memo commitment');
   if (memoToField(memo ?? '').toString() !== memoHash) {
     throw new Error(
       'The memo in this bundle does not match the memo the owners approved. ' +
-      'Refusing to sign an execution with a different memo.',
+      'Refusing to sign with a different memo.',
     );
   }
 }
@@ -1029,6 +1030,7 @@ export async function handleApprove(
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
   assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'approve this proposal');
+  assertBundleMemo(bundle);
   log(`Proposal hash: ${hashStr}`);
 
   // Sign the action-specific approval message.
@@ -1124,7 +1126,7 @@ export async function handleExecute(
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
   assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'execute this proposal');
-  assertExecuteBundleMemo(bundle);
+  assertBundleMemo(bundle);
   log(`Proposal hash: ${hashStr}`);
 
   const approvalWitness = approvalStore.getWitness(proposalHash);

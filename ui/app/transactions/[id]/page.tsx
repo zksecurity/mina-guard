@@ -35,7 +35,7 @@ import {
   computeMemoHash,
   validateAddOwnerProposalData,
 } from '@/lib/multisigClient';
-import { EXECUTION_MEMO_MISMATCH, memoBadge } from '@/lib/memo-check';
+import { APPROVAL_MEMO_MISMATCH, EXECUTION_MEMO_MISMATCH, memoBadge } from '@/lib/memo-check';
 import {
   PENDING_TXS_CHANGED,
   getPendingTx,
@@ -387,7 +387,11 @@ export default function TransactionDetailPage() {
   // A SubVault is approved only once its owners and threshold are shown and
   // hash to the signed proposal.data. Indexer lag is a reason to wait, not to
   // approve a configuration nobody has seen.
-  const canApprove = canApproveExceptConfig && (!pendingCreateChild || childConfigStatus === 'match');
+  const canApproveExceptMemo = canApproveExceptConfig && (!pendingCreateChild || childConfigStatus === 'match');
+  // Approvers sign only the memo hash, so the memo text they read must hash to
+  // it before approval is offered. Otherwise a tampered server could collect
+  // approvals on one memo and execute with another. The worker checks it again.
+  const canApprove = canApproveExceptMemo && localMemoMatch === true;
   const canExecuteExceptMemo =
     !!proposal &&
     !isLocalPending &&
@@ -979,8 +983,19 @@ export default function TransactionDetailPage() {
                     </button>
                   )}
                   {/* Keep a disabled Approve visible with the reason, rather than
-                      hiding it, so the block is explicit: a config swap, or a
-                      configuration not shown yet. */}
+                      hiding it, so the block is explicit: a memo swap, a config
+                      swap, or a check not finished yet. */}
+                  {canApproveExceptMemo && localMemoMatch !== true && (
+                    <button
+                      disabled
+                      title={localMemoMatch === false
+                        ? 'The memo text from the server does not hash to the memo hash this proposal commits to'
+                        : 'The memo text is being checked against the memo hash this proposal commits to'}
+                      className="flex-1 bg-safe-green/40 text-safe-dark font-semibold rounded-lg py-3 text-sm cursor-not-allowed"
+                    >
+                      {localMemoMatch === false ? 'Approve blocked: memo mismatch' : 'Approve waits for the memo check'}
+                    </button>
+                  )}
                   {pendingCreateChild && canApproveExceptConfig && childConfigStatus !== 'match' && (
                     <button
                       disabled
@@ -1109,6 +1124,13 @@ export default function TransactionDetailPage() {
                               multisig!.address,
                               p.childAccount,
                             );
+                            // The offline signer checks this again; stop here first so an
+                            // approval of a memo other than the one shown is never exported.
+                            if (localMemoMatch !== true) {
+                              throw new Error(localMemoMatch === false
+                                ? APPROVAL_MEMO_MISMATCH
+                                : 'The memo has not been checked against the memo hash this proposal commits to yet. Try again in a moment.');
+                            }
                             return buildOfflineApproveBundle({
                               contractAddress: multisig!.address,
                               feePayerAddress: offlineFeePayerAddress,

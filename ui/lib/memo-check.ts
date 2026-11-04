@@ -25,12 +25,18 @@ export const EXECUTION_MEMO_MISMATCH =
   'The memo text from the server does not match the memo the owners approved. ' +
   'Execution stopped so the transaction is not sent with a different memo.';
 
+/** Error text shown when the memo an approver reads does not match the proposal's memo hash. */
+export const APPROVAL_MEMO_MISMATCH =
+  'The memo text from the server does not match the memo hash this proposal commits to. ' +
+  'Approval stopped so you do not approve a transaction whose memo could change at execution.';
+
 /**
- * Stops an execution before it is built when the memo text that will be put
- * on the transaction does not hash to the memo hash the owners approved.
- * Owners approve only the hash; the memo text itself comes from the server.
- * Without this check a tampered server could keep the approved proposal and
- * swap its memo (for example an exchange deposit tag), and the proof would
+ * Stops an approval or execution before it is built when the memo text shown
+ * does not hash to the memo hash the proposal commits to. Owners approve only
+ * the hash; the memo text itself comes from the server. Without this check a
+ * tampered server could show approvers one memo (for example an exchange
+ * deposit tag), collect their approvals, then execute with another, or keep
+ * the approved proposal and swap its memo at execution, and the proof would
  * still verify. A missing memo is treated as the empty memo, which is what
  * the transaction would carry.
  *
@@ -41,6 +47,7 @@ export function assertExecutionMemoMatches(
   memo: string | null | undefined,
   approvedMemoHash: string,
   hashMemo: (memo: string) => string,
+  message: string = EXECUTION_MEMO_MISMATCH,
 ): void {
-  if (hashMemo(memo ?? '') !== approvedMemoHash) throw new Error(EXECUTION_MEMO_MISMATCH);
+  if (hashMemo(memo ?? '') !== approvedMemoHash) throw new Error(message);
 }
