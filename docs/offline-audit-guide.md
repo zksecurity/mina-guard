@@ -471,9 +471,12 @@ come from a **GitHub release** of this repo pinned by
 provenance rests with the release pipeline (maintainers + GitHub Actions)
 rather than a backend operator, as in the earlier build-on-demand design.
 `SHA256SUMS` ships in the same release as the binaries, each release asset
-carries a signed build-provenance attestation (`gh attestation verify <file>
---repo zksecurity/mina-guard` binds it to this repository, the release
-workflow and the tagged commit), and the release's `minaguard-vk-hash.txt`
+carries a signed build-provenance attestation that binds it to this
+repository, the release workflow and the tagged commit (verify with
+`gh attestation verify <file> --repo zksecurity/mina-guard --signer-workflow
+zksecurity/mina-guard/.github/workflows/offline-cli-release.yml --source-ref
+refs/tags/<release tag>`; `--repo` alone would accept any attestation this
+repository ever produced), and the release's `minaguard-vk-hash.txt`
 identifies the deployment its proofs target. The key is read from the
 `MINA_PRIVATE_KEY` environment variable.
 
@@ -631,7 +634,10 @@ aggregation job attaches one canonical `SHA256SUMS` plus
 `minaguard-vk-hash.txt` (a copy of the CI-generated `contracts/.vk-hash` for
 the tagged source, one hash per network), signs a build-provenance
 attestation for every asset (`actions/attest-build-provenance`; verify with
-`gh attestation verify <file> --repo zksecurity/mina-guard`), and publishes
+`gh attestation verify <file> --repo zksecurity/mina-guard --signer-workflow
+zksecurity/mina-guard/.github/workflows/offline-cli-release.yml --source-ref
+refs/tags/<release tag>`, which pins the signing workflow and the tag rather
+than accepting any attestation from the repository), and publishes
 everything as a **draft** release for manual review (`workflow_dispatch` =
 dry run, CI artifacts only). `SHA256SUMS` alone only shows a download is the
 file the job had, since the job writes it; the attestation is what ties the

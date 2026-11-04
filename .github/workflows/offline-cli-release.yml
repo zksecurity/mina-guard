@@ -209,8 +209,10 @@ jobs:
       # SHA256SUMS only proves a download is the file this job had; it is
       # written here, so a binary tampered with earlier in the run would get a
       # matching checksum. The signed provenance attestation binds each file's
-      # digest to this repository, workflow, run and tagged commit, and users
-      # check it with `gh attestation verify <file> --repo <owner>/<repo>`.
+      # digest to this repository, workflow, run and tagged commit. Verifiers
+      # must pin the signing workflow and the tag (the release notes below
+      # give the exact command): `--repo` alone accepts any attestation this
+      # repository ever produced, including other workflows' and older tags'.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
@@ -234,7 +236,13 @@ jobs:
             --notes "$(cat <<EOF
           Air-gapped signing CLI for MinaGuard. Usage and security model: \`docs/offline-audit-guide.md\`.
 
-          **Verify your download** before moving it to the air-gapped machine: check it against \`SHA256SUMS\`, and check its signed build provenance with \`gh attestation verify mina-guard-cli-<platform> --repo ${GITHUB_REPOSITORY}\` (binds the file to this repository, workflow and tagged commit).
+          **Verify your download** before moving it to the air-gapped machine. Check it against \`SHA256SUMS\`, then check its signed build provenance, pinned to this repository's release workflow and to this tag:
+
+          \`\`\`
+          gh attestation verify mina-guard-cli-<platform> --repo ${GITHUB_REPOSITORY} \\
+            --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/offline-cli-release.yml \\
+            --source-ref refs/tags/${GITHUB_REF_NAME}
+          \`\`\`
 
           **Circuit compatibility:** this binary inlines the MinaGuard circuit; it only produces valid proofs for contracts whose verification-key hash matches \`minaguard-vk-hash.txt\`.
 
