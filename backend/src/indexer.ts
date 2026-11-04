@@ -129,7 +129,7 @@ export class MinaGuardIndexer {
   /** First-scan progress of unready vaults, by contract id. Kept across ticks
    *  so a long history resumes where it stopped instead of restarting. A
    *  process restart only repeats work: event ingestion is idempotent. */
-  private readonly firstScans = new Map<number, { start: number; next: number; ingested: boolean }>();
+  private readonly firstScans = new Map<number, { start: number; next: number }>();
   private intervalHandle: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
@@ -251,6 +251,10 @@ export class MinaGuardIndexer {
       // of this tick and let the next one resume syncing from the new cursor.
       const rolledBackTo = await this.detectAndRollbackReorg();
       if (rolledBackTo !== null) {
+        // Rollback deleted events above the fork; first scans rescan them.
+        for (const scan of this.firstScans.values()) {
+          scan.next = Math.max(scan.start, Math.min(scan.next, rolledBackTo + 1));
+        }
         this.status.indexedHeight = rolledBackTo;
         this.status.lastSuccessfulRunAt = new Date().toISOString();
         this.status.lastError = null;
@@ -523,23 +527,22 @@ export class MinaGuardIndexer {
       if (start > latestHeight) continue;
       let scan = this.firstScans.get(c.id);
       if (!scan || scan.start !== start) {
-        scan = { start, next: start, ingested: false };
+        scan = { start, next: start };
         this.firstScans.set(c.id, scan);
       }
       while (steps > 0) {
         steps -= 1;
         const to = Math.min(scan.next + EVENT_QUERY_BLOCK_SPAN - 1, latestHeight);
         const finish = to === latestHeight;
-        const ingested = await this.syncSingleContract(c.id, c.address, scan.next, to, {
-          finish, ingestedEarlier: scan.ingested,
+        const result = await this.syncSingleContract(c.id, c.address, scan.next, to, {
+          finish, readyFromStoredEvents: true,
         });
         // A missing or refused account: retry the same step next tick.
-        if (ingested === null) break;
+        if (result === null) break;
         if (finish) {
           this.firstScans.delete(c.id);
           break;
         }
-        scan.ingested ||= ingested;
         scan.next = to + 1;
       }
     }
@@ -574,15 +577,16 @@ export class MinaGuardIndexer {
    *
    * Returns whether an event was applied, or null when the account is missing
    * or refused. `finish: false` leaves lastSyncedAt and ready unchanged, for a
-   * first scan that continues past `toHeight`; `ingestedEarlier` carries its
-   * earlier steps' result into the final ready decision.
+   * first scan that continues past `toHeight`. With `readyFromStoredEvents`,
+   * the final step also counts events applied by earlier steps, including
+   * steps before a restart, whose replay is skipped as duplicate.
    */
   async syncSingleContract(
     contractId: number,
     address: string,
     fromHeight: number,
     toHeight: number,
-    { finish = true, ingestedEarlier = false }: { finish?: boolean; ingestedEarlier?: boolean } = {},
+    { finish = true, readyFromStoredEvents = false }: { finish?: boolean; readyFromStoredEvents?: boolean } = {},
   ): Promise<boolean | null> {
     const tracked = await prisma.contract.findUnique({
       where: { id: contractId },
@@ -653,9 +657,11 @@ export class MinaGuardIndexer {
     // deploy contract from appearing in API read routes until its first
     // event actually lands.
     if (finish) {
+      const ready = ingested || (readyFromStoredEvents
+        && await prisma.eventRaw.count({ where: { contractId, applyError: null } }) > 0);
       await prisma.contract.update({
         where: { id: contractId },
-        data: ingested || ingestedEarlier
+        data: ready
           ? { lastSyncedAt: new Date(), ready: true }
           : { lastSyncedAt: new Date() },
       });
