@@ -33,9 +33,11 @@ const CONTRACTS_PAGE_LIMIT = 200;
 const CONTRACTS_MAX_PAGES = 50;
 
 /** Fetches all discovered contracts from backend, one page at a time, until a
- *  short page or the page cap. A failed page ends the list with the pages
- *  already read; a failed first page gives an empty list, as a failed single
- *  read did before.
+ *  short page or the page cap. Any failed page gives an empty list, as a
+ *  failed single read did before. A partial list would be wrong: the caller
+ *  takes it as the whole list, and could move the selection off a vault that
+ *  is missing only because its page failed. With an empty list no vault
+ *  matches, so the selection stays.
  *
  *  Each later page starts after the previous page's last row (its
  *  `discoveredAt` and `id`), so vaults discovered or removed between reads do
@@ -50,7 +52,7 @@ export async function fetchContracts(): Promise<ContractSummary[]> {
     const data = await getJson<Array<Record<string, unknown>>>(
       `/api/contracts?limit=${CONTRACTS_PAGE_LIMIT}${cursor}`,
     );
-    if (!data) break;
+    if (!data) return [];
     const before = contracts.size;
     for (const item of data) {
       const contract = toContractSummary(item);

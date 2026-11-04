@@ -56,17 +56,20 @@ const CONTRACTS_PAGE_LIMIT = 200;
  *  them through `offset`. */
 const DERIVED_STATUS_SCAN_LIMIT = 1_000;
 
-/** Optional page cursor value; anything unparsable counts as absent, so a
- *  bad cursor reads the first page instead of failing. */
+/** Optional page cursor values. Anything unparsable, or outside what the
+ *  database columns hold (a 32-bit `Int` id; a date in years 1970 to 9999),
+ *  counts as absent, so a bad cursor reads the first page instead of making
+ *  the query fail. */
+const MAX_DB_INT = 2_147_483_647;
 const optionalCursorDateSchema = z.any().transform((input) => {
-  if (input instanceof Date) return input;
-  if (typeof input !== 'string' || input.length === 0) return undefined;
-  const date = new Date(input);
-  return Number.isNaN(date.getTime()) ? undefined : date;
+  const date = input instanceof Date ? input : typeof input === 'string' && input.length > 0 ? new Date(input) : null;
+  if (!date || Number.isNaN(date.getTime())) return undefined;
+  const year = date.getUTCFullYear();
+  return year >= 1970 && year <= 9999 ? date : undefined;
 });
 const optionalCursorIdSchema = z.any().transform((input) => {
-  const value = typeof input === 'number' ? input : typeof input === 'string' && /^\d+$/.test(input) ? Number(input) : NaN;
-  return Number.isSafeInteger(value) ? value : undefined;
+  const value = typeof input === 'number' ? input : typeof input === 'string' && /^\d{1,10}$/.test(input) ? Number(input) : NaN;
+  return Number.isInteger(value) && value >= 0 && value <= MAX_DB_INT ? value : undefined;
 });
 
 const contractsQuerySchema = z.object({

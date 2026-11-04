@@ -95,7 +95,7 @@ test('stops when a full page adds no new vault', async () => {
   expect(calls).toBe(2);
 });
 
-test('keeps the pages read before a failed one', async () => {
+test('gives an empty list when a later page fails, as for a failed first page', async () => {
   let page = 0;
   globalThis.fetch = (async (_input: RequestInfo | URL) => {
     page++;
@@ -103,7 +103,7 @@ test('keeps the pages read before a failed one', async () => {
     return new Response('down', { status: 503 });
   }) as typeof fetch;
 
-  expect(await fetchContracts()).toHaveLength(200);
+  expect(await fetchContracts()).toEqual([]);
   expect(page).toBe(2);
 });
 

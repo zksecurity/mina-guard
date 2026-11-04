@@ -479,10 +479,21 @@ describe('GET /api/contracts', () => {
       const bad = await (await get('/api/contracts?limit=100000&beforeDiscoveredAt=nope&beforeId=-1')).json() as Row[];
       expect(bad.map((c) => c.address)).toEqual(all.map((c) => c.address));
       expect((await get('/api/contracts?limit=nope&offset=7')).status).toBe(200);
+      // Values the id and date columns cannot hold are ignored, not sent to the database.
+      for (const query of [
+        `beforeDiscoveredAt=${encodeURIComponent(all[0].discoveredAt)}&beforeId=2147483648`,
+        `beforeDiscoveredAt=${encodeURIComponent(all[0].discoveredAt)}&beforeId=99999999999999999999`,
+        'beforeDiscoveredAt=-271821-04-20T00:00:00.000Z&beforeId=5',
+        'beforeDiscoveredAt=%2B275760-09-13T00:00:00.000Z&beforeId=5',
+      ]) {
+        const res = await get(`/api/contracts?limit=200&${query}`);
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as Row[]).map((c) => c.address)).toEqual(all.map((c) => c.address));
+      }
     } finally {
       recording = false;
     }
-    expect(takes).toEqual([1, 200, 200]);
+    expect(takes).toEqual([1, 200, 200, 200, 200, 200, 200]);
   });
 
   test('neither skips nor repeats a vault when one is added or removed between pages', async () => {
