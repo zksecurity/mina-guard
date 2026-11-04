@@ -34,18 +34,27 @@ const CONTRACTS_MAX_OFFSET = 10_000;
 /** Fetches all discovered contracts from backend, one page at a time, until a
  *  short page or the backend's offset cap. A failed page ends the list with
  *  the pages already read; a failed first page gives an empty list, as a
- *  failed single read did before. */
+ *  failed single read did before.
+ *
+ *  Vaults are kept once by address. Offsets shift when discovery adds a vault
+ *  between page reads, so a page can repeat the previous page's last rows. An
+ *  older backend ignores `limit` and returns the whole list at once; a page
+ *  longer than the limit, or one with no new vault, is taken as the end. */
 export async function fetchContracts(): Promise<ContractSummary[]> {
-  const contracts: ContractSummary[] = [];
+  const contracts = new Map<string, ContractSummary>();
   for (let offset = 0; offset <= CONTRACTS_MAX_OFFSET; offset += CONTRACTS_PAGE_LIMIT) {
     const data = await getJson<Array<Record<string, unknown>>>(
       `/api/contracts?limit=${CONTRACTS_PAGE_LIMIT}&offset=${offset}`,
     );
     if (!data) break;
-    contracts.push(...data.map((item) => toContractSummary(item)));
-    if (data.length < CONTRACTS_PAGE_LIMIT) break;
+    const before = contracts.size;
+    for (const item of data) {
+      const contract = toContractSummary(item);
+      if (!contracts.has(contract.address)) contracts.set(contract.address, contract);
+    }
+    if (data.length !== CONTRACTS_PAGE_LIMIT || contracts.size === before) break;
   }
-  return contracts;
+  return [...contracts.values()];
 }
 
 /** Uses owners bundled with the list response; older backends need the per-vault endpoint. */
