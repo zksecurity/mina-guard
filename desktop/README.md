@@ -1,8 +1,7 @@
 # MinaGuard Desktop
 
 > **BETA: MinaGuard is in beta.** Bugs could cause loss of funds. Use only amounts
-> you can afford to lose. This applies to the desktop app on both Testnet and
-> Mainnet; Mainnet funds are real. Read **User guide → Beta product** in the app
+> you can afford to lose. The desktop app runs on Mainnet, so funds are real. Read **User guide → Beta product** in the app
 > (`/guide#beta`).
 > You can dismiss the banner for the current tab; the warning appears again
 > when you open the proposal-creation page or the SubVault proposal wizard.
@@ -67,22 +66,26 @@ Run from `desktop/`.
 | `bun run prepare:backend` | Regenerates the SQLite Prisma client in `../backend/src/generated/prisma/` from `schema.sqlite.prisma`. Runs the schema-sync check against `schema.prisma` first. |
 | `bun run prepare:schema-sql` | Regenerates `desktop/assets/schema.sql` via `prisma migrate diff`. This is what `backend-embed.ts` executes against a fresh SQLite DB on first launch. |
 | `bun run prepare:assets` | Runs `prepare:schema-sql`, then copies `assets/schema.sql` into `dist/assets/` and copies the CI-generated `../contracts/.vk-hash` into both `assets/.vk-hash` and `dist/assets/.vk-hash`. |
-| `bun run build:ui` | Builds `../ui` in standalone mode with `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`, `NEXT_PUBLIC_INDEXER_MODE=lite`, and `NEXT_PUBLIC_MINA_NETWORK=testnet`. |
+| `bun run build:ui` | Builds `../ui` in standalone mode with `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`, `NEXT_PUBLIC_INDEXER_MODE=lite`, `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the minascan mainnet endpoints and explorer URL, and the mainnet VK hash. The endpoints satisfy the mainnet build check and serve only as a fallback outside Electron: the app uses the endpoints saved at setup, and its proxy replaces the UI's Content-Security-Policy with one that allows them. |
 | `bun run stage` | Rebuilds `packaging-stage/backend-bundle.js` (esbuild) and copies `ui/.next/standalone` into `ui-standalone/`. |
 | `bun run build:electron` | Compiles `src/*.ts` → `dist/*.js` and copies static files (preload, setup.html, auro/page.html). |
 | `bun run build` | All of the above in order. |
 | `bun run dev` | `build` + `electron --no-sandbox .` with `.env` applied. |
 | `bun run package` | `build` + `electron-builder --dir` (outputs under `release/`). |
 
-The packaged desktop circuit uses the shared testnet/devnet `Field(2)` domain.
+The desktop app is a mainnet build: its circuit uses the mainnet `Field(1)`
+domain and the mainnet VK hash.
 Release builds download and verify the CI VK manifest for their exact source
 commit before packaging. A local `bun run build` needs a generated
 `../contracts/.vk-hash` first.
-The endpoint check accepts nodes explicitly reporting either test-network ID,
-but rejects mainnet and nodes without a supported `networkID`. It rejects an
+The endpoint check accepts only nodes explicitly reporting `mina:mainnet`, and
+rejects testnet, devnet and nodes without a supported `networkID`. It rejects an
 archive without the pending-height and bounded-event fields needed by the
-indexer. Saved endpoints are rechecked at startup; mainnet requires its own
-circuit build and VK.
+indexer. Saved endpoints are rechecked at startup, so a config saved by an
+earlier testnet build reopens the setup window; saving mainnet endpoints there
+replaces the local index. A testnet build needs `NEXT_PUBLIC_MINA_NETWORK`, the
+VK-hash line in `build:ui` and `BUILD_NETWORK_DOMAIN` in `src/config-store.ts`
+flipped together.
 
 ## Quick start (dev)
 

@@ -41,9 +41,15 @@ function nodeReports(
 }
 
 describe('desktop endpoint network check', () => {
-  it('rejects a mainnet node despite a testnet-looking URL', async () => {
-    nodeReports('mina:mainnet');
-    await expect(verifyEndpoints('https://testnet.example/graphql', 'https://archive.example/graphql'))
+  it('rejects a testnet node despite a mainnet-looking URL', async () => {
+    nodeReports('mina:testnet');
+    await expect(verifyEndpoints('https://mainnet.example/graphql', 'https://archive.example/graphql'))
+      .rejects.toThrow('Network mismatch: this is a mainnet build');
+  });
+
+  it('rejects a devnet node', async () => {
+    nodeReports('mina:devnet');
+    await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
       .rejects.toThrow('Network mismatch');
   });
 
@@ -53,22 +59,16 @@ describe('desktop endpoint network check', () => {
       .rejects.toThrow('networkID');
   });
 
-  it('accepts an explicitly reported testnet node', async () => {
-    nodeReports('mina:testnet');
+  it('accepts an explicitly reported mainnet node', async () => {
+    nodeReports('mina:mainnet');
     await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
-      .resolves.toBe('testnet');
-  });
-
-  it('accepts an explicitly reported devnet node in the shared test proof domain', async () => {
-    nodeReports('mina:devnet');
-    await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
-      .resolves.toBe('devnet');
+      .resolves.toBe('mainnet');
   });
 
   it('checks the archive pending tip and bounded event fields before accepting endpoints', async () => {
-    const requests = nodeReports('mina:testnet');
+    const requests = nodeReports('mina:mainnet');
     await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
-      .resolves.toBe('testnet');
+      .resolves.toBe('mainnet');
 
     const archive = requests.find((request) => request.url.includes(':8282'));
     expect(archive?.body.query).toContain('pendingMaxBlockHeight');
@@ -80,11 +80,11 @@ describe('desktop endpoint network check', () => {
   });
 
   it('accepts a decimal archive pending height', async () => {
-    nodeReports('mina:testnet', { body: { data: {
+    nodeReports('mina:mainnet', { body: { data: {
       networkState: { maxBlockHeight: { pendingMaxBlockHeight: '100' } }, events: [],
     } } });
     await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
-      .resolves.toBe('testnet');
+      .resolves.toBe('mainnet');
   });
 
   for (const [name, height] of [
@@ -92,7 +92,7 @@ describe('desktop endpoint network check', () => {
     ['fractional', 1.5], ['nonnumeric', 'later'], ['unsafe', Number.MAX_SAFE_INTEGER + 1],
   ] as const) {
     it(`rejects an archive pending height that is ${name}`, async () => {
-      nodeReports('mina:testnet', { body: { data: {
+      nodeReports('mina:mainnet', { body: { data: {
         networkState: { maxBlockHeight: { pendingMaxBlockHeight: height } }, events: [],
       } } });
       await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
@@ -101,7 +101,7 @@ describe('desktop endpoint network check', () => {
   }
 
   it('rejects an archive that does not return an events list', async () => {
-    nodeReports('mina:testnet', { body: { data: {
+    nodeReports('mina:mainnet', { body: { data: {
       networkState: { maxBlockHeight: { pendingMaxBlockHeight: 100 } }, events: null,
     } } });
     await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
@@ -110,7 +110,7 @@ describe('desktop endpoint network check', () => {
 
   for (const field of ['to', 'authorizationKind']) {
     it(`rejects an archive that cannot query ${field}`, async () => {
-      nodeReports('mina:testnet', { body: {
+      nodeReports('mina:mainnet', { body: {
         data: { networkState: { maxBlockHeight: { pendingMaxBlockHeight: 100 } }, events: [] },
         errors: [{ message: `Unsupported ${field}` }],
       } });
@@ -120,7 +120,7 @@ describe('desktop endpoint network check', () => {
   }
 
   it('rejects a non-success archive HTTP response even if it contains GraphQL data', async () => {
-    nodeReports('mina:testnet', { status: 502 });
+    nodeReports('mina:mainnet', { status: 502 });
     await expect(verifyEndpoints('http://localhost:8080/graphql', 'http://localhost:8282/graphql'))
       .rejects.toThrow('Archive endpoint returned HTTP 502');
   });
