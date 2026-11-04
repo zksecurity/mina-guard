@@ -348,6 +348,18 @@ function checkedChildConfigHash(
   } catch {
     throw new Error('createChild bundle has an invalid SubVault owner address');
   }
+  // reserveForParent runs assertCoherentSetupOwners, which rejects two owners
+  // sharing an x-coordinate (a repeated key, or a key and its negation, held by
+  // the same secret). Refuse them here so the summary never shows a SubVault
+  // the contract cannot create.
+  const seenX = new Set<string>();
+  for (const owner of owners) {
+    const x = owner.x.toString();
+    if (seenX.has(x)) {
+      throw new Error('createChild bundle lists the same SubVault owner twice (or a key and its negation)');
+    }
+    seenX.add(x);
+  }
   const store = new OwnerStore();
   if (order === 'reserved') {
     store.owners = owners;

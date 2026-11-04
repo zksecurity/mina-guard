@@ -441,6 +441,20 @@ describe('offline-cli', () => {
       expect(check({ createChildConfigHash: '5' })).toThrow('SubVault config mismatch');
     });
 
+    it('rejects a repeated owner or a key with its negation, even when the hash matches them', () => {
+      // reserveForParent's assertCoherentSetupOwners rejects owners sharing an
+      // x-coordinate, so a hash computed over such a list must still be refused.
+      const negated = PublicKey.fromObject({ x: ownerKeys[0].x, isOdd: ownerKeys[0].isOdd.not() });
+      for (const pair of [[ownerKeys[0], ownerKeys[0]], [ownerKeys[0], negated]]) {
+        const store = new OwnerStore();
+        for (const owner of pair) store.addSorted(owner);
+        const hash = childConfigHash(store.getCommitment(), Field(1), Field(2)).toString();
+        expect(() => assertCreateChildProposeConfig(bundle({
+          childOwners: pair.map((owner) => owner.toBase58()), createChildConfigHash: hash,
+        }))).toThrow('same SubVault owner twice');
+      }
+    });
+
     it('refuses a swapped config hash before rendering a summary or signing', async () => {
       // The owners and threshold shown would be fine, but the proposal would
       // sign a different configuration: refuse before the operator sees either.
