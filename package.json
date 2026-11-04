@@ -32,6 +32,8 @@
   },
   "overrides": {
     "electron-builder-squirrel-windows": "26.15.3",
-    "qs": "^6.16.0"
+    "qs": "^6.16.0",
+    "proxy-addr": "^2.0.8",
+    "handlebars": "^4.7.10"
   }
 }
