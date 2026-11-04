@@ -1,10 +1,9 @@
-# PR Preview Environment for MinaGuard
+# Full local MinaGuard stack (lightnet, postgres, backend, frontend, explorer,
+# Caddy). Used together with docker-compose.local.yml by local-preview.sh.
 #
 # Usage (run from repo root):
-#   PR_NUMBER=1 PREVIEW_PORT=10001 docker compose -f preview-env/docker-compose.preview.yml -p pr-1 up -d --build
-#   docker compose -p pr-1 down -v
-#
-# Access: https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/
+#   ./preview-env/local-preview.sh up 1
+#   ./preview-env/local-preview.sh down 1
 
 services:
   lightnet:
@@ -46,9 +45,9 @@ services:
       dockerfile: preview-env/Dockerfile.backend
       args:
         # When set, the Dockerfile skips the in-image circuit compile and
-        # writes this value to /app/.vk-hash. preview.sh computes it once on
-        # the host before invoking compose build to avoid OOM kills inside
-        # the Docker build.
+        # writes this value to /app/.vk-hash. Compute it once on the host
+        # before invoking compose build to avoid OOM kills inside the Docker
+        # build.
         - MINAGUARD_VK_HASH=${MINAGUARD_VK_HASH:-}
     restart: unless-stopped
     environment:

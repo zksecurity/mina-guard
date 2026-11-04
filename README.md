@@ -198,24 +198,9 @@ runtime. The browser checks the Mina node's reported network again before
 Vault creation. See the [deployment audit guide](docs/deploy-audit-guide.md)
 for the release boundary and remaining AWS setup.
 
-## PR Preview Environments
+## Local full stack with Docker
 
-Each PR targeting `main` could get an isolated preview stack deployed to the Hetzner server via a self-hosted GitHub Actions runner, at `https://mina-nodes.duckdns.org/preview/<PR_NUMBER>/`. The `Preview Environment` workflow has been disabled since 2026-11-02 and its runner deregistered (see the [deployment audit guide](docs/deploy-audit-guide.md)); the section below describes the stack for when it is brought back without a runner on the box.
-
-Each stack includes: lightnet, PostgreSQL, backend, frontend, block explorer, and a Caddy reverse proxy.
-
-### Manual management
-
-```bash
-# From repo root
-./preview-env/preview.sh up <PR_NUMBER>    # deploy
-./preview-env/preview.sh down <PR_NUMBER>  # teardown
-./preview-env/preview.sh list              # show active previews
-```
-
-### Local development with Docker
-
-You can run the full stack locally without the server's Caddy:
+You can run the full stack (lightnet, PostgreSQL, backend, frontend, block explorer and a Caddy reverse proxy) locally:
 
 ```bash
 ./preview-env/local-preview.sh up 1
@@ -223,7 +208,7 @@ You can run the full stack locally without the server's Caddy:
 
 Access at `https://localhost:10001/preview/1/`. In Auro Wallet, set the network URL to `https://localhost:10001/preview/1/graphql`.
 
-Caddy serves this over HTTPS with a self-signed cert (`tls internal`) and sets the COOP/COEP headers o1js needs — accept the cert warning on first visit. The CA persists in the `caddy-local-data` volume so the cert stays stable across restarts.
+Caddy serves this over HTTPS with a self-signed cert (`tls internal`) and sets the COOP/COEP headers o1js needs; accept the cert warning on first visit. The CA persists in the `caddy-local-data` volume so the cert stays stable across restarts.
 
 The helper builds `backend`, `frontend`, and `explorer` sequentially before starting the stack. This avoids the RAM spike from `docker compose up -d --build`, which can try to build all three images at once.
 
@@ -255,7 +240,7 @@ MINA_NETWORK_DOMAIN=testnet bun run dev-helpers/cli.ts lightnet-fixture --main-a
 
 By default this uses the quick-test `minimal` scenario: 2 vaults, 2 executed proposals per vault, and both vaults ending with your wallet as the sole owner at threshold 1. For broader coverage, you can also use `--scenario full`.
 
-That command acquires a funded lightnet deployer, generates helper signers, deploys real MinaGuard contracts that include your wallet address as an owner, submits real propose / approve / execute transactions with proofs disabled, and waits for the preview indexer to ingest them. The result is fixture data that stays consistent across chain, backend, and UI.
+That command acquires a funded lightnet deployer, generates helper signers, deploys real MinaGuard contracts that include your wallet address as an owner, submits real propose / approve / execute transactions with proofs disabled, and waits for the stack's indexer to ingest them. The result is fixture data that stays consistent across chain, backend, and UI.
 
 ```bash
 # Logs
@@ -291,20 +276,11 @@ Notes:
 - Add a custom network in Auro Wallet pointing at `http://localhost:8080/graphql` and switch to it before connecting.
 - Tunnel dies → the page errors. Run the SSH command inside `tmux`/`screen` if you want it sticky.
 
-### Architecture
-
-Requests hit the main Caddy (TLS + COOP/COEP headers) which reverse-proxies to a per-preview Caddy container that routes to individual services. COOP/COEP headers are set at the main Caddy level and upstream copies are stripped to prevent duplicates.
-
-### Server setup
-
-Preview routes are managed via the Caddy admin API (`localhost:2019`) — no sudo required. The self-hosted runner only needs Docker access (`docker` group).
-
 ### Gotchas
 
 - **SharedArrayBuffer**: o1js WASM requires `crossOriginIsolated`, which needs COOP + COEP headers over HTTPS. Do not add `Cross-Origin-Resource-Policy: same-origin` — it blocks o1js blob URL sub-workers.
 - **Bun workspaces**: keep the exact `o1js` and `mina-signer` pins in `bun.lock` when building UI, backend, and offline CLI artifacts.
 - **Minification disabled**: SWC/terser mangle BigInt ops used by o1js.
-- **Server limits**: ~2GB RAM per preview stack, max 2–3 concurrent previews on the 30GB server. Run `docker image prune -f` periodically.
 
 
 # Lightnet (working image before update 2026/04/13)

@@ -159,8 +159,8 @@ These instructions apply to the entire MinaGuard monorepo.
 ## Operations
 
 - Do not deploy, publish releases, reset databases, stop shared containers,
-  operate preview stacks, or mutate production infrastructure unless the user
-  explicitly requests that action.
+  or mutate production infrastructure unless the user explicitly requests that
+  action.
 - To release `main` to `production`, follow "Release from production" in
   `docs/deploy-audit-guide.md`. Start a new branch from `origin/production`,
   copy the current `main` files into it with `git read-tree --reset -u
