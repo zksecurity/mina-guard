@@ -170,16 +170,24 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    the action and transaction type are known (`canonicalizeBundleTxType`;
    anything else aborts before a summary is shown, and a numeric type code is
    rewritten to its name so the summary and the builder compare the same
-   value), a check that a CREATE_CHILD approval carries the SubVault owners and
-   threshold it authorizes and that they hash, in reserved slot order, to the
-   signed `proposal.data` (`assertCreateChildApprovalConfig`; a missing,
-   malformed or swapped configuration aborts before the summary, which
-   otherwise prints the checked owners and threshold), and *before any
+   value), a check that a CREATE_CHILD bundle carries the SubVault owners and
+   threshold it authorizes and that they hash to the config hash the signature
+   covers: in reserved slot order to the signed `proposal.data` for approve and
+   execute (`assertCreateChildBundleConfig`), and in base58 order, the order
+   `handlePropose` reserves with, to `input.createChildConfigHash` for propose
+   (`assertCreateChildProposeConfig`); a missing, malformed or swapped
+   configuration aborts before the summary, which otherwise prints the checked
+   owners and threshold), and *before any
    compile/prove/sign work or key use*, `renderBundleSummary` renders
    the action, contract, fee payer, the exact request fee that the CLI will
    sign, and everything the proposal hash covers (including
    nonce, memo, expiry, the per-type body), plus a `*** MAINNET ***` banner when
-   applicable). Every summary line goes through `escapeTerminalText`, so
+   applicable). An execute summary for a payment also prints a `New accounts`
+   line: how many receiver accounts the execution creates and how many MINA
+   (1 per account) the fee payer is charged on top of the fee, `0` when none;
+   the number comes from `countExecuteNewAccounts`, the same function
+   `handleExecute` funds from, so the charge confirmed is the charge signed.
+   Every summary line goes through `escapeTerminalText`, so
    control, format (bidi) and line-separator characters from the bundle print
    as visible `\u{XX}` text instead of acting on the terminal; error and log
    messages are escaped the same way. It then asks for `y` on the controlling terminal (`/dev/tty`, so
@@ -234,8 +242,14 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 
 Execute handling mirrors the worker per type: account-creation funding is
 counted **from the hash-bound `proposalStruct.receivers`**, never the raw
-bundle array; CREATE_CHILD executes re-derive the child config hash against
-`proposal.data` and refuse an already-initialized child. The broadcast memo
+bundle array, by `countExecuteNewAccounts`, the same function that puts the
+`New accounts` line in the summary, so the count the operator confirmed is the
+count `fundNewAccount` charges; CREATE_CHILD executes re-derive the child
+config hash against `proposal.data` and refuse an already-initialized child.
+CREATE_CHILD proposes re-derive it against `input.createChildConfigHash`
+(`assertCreateChildProposeConfig`, before the summary and again in
+`handlePropose`), so the owners and threshold on screen are the ones the
+signed proposal data commits to. The broadcast memo
 on executes is the bundle's `proposal.memo`, and the CLI refuses an approve or
 execute bundle unless that text hashes to the proposal's `proposal.memoHash`
 (`assertBundleMemo`; a missing memo counts as the empty memo). The check runs
@@ -389,10 +403,10 @@ the offline CLI restores the resulting leaves without replaying events.
 | `input.reclaimAmount` | `string` | reclaimChild (nanomina) |
 | `input.childAccount` | `string` | Target child (child actions) |
 | `input.childMultiSigEnable` | `boolean` | enableChildMultiSig |
-| `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners) |
+| `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners), the proposal's signed `data`; the CLI recomputes it from `input.childOwners` (base58 order) and `input.childThreshold` and refuses a mismatch before the summary |
 | `input.childPrivateKey` | `string` | createChild only — signs the child's deploy update (see threat model) |
 | `accounts[input.childAccount]` | `FetchedAccount?` | createChild: present when the child's bare account already exists; the CLI then deploys into it without `fundNewAccount` (`deployTargetFromSnapshot`). A snapshot with a verification key or app state is refused |
-| `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config |
+| `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config, shown in the summary and checked against `input.createChildConfigHash` (`assertCreateChildProposeConfig`) |
 | `input.expirySlot` | `number` | UInt32 inclusion deadline for propose, approve, and execute; 0 = no expiry |
 | `input.memo` | `string` | Plaintext memo — hashed into the proposal **and** attached as the broadcast memo |
 
@@ -412,7 +426,7 @@ from the fields and recomputes the hash it signs.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `proposal` | object | Same shape as approve |
-| `receiverAccountExists` | `Record<address, boolean>` | Which receivers already exist on-chain (drives `fundNewAccount`; absent/false ⇒ treated as new) |
+| `receiverAccountExists` | `Record<address, boolean>` | Which receivers already exist on-chain (drives `fundNewAccount`; absent/false ⇒ treated as new; an entry for an address outside the hash-bound receivers is ignored). The resulting count and MINA charge appear as the summary's `New accounts` line before confirmation |
 | `childAddress` | `string?` | Child contract (child actions) |
 | `childEvents` | `Array?` | Child event history (child lifecycle actions — rebuilds `childExecutionRoot`) |
 | `childOwners` / `childThreshold` | `string[]?` / `number?` | createChild execute: announced config, re-verified against `proposal.data` by the CLI **and** by the contract |
@@ -432,7 +446,13 @@ action differs, and the distinction is the heart of this design:
   object to check against: whatever `input` says is what gets hashed, proved,
   and signed. The CLI renders everything the hash covers in the summary
   before signing, and for propose the displayed memo *is* the string that
-  gets hashed.
+  gets hashed. The one indirection is CREATE_CHILD: the proposal data is
+  `input.createChildConfigHash`, not the owners and threshold themselves, so
+  the CLI recomputes that hash from `input.childOwners` and
+  `input.childThreshold` and refuses the bundle before the summary unless they
+  match. The summary therefore shows the configuration the signed hash
+  commits to, and a bundle that displays one SubVault config while hashing
+  another is never shown.
 - **Approve bundles *claim* an existing proposal.** The CLI does not trust
   the bundle's `proposalHash`; it rebuilds the struct from the hash-covered
   fields and recomputes it, and the contract requires that hash to match a
@@ -449,7 +469,10 @@ action differs, and the distinction is the heart of this design:
 - **Execute bundles.** Execution is permissionless on-chain: anyone can
   submit a fully-approved proposal. The `receiverAccountExists` map drives the
   executor-signed account-creation fee (1 MINA per new receiver slot), counted
-  from the hash-bound `proposalStruct.receivers`. The memo text the execution
+  from the hash-bound `proposalStruct.receivers`; the summary's `New accounts`
+  line states that count and charge before confirmation, from the same
+  function the builder funds with, so a map that hides new receivers cannot
+  add an unannounced charge after the operator says yes. The memo text the execution
   broadcasts must hash to the approved `memoHash`, or the CLI refuses the
   bundle before the summary.
 - **`childPrivateKey` (createChild propose bundles).** It signs the child's
@@ -539,7 +562,10 @@ authoritative check at broadcast.
 
 **5. Fee counting & account snapshots.** `countNewReceiverAccounts` derives
 strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
-`MAX_RECEIVERS` don't affect the count). Account snapshots (nonce/balance/VK)
+`MAX_RECEIVERS` don't affect the count). `countExecuteNewAccounts` wraps it
+for execute bundles and is the single source for both the summary's
+`New accounts` line and `handleExecute`'s `fundNewAccount` count, so the two
+cannot disagree. Account snapshots (nonce/balance/VK)
 come from the bundle and feed o1js's account cache; the proved tx is checked
 against real chain state at broadcast.
 
@@ -582,8 +608,10 @@ offline-cli/
 │   ├── terminal-safe.ts # Escapes control/format characters in bundle text
 │   ├── wasm-shim.ts    # Embeds Kimchi WASM into the compiled binary
 │   │                   #   (patches fs.readFileSync; redirects kimchi_wasm.cjs
-│   │                   #   resolution inside Bun-compiled binaries via a temp-dir
-│   │                   #   stub — see the file's comments before touching it)
+│   │                   #   resolution inside Bun-compiled binaries via a stub in
+│   │                   #   a private mkdtemp directory (mode 0700, created
+│   │                   #   exclusively, removed on exit) so no other local user
+│   │                   #   can plant it; see the file's comments before touching it)
 │   └── tests/          # Unit + e2e tests (bundle → sign → broadcast on lightnet)
 ├── cache/              # o1js compile cache (prover/verifier keys, SRS) — NOT
 │                       #   committed (gitignored); generated locally on first

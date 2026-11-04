@@ -21,6 +21,7 @@ import {
   normalizeTxType,
   EMPTY_PUBKEY_B58,
   resolveBundleFee,
+  countExecuteNewAccounts,
   type TxType,
   type OfflineBundle,
   type OfflineProposeBundle,
@@ -120,6 +121,27 @@ function renderReceivers(receivers: Receiverish[]): string[] {
   }
   out.push(line('Total', `${totalMina(real)} MINA`));
   return out;
+}
+
+/**
+ * The account-creation charge an execute bundle adds to the fee payer's cost:
+ * 1 MINA per receiver account that does not exist yet, on top of the fee and
+ * not reimbursed by the vault. The count is the one handleExecute funds, read
+ * from the same function, so the operator confirms the exact charge.
+ */
+function renderAccountCreation(bundle: OfflineExecuteBundle): string {
+  let count: number;
+  try {
+    count = countExecuteNewAccounts(bundle);
+  } catch (err) {
+    return line('New accounts', `UNKNOWN: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return line(
+    'New accounts',
+    count === 0
+      ? '0 new receiver account(s), no account creation fee'
+      : `${count} new receiver account(s), ${count} MINA charged to the fee payer in addition to the fee`,
+  );
 }
 
 /** Body lines specific to the tx type, given the resolved field sources. */
@@ -305,6 +327,12 @@ export function renderBundleSummary(bundle: OfflineBundle): string {
           enableMultiSig: p.data === '1',
         }),
       );
+      // Executing a payment can create receiver accounts at the fee payer's
+      // expense; say how many before the operator confirms (0 for allocation,
+      // which never creates accounts).
+      if (b.action === 'execute' && (txType === 'transfer' || txType === 'allocateChild')) {
+        lines.push(renderAccountCreation(b));
+      }
     }
   } catch (err) {
     lines = [

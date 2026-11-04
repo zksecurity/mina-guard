@@ -28,7 +28,7 @@ if (!isMainThread) {
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
-import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildBundleConfig, assertBundleMemo, resolveBundleFee } from './build-tx.js';
+import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildBundleConfig, assertCreateChildProposeConfig, assertBundleMemo, resolveBundleFee } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
 import { OFFLINE_REQUEST_VERSION } from 'contracts';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
@@ -109,10 +109,13 @@ async function main() {
   }
   // Refuse an unknown transaction type before showing anything, and turn a
   // numeric code into its name, so the summary and the builder agree on it.
-  // A CREATE_CHILD approval or execution also needs the SubVault owners and
-  // threshold it carries, checked against the signed data, before they are shown.
+  // A CREATE_CHILD bundle also needs the SubVault owners and threshold it
+  // carries, checked against the config hash that is signed (the proposal data
+  // on approve and execute, input.createChildConfigHash on propose), before
+  // they are shown.
   try {
     canonicalizeBundleTxType(bundle);
+    if (bundle.action === 'propose') assertCreateChildProposeConfig(bundle);
     if (bundle.action === 'approve' || bundle.action === 'execute') assertCreateChildBundleConfig(bundle);
     // Owners sign the memo hash and an execution carries the memo text to the
     // chain, so the text must match the hash before anything is shown or signed.
