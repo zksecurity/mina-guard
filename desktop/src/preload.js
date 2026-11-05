@@ -37,7 +37,9 @@ contextBridge.exposeInMainWorld('mina', {
   },
 
   requestNetwork() {
-    const id = initialConfig?.networkId ?? 'testnet';
+    // Matches BUILD_NETWORK_DOMAIN in config-store.ts; the main process always
+    // passes the verified networkId, so this is only a fallback.
+    const id = initialConfig?.networkId ?? 'mainnet';
     return Promise.resolve({ networkID: `mina:${id}` });
   },
 

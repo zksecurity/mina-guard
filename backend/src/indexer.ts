@@ -9,6 +9,7 @@ import {
   configureNetwork,
   discoverCandidateAddresses,
   discoverCandidateAddressesFromArchive,
+  EVENT_QUERY_BLOCK_SPAN,
   fetchBestChainHeaders,
   fetchDecodedContractEvents,
   fetchGenesisConstants,
@@ -72,11 +73,40 @@ export interface IndexerStatus {
   /** Current `globalSlotSinceGenesis` derived from wall-clock + genesis constants. */
   latestSlot: number;
   indexedHeight: number;
+  /** Message of the error that failed the last tick, or null after a
+   *  successful tick. It can name database hosts, connection strings or file
+   *  paths, so the status route publishes only `lastErrorAt`; the message is
+   *  logged by the tick. */
   lastError: string | null;
+  /** When `lastError` was recorded; null whenever `lastError` is. */
+  lastErrorAt: string | null;
   /** Latest recovery warning; retained across successful ticks until restart. */
   lastWarning: string | null;
   discoveredContracts: number;
+  /** Lite mode only: history scans of tracked vaults that are not ready yet.
+   *  Each has read the archive from `startHeight` through `scannedHeight`;
+   *  `finished` means it reached the tip without applying a vault event;
+   *  `failedEvents` counts events it found but could not apply. */
+  firstScans: Array<{
+    address: string; startHeight: number; scannedHeight: number; finished: boolean; failedEvents: number;
+  }>;
   indexerMode: 'full' | 'lite';
+}
+
+/** The status served by `GET /api/indexer/status`: everything an operator
+ *  needs to see whether the indexer runs, where its cursor is and whether its
+ *  last tick failed, without the raw error text. */
+export type PublicIndexerStatus = Omit<IndexerStatus, 'lastError'> & {
+  lastRunFailed: boolean;
+};
+
+/** Projects the in-memory status to the public shape. `lastError` is replaced
+ *  by `lastRunFailed`; `lastErrorAt` says when the failure happened. */
+export function toPublicIndexerStatus(
+  status: Omit<IndexerStatus, 'indexerMode'>,
+): Omit<PublicIndexerStatus, 'indexerMode'> {
+  const { lastError, ...rest } = status;
+  return { ...rest, lastErrorAt: status.lastErrorAt ?? null, lastRunFailed: lastError !== null };
 }
 
 /** Fields describing a single ContractConfig row — subset used when merging deltas. */
@@ -94,14 +124,27 @@ type ContractConfigFields = {
 /** Partial change set for a config-mutating event. Fields left undefined are copied from the latest row. */
 type ContractConfigChanges = Partial<ContractConfigFields>;
 
+/** Each first-scan step is one archive events request. A tick takes at most
+ *  this many steps across all unready vaults, so importing an old vault paces
+ *  itself (about 20 requests a minute at the default 15 s poll). The hosted
+ *  endpoints allow 60 node and archive requests a minute per IP, and the
+ *  indexer's other calls and the app's own transactions share that budget. */
+const FIRST_SCAN_STEPS_PER_TICK = 5;
+
 /** Polling indexer that discovers MinaGuard contracts and ingests lifecycle events. */
 export class MinaGuardIndexer {
   private readonly config: BackendConfig;
+  /** First-scan progress of unready vaults, by contract id. Kept across ticks
+   *  so a long history resumes where it stopped instead of restarting. A
+   *  process restart only repeats work: event ingestion is idempotent. */
+  private readonly firstScans = new Map<number, { address: string; start: number; next: number }>();
+  /** Unready vaults whose first scan already reached the tip, as of the last tick. */
+  private scannedUnready: Array<{ address: string; start: number; failedEvents: number }> = [];
   private intervalHandle: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
   private archivePool: pg.Pool | null = null;
-  private status: Omit<IndexerStatus, 'indexerMode'> = {
+  private status: Omit<IndexerStatus, 'indexerMode' | 'firstScans'> = {
     running: false,
     lastRunAt: null,
     lastSuccessfulRunAt: null,
@@ -109,6 +152,7 @@ export class MinaGuardIndexer {
     latestSlot: 0,
     indexedHeight: 0,
     lastError: null,
+    lastErrorAt: null,
     lastWarning: null,
     discoveredContracts: 0,
   };
@@ -189,7 +233,20 @@ export class MinaGuardIndexer {
 
   /** Returns the latest in-memory indexer status snapshot. Does not include `indexerMode` — the route layer adds it from config. */
   getStatus(): Omit<IndexerStatus, 'indexerMode'> {
-    return { ...this.status };
+    // Full mode can track many unready deploys; only lite mode imports by hand.
+    const firstScans = this.config.indexerMode !== 'lite' ? [] : [
+      ...[...this.firstScans.values()].map((scan) => ({
+        address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1,
+        finished: false, failedEvents: 0,
+      })),
+      // A finished scan's later replays are complete through the indexed
+      // height, which advances only after a tick, replays included, succeeds.
+      ...this.scannedUnready.map((scan) => ({
+        address: scan.address, startHeight: scan.start,
+        scannedHeight: this.status.indexedHeight, finished: true, failedEvents: scan.failedEvents,
+      })),
+    ];
+    return { ...this.status, firstScans };
   }
 
   /** Runs one complete indexing loop: discovery, ingestion, and cursor advancement. */
@@ -217,9 +274,14 @@ export class MinaGuardIndexer {
       // of this tick and let the next one resume syncing from the new cursor.
       const rolledBackTo = await this.detectAndRollbackReorg();
       if (rolledBackTo !== null) {
+        // Rollback deleted events above the fork; first scans rescan them.
+        for (const scan of this.firstScans.values()) {
+          scan.next = Math.max(scan.start, Math.min(scan.next, rolledBackTo + 1));
+        }
         this.status.indexedHeight = rolledBackTo;
         this.status.lastSuccessfulRunAt = new Date().toISOString();
         this.status.lastError = null;
+        this.status.lastErrorAt = null;
         return;
       }
 
@@ -326,6 +388,7 @@ export class MinaGuardIndexer {
 
       this.status.lastSuccessfulRunAt = new Date().toISOString();
       this.status.lastError = null;
+      this.status.lastErrorAt = null;
     } catch (error) {
       // Log the raw thrown value before stringifying: o1js and some driver
       // paths throw non-Error values (plain strings/objects), which otherwise
@@ -334,6 +397,7 @@ export class MinaGuardIndexer {
       this.status.lastError = error instanceof Error
         ? error.message
         : `Non-Error thrown by indexer tick: ${describeThrown(error)}`;
+      this.status.lastErrorAt = new Date().toISOString();
     } finally {
       this.tickInProgress = false;
     }
@@ -463,19 +527,75 @@ export class MinaGuardIndexer {
    * Scans an unready contract's full history once, then replays the same recent
    * window as ready contracts. Missing accounts and failed scans do not stamp
    * lastSyncedAt, so subscribe-before-deploy still gets a full first scan.
+   * The first scan advances one archive request at a time and resumes from
+   * its last completed step after a failure or when the tick's step budget
+   * runs out.
    */
   private async rescanUnreadyContracts(fromHeight: number, latestHeight: number): Promise<void> {
     const unready = await prisma.contract.findMany({
       where: { ready: false },
       select: { id: true, address: true, discoveredAtBlock: true, lastSyncedAt: true },
     });
+    const pending = new Set(unready.filter((c) => c.lastSyncedAt === null).map((c) => c.id));
+    const scanned = unready.filter((c) => c.lastSyncedAt !== null);
+    const failed = this.config.indexerMode === 'lite' && scanned.length > 0
+      ? await this.countFailedEvents(scanned.map((c) => c.id))
+      : new Map<number, number>();
+    this.scannedUnready = scanned.map((c) => ({
+      address: c.address,
+      start: c.discoveredAtBlock ?? this.config.indexStartHeight,
+      failedEvents: failed.get(c.id) ?? 0,
+    }));
+    for (const id of this.firstScans.keys()) if (!pending.has(id)) this.firstScans.delete(id);
+    let steps = FIRST_SCAN_STEPS_PER_TICK;
     for (const c of unready) {
-      const from = c.lastSyncedAt === null
-        ? (c.discoveredAtBlock ?? this.config.indexStartHeight)
-        : Math.max(c.discoveredAtBlock ?? 0, fromHeight);
-      if (from > latestHeight) continue;
-      await this.syncSingleContract(c.id, c.address, from, latestHeight);
+      if (c.lastSyncedAt !== null) {
+        const from = Math.max(c.discoveredAtBlock ?? 0, fromHeight);
+        if (from > latestHeight) continue;
+        await this.syncSingleContract(c.id, c.address, from, latestHeight);
+        continue;
+      }
+      const start = c.discoveredAtBlock ?? this.config.indexStartHeight;
+      if (start > latestHeight) continue;
+      let scan = this.firstScans.get(c.id);
+      if (!scan || scan.start !== start) {
+        scan = { address: c.address, start, next: start };
+        this.firstScans.set(c.id, scan);
+      }
+      while (steps > 0) {
+        steps -= 1;
+        const to = Math.min(scan.next + EVENT_QUERY_BLOCK_SPAN - 1, latestHeight);
+        const finish = to === latestHeight;
+        const result = await this.syncSingleContract(c.id, c.address, scan.next, to, {
+          finish, readyFromStoredEvents: true,
+        });
+        // A missing or refused account: retry the same step next tick.
+        if (result === null) break;
+        if (finish) {
+          this.firstScans.delete(c.id);
+          // Report an empty finished scan now, not from the next tick's query.
+          // The final step returns only its own window's ingestion, so read
+          // the readiness it stored.
+          const done = await prisma.contract.findUnique({ where: { id: c.id }, select: { ready: true } });
+          if (done && !done.ready) {
+            const failedEvents = (await this.countFailedEvents([c.id])).get(c.id) ?? 0;
+            this.scannedUnready.push({ address: c.address, start, failedEvents });
+          }
+          break;
+        }
+        scan.next = to + 1;
+      }
     }
+  }
+
+  /** Events recorded but not applied (malformed or rejected), per contract. */
+  private async countFailedEvents(contractIds: number[]): Promise<Map<number, number>> {
+    const rows = await prisma.eventRaw.groupBy({
+      by: ['contractId'],
+      where: { contractId: { in: contractIds }, applyError: { not: null } },
+      _count: { _all: true },
+    });
+    return new Map(rows.flatMap((row) => row.contractId === null ? [] : [[row.contractId, row._count._all]]));
   }
 
   /** Indexes events for all tracked contracts across the requested block range. */
@@ -504,13 +624,20 @@ export class MinaGuardIndexer {
    * Fetches, stores, and applies decoded events for a single contract address.
    * Public so tests can drive the event-apply pipeline with mocked chain data
    * (used by the reorg-reconstruction test).
+   *
+   * Returns whether an event was applied, or null when the account is missing
+   * or refused. `finish: false` leaves lastSyncedAt and ready unchanged, for a
+   * first scan that continues past `toHeight`. With `readyFromStoredEvents`,
+   * the final step also counts events applied by earlier steps, including
+   * steps before a restart, whose replay is skipped as duplicate.
    */
   async syncSingleContract(
     contractId: number,
     address: string,
     fromHeight: number,
-    toHeight: number
-  ): Promise<void> {
+    toHeight: number,
+    { finish = true, readyFromStoredEvents = false }: { finish?: boolean; readyFromStoredEvents?: boolean } = {},
+  ): Promise<boolean | null> {
     const tracked = await prisma.contract.findUnique({
       where: { id: contractId },
       select: { permissionsVerified: true },
@@ -520,7 +647,7 @@ export class MinaGuardIndexer {
         address,
         this.config
       );
-      if (!security.accountFound) return;
+      if (!security.accountFound) return null;
       if (!security.safe) {
         await prisma.contract.update({
           where: { id: contractId },
@@ -535,7 +662,7 @@ export class MinaGuardIndexer {
               : 'verification key mismatch'
           }`
         );
-        return;
+        return null;
       }
       await prisma.contract.update({
         where: { id: contractId },
@@ -579,12 +706,17 @@ export class MinaGuardIndexer {
     // a real, set-up contract. Flipping ready here gates a subscribed-before-
     // deploy contract from appearing in API read routes until its first
     // event actually lands.
-    await prisma.contract.update({
-      where: { id: contractId },
-      data: ingested
-        ? { lastSyncedAt: new Date(), ready: true }
-        : { lastSyncedAt: new Date() },
-    });
+    if (finish) {
+      const ready = ingested || (readyFromStoredEvents
+        && await prisma.eventRaw.count({ where: { contractId, applyError: null } }) > 0);
+      await prisma.contract.update({
+        where: { id: contractId },
+        data: ready
+          ? { lastSyncedAt: new Date(), ready: true }
+          : { lastSyncedAt: new Date() },
+      });
+    }
+    return ingested;
   }
 
   /**

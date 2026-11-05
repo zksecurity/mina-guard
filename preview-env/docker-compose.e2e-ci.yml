@@ -1,11 +1,11 @@
-# E2E CI stack for the self-hosted runner.
+# E2E CI stack for .github/workflows/e2e.yml (GitHub-hosted runner).
 #
-# Playwright runs on the host; all infrastructure lives in containers.
-# Ports are published to 127.0.0.1 only (self-hosted runner has a public IP).
+# Playwright runs on the runner; all infrastructure lives in containers.
+# Ports are published to 127.0.0.1 only.
 #
 # Host ports are published in an isolated 1xxxx range (container ports unchanged)
-# so the stack never collides with other long-lived services on the shared
-# self-hosted runner (e.g. host postgres on 5432, other apps on 8080/8282).
+# so the stack never collides with other services on the runner (e.g. a host
+# postgres on 5432, other apps on 8080/8282).
 # The host-facing endpoints are passed to the test harness via E2E_* env vars
 # in .github/workflows/e2e.yml; internal service-to-service URLs are unchanged.
 #

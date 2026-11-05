@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import './default-network.js';
 import './wasm-shim.js';
 import { isMainThread } from 'worker_threads';
 
@@ -19,6 +20,8 @@ if (!isMainThread) {
 // Usage:
 //   MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [> signed.json]
 //
+// MINA_NETWORK_DOMAIN defaults to mainnet; set testnet or devnet for those.
+//
 // Reads a request bundle exported from the Mina Guard web UI, compiles the
 // MinaGuard contract, builds a zero-knowledge proof, signs the transaction
 // with the supplied private key, and outputs a ready-to-broadcast signed
@@ -28,7 +31,7 @@ if (!isMainThread) {
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
-import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildBundleConfig, assertExecuteBundleMemo, resolveBundleFee } from './build-tx.js';
+import { handlePropose, handleApprove, handleExecute, canonicalizeBundleTxType, assertCreateChildBundleConfig, assertCreateChildProposeConfig, assertBundleMemo, resolveBundleFee } from './build-tx.js';
 import type { OfflineBundle } from './build-tx.js';
 import { OFFLINE_REQUEST_VERSION } from 'contracts';
 import { renderBundleSummary, confirmOrExit } from './summary.js';
@@ -62,6 +65,7 @@ if (!bundlePath || !rawKey) {
     '  bundle.json        Path to the request bundle exported from the Mina Guard UI\n' +
     '  MINA_PRIVATE_KEY   Mina private key (base58, starts with EKE...); deploy key for migration\n' +
     '  MINA_FEE_PAYER_PRIVATE_KEY  Optional second fee payer key for migration\n' +
+    '  MINA_NETWORK_DOMAIN  mainnet (default), testnet or devnet; must match the bundle\n' +
     '  --yes, -y          Skip the interactive sign confirmation; required when\n' +
     '                     running without a terminal (also MINA_GUARD_ASSUME_YES=1)\n' +
     '\n' +
@@ -109,14 +113,17 @@ async function main() {
   }
   // Refuse an unknown transaction type before showing anything, and turn a
   // numeric code into its name, so the summary and the builder agree on it.
-  // A CREATE_CHILD approval or execution also needs the SubVault owners and
-  // threshold it carries, checked against the signed data, before they are shown.
+  // A CREATE_CHILD bundle also needs the SubVault owners and threshold it
+  // carries, checked against the config hash that is signed (the proposal data
+  // on approve and execute, input.createChildConfigHash on propose), before
+  // they are shown.
   try {
     canonicalizeBundleTxType(bundle);
+    if (bundle.action === 'propose') assertCreateChildProposeConfig(bundle);
     if (bundle.action === 'approve' || bundle.action === 'execute') assertCreateChildBundleConfig(bundle);
-    // An execution carries the memo text to the chain, so it must match the
-    // approved memo hash before anything is shown or signed.
-    if (bundle.action === 'execute') assertExecuteBundleMemo(bundle);
+    // Owners sign the memo hash and an execution carries the memo text to the
+    // chain, so the text must match the hash before anything is shown or signed.
+    if (bundle.action === 'approve' || bundle.action === 'execute') assertBundleMemo(bundle);
     resolveBundleFee(bundle);
   } catch (err) {
     fatal(`${err instanceof Error ? err.message : String(err)}\nAborted. No transaction was signed.`);

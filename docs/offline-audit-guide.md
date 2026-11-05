@@ -154,13 +154,16 @@ offline CLI's bundle-domain checks.
 ### 2. Sign (`offline-cli/src/`)
 
 ```
-MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
+MINA_NETWORK_DOMAIN=mainnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a testnet bundle,
-use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
-unset, invalid, and mainnet/test-network mismatches fail closed. Offline
-bundles encode devnet as `testnet`.
+`MINA_NETWORK_DOMAIN` defaults to `mainnet` in the CLI
+(`offline-cli/src/default-network.ts`, loaded before `contracts`). For a testnet
+bundle, set `testnet` or `devnet` (both select `Field(2)`). Invalid values and
+mainnet/test-network mismatches fail closed, so a testnet bundle run with the
+default is rejected before signing. Offline bundles encode devnet as `testnet`.
+The UI's offline panel shows the full command with the domain of the network it
+is connected to and the binary for the platform the user picks.
 The CLI checks the bundle against the domain captured when contracts were
 imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
@@ -170,16 +173,24 @@ Progress goes to stderr; stdout stays pure JSON. The flow
    the action and transaction type are known (`canonicalizeBundleTxType`;
    anything else aborts before a summary is shown, and a numeric type code is
    rewritten to its name so the summary and the builder compare the same
-   value), a check that a CREATE_CHILD approval carries the SubVault owners and
-   threshold it authorizes and that they hash, in reserved slot order, to the
-   signed `proposal.data` (`assertCreateChildApprovalConfig`; a missing,
-   malformed or swapped configuration aborts before the summary, which
-   otherwise prints the checked owners and threshold), and *before any
+   value), a check that a CREATE_CHILD bundle carries the SubVault owners and
+   threshold it authorizes and that they hash to the config hash the signature
+   covers: in reserved slot order to the signed `proposal.data` for approve and
+   execute (`assertCreateChildBundleConfig`), and in base58 order, the order
+   `handlePropose` reserves with, to `input.createChildConfigHash` for propose
+   (`assertCreateChildProposeConfig`); a missing, malformed or swapped
+   configuration aborts before the summary, which otherwise prints the checked
+   owners and threshold), and *before any
    compile/prove/sign work or key use*, `renderBundleSummary` renders
    the action, contract, fee payer, the exact request fee that the CLI will
    sign, and everything the proposal hash covers (including
    nonce, memo, expiry, the per-type body), plus a `*** MAINNET ***` banner when
-   applicable). Every summary line goes through `escapeTerminalText`, so
+   applicable). An execute summary for a payment also prints a `New accounts`
+   line: how many receiver accounts the execution creates and how many MINA
+   (1 per account) the fee payer is charged on top of the fee, `0` when none;
+   the number comes from `countExecuteNewAccounts`, the same function
+   `handleExecute` funds from, so the charge confirmed is the charge signed.
+   Every summary line goes through `escapeTerminalText`, so
    control, format (bidi) and line-separator characters from the bundle print
    as visible `\u{XX}` text instead of acting on the terminal; error and log
    messages are escaped the same way. It then asks for `y` on the controlling terminal (`/dev/tty`, so
@@ -234,15 +245,22 @@ Progress goes to stderr; stdout stays pure JSON. The flow
 
 Execute handling mirrors the worker per type: account-creation funding is
 counted **from the hash-bound `proposalStruct.receivers`**, never the raw
-bundle array; CREATE_CHILD executes re-derive the child config hash against
-`proposal.data` and refuse an already-initialized child. The broadcast memo
-on executes is the bundle's `proposal.memo`, and the CLI refuses an execute
-bundle unless that text hashes to the approved `proposal.memoHash`
-(`assertExecuteBundleMemo`; a missing memo counts as the empty memo). The check
-runs before the summary is shown and again inside `handleExecute`, so a
-tampered online backend cannot swap the memo of an approved proposal. The
-online UI applies the same rule before it exports an execute bundle and in its
-own execute paths (see the UI guide).
+bundle array, by `countExecuteNewAccounts`, the same function that puts the
+`New accounts` line in the summary, so the count the operator confirmed is the
+count `fundNewAccount` charges; CREATE_CHILD executes re-derive the child
+config hash against `proposal.data` and refuse an already-initialized child.
+CREATE_CHILD proposes re-derive it against `input.createChildConfigHash`
+(`assertCreateChildProposeConfig`, before the summary and again in
+`handlePropose`), so the owners and threshold on screen are the ones the
+signed proposal data commits to. The broadcast memo
+on executes is the bundle's `proposal.memo`, and the CLI refuses an approve or
+execute bundle unless that text hashes to the proposal's `proposal.memoHash`
+(`assertBundleMemo`; a missing memo counts as the empty memo). The check runs
+before the summary is shown and again inside `handleApprove` and
+`handleExecute`, so a tampered online backend can neither collect approvals on
+a memo other than the committed one nor swap the memo of an approved proposal.
+The online UI applies the same rule before it exports approve and execute
+bundles and in its own approve and execute paths (see the UI guide).
 
 Child reservation enforces the same governance bounds as initialization and rejects
 self-parenting or a parent without initialized root state. The parent's owners
@@ -266,12 +284,15 @@ the proposal being viewed — a signed file for a different vault or proposal
 is rejected. (The propose page can only bind by contract: its hash is new by
 definition.) The UI reads `feePayer.body.fee` from the actual signed command,
 requires a canonical integer string in the 0.01–0.1 MINA range, and rejects a
-mismatch with the most recent request exported for the same action in the current
-page session. It shows the signed fee and fee payer in a review panel and does
+mismatch with the most recent request exported for the same action in the page
+session. On a proposal's page, approve and execute exports are kept in
+`sessionStorage`, keyed by vault and proposal hash, across reloads until a
+broadcast or **Start over**. It shows the signed fee and fee payer in a review panel and does
 not broadcast on upload. The user must click **Broadcast signed transaction**.
-After a reload, the page no longer has the exported fee to compare automatically;
-the panel instead asks the user to compare the signed fee with the saved request
-and offline CLI summary. At the click, the UI checks the fee again and performs
+Without an export (another tab, a new proposal after a reload, or after
+**Start over**), the panel instead
+asks the user to compare the signed fee with the saved request and offline CLI
+summary. At the click, the UI checks the fee again and performs
 the existing network, policy, and live-state checks before POSTing `sendZkapp`
 to the configured Mina endpoint. It maps common node rejections to actionable
 messages and, on success, records a pending tx for normal reconciliation.
@@ -388,10 +409,10 @@ the offline CLI restores the resulting leaves without replaying events.
 | `input.reclaimAmount` | `string` | reclaimChild (nanomina) |
 | `input.childAccount` | `string` | Target child (child actions) |
 | `input.childMultiSigEnable` | `boolean` | enableChildMultiSig |
-| `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners) |
+| `input.createChildConfigHash` | `string` | createChild: Poseidon(ownersCommitment, threshold, numOwners), the proposal's signed `data`; the CLI recomputes it from `input.childOwners` (base58 order) and `input.childThreshold` and refuses a mismatch before the summary |
 | `input.childPrivateKey` | `string` | createChild only — signs the child's deploy update (see threat model) |
 | `accounts[input.childAccount]` | `FetchedAccount?` | createChild: present when the child's bare account already exists; the CLI then deploys into it without `fundNewAccount` (`deployTargetFromSnapshot`). A snapshot with a verification key or app state is refused |
-| `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config |
+| `input.childOwners` / `input.childThreshold` | `string[]` / `number` | createChild config, shown in the summary and checked against `input.createChildConfigHash` (`assertCreateChildProposeConfig`) |
 | `input.expirySlot` | `number` | UInt32 inclusion deadline for propose, approve, and execute; 0 = no expiry |
 | `input.memo` | `string` | Plaintext memo — hashed into the proposal **and** attached as the broadcast memo |
 
@@ -411,7 +432,7 @@ from the fields and recomputes the hash it signs.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `proposal` | object | Same shape as approve |
-| `receiverAccountExists` | `Record<address, boolean>` | Which receivers already exist on-chain (drives `fundNewAccount`; absent/false ⇒ treated as new) |
+| `receiverAccountExists` | `Record<address, boolean>` | Which receivers already exist on-chain (drives `fundNewAccount`; absent/false ⇒ treated as new; an entry for an address outside the hash-bound receivers is ignored). The resulting count and MINA charge appear as the summary's `New accounts` line before confirmation |
 | `childAddress` | `string?` | Child contract (child actions) |
 | `childEvents` | `Array?` | Child event history (child lifecycle actions — rebuilds `childExecutionRoot`) |
 | `childOwners` / `childThreshold` | `string[]?` / `number?` | createChild execute: announced config, re-verified against `proposal.data` by the CLI **and** by the contract |
@@ -431,15 +452,22 @@ action differs, and the distinction is the heart of this design:
   object to check against: whatever `input` says is what gets hashed, proved,
   and signed. The CLI renders everything the hash covers in the summary
   before signing, and for propose the displayed memo *is* the string that
-  gets hashed.
+  gets hashed. The one indirection is CREATE_CHILD: the proposal data is
+  `input.createChildConfigHash`, not the owners and threshold themselves, so
+  the CLI recomputes that hash from `input.childOwners` and
+  `input.childThreshold` and refuses the bundle before the summary unless they
+  match. The summary therefore shows the configuration the signed hash
+  commits to, and a bundle that displays one SubVault config while hashing
+  another is never shown.
 - **Approve bundles *claim* an existing proposal.** The CLI does not trust
   the bundle's `proposalHash`; it rebuilds the struct from the hash-covered
   fields and recomputes it, and the contract requires that hash to match a
   proposal that exists on-chain (`Proposal not found` otherwise). The summary
   renders the rebuilt proposal's fields for out-of-band comparison; its Memo
   line is the bundle's advisory plaintext, not the hash-covered `memoHash`,
-  so a Memo check line recomputes `memoToField` from that text and says
-  whether it matches `memoHash` (see focus point 2). A CREATE_CHILD approve
+  so the CLI refuses the bundle before the summary unless `memoToField` of
+  that text equals `memoHash`, and a Memo check line restates the result
+  (see focus point 2). A CREATE_CHILD approve
   bundle also carries the SubVault owners and threshold; the CLI recomputes
   their commitment and config hash and refuses the bundle unless it equals
   `proposal.data`, so the summary shows the configuration the approval
@@ -447,7 +475,10 @@ action differs, and the distinction is the heart of this design:
 - **Execute bundles.** Execution is permissionless on-chain: anyone can
   submit a fully-approved proposal. The `receiverAccountExists` map drives the
   executor-signed account-creation fee (1 MINA per new receiver slot), counted
-  from the hash-bound `proposalStruct.receivers`. The memo text the execution
+  from the hash-bound `proposalStruct.receivers`; the summary's `New accounts`
+  line states that count and charge before confirmation, from the same
+  function the builder funds with, so a map that hides new receivers cannot
+  add an unannounced charge after the operator says yes. The memo text the execution
   broadcasts must hash to the approved `memoHash`, or the CLI refuses the
   bundle before the summary.
 - **`childPrivateKey` (createChild propose bundles).** It signs the child's
@@ -470,9 +501,15 @@ come from a **GitHub release** of this repo pinned by
 `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL` (see Build & distribution), so
 provenance rests with the release pipeline (maintainers + GitHub Actions)
 rather than a backend operator, as in the earlier build-on-demand design.
-`SHA256SUMS` ships in the same release as the binaries, and the release's
-`minaguard-vk-hash.txt` identifies the deployment its proofs target. The key
-is read from the `MINA_PRIVATE_KEY` environment variable.
+`SHA256SUMS` ships in the same release as the binaries, each release asset
+carries a signed build-provenance attestation that binds it to this
+repository, the release workflow and the tagged commit (verify with
+`gh attestation verify <file> --repo zksecurity/mina-guard --signer-workflow
+zksecurity/mina-guard/.github/workflows/offline-cli-release.yml --source-ref
+refs/tags/<release tag>`; `--repo` alone would accept any attestation this
+repository ever produced), and the release's `minaguard-vk-hash.txt`
+identifies the deployment its proofs target. The key is read from the
+`MINA_PRIVATE_KEY` environment variable.
 
 #### Suggested focus points
 
@@ -531,7 +568,10 @@ authoritative check at broadcast.
 
 **5. Fee counting & account snapshots.** `countNewReceiverAccounts` derives
 strictly from the hash-bound `proposalStruct.receivers` (bundle rows beyond
-`MAX_RECEIVERS` don't affect the count). Account snapshots (nonce/balance/VK)
+`MAX_RECEIVERS` don't affect the count). `countExecuteNewAccounts` wraps it
+for execute bundles and is the single source for both the summary's
+`New accounts` line and `handleExecute`'s `fundNewAccount` count, so the two
+cannot disagree. Account snapshots (nonce/balance/VK)
 come from the bundle and feed o1js's account cache; the proved tx is checked
 against real chain state at broadcast.
 
@@ -574,8 +614,10 @@ offline-cli/
 │   ├── terminal-safe.ts # Escapes control/format characters in bundle text
 │   ├── wasm-shim.ts    # Embeds Kimchi WASM into the compiled binary
 │   │                   #   (patches fs.readFileSync; redirects kimchi_wasm.cjs
-│   │                   #   resolution inside Bun-compiled binaries via a temp-dir
-│   │                   #   stub — see the file's comments before touching it)
+│   │                   #   resolution inside Bun-compiled binaries via a stub in
+│   │                   #   a private mkdtemp directory (mode 0700, created
+│   │                   #   exclusively, removed on exit) so no other local user
+│   │                   #   can plant it; see the file's comments before touching it)
 │   └── tests/          # Unit + e2e tests (bundle → sign → broadcast on lightnet)
 ├── cache/              # o1js compile cache (prover/verifier keys, SRS) — NOT
 │                       #   committed (gitignored); generated locally on first
@@ -626,8 +668,19 @@ on a three-leg runner matrix (each leg smoke-tests its own-arch binary,
 exercising module init and the embedded WASM), signs the macOS ones, and an
 aggregation job attaches one canonical `SHA256SUMS` plus
 `minaguard-vk-hash.txt` (a copy of the CI-generated `contracts/.vk-hash` for
-the tagged source, one hash per network), publishing everything as a **draft** release for manual review
-(`workflow_dispatch` = dry run, CI artifacts only). The UI's download panel
+the tagged source, one hash per network), signs a build-provenance
+attestation for every asset (`actions/attest-build-provenance`; verify with
+`gh attestation verify <file> --repo zksecurity/mina-guard --signer-workflow
+zksecurity/mina-guard/.github/workflows/offline-cli-release.yml --source-ref
+refs/tags/<release tag>`, which pins the signing workflow and the tag rather
+than accepting any attestation from the repository), and publishes
+everything as a **draft** release for manual review (`workflow_dispatch` =
+dry run, CI artifacts only). `SHA256SUMS` alone only shows a download is the
+file the job had, since the job writes it; the attestation is what ties the
+file to the tagged source and this workflow. The workflow pins every action
+to a commit SHA, installs dependencies with `--ignore-scripts`, and grants
+write permissions (release, OIDC token, attestations) to the publishing job
+only. The UI's download panel
 links the binary and `SHA256SUMS` of the release pinned by
 `NEXT_PUBLIC_OFFLINE_CLI_RELEASE_URL`. There is deliberately **no default
 URL**: `releases/latest` resolves repo-wide (the desktop app releases through

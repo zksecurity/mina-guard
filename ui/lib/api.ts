@@ -26,11 +26,44 @@ export async function fetchIndexerStatus(): Promise<IndexerStatus | null> {
   return getJson<IndexerStatus>('/api/indexer/status');
 }
 
-/** Fetches all discovered contracts from backend. */
+/** The backend serves the vault list in pages of at most this many. */
+const CONTRACTS_PAGE_LIMIT = 200;
+/** Most pages read per refresh, so a misbehaving backend cannot keep the
+ *  loop going; at 200 a page this is about 10,000 vaults. */
+const CONTRACTS_MAX_PAGES = 50;
+
+/** Fetches all discovered contracts from backend, one page at a time, until a
+ *  short page or the page cap. Any failed page gives an empty list, as a
+ *  failed single read did before. A partial list would be wrong: the caller
+ *  takes it as the whole list, and could move the selection off a vault that
+ *  is missing only because its page failed. With an empty list no vault
+ *  matches, so the selection stays.
+ *
+ *  Each later page starts after the previous page's last row (its
+ *  `discoveredAt` and `id`), so vaults discovered or removed between reads do
+ *  not shift the pages. Vaults are still kept once by address. An older
+ *  backend ignores the paging parameters and returns the whole list at once;
+ *  a page longer than the limit, one with no new vault, or one whose last row
+ *  carries no cursor is taken as the end. */
 export async function fetchContracts(): Promise<ContractSummary[]> {
-  const data = await getJson<Array<Record<string, unknown>>>('/api/contracts');
-  if (!data) return [];
-  return data.map((item) => toContractSummary(item));
+  const contracts = new Map<string, ContractSummary>();
+  let cursor = '';
+  for (let page = 0; page < CONTRACTS_MAX_PAGES; page++) {
+    const data = await getJson<Array<Record<string, unknown>>>(
+      `/api/contracts?limit=${CONTRACTS_PAGE_LIMIT}${cursor}`,
+    );
+    if (!data) return [];
+    const before = contracts.size;
+    for (const item of data) {
+      const contract = toContractSummary(item);
+      if (!contracts.has(contract.address)) contracts.set(contract.address, contract);
+    }
+    if (data.length !== CONTRACTS_PAGE_LIMIT || contracts.size === before) break;
+    const last = data[data.length - 1];
+    if (typeof last.discoveredAt !== 'string' || typeof last.id !== 'number') break;
+    cursor = `&beforeDiscoveredAt=${encodeURIComponent(last.discoveredAt)}&beforeId=${last.id}`;
+  }
+  return [...contracts.values()];
 }
 
 /** Uses owners bundled with the list response; older backends need the per-vault endpoint. */

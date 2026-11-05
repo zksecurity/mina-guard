@@ -10,7 +10,7 @@ import {
   fetchAccount,
 } from 'o1js';
 import { getNetworkConfig } from './network-config';
-import { MOCK_WALLET_SCRIPT } from './wallet-mock';
+import { MOCK_WALLET_SCRIPT, TERMS_ACCEPTED_SCRIPT } from './wallet-mock';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -166,9 +166,10 @@ export async function waitForIndexer(
     dots++;
     if (dots % 5 === 0) {
       const status = await getIndexerStatus();
-      const err = status?.lastError;
+      // The API reports only when a tick failed; the error text is in the backend log.
+      const err = status?.lastRunFailed ? `tick failed at ${status.lastErrorAt}` : null;
       if (err && err !== lastError) {
-        log(`  ⚠ Indexer error: ${err}`);
+        log(`  ⚠ Indexer error: ${err} (see the backend log)`);
         lastError = err;
       }
       log(`  Still waiting... (${((Date.now() - start) / 1000).toFixed(0)}s) [height=${status?.indexedHeight ?? '?'}]`);
@@ -303,6 +304,8 @@ export async function setupTestPage(
   page: Page,
   account: TestAccount
 ): Promise<void> {
+  // A returning user who already accepted the terms in the connect dialog.
+  await page.addInitScript(TERMS_ACCEPTED_SCRIPT);
   await page.addInitScript(MOCK_WALLET_SCRIPT);
   // Set active address before navigation triggers wallet detection
   await page.addInitScript(`window.__testActiveAddress = "${account.publicKey}";`);

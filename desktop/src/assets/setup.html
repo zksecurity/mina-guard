@@ -99,8 +99,7 @@
     <input type="text" id="archive" spellcheck="false" autocomplete="off" />
 
     <div class="presets">
-      <button class="preset" data-preset="mainnet">Mainnet (minascan.io)</button>
-      <button class="preset" data-preset="devnet">Devnet (minascan.io)</button>
+      <button class="preset" data-preset="mainnet">Mainnet (MinaGuard)</button>
     </div>
 
     <div class="error" id="error"></div>
@@ -114,12 +113,8 @@
   <script>
     const PRESETS = {
       mainnet: {
-        mina: 'https://api.minascan.io/node/mainnet/v1/graphql',
-        archive: 'https://api.minascan.io/archive/mainnet/v1/graphql',
-      },
-      devnet: {
-        mina: 'https://api.minascan.io/node/devnet/v1/graphql',
-        archive: 'https://api.minascan.io/archive/devnet/v1/graphql',
+        mina: 'https://app.minaguard.com/graphql',
+        archive: 'https://app.minaguard.com/archive',
       },
     };
 

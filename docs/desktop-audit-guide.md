@@ -1,8 +1,8 @@
 # Desktop App (Electron) — Architecture & Security Notes
 
 **Beta status:** the packaged UI displays the same dismissible beta notice,
-proposal-creation warning, and user-guide precautions as the web app, on both
-Testnet and Mainnet. Bugs could cause loss of funds. See
+proposal-creation warning, and user-guide precautions as the web app. The
+desktop app is a mainnet build, so funds are real. Bugs could cause loss of funds. See
 [the UI notice](./ui-audit-guide.md#beta-product-notice).
 
 The shared online UI also checks for an already-created proposal and offers View proposal. Propose/approve recheck state after the owner signature before building; this uses the same runtime node access as the existing checks.
@@ -74,9 +74,10 @@ you obtained, once" (see the supply-chain notes below).
 On launch (`src/main.ts`):
 
 1. **First run:** a setup window asks for a Mina GraphQL endpoint and an
-   archive endpoint (pre-filled with minascan mainnet defaults — never used
-   silently). Save probes both endpoints, detects the node's network ID, and
-   checks that the archive reports a valid pending height and accepts a bounded
+   archive endpoint (pre-filled with the `app.minaguard.com` `/graphql` and
+   `/archive` routes, never used silently). Save probes both endpoints, detects
+   the node's network ID, checks that the archive's pending height is within
+   290 blocks of the node's best chain height, and that the archive accepts a bounded
    one-block event query selecting the fields the indexer needs, including
    `transactionInfo.authorizationKind` (Archive-Node-API v0.0.8+). HTTP or
    GraphQL errors, missing fields, and nodes without an explicit supported
@@ -183,10 +184,12 @@ This fee change does not require a SQLite schema migration.
 Loopback binding keeps 5051 off the network, but any local process, and
 potentially a web page in the user's browser, can still send it requests, so the
 Next.js version is part of the attack surface. `ui/package.json` and
-`desktop/package.json` both pin `next` at `^16.3.8`, the supported Active LTS
+`desktop/package.json` both pin `next` at `^16.4.5`, the supported Active LTS
 line. GHSA-p293-qw3h-jr36 (unauthenticated RCE on Windows-hosted servers)
 affects `>=13.4.0 <15.5.24` and `>=16.0.0 <16.3.3`, which includes all of 14.x;
-16.3.3 is still affected by GHSA-vcvr-r3jv-pc5j, fixed in 16.3.6. Next 16 builds
+16.3.3 is still affected by GHSA-vcvr-r3jv-pc5j, fixed in 16.3.6, and
+versions through 16.4.0 by GHSA-2464-fhr4-w9xw and GHSA-673q-mjm6-r5xr, fixed in
+16.4.1. Next 16 builds
 with Turbopack by default, so the UI's `build` and `dev` scripts pass
 `--webpack` to keep the webpack settings in `ui/next.config.mjs`. Keep the two
 pins equal so the standalone tree cannot trace an older copy. Two release checks
@@ -196,7 +199,7 @@ back this up:
 - electron-builder's `afterPack` hook (`desktop/scripts/check-packaged-versions.mjs`)
   reads the unpacked app on every platform, before installers are built or
   published. It fails unless the app holds exactly one Next.js copy at
-  `>=16.3.6 <17` and Electron at `>=43.5.0 <44`, the first releases on those
+  `>=16.4.1 <17` and Electron at `>=43.5.0 <44`, the first releases on those
   lines with no known advisory, and only while each line is still supported
   (Next 16 until 2027-10-21, Electron 43 until 2027-01-05). After either date a
   release fails until the app moves to a supported line and the list in that
@@ -303,14 +306,15 @@ macOS, `%APPDATA%\MinaGuard` on Windows):
 - **Endpoints are probed before persisting** (`verifyEndpoints`,
   `src/config-store.ts`): both must answer GraphQL POSTs within 10 s without
   HTTP or GraphQL errors. The archive's pending height must be a nonnegative
-  safe integer, and a one-block `events(input:{from,to})` query must return an
+  safe integer no more than 290 blocks below the node's `bestChain(maxLength: 1)`
+  height (a lagging archive returns empty event lists, not errors), and a one-block `events(input:{from,to})` query must return an
   events list while selecting the indexer's authorization and block fields.
   This checks schema compatibility, not the configured event-range cap or
   whether real event rows carry authorization values. The network id must be
   explicitly reported in the node's `networkID` field; URL names are never
   used to guess it. A node whose proof domain doesn't match this
-  build's compile-time `BUILD_NETWORK_DOMAIN` (mainnet versus the shared
-  testnet/devnet proof domain) is rejected at save time — the bundled circuit
+  build's compile-time `BUILD_NETWORK_DOMAIN` (`mainnet` for released builds,
+  versus the shared testnet/devnet proof domain) is rejected at save time, because the bundled circuit
   can only prove against one domain.
 - **Changing endpoints wipes the local DB and relaunches**
   (`changeEndpointsAndRelaunch`, `src/main.ts:349-363`): the local index is
@@ -404,7 +408,8 @@ allowlist, and the id rides a URL handed to the OS browser
 
 **3. Endpoint lifecycle & network-id detection (`src/config-store.ts`).**
 Probing requires both endpoints to answer GraphQL queries without errors. The
-archive must report a valid pending height and accept a bounded event query
+archive must report a valid pending height within 290 blocks of the node's best
+chain height and accept a bounded event query
 with the fields used by the local indexer; the one-block probe cannot verify
 that the server accepts the required 5,000-block range or that its history is
 complete. The node-reported network ID must match the build's exact proof domain
@@ -434,7 +439,8 @@ bundle, `schema.sql` (run through `$executeRawUnsafe`), `.vk-hash`, and
 Prisma's native engines — the latter three `asarUnpack`ed as plain files under
 the install's `resources/`. The producing pipeline is `scripts/stage.mjs` +
 `scripts/bundle-backend.mjs` and `.github/workflows/desktop-release.yml`
-(draft releases, unsigned artifacts).
+(preflight input checks, draft releases, checksummed and attested but unsigned
+artifacts).
 
 **6. Network consistency across the Auro bridge.**
 The desktop trusts `config.networkId`; the external browser's Auro has its own
@@ -458,6 +464,14 @@ the endpoints baked in at build time. The proxy to the Next child deletes that
 upstream header before writing the response, so the window enforces only the
 desktop policy above; otherwise the upstream value would replace it and block
 the user's configured nodes.
+Because the policy depends on the configured endpoints, every app, API and
+proxied response is sent `Cache-Control: no-store`, and the proxy drops Next's
+`immutable` caching, `ETag` and `Last-Modified` (`src/proxy-headers.ts`). A
+dedicated worker enforces the policy delivered with its own script, so a
+cached worker script would keep the policy for earlier endpoints after a
+change and block the o1js worker's node requests. Each launch also clears the
+session's HTTP cache, which removes entries cached by earlier releases; the
+compile cache and store checkpoints live in IndexedDB and are not affected.
 
 ---
 
@@ -502,7 +516,7 @@ desktop/
 ├── packaging-stage/         # Build output: backend bundle + generated Prisma client
 ├── ui-standalone/           # Build output: staged Next standalone server + static
 ├── package.json             # Scripts + electron-builder config (targets, asarUnpack,
-│                            #   unsigned mac identity, GitHub draft publish)
+│                            #   unsigned mac identity; `publish` block unused by CI)
 ├── README.md                # Build pipeline, packaging, signing status, troubleshooting
 └── ARCHITECTURE.md          # Pointer to this document
 ```
@@ -525,13 +539,24 @@ All steps run from `desktop/` (`bun run build` chains them; details in
    the Postgres `schema.prisma`).
 2. `prepare:assets` — regenerates `assets/schema.sql` and copies it plus
    the downloaded `contracts/.vk-hash` into `dist/assets/`.
-3. `build:ui` — builds `../ui` in Next standalone mode with
-   `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
-   `NEXT_PUBLIC_INDEXER_MODE=lite` and
-   `NEXT_PUBLIC_MINA_NETWORK=testnet` baked in (plus anything from the
-   git-ignored `desktop/.env`). The network domain must match
-   `BUILD_NETWORK_DOMAIN` in `config-store.ts` — the two flip together to cut
-   a mainnet build.
+3. `build:ui` — `scripts/build-ui.mjs` builds `../ui` in Next standalone mode
+   in an environment it assembles itself: inherited `NEXT_PUBLIC_*` variables
+   and `MINA_NETWORK_DOMAIN` are dropped, the git-ignored `desktop/.env` is
+   applied, then the fixed inputs `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
+   `NEXT_PUBLIC_INDEXER_MODE=lite`, `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the
+   `app.minaguard.com` endpoints and the minascan explorer URL, and the
+   `mainnet=` line of `contracts/.vk-hash` read through
+   `contracts/scripts/read-vk-hash.sh`. `desktop/.env` may not set any of
+   those, and the script refuses to run while `ui/.env`, `ui/.env.production`,
+   `ui/.env.local` or `ui/.env.production.local` exists, since `next build`
+   would load them outside the assembled environment. The endpoints satisfy
+   the mainnet check in `ui/next.config.mjs` and
+   are only a fallback: the preload injects the endpoints saved at setup, and
+   the desktop proxy replaces the UI's Content-Security-Policy with one built
+   from them. `BUILD_NETWORK` in `scripts/build-ui-env.mjs` must match
+   `BUILD_NETWORK_DOMAIN` in `config-store.ts`; the build refuses to run when they differ, and the
+   two flip together to cut a testnet build. `--check` validates the same
+   environment without building (step 7).
 4. `stage` — `stage.mjs` copies the standalone tree into `ui-standalone/`
    resolving every bun-store symlink to a real file (Windows can't ship
    symlinks; naive dereferencing breaks Node module resolution — the script
@@ -543,11 +568,31 @@ All steps run from `desktop/` (`bun run build` chains them; details in
    NSIS for Windows). Prisma query engines for darwin (x64/arm64), windows,
    debian- and rhel-flavored Linux are bundled and `asarUnpack`ed together
    with `dist/assets/**`.
-7. CI: `.github/workflows/desktop-release.yml` builds all three platforms on
-   native runners for `desktop-v*` tags and uploads to a **draft** GitHub
-   release; artifacts are **unsigned** on every platform (macOS bundles get an
-   ad-hoc signature from the `afterPack` hook so downloaded copies remain
-   launchable).
+7. CI: `.github/workflows/desktop-release.yml` runs for `desktop-v*` tags and
+   manual dry runs. A tag-check job with no other dependency rejects a tag
+   that does not point at a commit on `production` (the reviewed branch the
+   hosted mainnet images are built from) before the circuit compile starts. A
+   preflight job then verifies that the CI VK manifest belongs to the commit
+   and runs `node desktop/scripts/build-ui.mjs --check`, which assembles the
+   UI build environment of step 3, requires `BUILD_NETWORK_DOMAIN` to be
+   `mainnet`, and runs `deploy/validate-mainnet-build-config.py --desktop` in
+   it: the `mainnet=` VK hash must equal the reviewed `MAINNET_VK_HASH` pin in
+   `deploy/verify-mainnet-release.py`, the network must be mainnet, the node,
+   archive and explorer URLs must be HTTPS on public hosts, the API base URL
+   must be the embedded backend's loopback address, and no E2E flag or base
+   path may be set, including from `desktop/.env`. Three native
+   runners then build with a pinned Bun and SHA-pinned actions, package with
+   `--publish never`, and upload the installers as artifacts. For tag builds a
+   release job with the only write permissions collects them, writes
+   `SHA256SUMS`, attaches `minaguard-vk-hash.txt`, signs a build-provenance
+   attestation for every file (verify with `gh attestation verify <file>
+   --repo zksecurity/mina-guard --signer-workflow
+   zksecurity/mina-guard/.github/workflows/desktop-release.yml --source-ref
+   refs/tags/<tag>`, which pins the signing workflow and the tag), and creates
+   a **draft** release for manual review. Artifacts are **unsigned** on every
+   platform (macOS bundles get an ad-hoc signature from the `afterPack` hook so
+   downloaded copies remain launchable); the attestation, not a code
+   signature, is what ties an installer to the tagged source.
 
 ## Dependencies
 

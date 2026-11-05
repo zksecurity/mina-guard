@@ -134,8 +134,16 @@ export interface IndexerStatus {
   lastSuccessfulRunAt: string | null;
   latestChainHeight: number;
   indexedHeight: number;
-  lastError: string | null;
+  /** Whether the last indexer tick failed. The error itself is only in the backend log. */
+  lastRunFailed: boolean;
+  lastErrorAt: string | null;
   discoveredContracts: number;
+  /** Lite mode: history scans of vaults not ready yet; `finished` means the
+   *  scan reached the tip without applying a vault event, and `failedEvents`
+   *  counts events it could not apply. Absent from older backends. */
+  firstScans?: Array<{
+    address: string; startHeight: number; scannedHeight: number; finished: boolean; failedEvents: number;
+  }>;
   indexerMode: 'full' | 'lite';
 }
 

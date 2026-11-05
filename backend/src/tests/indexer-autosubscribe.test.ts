@@ -460,6 +460,25 @@ describe('tick: rescanUnreadyContracts', () => {
     }));
   }
 
+  test('a finished scan reports events it could not apply', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(1000);
+    stubTicks(async () => [{
+      type: 'malformed', blockHeight: 5, txHash: 'tx-bad', txMemo: null,
+      blockHash: 'h5', parentHash: 'h4',
+      event: { data: ['99', '0'] }, decodeError: 'unknown event type index 99',
+    }]);
+
+    const indexer = await runSingleTick(liteConfig);
+    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(false);
+    expect(indexer.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true, failedEvents: 1 },
+    ]);
+  });
+
   test('scans an empty vault history once, then only replays recent blocks', async () => {
     const contract = await prisma.contract.create({
       data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
@@ -468,14 +487,22 @@ describe('tick: rescanUnreadyContracts', () => {
     const ranges: Array<{ from: number; to: number }> = [];
     stubTicks(async (_address, from, to) => { ranges.push({ from, to }); return []; });
 
-    await runSingleTick(liteConfig);
+    const first = await runSingleTick(liteConfig);
     let updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(false);
     expect(updated.lastSyncedAt).not.toBeNull();
-    await runSingleTick(liteConfig);
+    expect(first.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true, failedEvents: 0 },
+    ]);
+    const indexer = await runSingleTick(liteConfig);
     updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(false);
     expect(ranges).toEqual([{ from: 0, to: 1000 }, { from: 711, to: 1000 }]);
+    // The import page can tell a finished, empty scan from one not started.
+    expect(indexer.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true, failedEvents: 0 },
+    ]);
+    expect((await runSingleTick(fullConfig)).getStatus().firstScans).toEqual([]);
   });
 
   test('the first scan uses indexStartHeight when no discovered height is stored', async () => {
@@ -524,11 +551,123 @@ describe('tick: rescanUnreadyContracts', () => {
     });
     const failed = await runSingleTick(liteConfig);
     expect(failed.getStatus().lastError).toContain('archive page unavailable');
+    expect(failed.getStatus().lastErrorAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect((await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } })).lastSyncedAt).toBeNull();
     expect((await prisma.indexerCursor.findUniqueOrThrow({ where: { key: 'indexed_height' } })).value).toBe('1000');
     fail = false;
     await runSingleTick(liteConfig);
     expect(starts).toEqual([0, 0]);
+  });
+
+  test('a long first scan is paced per tick and resumes after a failed step', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(59_990);
+    const ranges: Array<{ from: number; to: number }> = [];
+    let failAt: number | null = 10_000;
+    stubTicks(async (_address, from, to) => {
+      ranges.push({ from, to });
+      if (from === failAt) {
+        failAt = null;
+        throw new Error('429 Too Many Requests');
+      }
+      // The deploy and first owner proposal sit in an early window.
+      return from === 5_000 ? [makeAddOwnerProposalEvent('early-proposal', 7_000)] : [];
+    });
+    stubMinaClient(() => ({ fetchLatestBlockHeight: async () => 60_000 }));
+    const indexer = new MinaGuardIndexer(liteConfig);
+    const tick = async () => { await indexer.start(); indexer.stop(); };
+
+    await tick();
+    expect(indexer.getStatus().lastError).toContain('429');
+    expect(ranges.map((r) => r.from)).toEqual([0, 5_000, 10_000]);
+    // Progress is reported through the last window that succeeded.
+    expect(indexer.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 9_999, finished: false, failedEvents: 0 },
+    ]);
+    await tick();
+    // Resumes at the failed window, and stops after this tick's five steps.
+    expect(ranges.slice(3).map((r) => r.from)).toEqual([10_000, 15_000, 20_000, 25_000, 30_000]);
+    await tick();
+    expect(ranges.slice(8).map((r) => r.from)).toEqual([35_000, 40_000, 45_000, 50_000, 55_000]);
+    let updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(false);
+    expect(updated.lastSyncedAt).toBeNull();
+    await tick();
+    // The final step reaches the tip; the ready sweep then replays recent blocks.
+    expect(ranges[13]).toEqual({ from: 60_000, to: 60_000 });
+    updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    // An event from an earlier step readies the vault when the scan finishes.
+    expect(updated.ready).toBe(true);
+    expect(updated.lastSyncedAt).not.toBeNull();
+    expect(indexer.getStatus().firstScans).toEqual([]);
+    expect(ranges.every((r) => r.to - r.from < 5_000)).toBe(true);
+  });
+
+  test('a restarted first scan begins again from its lower bound', async () => {
+    await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(59_990);
+    const starts: number[] = [];
+    stubTicks(async (_address, from) => { starts.push(from); return []; });
+    stubMinaClient(() => ({ fetchLatestBlockHeight: async () => 60_000 }));
+    await runSingleTick(liteConfig);
+    await runSingleTick(liteConfig);
+    expect(starts.slice(5, 6)).toEqual([0]);
+  });
+
+  test('events applied before a restart still ready the vault when the scan finishes', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(59_990);
+    stubTicks(async (_address, from) =>
+      from === 5_000 ? [makeAddOwnerProposalEvent('before-restart', 7_000)] : []);
+    stubMinaClient(() => ({ fetchLatestBlockHeight: async () => 60_000 }));
+    await runSingleTick(liteConfig);
+    // A new process replays the early step; its event is now a duplicate.
+    const restarted = new MinaGuardIndexer(liteConfig);
+    for (let i = 0; i < 3; i++) { await restarted.start(); restarted.stop(); }
+    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.lastSyncedAt).not.toBeNull();
+    expect(updated.ready).toBe(true);
+  });
+
+  test('a chain rollback rewinds an active first scan to the fork', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(11_990);
+    const ranges: Array<{ from: number; to: number }> = [];
+    let headers: Array<{ height: number; blockHash: string; parentHash: string }> = [];
+    let orphan = true;
+    stubTicks(async (_address, from, to) => {
+      ranges.push({ from, to });
+      if (from === 10_000 && ranges.length === 3) throw new Error('archive page unavailable');
+      return orphan && from === 5_000 ? [makeAddOwnerProposalEvent('orphaned', 9_900)] : [];
+    });
+    stubMinaClient(() => ({
+      fetchLatestBlockHeight: async () => 12_000,
+      fetchBestChainHeaders: async () => headers,
+    }));
+    const indexer = new MinaGuardIndexer(liteConfig);
+    const tick = async () => { await indexer.start(); indexer.stop(); };
+
+    await tick();
+    expect(await prisma.eventRaw.count({ where: { contractId: contract.id } })).toBe(1);
+    // Block 9,900 is replaced; the rollback deletes the orphaned event.
+    headers = [{ height: 9_900, blockHash: 'replacement', parentHash: 'h9899' }];
+    orphan = false;
+    await tick();
+    expect(await prisma.eventRaw.count({ where: { contractId: contract.id } })).toBe(0);
+    headers = [];
+    await tick();
+    expect(ranges.slice(3)).toEqual([{ from: 9_900, to: 12_000 }]);
+    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.lastSyncedAt).not.toBeNull();
+    expect(updated.ready).toBe(false);
   });
 
   test('a resumed unready scan starts from the saved cursor, not a far-ahead tip', async () => {

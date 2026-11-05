@@ -4,9 +4,9 @@
 import './disable-wasm-finalizers';
 import { createContractCompiler } from './contract-compiler';
 import type { PreflightContext, RetryEligibility } from './preflight-flow';
-import { classifyDeployTarget, receiverExists } from './deploy-target';
+import { classifyDeployTarget, fetchFailure, receiverExists } from './deploy-target';
 import { requireUnregisteredProposal } from './proposal-preparation';
-import { assertExecutionMemoMatches } from './memo-check';
+import { APPROVAL_MEMO_MISMATCH, assertExecutionMemoMatches } from './memo-check';
 import * as Comlink from 'comlink';
 
 import {
@@ -261,15 +261,17 @@ async function compileContract(): Promise<void> {
   await compileOnce();
 }
 
-async function fetchContractState(
+/** The contract's on-chain state, or why the node could not provide it. */
+async function readContractState(
   contractAddress: string
-): Promise<ContractState | null> {
+): Promise<{ state: ContractState } | { reason: string }> {
   try {
     await configureNetwork();
     const address = PublicKey.fromBase58(contractAddress);
-    await fetchAccount({ publicKey: address });
+    const fetched = await fetchAccount({ publicKey: address });
+    if (fetched.error) return { reason: fetchFailure(fetched.error) };
     const zkApp = new MinaGuard(address);
-    return {
+    return { state: {
       ownersCommitment: zkApp.ownersCommitment.get().toString(),
       threshold: Number(zkApp.threshold.get().toString()),
       numOwners: Number(zkApp.numOwners.get().toString()),
@@ -278,11 +280,16 @@ async function fetchContractState(
       approvalRoot: zkApp.approvalRoot.get().toString(),
       configNonce: Number(zkApp.configNonce.get().toString()),
       childExecutionRoot: zkApp.childExecutionRoot.get().toString(),
-    };
+    } };
   } catch (error) {
     console.error('[MultisigWorker] Failed to fetch contract state', error);
-    return null;
+    return { reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+async function fetchContractState(contractAddress: string): Promise<ContractState | null> {
+  const result = await readContractState(contractAddress);
+  return 'state' in result ? result.state : null;
 }
 
 
@@ -358,9 +365,11 @@ async function rebuildStoresFromBackend(contractAddress: string) {
 
 /** On-chain state, or a clear error: rebuilt stores are never used unchecked. */
 async function requireContractState(contractAddress: string, label = 'vault'): Promise<ContractState> {
-  const state = await fetchContractState(contractAddress);
-  if (!state) throw new Error(`Could not read the ${label}'s on-chain state from the Mina node; retry shortly.`);
-  return state;
+  const result = await readContractState(contractAddress);
+  if ('reason' in result) {
+    throw new Error(`Could not read the ${label}'s on-chain state from the Mina node: ${result.reason}`);
+  }
+  return result.state;
 }
 
 /** Parent stores for a child lifecycle action; only the approval map is proved against. */
@@ -650,8 +659,9 @@ function buildProposalStruct(
 function assertApprovedMemo(
   memo: string | null | undefined,
   proposalStruct: InstanceType<typeof TransactionProposal>,
+  message?: string,
 ): void {
-  assertExecutionMemoMatches(memo, proposalStruct.memoHash.toString(), (text) => memoToField(text).toString());
+  assertExecutionMemoMatches(memo, proposalStruct.memoHash.toString(), (text) => memoToField(text).toString(), message);
 }
 
 /**
@@ -1159,6 +1169,9 @@ const workerApi = {
     const proposalHash = proposalStruct.hash();
     const hashStr = proposalHash.toString();
     assertRecomputedProposalHash(proposalHash, params.proposal.proposalHash, 'approve this proposal');
+    // Approvers sign the memo hash, so the memo text they were shown must be
+    // the one it commits to; the page checks this before offering Approve.
+    assertApprovedMemo(params.proposal.memo, proposalStruct, APPROVAL_MEMO_MISMATCH);
 
     progressFn(testPrivateKey ? 'Signing proposal authorization...' : 'Awaiting wallet signature...');
     const signature = await signProposalAuthorization(hashStr, 'approve', signFn);

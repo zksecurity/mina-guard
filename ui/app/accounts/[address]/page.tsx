@@ -33,9 +33,10 @@ export default function AccountPage() {
   const params = useParams<{ address: string }>();
   const urlAddress = params?.address ?? null;
   const searchParams = useSearchParams();
-  // Set by the new-account page right after deploy submission, to differentiate
-  // "indexer hasn't caught up yet" from "no such account".
-  const isPendingIndex = searchParams.get('pending') === '1';
+  // Set by "Add existing" right after subscribing, to tell "the indexer is
+  // still reading this vault's history" from "no such account". Earlier
+  // releases used ?pending=1 for the same link.
+  const isImporting = searchParams.get('importing') === '1' || searchParams.get('pending') === '1';
 
   const {
     wallet,
@@ -286,7 +287,7 @@ export default function AccountPage() {
             </div>
           </div>
         ) : urlAddress && !contracts.some((c) => c.address === urlAddress) ? (
-          pendingDeployTxHash || isPendingIndex ? (
+          pendingDeployTxHash ? (
             <div className="rounded-xl border p-4 text-sm space-y-1 border-yellow-400/30 bg-yellow-400/10 text-yellow-200 max-w-2xl">
               <p className="font-semibold">Deploying Vault — awaiting inclusion</p>
               <p className="opacity-90">
@@ -309,6 +310,11 @@ export default function AccountPage() {
                 </p>
               )}
             </div>
+          ) : isImporting ? (
+            <ImportProgress
+              scan={indexerStatus?.firstScans?.find((s) => s.address === urlAddress) ?? null}
+              tip={indexerStatus?.latestChainHeight ?? 0}
+            />
           ) : (
             <div className="text-center py-20">
               <p className="text-safe-text mb-4">Vault not found.</p>
@@ -326,6 +332,52 @@ export default function AccountPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Shown after "Add existing" until the indexer has read the vault's history. */
+function ImportProgress({ scan, tip }: {
+  scan: { startHeight: number; scannedHeight: number; finished: boolean; failedEvents: number } | null;
+  tip: number;
+}) {
+  const span = tip - (scan?.startHeight ?? 0);
+  const percent = scan && span > 0
+    ? Math.min(100, Math.max(0, Math.round(((scan.scannedHeight - scan.startHeight) / span) * 100)))
+    : null;
+  return (
+    <div className="rounded-xl border border-safe-border bg-safe-gray p-4 text-sm space-y-2 max-w-2xl">
+      <p className="font-semibold text-white">Importing Vault: reading its history</p>
+      {!scan?.finished && (
+        <p className="text-safe-text">
+          MinaGuard is reading this vault&apos;s past activity from the archive node. Older vaults take
+          longer, often a few minutes. The vault opens here once the scan finds its setup.
+        </p>
+      )}
+      {scan?.finished && scan.failedEvents > 0 ? (
+        <p className="text-xs text-red-400">
+          The scan found {scan.failedEvents} event{scan.failedEvents === 1 ? '' : 's'} for this vault that
+          MinaGuard could not apply, so it cannot open the vault. This app version may not match the
+          vault, or its history may be damaged. Use Report a bug in the page footer to send the details.
+        </p>
+      ) : scan?.finished ? (
+        <p className="text-xs text-amber-400">
+          The scan reached the current block without finding any activity for this vault, for
+          example because it was deployed but never set up. MinaGuard keeps watching and opens it
+          when its first event lands.
+        </p>
+      ) : scan && percent !== null ? (
+        <div className="space-y-1">
+          <div className="h-1.5 rounded-full bg-safe-dark overflow-hidden" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+            <div className="h-full bg-safe-green" style={{ width: `${percent}%` }} />
+          </div>
+          <p className="text-xs text-safe-text">
+            Read through block {Math.max(scan.scannedHeight, scan.startHeight).toLocaleString()} of {tip.toLocaleString()} ({percent}%)
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-safe-text">Waiting for the indexer to start the scan…</p>
+      )}
     </div>
   );
 }

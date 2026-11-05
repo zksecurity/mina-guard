@@ -8,7 +8,9 @@ Reorg recovery removes affected history before replaying and preserves lite-mode
 vault subscriptions. Recovery without an agreeing stored predecessor leaves a
 `lastWarning` in indexer status; older history may still require reindexing.
 Unready vaults scan their full history once, then replay recent blocks after a
-successful scan, including an empty result.
+successful scan, including an empty result. The first scan advances one
+5,000-block archive request at a time, at most 10 per tick, and resumes after a
+failed request.
 
 Moved: architecture, security notes, **and** operator docs (setup, scripts, env
 vars, API routes, proposal-status derivation, Lightnet dev, troubleshooting)

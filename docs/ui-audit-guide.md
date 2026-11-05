@@ -44,14 +44,26 @@ failure or prove production deployment works.
 
 MinaGuard is in beta on every supported network, including Mainnet. Bugs could
 cause loss of funds; users should keep balances to amounts they can afford to lose.
+Before a wallet connects, `components/ConnectTermsDialog.tsx` shows the beta
+risk and requires a checkbox accepting the Terms (`/terms`) and Privacy Policy
+(`/privacy`). The app shell wraps every connect handler (header, home page and
+vault page) so a connect request waits for that acceptance, then runs from the
+dialog's Continue click. A wallet that reconnects on load without an acceptance
+on record sees the dialog too, and Cancel disconnects it. Acceptance is stored
+in this browser's `localStorage` under `lib/terms-acceptance.ts`'s
+`TERMS_VERSION`; bumping that version asks everyone again. Nothing is sent to
+the server, so there is no server-side record of acceptance.
+
 `components/BetaNotice.tsx` displays a dismissible notice below the header
-(and below a network-mismatch warning, when present) on every app route. The
-standalone `/guide` renders the same warning without the link back to itself;
-its `#beta` section explains the risk and precautions. Dismissing the notice
-hides it for the current browser tab session. The shared web and desktop UI
-also shows the warning in a dialog each time the proposal-creation page or the
-SubVault proposal wizard opens, before online creation or offline request export.
-The dialog can be dismissed with Continue or Escape; it does not create a transaction.
+(and below a network-mismatch warning, when present) until the terms are
+accepted; after that the header shows a BETA badge linking to the guide
+instead. The standalone `/guide` always renders the notice, without the link
+back to itself; its `#beta` section explains the risk and precautions.
+Dismissing the notice hides it for the current browser tab session. The
+proposal-creation page and the SubVault proposal wizard show the warning in a
+dialog only to a visitor with no connected wallet who has not accepted, such
+as one exporting an offline request; it can be dismissed with Continue or
+Escape and does not create a transaction.
 
 This disclosure does not enforce balance limits or verify a transaction's safety.
 Existing network checks and signing confirmations still apply.
@@ -143,10 +155,11 @@ Nothing in the circuit ties (2)/(3) to (1), so they can diverge. The browser has
 text itself and compares it with (1); the indexer compares the broadcast memo of the execution;
 `MemoWarningTooltip` shows the result. Takeaway: **only a memo whose displayed
 value matches the on-chain hash was actually approved by the multisig** — the plaintext shown or
-broadcast is advisory. Execution refuses a memo that does not match: the proposal page offers
-**Execute** (online or as an offline bundle) only after the browser's check passes, and the
-worker and offline CLI check again before they build the transaction, so a tampered server
-cannot swap the memo of an approved proposal (for example an exchange deposit tag).
+broadcast is advisory. Approval and execution both refuse a memo that does not match: the
+proposal page offers **Approve** and **Execute** (online or as an offline bundle) only after the
+browser's check passes, and the worker and offline CLI check again before they build the
+transaction. So a tampered server can neither collect approvals on a memo other than the
+committed one nor swap the memo of an approved proposal (for example an exchange deposit tag).
 (Mechanics in focus point 3.)
 
 **Proposal "deletion" and the `CREATE_CHILD` edge case.** There is no on-chain delete method:
@@ -328,11 +341,15 @@ from the version 3 request. VK migration uses a separate version 3 request
 with a fixed 0.1 MINA fee and no `fee` field.
 On owner signed-response upload, the UI reads the fee from the signed command
 itself, rejects malformed or out-of-range fees, and rejects a mismatch with
-the most recent same-action request exported in the current page session. It
-displays that fee and the fee payer for review and requires a separate
-**Broadcast signed transaction** click. After a reload, no exported fee is retained for an
-automatic comparison; the user must compare the displayed signed fee with
-the saved request and offline CLI summary before broadcasting. The existing
+the most recent same-action request exported in the page session. It displays
+that fee and the fee payer for review and requires a separate **Broadcast
+signed transaction** click. On a proposal's page, the panel keeps each
+action's exported filename and fee in `sessionStorage`, keyed by network,
+vault and proposal hash, so the comparison survives a reload or navigation in
+the same tab. A broadcast or **Start over** clears it. The new-proposal page
+keeps nothing, since a signed proposal cannot be matched to an export there. Without a kept export, the
+user must compare the displayed signed fee with the saved request and offline
+CLI summary before broadcasting. The existing
 network, policy, and live-state checks still run at broadcast time.
 
 
@@ -658,8 +675,10 @@ ui/
 │   ├── layout.tsx               # Root provider: wires wallet + indexer state, global
 │   │                            #   operation banner, Ledger signing modal (the
 │   │                            #   AppContext every page trusts — except the
-│   │                            #   standalone /guide route, rendered outside it)
+│   │                            #   standalone /guide, /terms and /privacy routes,
+│   │                            #   rendered outside it)
 │   ├── page.tsx                 # Landing / connect
+│   ├── terms/page.tsx  privacy/page.tsx  # Static legal pages (LegalPage layout)
 │   ├── globals.css
 │   ├── accounts/
 │   │   ├── new/page.tsx         # Vault + sub-vault creation wizard. Generates the
@@ -728,6 +747,7 @@ ui/
 │   ├── ledger-field.ts          # Field -> 32 device bytes, and the hash text the
 │   │                            #   device shows for it
 │   ├── memo-check.ts            # Memo badge choice + execution memo binding
+│   ├── bug-report.ts            # Prefilled GitHub bug report link (footer, error toasts)
 │   ├── offline-signing.ts       # Offline bundle builders + signed-response validation
 │   │                            #   (cross-reference offline-audit-guide.md)
 │   ├── api.ts                   # Backend read client + response normalization

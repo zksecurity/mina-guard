@@ -296,24 +296,78 @@ export function canonicalizeBundleTxType(bundle: OfflineBundle): TxType {
 }
 
 /**
- * Refuses an execute bundle whose memo text does not hash to the memo hash in
- * the approved proposal. Owners approve only the hash; the memo text comes
- * from the online backend and is what the signed transaction will carry. A
- * tampered backend could otherwise keep the approved proposal, swap the memo
- * (for example an exchange deposit tag), and still get a valid proof. A
+ * Refuses an approve or execute bundle whose memo text does not hash to the
+ * memo hash in the proposal. Owners approve only the hash; the memo text comes
+ * from the online backend and is what the signed execution will carry. A
+ * tampered backend could otherwise show approvers one memo (for example an
+ * exchange deposit tag) and execute with another, or keep the approved
+ * proposal and swap the memo at execution, and still get a valid proof. A
  * missing memo counts as the empty memo, which is what the transaction would
- * carry. The CLI runs this before the summary, and handleExecute runs it again
- * for direct callers.
+ * carry. The CLI runs this before the summary, and handleApprove and
+ * handleExecute run it again for direct callers.
  */
-export function assertExecuteBundleMemo(bundle: Pick<OfflineExecuteBundle, 'proposal'>): void {
+export function assertBundleMemo(bundle: Pick<OfflineApproveBundle | OfflineExecuteBundle, 'proposal'>): void {
   const { memo, memoHash } = bundle.proposal;
   if (memoHash == null) throw new Error('Proposal is missing its memo commitment');
   if (memoToField(memo ?? '').toString() !== memoHash) {
     throw new Error(
       'The memo in this bundle does not match the memo the owners approved. ' +
-      'Refusing to sign an execution with a different memo.',
+      'Refusing to sign with a different memo.',
     );
   }
+}
+
+/**
+ * Checks a bundled SubVault owner list and threshold and returns the config
+ * hash they produce. The list must be well formed (1 to MAX_OWNERS distinct
+ * real addresses, threshold within the list length). `order` says which owner
+ * order the commitment covers: 'reserved' keeps the bundle order, which is the
+ * slot order reserveForParent committed on chain (approve and execute);
+ * 'sorted' is the base58 order handlePropose reserves with (propose).
+ */
+function checkedChildConfigHash(
+  childOwners: unknown,
+  childThreshold: unknown,
+  order: 'reserved' | 'sorted',
+): { owners: string[]; threshold: number; hash: InstanceType<typeof Field> } {
+  if (!Array.isArray(childOwners) || childOwners.length === 0) {
+    throw new Error('createChild bundle is missing the SubVault owner list');
+  }
+  if (childOwners.length > MAX_OWNERS) {
+    throw new Error(`createChild bundle lists more than ${MAX_OWNERS} SubVault owners`);
+  }
+  if (!Number.isInteger(childThreshold) || (childThreshold as number) < 1 || (childThreshold as number) > childOwners.length) {
+    throw new Error('createChild bundle has an invalid SubVault threshold');
+  }
+  let owners: PublicKey[];
+  try {
+    owners = childOwners.map((owner) => {
+      if (typeof owner !== 'string' || owner === EMPTY_PUBKEY_B58) throw new Error('empty');
+      return PublicKey.fromBase58(owner);
+    });
+  } catch {
+    throw new Error('createChild bundle has an invalid SubVault owner address');
+  }
+  // reserveForParent runs assertCoherentSetupOwners, which rejects two owners
+  // sharing an x-coordinate (a repeated key, or a key and its negation, held by
+  // the same secret). Refuse them here so the summary never shows a SubVault
+  // the contract cannot create.
+  const seenX = new Set<string>();
+  for (const owner of owners) {
+    const x = owner.x.toString();
+    if (seenX.has(x)) {
+      throw new Error('createChild bundle lists the same SubVault owner twice (or a key and its negation)');
+    }
+    seenX.add(x);
+  }
+  const store = new OwnerStore();
+  if (order === 'reserved') {
+    store.owners = owners;
+  } else {
+    for (const owner of owners) store.addSorted(owner);
+  }
+  const hash = childConfigHash(store.getCommitment(), Field(childThreshold as number), Field(childOwners.length));
+  return { owners: childOwners as string[], threshold: childThreshold as number, hash };
 }
 
 /**
@@ -327,40 +381,46 @@ export function assertCreateChildBundleConfig(
   bundle: OfflineApproveBundle | OfflineExecuteBundle,
 ): { owners: string[]; threshold: number } | null {
   if (requireTxType(bundle.proposal?.txType) !== 'createChild') return null;
-  const { childOwners, childThreshold } = bundle;
-  if (!Array.isArray(childOwners) || childOwners.length === 0) {
-    throw new Error('createChild bundle is missing the SubVault owner list');
-  }
-  if (childOwners.length > MAX_OWNERS) {
-    throw new Error(`createChild bundle lists more than ${MAX_OWNERS} SubVault owners`);
-  }
-  if (!Number.isInteger(childThreshold) || childThreshold! < 1 || childThreshold! > childOwners.length) {
-    throw new Error('createChild bundle has an invalid SubVault threshold');
-  }
   if (bundle.childAddress !== undefined && bundle.childAddress !== bundle.proposal.childAccount) {
     throw new Error("createChild bundle names a SubVault address other than the proposal's");
   }
-  let owners: PublicKey[];
-  try {
-    owners = childOwners.map((owner) => {
-      if (typeof owner !== 'string' || owner === EMPTY_PUBKEY_B58) throw new Error('empty');
-      return PublicKey.fromBase58(owner);
-    });
-  } catch {
-    throw new Error('createChild bundle has an invalid SubVault owner address');
-  }
   // Keep the order reserveForParent committed (its slot index), not base58
   // order: the reserved config hash binds that exact order.
-  const store = new OwnerStore();
-  store.owners = owners;
-  const expected = childConfigHash(store.getCommitment(), Field(childThreshold!), Field(childOwners.length));
-  if (expected.toString() !== (bundle.proposal.data ?? '')) {
+  const { owners, threshold, hash } = checkedChildConfigHash(bundle.childOwners, bundle.childThreshold, 'reserved');
+  if (hash.toString() !== (bundle.proposal.data ?? '')) {
     throw new Error(
       'SubVault config mismatch: the bundle\'s owners/threshold do not hash to the proposal data ' +
       'this approval would sign. The bundle may contain a tampered SubVault config.',
     );
   }
-  return { owners: childOwners, threshold: childThreshold! };
+  return { owners, threshold };
+}
+
+/**
+ * Checks the SubVault configuration a CREATE_CHILD propose bundle carries,
+ * before the summary shows it. The proposal signs `input.createChildConfigHash`
+ * as its data, and handlePropose reserves the child with `input.childOwners`
+ * in base58 order and `input.childThreshold`, so the displayed owners and
+ * threshold must hash (in that order) to the bundled config hash, or the
+ * operator would confirm one configuration and sign another. Other types
+ * return null.
+ */
+export function assertCreateChildProposeConfig(
+  bundle: OfflineProposeBundle,
+): { owners: string[]; threshold: number } | null {
+  if (requireTxType(bundle.input?.txType) !== 'createChild') return null;
+  const input = bundle.input;
+  const { owners, threshold, hash } = checkedChildConfigHash(input.childOwners, input.childThreshold, 'sorted');
+  if (typeof input.createChildConfigHash !== 'string' || input.createChildConfigHash === '') {
+    throw new Error('createChild bundle is missing createChildConfigHash');
+  }
+  if (hash.toString() !== input.createChildConfigHash) {
+    throw new Error(
+      'SubVault config mismatch: the bundle\'s owners/threshold do not hash to the createChildConfigHash ' +
+      'this proposal would sign. The bundle may contain a tampered SubVault config.',
+    );
+  }
+  return { owners, threshold };
 }
 
 function uiTxTypeToField(type: string): InstanceType<typeof Field> {
@@ -443,6 +503,27 @@ export function countNewReceiverAccounts(
     if (!accountExists(r.address.toBase58())) count += 1;
   }
   return count;
+}
+
+/**
+ * How many receiver accounts an execute bundle creates, and so how many MINA
+ * (one per account) the fee payer is charged beyond the fee. Only an ordinary
+ * transfer creates accounts; allocation recipients are proved to exist. The
+ * count comes from the hash-bound canonical receivers and the bundle's
+ * `receiverAccountExists` flags, where a missing or false flag means the
+ * account is new and an entry for an address outside those receivers is
+ * ignored. The summary prints this before confirmation and handleExecute
+ * funds exactly this many accounts, so both read the one function.
+ */
+export function countExecuteNewAccounts(
+  bundle: Pick<OfflineExecuteBundle, 'proposal' | 'receiverAccountExists'>,
+): number {
+  if (requireTxType(bundle.proposal?.txType) !== 'transfer') return 0;
+  const exists = bundle.receiverAccountExists;
+  return countNewReceiverAccounts(
+    buildTransferReceivers(bundle.proposal.receivers ?? []),
+    (addr) => exists != null && typeof exists === 'object' && exists[addr] === true,
+  );
 }
 
 /**
@@ -854,6 +935,8 @@ export async function handlePropose(
   if (isCreateChild && (!input.childPrivateKey || !input.childOwners || input.childThreshold == null)) {
     throw new Error('createChild proposal requires childPrivateKey, childOwners, and childThreshold in the bundle');
   }
+  // The same check the CLI ran before the summary; direct callers get it here.
+  assertCreateChildProposeConfig(bundle);
 
   log('Configuring network and injecting accounts...');
   configureNetwork(bundle);
@@ -1029,6 +1112,7 @@ export async function handleApprove(
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
   assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'approve this proposal');
+  assertBundleMemo(bundle);
   log(`Proposal hash: ${hashStr}`);
 
   // Sign the action-specific approval message.
@@ -1124,7 +1208,7 @@ export async function handleExecute(
   const proposalHash = proposalStruct.hash();
   const hashStr = proposalHash.toString();
   assertRecomputedProposalHash(proposalHash, bundle.proposal.proposalHash, 'execute this proposal');
-  assertExecuteBundleMemo(bundle);
+  assertBundleMemo(bundle);
   log(`Proposal hash: ${hashStr}`);
 
   const approvalWitness = approvalStore.getWitness(proposalHash);
@@ -1259,17 +1343,12 @@ export async function handleExecute(
       }
     }
   }
-  // Ordinary transfers may create accounts. Count only hash-bound receivers;
-  // absent/false existence flags mean the executor funds account creation.
-  let newAccountCount = 0;
-  if (txType === 'transfer') {
-    newAccountCount = countNewReceiverAccounts(
-      proposalStruct.receivers,
-      (addr) => bundle.receiverAccountExists[addr] === true,
-    );
-    if (newAccountCount > 0) {
-      log(`${newAccountCount} new account(s) will be funded`);
-    }
+  // Ordinary transfers may create accounts. The count comes from the same
+  // function the summary printed before confirmation: hash-bound receivers
+  // only, and absent/false existence flags mean the executor funds creation.
+  const newAccountCount = countExecuteNewAccounts(bundle);
+  if (newAccountCount > 0) {
+    log(`${newAccountCount} new account(s) will be funded`);
   }
 
   await compileContract(log);

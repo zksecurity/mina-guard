@@ -11,14 +11,15 @@ import path from 'node:path';
 // The lines we ship: each starts at its first release with no known advisory
 // and is allowed until its vendor support ends, after which a release fails
 // until we move to a supported line and update this list.
-// - Next.js 16: 16.3.6 is the first release clear of GHSA-p293-qw3h-jr36,
-//   GHSA-2xp9-vwfh-vxw4 and GHSA-vcvr-r3jv-pc5j. 16.x is supported (Active,
+// - Next.js 16: 16.4.1 is the first release clear of GHSA-2464-fhr4-w9xw and
+//   GHSA-673q-mjm6-r5xr (earlier: GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4,
+//   GHSA-vcvr-r3jv-pc5j, fixed in 16.3.6). 16.x is supported (Active,
 //   then Maintenance LTS) until two years after its 2025-10-21 release.
 // - Electron 43: 43.5.0 is the first release clear of the advisories 43.1.0
 //   had (the last, GHSA-qmv3-fv6v-rmhq, was fixed in 43.5.0). End of life per
 //   the Electron release schedule: 2027-01-05.
 export const ALLOWED_VERSIONS = {
-  next: [{ min: '16.3.6', below: '17.0.0', supportedUntil: '2027-10-21' }],
+  next: [{ min: '16.4.1', below: '17.0.0', supportedUntil: '2027-10-21' }],
   electron: [{ min: '43.5.0', below: '44.0.0', supportedUntil: '2027-01-05' }],
 };
 
