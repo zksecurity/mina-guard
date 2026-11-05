@@ -332,8 +332,10 @@ VK migration keeps its fixed 0.1 MINA fee. Auro keeps its
 existing fixed fee and online Ledger uses the same bounded estimate as offline
 export. On owner response upload, the UI shows the signed command's fee and
 requires a separate broadcast click. It rejects fees outside 0.01–0.1 MINA or
-different from the latest same-action request exported in the page session.
-After a reload, compare the displayed fee with the saved request and CLI summary.
+different from the latest same-action request exported for that vault and
+proposal in the browser tab. The tab keeps that export across reloads until it
+is broadcast or the user clicks **Start over**; with no export, compare the
+displayed fee with the saved request and CLI summary.
 Version 1 and 2 requests must be re-exported with a matching UI and
 CLI; owner signed responses stay at version 1 and VK migration responses stay
 at version 2. This fee change does not alter proposal hashes, circuits, or

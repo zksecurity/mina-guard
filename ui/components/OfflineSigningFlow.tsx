@@ -395,6 +395,8 @@ export function OfflineSigningPanel({ actions, persistKey, upload }: OfflineSign
           })}
           onComplete={(response, txHash, feePayer) => {
             setBroadcast(true);
+            // The page navigates away next, possibly before the effect saves.
+            saveOfflineExports(storageKey, EMPTY_OFFLINE_EXPORTS);
             upload.onComplete?.(response, txHash, feePayer);
           }}
         />
