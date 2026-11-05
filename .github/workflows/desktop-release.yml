@@ -48,14 +48,56 @@ env:
   BUN_VERSION: 1.3.10
 
 jobs:
+  # Runs first and alone, so a tag that is not on production fails in seconds
+  # instead of after the circuit compile. Nothing else starts until it passes.
+  tag-check:
+    name: Check the tag
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # A release ships the code at the tag, and anyone with write access can
+      # push a tag, so the tagged commit must already be on `production`: the
+      # branch that only accepts reviewed release PRs from main and that the
+      # hosted mainnet images are built from (docs/deploy-audit-guide.md,
+      # "Release from production"). The commit is taken from the checkout,
+      # which is what every later job builds, so an annotated tag's own object
+      # id never stands in for it. GitHub's compare endpoint reports the commit
+      # as "identical" to or "behind" production exactly when production
+      # contains it; a commit on main alone reads as "diverged".
+      - name: Require the tag to point at a commit on production
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/production...${commit}" --jq .status)"
+          echo "${GITHUB_REF_NAME} -> ${commit}; production...${commit}: ${status}"
+          case "$status" in
+            identical|behind) ;;
+            *)
+              echo "::error::${GITHUB_REF_NAME} points at ${commit}, which is not on production (compare status: ${status})"
+              exit 1 ;;
+          esac
+      - name: No tag to check for a manual dry run
+        if: ${{ !startsWith(github.ref, 'refs/tags/desktop-v') }}
+        run: echo "workflow_dispatch run; the production check applies to desktop-v* tags only"
+
   vk-hashes:
+    needs: tag-check
     uses: ./.github/workflows/vk-hashes.yml
 
-  # Fails before any platform build starts when the release inputs are wrong:
-  # a tag that is not on production, a VK manifest for another commit, or
-  # mainnet build inputs that do not match the reviewed pin.
+  # Fails before any platform build starts when the build inputs are wrong: a
+  # VK manifest for another commit, or mainnet inputs that do not match the
+  # reviewed pin.
   preflight:
-    name: Check release inputs
+    name: Check build inputs
     needs: vk-hashes
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -65,28 +107,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # A release ships the code at the tag, and anyone with write access can
-      # push a tag, so the tagged commit must already be on `production`: the
-      # branch that only accepts reviewed release PRs from main and that the
-      # hosted mainnet images are built from (docs/deploy-audit-guide.md,
-      # "Release from production"). GitHub's compare endpoint reports the
-      # commit as "identical" to or "behind" production exactly when
-      # production contains it; a commit on main alone reads as "diverged".
-      - name: Require the tag to point at a commit on production
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/production...${GITHUB_SHA}" --jq .status)"
-          echo "production...${GITHUB_SHA}: ${status}"
-          case "$status" in
-            identical|behind) ;;
-            *)
-              echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on production (compare status: ${status})"
-              exit 1 ;;
-          esac
-
       - name: Download VK manifest for this commit
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -95,40 +115,25 @@ jobs:
       - name: Verify VK manifest source
         run: bash contracts/scripts/verify-vk-manifest.sh
 
-      # The desktop bakes its mainnet inputs in the `build:ui` script of
-      # desktop/package.json, so this step reads them from there rather than
-      # restating them, and validates them the way the mainnet image build
-      # validates its own inputs. The VK hash is the manifest line that script
-      # bakes; the validator rejects it unless it equals MAINNET_VK_HASH in
+      # desktop/scripts/build-ui.mjs assembles the UI build environment for
+      # `bun run build` and, with --check, validates that same environment
+      # instead of building: it drops every inherited NEXT_PUBLIC_* variable,
+      # applies desktop/.env, applies the fixed desktop inputs, reads the
+      # mainnet VK hash through contracts/scripts/read-vk-hash.sh, refuses to
+      # run while any ui/.env* file that `next build` would load exists,
+      # requires BUILD_NETWORK_DOMAIN in desktop/src/config-store.ts to be
+      # mainnet, and runs deploy/validate-mainnet-build-config.py --desktop.
+      # The validator rejects the hash unless it equals MAINNET_VK_HASH in
       # deploy/verify-mainnet-release.py, so a circuit change cannot reach an
-      # installer unless the reviewed pin moves in the same commit. The
-      # endpoint check in desktop/src/config-store.ts must agree with the UI's
-      # network, or the app would accept test-network nodes for mainnet proofs.
-      - name: Validate mainnet build inputs against the reviewed VK pin
-        run: |
-          set -euo pipefail
-          script="$(python3 -c 'import json; print(json.load(open("desktop/package.json"))["scripts"]["build:ui"])')"
-          baked() { printf '%s\n' "$script" | tr ' ' '\n' | sed -n "s/^$1=//p" | head -n 1; }
-          for name in NEXT_PUBLIC_MINA_NETWORK NEXT_PUBLIC_API_BASE_URL NEXT_PUBLIC_MINA_ENDPOINT NEXT_PUBLIC_ARCHIVE_ENDPOINT NEXT_PUBLIC_BLOCK_EXPLORER_URL; do
-            value="$(baked "$name")"
-            echo "${name}=${value}"
-            export "${name}=${value}"
-          done
-          case "$script" in
-            *"grep -m1 '^mainnet=' ../contracts/.vk-hash"*) ;;
-            *)
-              echo "::error::desktop/package.json build:ui does not bake the mainnet line of contracts/.vk-hash"
-              exit 1 ;;
-          esac
-          grep -q "^export const BUILD_NETWORK_DOMAIN: 'mainnet' | 'testnet' = 'mainnet';" desktop/src/config-store.ts || {
-            echo "::error::BUILD_NETWORK_DOMAIN in desktop/src/config-store.ts is not mainnet"
-            exit 1
-          }
-          NEXT_PUBLIC_MINAGUARD_VK_HASH="$(contracts/scripts/read-vk-hash.sh mainnet)" \
-            python3 deploy/validate-mainnet-build-config.py --desktop
+      # installer unless the reviewed pin moves in the same commit. The build
+      # legs go through the same script, and every variable the UI build reads
+      # comes from the checkout and the manifest, so what passes here is what
+      # they bake.
+      - name: Validate the UI build inputs against the reviewed VK pin
+        run: node desktop/scripts/build-ui.mjs --check
 
   build:
-    needs: [vk-hashes, preflight]
+    needs: [tag-check, vk-hashes, preflight]
     name: Build (${{ matrix.os }})
     timeout-minutes: 60
     strategy:
@@ -176,10 +181,11 @@ jobs:
         run: bun run --filter contracts build
 
       # The desktop `build` script chains: prepare:backend (sqlite Prisma client
-      # with all platform binaryTargets) → prepare:assets → build:ui (Next.js
-      # standalone) → stage (esbuild backend bundle + copy UI) → build:electron
-      # (tsc). It uses bash-isms (`env $(grep ...)`, `cp -R`, `rm -rf`), so force
-      # bash on every OS — GitHub's windows-latest ships Git Bash.
+      # with all platform binaryTargets) → prepare:assets → build:ui
+      # (scripts/build-ui.mjs, the same environment preflight validated) →
+      # stage (esbuild backend bundle + copy UI) → build:electron (tsc). It
+      # uses bash-isms (`cp`, `mkdir -p`, read-vk-hash.sh), so force bash on
+      # every OS — GitHub's windows-latest ships Git Bash.
       - name: Build desktop bundle
         working-directory: desktop
         shell: bash
@@ -286,7 +292,7 @@ jobs:
 
       # Record the exact toolchain in the release body so a rebuild of the
       # same tag can match it. The VK hash was checked against the reviewed
-      # pin in the preflight job before anything was built.
+      # pin by the preflight job before anything was built.
       - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

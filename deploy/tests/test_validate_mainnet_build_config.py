@@ -22,8 +22,9 @@ VALID_ENV = {
     "NEXT_PUBLIC_ARCHIVE_ENDPOINT": "https://app.example.org/archive",
     "NEXT_PUBLIC_BLOCK_EXPLORER_URL": "https://explorer.example.org/mainnet",
 }
-# The desktop UI build (desktop/package.json `build:ui`): the API is the
-# embedded backend on loopback, and MINA_NETWORK_DOMAIN is not a build input.
+# The desktop UI build (desktop/scripts/build-ui.mjs, run by `build:ui`): the
+# API is the embedded backend on loopback, and MINA_NETWORK_DOMAIN is not a
+# build input.
 DESKTOP_ENV = {
     **{name: value for name, value in VALID_ENV.items() if name != "MINA_NETWORK_DOMAIN"},
     "NEXT_PUBLIC_API_BASE_URL": "http://127.0.0.1:5050",
@@ -142,7 +143,7 @@ class MainnetBuildConfigTest(unittest.TestCase):
 
 
 class DesktopBuildConfigTest(unittest.TestCase):
-    """`--desktop`: the inputs baked by desktop/package.json `build:ui`."""
+    """`--desktop`: the environment desktop/scripts/build-ui.mjs assembles."""
 
     def run_validator(self, changes):
         return run_validator(DESKTOP_ENV, changes, args=("--desktop",))
