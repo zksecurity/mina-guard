@@ -172,9 +172,10 @@ function NewTransactionPageInner() {
   const [mode, setMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
   const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
-  // What the last offline export in this page load proposed. The form can
-  // change, or be empty after a reload, by the time the signed file comes back.
-  const exportedProposalRef = useRef<{ input: NewProposalInput; configNonce: number } | null>(null);
+  // What the last offline export in this page load proposed, and for which
+  // vault. The form can change, or be empty after a reload, by the time the
+  // signed file comes back.
+  const exportedProposalRef = useRef<{ contractAddress: string; input: NewProposalInput; configNonce: number } | null>(null);
 
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
@@ -425,7 +426,7 @@ function NewTransactionPageInner() {
                             input,
                             configNonce,
                           });
-                          exportedProposalRef.current = { input, configNonce };
+                          exportedProposalRef.current = { contractAddress: multisig!.address, input, configNonce };
                           return bundle;
                         },
                       }]}
@@ -436,9 +437,12 @@ function NewTransactionPageInner() {
                         onComplete: (response, txHash, feePayer) => {
                           const hash = response.proposalHash;
                           if (hash && multisig) {
-                            // No summary after a reload: the proposal page shows
-                            // the indexed proposal once it lands.
-                            const { input, configNonce } = exportedProposalRef.current ?? {};
+                            // No summary after a reload or for another vault's
+                            // file: the proposal page shows the indexed proposal
+                            // once it lands.
+                            const exported = exportedProposalRef.current;
+                            const { input, configNonce } =
+                              exported?.contractAddress === response.contractAddress ? exported : {};
                             const isRemote = input && (
                               input.txType === 'reclaimChild' ||
                               input.txType === 'destroyChild' ||
