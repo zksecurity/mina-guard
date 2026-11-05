@@ -154,13 +154,16 @@ offline CLI's bundle-domain checks.
 ### 2. Sign (`offline-cli/src/`)
 
 ```
-MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
+MINA_NETWORK_DOMAIN=mainnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a testnet bundle,
-use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
-unset, invalid, and mainnet/test-network mismatches fail closed. Offline
-bundles encode devnet as `testnet`.
+`MINA_NETWORK_DOMAIN` defaults to `mainnet` in the CLI
+(`offline-cli/src/default-network.ts`, loaded before `contracts`). For a testnet
+bundle, set `testnet` or `devnet` (both select `Field(2)`). Invalid values and
+mainnet/test-network mismatches fail closed, so a testnet bundle run with the
+default is rejected before signing. Offline bundles encode devnet as `testnet`.
+The UI's offline panel shows the full command with the domain of the network it
+is connected to and the binary for the platform the user picks.
 The CLI checks the bundle against the domain captured when contracts were
 imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
