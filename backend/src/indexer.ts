@@ -83,6 +83,9 @@ export interface IndexerStatus {
   /** Latest recovery warning; retained across successful ticks until restart. */
   lastWarning: string | null;
   discoveredContracts: number;
+  /** History scans of newly tracked contracts still in progress: each has read
+   *  the archive from `startHeight` through `scannedHeight`. */
+  firstScans: Array<{ address: string; startHeight: number; scannedHeight: number }>;
   indexerMode: 'full' | 'lite';
 }
 
@@ -129,12 +132,12 @@ export class MinaGuardIndexer {
   /** First-scan progress of unready vaults, by contract id. Kept across ticks
    *  so a long history resumes where it stopped instead of restarting. A
    *  process restart only repeats work: event ingestion is idempotent. */
-  private readonly firstScans = new Map<number, { start: number; next: number }>();
+  private readonly firstScans = new Map<number, { address: string; start: number; next: number }>();
   private intervalHandle: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
   private archivePool: pg.Pool | null = null;
-  private status: Omit<IndexerStatus, 'indexerMode'> = {
+  private status: Omit<IndexerStatus, 'indexerMode' | 'firstScans'> = {
     running: false,
     lastRunAt: null,
     lastSuccessfulRunAt: null,
@@ -223,7 +226,10 @@ export class MinaGuardIndexer {
 
   /** Returns the latest in-memory indexer status snapshot. Does not include `indexerMode` — the route layer adds it from config. */
   getStatus(): Omit<IndexerStatus, 'indexerMode'> {
-    return { ...this.status };
+    const firstScans = [...this.firstScans.values()].map((scan) => ({
+      address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1,
+    }));
+    return { ...this.status, firstScans };
   }
 
   /** Runs one complete indexing loop: discovery, ingestion, and cursor advancement. */
@@ -527,7 +533,7 @@ export class MinaGuardIndexer {
       if (start > latestHeight) continue;
       let scan = this.firstScans.get(c.id);
       if (!scan || scan.start !== start) {
-        scan = { start, next: start };
+        scan = { address: c.address, start, next: start };
         this.firstScans.set(c.id, scan);
       }
       while (steps > 0) {

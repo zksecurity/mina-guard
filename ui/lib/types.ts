@@ -138,6 +138,9 @@ export interface IndexerStatus {
   lastRunFailed: boolean;
   lastErrorAt: string | null;
   discoveredContracts: number;
+  /** History scans of newly tracked vaults still in progress. Absent from
+   *  older backends. */
+  firstScans?: Array<{ address: string; startHeight: number; scannedHeight: number }>;
   indexerMode: 'full' | 'lite';
 }
 

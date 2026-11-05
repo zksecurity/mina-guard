@@ -555,6 +555,10 @@ describe('tick: rescanUnreadyContracts', () => {
     await tick();
     expect(indexer.getStatus().lastError).toContain('429');
     expect(ranges.map((r) => r.from)).toEqual([0, 5_000, 10_000]);
+    // Progress is reported through the last window that succeeded.
+    expect(indexer.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 9_999 },
+    ]);
     await tick();
     // Resumes at the failed window, and stops after this tick's ten steps.
     expect(ranges.slice(3).map((r) => r.from)).toEqual(
@@ -570,6 +574,7 @@ describe('tick: rescanUnreadyContracts', () => {
     // An event from an earlier step readies the vault when the scan finishes.
     expect(updated.ready).toBe(true);
     expect(updated.lastSyncedAt).not.toBeNull();
+    expect(indexer.getStatus().firstScans).toEqual([]);
     expect(ranges.every((r) => r.to - r.from < 5_000)).toBe(true);
   });
 
