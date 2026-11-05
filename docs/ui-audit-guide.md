@@ -341,12 +341,13 @@ from the version 3 request. VK migration uses a separate version 3 request
 with a fixed 0.1 MINA fee and no `fee` field.
 On owner signed-response upload, the UI reads the fee from the signed command
 itself, rejects malformed or out-of-range fees, and rejects a mismatch with
-the most recent same-action request exported for that vault and proposal in
-the browser tab. It displays that fee and the fee payer for review and
-requires a separate **Broadcast signed transaction** click. The panel keeps
-each action's exported filename and fee in `sessionStorage`, keyed by network,
-vault and proposal, so the comparison survives a reload or navigation in the
-same tab. A broadcast or **Start over** clears it. Without a kept export, the
+the most recent same-action request exported in the page session. It displays
+that fee and the fee payer for review and requires a separate **Broadcast
+signed transaction** click. On a proposal's page, the panel keeps each
+action's exported filename and fee in `sessionStorage`, keyed by network,
+vault and proposal hash, so the comparison survives a reload or navigation in
+the same tab. A broadcast or **Start over** clears it. The new-proposal page
+keeps nothing, since a signed proposal cannot be matched to an export there. Without a kept export, the
 user must compare the displayed signed fee with the saved request and offline
 CLI summary before broadcasting. The existing
 network, policy, and live-state checks still run at broadcast time.

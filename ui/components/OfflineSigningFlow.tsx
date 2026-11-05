@@ -297,8 +297,9 @@ interface OfflineSigningPanelProps {
   /** Actions the signer can export; the last one is selected first. */
   actions: OfflinePanelAction[];
   /** Names what is being signed (vault and proposal), so this tab can restore
-   *  its last export after a reload or navigation. */
-  persistKey: string;
+   *  its last export after a reload or navigation. Left out for a new
+   *  proposal, whose signed file cannot be matched to an export. */
+  persistKey?: string;
   // The panel checks the signed fee against its own exports.
   upload: Omit<UploadSignedResponseProps, 'onRecreate' | 'expectedFees'> & {
     /** Downloads a fresh request for the same action; returns what it exported. */
@@ -316,16 +317,17 @@ export function OfflineSigningPanel({ actions, persistKey, upload }: OfflineSign
 
   let network = 'mainnet';
   try { network = getMinaGuardConfig().networkId; } catch { /* The page reports configuration errors. */ }
-  const storageKey = offlineExportKey(network, persistKey);
+  const storageKey = persistKey === undefined ? null : offlineExportKey(network, persistKey);
   // Storage is read after mount, so the server and first client render agree.
   useEffect(() => {
+    if (storageKey === null) return;
     setState(loadOfflineExports(storageKey));
     setLoadedKey(storageKey);
   }, [storageKey]);
   // Never save under a key before its saved state is read. Once the request
   // is broadcast, a reload starts again from step 1.
   useEffect(() => {
-    if (loadedKey !== storageKey) return;
+    if (storageKey === null || loadedKey !== storageKey) return;
     saveOfflineExports(storageKey, broadcast ? EMPTY_OFFLINE_EXPORTS : { selected, exports });
   }, [loadedKey, storageKey, selected, exports, broadcast]);
 
@@ -396,7 +398,7 @@ export function OfflineSigningPanel({ actions, persistKey, upload }: OfflineSign
           onComplete={(response, txHash, feePayer) => {
             setBroadcast(true);
             // The page navigates away next, possibly before the effect saves.
-            saveOfflineExports(storageKey, EMPTY_OFFLINE_EXPORTS);
+            if (storageKey !== null) saveOfflineExports(storageKey, EMPTY_OFFLINE_EXPORTS);
             upload.onComplete?.(response, txHash, feePayer);
           }}
         />

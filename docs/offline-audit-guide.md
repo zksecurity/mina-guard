@@ -284,11 +284,13 @@ the proposal being viewed — a signed file for a different vault or proposal
 is rejected. (The propose page can only bind by contract: its hash is new by
 definition.) The UI reads `feePayer.body.fee` from the actual signed command,
 requires a canonical integer string in the 0.01–0.1 MINA range, and rejects a
-mismatch with the most recent request exported for the same action, vault and
-proposal in the browser tab (kept in `sessionStorage` across reloads until a
-broadcast or **Start over**). It shows the signed fee and fee payer in a review panel and does
+mismatch with the most recent request exported for the same action in the page
+session. On a proposal's page, approve and execute exports are kept in
+`sessionStorage`, keyed by vault and proposal hash, across reloads until a
+broadcast or **Start over**. It shows the signed fee and fee payer in a review panel and does
 not broadcast on upload. The user must click **Broadcast signed transaction**.
-Without a kept export (another tab, or after **Start over**), the panel instead
+Without an export (another tab, a new proposal after a reload, or after
+**Start over**), the panel instead
 asks the user to compare the signed fee with the saved request and offline CLI
 summary. At the click, the UI checks the fee again and performs
 the existing network, policy, and live-state checks before POSTing `sendZkapp`

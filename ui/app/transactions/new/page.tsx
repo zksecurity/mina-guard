@@ -430,7 +430,6 @@ function NewTransactionPageInner() {
                           return bundle;
                         },
                       }]}
-                      persistKey={`${multisig!.address}:new`}
                       upload={{
                         acceptActions: ['propose'],
                         expectedContractAddress: multisig!.address,
