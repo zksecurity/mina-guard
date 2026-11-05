@@ -439,7 +439,8 @@ bundle, `schema.sql` (run through `$executeRawUnsafe`), `.vk-hash`, and
 Prisma's native engines — the latter three `asarUnpack`ed as plain files under
 the install's `resources/`. The producing pipeline is `scripts/stage.mjs` +
 `scripts/bundle-backend.mjs` and `.github/workflows/desktop-release.yml`
-(draft releases, unsigned artifacts).
+(preflight input checks, draft releases, checksummed and attested but unsigned
+artifacts).
 
 **6. Network consistency across the Auro bridge.**
 The desktop trusts `config.networkId`; the external browser's Auro has its own
@@ -515,7 +516,7 @@ desktop/
 ├── packaging-stage/         # Build output: backend bundle + generated Prisma client
 ├── ui-standalone/           # Build output: staged Next standalone server + static
 ├── package.json             # Scripts + electron-builder config (targets, asarUnpack,
-│                            #   unsigned mac identity, GitHub draft publish)
+│                            #   unsigned mac identity; `publish` block unused by CI)
 ├── README.md                # Build pipeline, packaging, signing status, troubleshooting
 └── ARCHITECTURE.md          # Pointer to this document
 ```
@@ -538,17 +539,24 @@ All steps run from `desktop/` (`bun run build` chains them; details in
    the Postgres `schema.prisma`).
 2. `prepare:assets` — regenerates `assets/schema.sql` and copies it plus
    the downloaded `contracts/.vk-hash` into `dist/assets/`.
-3. `build:ui` — builds `../ui` in Next standalone mode with
-   `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
-   `NEXT_PUBLIC_INDEXER_MODE=lite` and
-   `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the `app.minaguard.com` endpoints, the
-   minascan explorer URL, and the `mainnet=` line of `contracts/.vk-hash` baked in. The
-   endpoints satisfy the mainnet check in `ui/next.config.mjs` and are only a
-   fallback: the preload injects the endpoints saved at setup, and the desktop
-   proxy replaces the UI's Content-Security-Policy with one built from them (plus anything from the
-   git-ignored `desktop/.env`). The network domain must match
-   `BUILD_NETWORK_DOMAIN` in `config-store.ts`; the two flip together to cut
-   a testnet build.
+3. `build:ui` — `scripts/build-ui.mjs` builds `../ui` in Next standalone mode
+   in an environment it assembles itself: inherited `NEXT_PUBLIC_*` variables
+   and `MINA_NETWORK_DOMAIN` are dropped, the git-ignored `desktop/.env` is
+   applied, then the fixed inputs `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`,
+   `NEXT_PUBLIC_INDEXER_MODE=lite`, `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the
+   `app.minaguard.com` endpoints and the minascan explorer URL, and the
+   `mainnet=` line of `contracts/.vk-hash` read through
+   `contracts/scripts/read-vk-hash.sh`. `desktop/.env` may not set any of
+   those, and the script refuses to run while `ui/.env`, `ui/.env.production`,
+   `ui/.env.local` or `ui/.env.production.local` exists, since `next build`
+   would load them outside the assembled environment. The endpoints satisfy
+   the mainnet check in `ui/next.config.mjs` and
+   are only a fallback: the preload injects the endpoints saved at setup, and
+   the desktop proxy replaces the UI's Content-Security-Policy with one built
+   from them. `BUILD_NETWORK` in `scripts/build-ui-env.mjs` must match
+   `BUILD_NETWORK_DOMAIN` in `config-store.ts`; the build refuses to run when they differ, and the
+   two flip together to cut a testnet build. `--check` validates the same
+   environment without building (step 7).
 4. `stage` — `stage.mjs` copies the standalone tree into `ui-standalone/`
    resolving every bun-store symlink to a real file (Windows can't ship
    symlinks; naive dereferencing breaks Node module resolution — the script
@@ -560,11 +568,31 @@ All steps run from `desktop/` (`bun run build` chains them; details in
    NSIS for Windows). Prisma query engines for darwin (x64/arm64), windows,
    debian- and rhel-flavored Linux are bundled and `asarUnpack`ed together
    with `dist/assets/**`.
-7. CI: `.github/workflows/desktop-release.yml` builds all three platforms on
-   native runners for `desktop-v*` tags and uploads to a **draft** GitHub
-   release; artifacts are **unsigned** on every platform (macOS bundles get an
-   ad-hoc signature from the `afterPack` hook so downloaded copies remain
-   launchable).
+7. CI: `.github/workflows/desktop-release.yml` runs for `desktop-v*` tags and
+   manual dry runs. A tag-check job with no other dependency rejects a tag
+   that does not point at a commit on `production` (the reviewed branch the
+   hosted mainnet images are built from) before the circuit compile starts. A
+   preflight job then verifies that the CI VK manifest belongs to the commit
+   and runs `node desktop/scripts/build-ui.mjs --check`, which assembles the
+   UI build environment of step 3, requires `BUILD_NETWORK_DOMAIN` to be
+   `mainnet`, and runs `deploy/validate-mainnet-build-config.py --desktop` in
+   it: the `mainnet=` VK hash must equal the reviewed `MAINNET_VK_HASH` pin in
+   `deploy/verify-mainnet-release.py`, the network must be mainnet, the node,
+   archive and explorer URLs must be HTTPS on public hosts, the API base URL
+   must be the embedded backend's loopback address, and no E2E flag or base
+   path may be set, including from `desktop/.env`. Three native
+   runners then build with a pinned Bun and SHA-pinned actions, package with
+   `--publish never`, and upload the installers as artifacts. For tag builds a
+   release job with the only write permissions collects them, writes
+   `SHA256SUMS`, attaches `minaguard-vk-hash.txt`, signs a build-provenance
+   attestation for every file (verify with `gh attestation verify <file>
+   --repo zksecurity/mina-guard --signer-workflow
+   zksecurity/mina-guard/.github/workflows/desktop-release.yml --source-ref
+   refs/tags/<tag>`, which pins the signing workflow and the tag), and creates
+   a **draft** release for manual review. Artifacts are **unsigned** on every
+   platform (macOS bundles get an ad-hoc signature from the `afterPack` hook so
+   downloaded copies remain launchable); the attestation, not a code
+   signature, is what ties an installer to the tagged source.
 
 ## Dependencies
 

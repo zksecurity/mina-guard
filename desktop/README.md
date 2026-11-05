@@ -35,15 +35,27 @@ architecture and security notes.
 
 ## Environment
 
-`desktop/.env` (optional, git-ignored) is loaded at dev and build time via
-`env $(grep -v '^#' .env | ...)`. The UI-build step reads it to inject
-`NEXT_PUBLIC_*` vars into the bundle.
+`desktop/.env` (optional, git-ignored) holds `KEY=VALUE` lines.
+`scripts/build-ui.mjs` applies it to the UI build, and `bun run dev` also
+applies it to the Electron process via `env $(grep -v '^#' .env | ...)`.
+
+The UI build environment is assembled only by `scripts/build-ui.mjs`: it drops
+every `NEXT_PUBLIC_*` variable and `MINA_NETWORK_DOMAIN` inherited from the
+shell, applies `desktop/.env`, then applies the fixed desktop inputs and the
+mainnet VK hash. `desktop/.env` may not set those fixed inputs (API base URL,
+indexer mode, network, node and archive endpoints, explorer URL), the VK hash
+or `MINA_NETWORK_DOMAIN`; the script refuses to build if it does. It also
+refuses while `ui/.env`, `ui/.env.production`, `ui/.env.local` or
+`ui/.env.production.local` exists, because `next build` would load those
+behind the script's back; local overrides belong in `desktop/.env`. `bun run
+check:build-inputs` validates the assembled environment without building, and
+the release workflow runs that check before every build.
 
 Recognized variables:
 
 | Var | Where | Purpose |
 |-----|-------|---------|
-| `NEXT_PUBLIC_*` | UI build | Any vars read by `../ui` code at build time. |
+| `NEXT_PUBLIC_*` | UI build | Any other vars read by `../ui` code at build time. |
 
 Everything else the backend needs (`MINA_ENDPOINT`, `ARCHIVE_ENDPOINT`,
 `DATABASE_URL`, `INDEXER_MODE`, `INDEX_START_HEIGHT`) is injected at runtime
@@ -66,7 +78,8 @@ Run from `desktop/`.
 | `bun run prepare:backend` | Regenerates the SQLite Prisma client in `../backend/src/generated/prisma/` from `schema.sqlite.prisma`. Runs the schema-sync check against `schema.prisma` first. |
 | `bun run prepare:schema-sql` | Regenerates `desktop/assets/schema.sql` via `prisma migrate diff`. This is what `backend-embed.ts` executes against a fresh SQLite DB on first launch. |
 | `bun run prepare:assets` | Runs `prepare:schema-sql`, then copies `assets/schema.sql` into `dist/assets/` and copies the CI-generated `../contracts/.vk-hash` into both `assets/.vk-hash` and `dist/assets/.vk-hash`. |
-| `bun run build:ui` | Builds `../ui` in standalone mode with `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`, `NEXT_PUBLIC_INDEXER_MODE=lite`, `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the `app.minaguard.com` mainnet endpoints, the minascan explorer URL, and the mainnet VK hash. The endpoints satisfy the mainnet build check and serve only as a fallback outside Electron: the app uses the endpoints saved at setup, and its proxy replaces the UI's Content-Security-Policy with one that allows them. |
+| `bun run build:ui` | Runs `scripts/build-ui.mjs`, which builds `../ui` in standalone mode with the fixed desktop inputs (`NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5050`, `NEXT_PUBLIC_INDEXER_MODE=lite`, `NEXT_PUBLIC_MINA_NETWORK=mainnet`, the `app.minaguard.com` mainnet endpoints, the minascan explorer URL), the mainnet VK hash read through `../contracts/scripts/read-vk-hash.sh`, and `desktop/.env` (see Environment). The endpoints satisfy the mainnet build check and serve only as a fallback outside Electron: the app uses the endpoints saved at setup, and its proxy replaces the UI's Content-Security-Policy with one that allows them. |
+| `bun run check:build-inputs` | Assembles the same UI build environment as `build:ui` and runs `deploy/validate-mainnet-build-config.py --desktop` in it instead of building. Needs `python3`. |
 | `bun run stage` | Rebuilds `packaging-stage/backend-bundle.js` (esbuild) and copies `ui/.next/standalone` into `ui-standalone/`. |
 | `bun run build:electron` | Compiles `src/*.ts` → `dist/*.js` and copies static files (preload, setup.html, auro/page.html). |
 | `bun run build` | All of the above in order. |
@@ -83,9 +96,10 @@ rejects testnet, devnet and nodes without a supported `networkID`. It rejects an
 archive without the pending-height and bounded-event fields needed by the
 indexer. Saved endpoints are rechecked at startup, so a config saved by an
 earlier testnet build reopens the setup window; saving mainnet endpoints there
-replaces the local index. A testnet build needs `NEXT_PUBLIC_MINA_NETWORK`, the
-VK-hash line in `build:ui` and `BUILD_NETWORK_DOMAIN` in `src/config-store.ts`
-flipped together.
+replaces the local index. A testnet build needs `BUILD_NETWORK` and the
+endpoints in `scripts/build-ui-env.mjs` and `BUILD_NETWORK_DOMAIN` in
+`src/config-store.ts` flipped together; the build refuses to run while the
+two network constants differ.
 
 ## Quick start (dev)
 
@@ -164,16 +178,42 @@ before a public release.
 ### Releasing via CI
 
 `.github/workflows/desktop-release.yml` builds all three platforms on native
-runners and uploads to a GitHub Release.
+runners, checksums and attests the installers, and publishes them to a GitHub
+Release.
 
-- **Cut a release:** push a tag matching `desktop-v*` (e.g. `desktop-v0.1.0`).
-  Each runner builds its platform's installers and publishes them to a
-  **draft** GitHub Release (configured via `publish.releaseType: "draft"` in
-  `package.json`). Review the draft, then publish it manually.
+- **Cut a release:** push a tag matching `desktop-v*` (e.g. `desktop-v0.1.0`)
+  at a commit on `production`, the reviewed branch the hosted mainnet images
+  are built from (see *Release from production* in
+  `docs/deploy-audit-guide.md`); the workflow refuses a tag that points
+  anywhere else, including a commit that is only on `main`.
+  Each runner builds its platform's installers and uploads them as CI
+  artifacts. One release job then collects them, writes `SHA256SUMS`, attaches
+  `minaguard-vk-hash.txt` (the CI VK manifest for the tagged commit), signs a
+  build-provenance attestation for every file, and creates a **draft** GitHub
+  Release. Review the draft, then publish it manually. CI does not use
+  electron-builder's GitHub publisher; the `publish` block in `package.json`
+  is unused there.
 - **Dry run:** trigger the workflow manually (`workflow_dispatch`) with no
   tag. It builds all three platforms and uploads the installers as CI
   artifacts (7-day retention) instead of publishing — use this to smoke-test
   the build before tagging.
+- **Preflight checks** run before any platform build. A tag-check job with
+  no other dependency applies the production rule above, so a bad tag fails
+  within seconds instead of after the circuit compile. After the compile, a
+  preflight job verifies the VK manifest belongs to the tagged commit and runs
+  `node scripts/build-ui.mjs --check`, which assembles the UI build
+  environment the platform legs use, requires `BUILD_NETWORK_DOMAIN` in
+  `src/config-store.ts` to be `mainnet`, and runs
+  `deploy/validate-mainnet-build-config.py --desktop` in it: network
+  `mainnet`, HTTPS node, archive and explorer URLs on public hosts that do not
+  name a test network, the API base URL equal to the embedded backend's
+  loopback address, no E2E flag or base path (including from `desktop/.env`),
+  and the `mainnet=` VK hash equal to `MAINNET_VK_HASH` in
+  `deploy/verify-mainnet-release.py`. A circuit change therefore cannot ship
+  in an installer unless the reviewed pin moves in the same commit.
+- **Pinned toolchain:** Bun `1.3.10` (`BUN_VERSION` in the workflow, the same
+  pin as the offline CLI release and the VK compile) and every action pinned
+  to a commit SHA. Only the release job holds write permissions.
 - **Audit gate:** every leg runs `bun audit --audit-level=critical` right after
   install and stops before packaging if any dependency has a critical advisory.
 - **Packaged-version check:** electron-builder's `afterPack` hook
@@ -183,13 +223,27 @@ runners and uploads to a GitHub Release.
   support ends (Next 16: 2027-10-21, Electron 43: 2027-01-05). Local
   `electron-builder` runs check too.
 
-The `owner`/`repo` in the `publish` block must match the GitHub repo the
-release should land on.
+**Verifying a download.** Check the installer against `SHA256SUMS`, then
+check its attestation, which binds the file to this repository, this workflow
+and the tagged commit:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS   # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+gh attestation verify MinaGuard-<version>-<platform>.<ext> --repo zksecurity/mina-guard \
+  --signer-workflow zksecurity/mina-guard/.github/workflows/desktop-release.yml \
+  --source-ref refs/tags/desktop-v<version>
+```
+
+`SHA256SUMS` alone only shows a download is the file the release job had; the
+attestation is what ties it to the tagged source. Enable **immutable
+releases** in the repository settings so a published release's assets cannot
+be replaced afterwards.
 
 ### Signing (not done yet)
 
-Released artifacts are **unsigned** (no Developer ID / Authenticode).
-Consequences for users:
+Released artifacts are **unsigned** (no Developer ID / Authenticode). The
+checksums and attestation above prove where an installer came from, not who
+the publisher is to the operating system. Consequences for users:
 
 - **macOS:** the packed app is **ad-hoc signed** by the `afterPack` hook
   (`scripts/adhoc-sign.mjs`). Without it, electron-builder's repack breaks the
