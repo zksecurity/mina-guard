@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { classifyDeployTarget, receiverExists } from '../lib/deploy-target';
+import { classifyDeployTarget, fetchFailure, receiverExists } from '../lib/deploy-target';
 
 describe('classifyDeployTarget', () => {
   it('funds an account the node does not have', () => {
@@ -45,5 +45,13 @@ describe('receiverExists', () => {
     expect(() => receiverExists({ error: { statusCode: 429, statusText: '' } }))
       .toThrow('Could not check a receiver address: too many requests (HTTP 429)');
     expect(() => receiverExists({ error: {} })).toThrow('Could not check a receiver address');
+  });
+});
+
+describe('fetchFailure', () => {
+  it('says a rate limit clears after a minute, and names other failures', () => {
+    expect(fetchFailure({ statusCode: 429 })).toContain('wait a minute and try again');
+    expect(fetchFailure({ statusCode: 502, statusText: ' Bad Gateway ' })).toBe('Bad Gateway');
+    expect(fetchFailure({ statusCode: 503 })).toBe('HTTP 503');
   });
 });

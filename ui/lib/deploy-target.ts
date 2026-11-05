@@ -9,9 +9,11 @@ export interface DeployTargetFetch {
   error?: { statusCode?: number; statusText?: string } | null;
 }
 
-function fetchFailure(error: NonNullable<DeployTargetFetch['error']>): string {
+/** Why a node request failed, as one clause for a longer message. */
+export function fetchFailure(error: NonNullable<DeployTargetFetch['error']>): string {
   if (error.statusCode === 429) {
-    return 'too many requests (HTTP 429). Close other MinaGuard tabs and try again in a minute.';
+    return 'too many requests (HTTP 429). The node limits requests per minute, shared by every open ' +
+      'MinaGuard window and the desktop app; wait a minute and try again.';
   }
   return error.statusText?.trim() ||
     (error.statusCode ? `HTTP ${error.statusCode}` : 'node request failed');
