@@ -239,9 +239,11 @@ export class MinaGuardIndexer {
         address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1,
         finished: false, failedEvents: 0,
       })),
+      // A finished scan's later replays are complete through the indexed
+      // height, which advances only after a tick, replays included, succeeds.
       ...this.scannedUnready.map((scan) => ({
         address: scan.address, startHeight: scan.start,
-        scannedHeight: this.status.latestChainHeight, finished: true, failedEvents: scan.failedEvents,
+        scannedHeight: this.status.indexedHeight, finished: true, failedEvents: scan.failedEvents,
       })),
     ];
     return { ...this.status, firstScans };

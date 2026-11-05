@@ -34,8 +34,9 @@ export default function AccountPage() {
   const urlAddress = params?.address ?? null;
   const searchParams = useSearchParams();
   // Set by "Add existing" right after subscribing, to tell "the indexer is
-  // still reading this vault's history" from "no such account".
-  const isImporting = searchParams.get('importing') === '1';
+  // still reading this vault's history" from "no such account". Earlier
+  // releases used ?pending=1 for the same link.
+  const isImporting = searchParams.get('importing') === '1' || searchParams.get('pending') === '1';
 
   const {
     wallet,
