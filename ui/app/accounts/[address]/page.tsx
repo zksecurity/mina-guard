@@ -337,7 +337,7 @@ export default function AccountPage() {
 
 /** Shown after "Add existing" until the indexer has read the vault's history. */
 function ImportProgress({ scan, tip }: {
-  scan: { startHeight: number; scannedHeight: number } | null;
+  scan: { startHeight: number; scannedHeight: number; finished: boolean } | null;
   tip: number;
 }) {
   const span = tip - (scan?.startHeight ?? 0);
@@ -347,11 +347,19 @@ function ImportProgress({ scan, tip }: {
   return (
     <div className="rounded-xl border border-safe-border bg-safe-gray p-4 text-sm space-y-2 max-w-2xl">
       <p className="font-semibold text-white">Importing Vault: reading its history</p>
-      <p className="text-safe-text">
-        MinaGuard is reading this vault&apos;s past activity from the archive node. Older vaults take
-        longer, often a few minutes. The vault opens here when the scan finishes.
-      </p>
-      {scan && percent !== null ? (
+      {!scan?.finished && (
+        <p className="text-safe-text">
+          MinaGuard is reading this vault&apos;s past activity from the archive node. Older vaults take
+          longer, often a few minutes. The vault opens here when the scan finishes.
+        </p>
+      )}
+      {scan?.finished ? (
+        <p className="text-xs text-amber-400">
+          The scan reached the current block without finding any activity for this vault, for
+          example because it was deployed but never set up. MinaGuard keeps watching and opens it
+          when its first event lands.
+        </p>
+      ) : scan && percent !== null ? (
         <div className="space-y-1">
           <div className="h-1.5 rounded-full bg-safe-dark overflow-hidden" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
             <div className="h-full bg-safe-green" style={{ width: `${percent}%` }} />

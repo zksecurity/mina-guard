@@ -83,9 +83,10 @@ export interface IndexerStatus {
   /** Latest recovery warning; retained across successful ticks until restart. */
   lastWarning: string | null;
   discoveredContracts: number;
-  /** History scans of newly tracked contracts still in progress: each has read
-   *  the archive from `startHeight` through `scannedHeight`. */
-  firstScans: Array<{ address: string; startHeight: number; scannedHeight: number }>;
+  /** Lite mode only: history scans of tracked vaults that are not ready yet.
+   *  Each has read the archive from `startHeight` through `scannedHeight`;
+   *  `finished` means it reached the tip without finding a vault event. */
+  firstScans: Array<{ address: string; startHeight: number; scannedHeight: number; finished: boolean }>;
   indexerMode: 'full' | 'lite';
 }
 
@@ -133,6 +134,8 @@ export class MinaGuardIndexer {
    *  so a long history resumes where it stopped instead of restarting. A
    *  process restart only repeats work: event ingestion is idempotent. */
   private readonly firstScans = new Map<number, { address: string; start: number; next: number }>();
+  /** Unready vaults whose first scan already reached the tip, as of the last tick. */
+  private scannedUnready: Array<{ address: string; start: number }> = [];
   private intervalHandle: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
@@ -226,9 +229,16 @@ export class MinaGuardIndexer {
 
   /** Returns the latest in-memory indexer status snapshot. Does not include `indexerMode` — the route layer adds it from config. */
   getStatus(): Omit<IndexerStatus, 'indexerMode'> {
-    const firstScans = [...this.firstScans.values()].map((scan) => ({
-      address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1,
-    }));
+    // Full mode can track many unready deploys; only lite mode imports by hand.
+    const firstScans = this.config.indexerMode !== 'lite' ? [] : [
+      ...[...this.firstScans.values()].map((scan) => ({
+        address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1, finished: false,
+      })),
+      ...this.scannedUnready.map((scan) => ({
+        address: scan.address, startHeight: scan.start,
+        scannedHeight: this.status.latestChainHeight, finished: true,
+      })),
+    ];
     return { ...this.status, firstScans };
   }
 
@@ -520,6 +530,9 @@ export class MinaGuardIndexer {
       select: { id: true, address: true, discoveredAtBlock: true, lastSyncedAt: true },
     });
     const pending = new Set(unready.filter((c) => c.lastSyncedAt === null).map((c) => c.id));
+    this.scannedUnready = unready
+      .filter((c) => c.lastSyncedAt !== null)
+      .map((c) => ({ address: c.address, start: c.discoveredAtBlock ?? this.config.indexStartHeight }));
     for (const id of this.firstScans.keys()) if (!pending.has(id)) this.firstScans.delete(id);
     let steps = FIRST_SCAN_STEPS_PER_TICK;
     for (const c of unready) {

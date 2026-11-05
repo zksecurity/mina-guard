@@ -138,9 +138,9 @@ export interface IndexerStatus {
   lastRunFailed: boolean;
   lastErrorAt: string | null;
   discoveredContracts: number;
-  /** History scans of newly tracked vaults still in progress. Absent from
-   *  older backends. */
-  firstScans?: Array<{ address: string; startHeight: number; scannedHeight: number }>;
+  /** Lite mode: history scans of vaults not ready yet; `finished` means the
+   *  scan reached the tip without a vault event. Absent from older backends. */
+  firstScans?: Array<{ address: string; startHeight: number; scannedHeight: number; finished: boolean }>;
   indexerMode: 'full' | 'lite';
 }
 

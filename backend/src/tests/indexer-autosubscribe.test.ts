@@ -472,10 +472,15 @@ describe('tick: rescanUnreadyContracts', () => {
     let updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(false);
     expect(updated.lastSyncedAt).not.toBeNull();
-    await runSingleTick(liteConfig);
+    const indexer = await runSingleTick(liteConfig);
     updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(false);
     expect(ranges).toEqual([{ from: 0, to: 1000 }, { from: 711, to: 1000 }]);
+    // The import page can tell a finished, empty scan from one not started.
+    expect(indexer.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true },
+    ]);
+    expect((await runSingleTick(fullConfig)).getStatus().firstScans).toEqual([]);
   });
 
   test('the first scan uses indexStartHeight when no discovered height is stored', async () => {
@@ -557,7 +562,7 @@ describe('tick: rescanUnreadyContracts', () => {
     expect(ranges.map((r) => r.from)).toEqual([0, 5_000, 10_000]);
     // Progress is reported through the last window that succeeded.
     expect(indexer.getStatus().firstScans).toEqual([
-      { address: contract.address, startHeight: 0, scannedHeight: 9_999 },
+      { address: contract.address, startHeight: 0, scannedHeight: 9_999, finished: false },
     ]);
     await tick();
     // Resumes at the failed window, and stops after this tick's ten steps.
