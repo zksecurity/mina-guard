@@ -10,6 +10,7 @@ import { countNewRecipientSlotsFromSnapshot } from '@/lib/recipient-account-fee'
 import { fetchProposal } from '@/lib/api';
 import { formatMina } from '@/lib/types';
 import { ALL_PLATFORMS, detectPlatform, getPlatformInfo, signCommand, type PlatformInfo } from '@/lib/offline-cli-command';
+import { EMPTY_OFFLINE_EXPORTS, loadOfflineExports, offlineExportKey, saveOfflineExports, type OfflineExportState } from '@/lib/offline-export-store';
 import { preflightBeforeSend, preflightFailureMessage, withStoreRecovery, PREFLIGHT_CANCELLED, PREFLIGHT_REBUILD } from '@/lib/preflight-flow';
 
 // CLI binaries are published per release by the offline-cli-release workflow
@@ -295,34 +296,56 @@ export interface OfflinePanelAction {
 interface OfflineSigningPanelProps {
   /** Actions the signer can export; the last one is selected first. */
   actions: OfflinePanelAction[];
-  onExported?: (action: OfflineAction, filename: string, fee: number) => void;
-  upload: Omit<UploadSignedResponseProps, 'onRecreate'> & {
+  /** Names what is being signed (vault and proposal), so this tab can restore
+   *  its last export after a reload or navigation. Left out for a new
+   *  proposal, whose signed file cannot be matched to an export. */
+  persistKey?: string;
+  // The panel checks the signed fee against its own exports.
+  upload: Omit<UploadSignedResponseProps, 'onRecreate' | 'expectedFees'> & {
     /** Downloads a fresh request for the same action; returns what it exported. */
     onRecreate?: (response: OfflineSignedTxResponse) => Promise<{ filename: string; fee: number }>;
   };
 }
 
 /** Export a request, sign it with the offline CLI, then upload the result. */
-export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSigningPanelProps) {
-  const [selected, setSelected] = useState<OfflineAction | null>(null);
-  const [exports, setExports] = useState<Partial<Record<OfflineAction, { filename: string; fee: number }>>>({});
+export function OfflineSigningPanel({ actions, persistKey, upload }: OfflineSigningPanelProps) {
+  const [{ selected, exports }, setState] = useState<OfflineExportState>(EMPTY_OFFLINE_EXPORTS);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [platform, setPlatform] = useState<PlatformInfo>(() => getPlatformInfo('macos-arm64'));
   const [broadcast, setBroadcast] = useState(false);
   useEffect(() => { setPlatform(detectPlatform()); }, []);
+
+  let network = 'mainnet';
+  try { network = getMinaGuardConfig().networkId; } catch { /* The page reports configuration errors. */ }
+  const storageKey = persistKey === undefined ? null : offlineExportKey(network, persistKey);
+  // Storage is read after mount, so the server and first client render agree.
+  useEffect(() => {
+    if (storageKey === null) return;
+    setState(loadOfflineExports(storageKey));
+    setLoadedKey(storageKey);
+  }, [storageKey]);
+  // Never save under a key before its saved state is read. Once the request
+  // is broadcast, a reload starts again from step 1.
+  useEffect(() => {
+    if (storageKey === null || loadedKey !== storageKey) return;
+    saveOfflineExports(storageKey, broadcast ? EMPTY_OFFLINE_EXPORTS : { selected, exports });
+  }, [loadedKey, storageKey, selected, exports, broadcast]);
 
   const current = actions.find((a) => a.action === selected) ?? actions.at(-1);
   if (!current) return null;
   // Steps 1 and 2 always describe the same request: the selected action's.
   const exported = exports[current.action];
-  let network = 'mainnet';
-  try { network = getMinaGuardConfig().networkId; } catch { /* The page reports configuration errors. */ }
+  const expectedFees = Object.fromEntries(
+    Object.entries(exports).map(([action, entry]) => [action, entry.fee]),
+  ) as Partial<Record<OfflineAction, number>>;
 
   const recordExport = (action: OfflineAction, filename: string, fee: number) => {
-    setExports((prev) => ({ ...prev, [action]: { filename, fee } }));
     // A stale-response rebuild can download the action that is not selected.
-    setSelected(action);
-    onExported?.(action, filename, fee);
+    setState((prev) => ({ selected: action, exports: { ...prev.exports, [action]: { filename, fee } } }));
   };
+  const select = (action: OfflineAction) => setState((prev) => ({ ...prev, selected: action }));
+  // The downloaded file stays on disk; the page just stops expecting it.
+  const startOver = () => setState(EMPTY_OFFLINE_EXPORTS);
 
   return (
     <div className="rounded-xl border border-safe-border bg-safe-gray px-5">
@@ -333,7 +356,7 @@ export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSign
               <button
                 key={a.action}
                 type="button"
-                onClick={() => setSelected(a.action)}
+                onClick={() => select(a.action)}
                 aria-pressed={a.action === current.action}
                 className={`rounded-md px-4 py-1.5 text-sm transition-colors ${
                   a.action === current.action ? 'bg-safe-green/15 text-safe-green' : 'text-safe-text hover:text-white'
@@ -349,13 +372,14 @@ export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSign
           action={current.action}
           label={current.label}
           onBuildBundle={current.onBuildBundle}
-          onExportStart={() => setExports(({ [current.action]: _old, ...rest }) => rest)}
+          onExportStart={() => setState(({ selected, exports: { [current.action]: _old, ...rest } }) => ({ selected, exports: rest }))}
           onExported={(filename, fee) => recordExport(current.action, filename, fee)}
         />
         {exported && (
           <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-safe-text">
             <span>Saved <code className="font-mono text-white">{exported.filename}</code></span>
             <span>Fee <span className="text-white">{formatMina(String(exported.fee))} MINA</span>, check it matches in the CLI</span>
+            <button type="button" onClick={startOver} className="text-safe-text underline hover:text-white">Start over</button>
           </p>
         )}
       </Step>
@@ -366,12 +390,15 @@ export function OfflineSigningPanel({ actions, onExported, upload }: OfflineSign
       <Step n={3} state={broadcast ? 'done' : 'pending'} title="Upload signed.json and broadcast" last>
         <UploadSignedResponse
           {...upload}
+          expectedFees={expectedFees}
           onRecreate={upload.onRecreate && (async (response) => {
             const { filename, fee } = await upload.onRecreate!(response);
             recordExport(response.action, filename, fee);
           })}
           onComplete={(response, txHash, feePayer) => {
             setBroadcast(true);
+            // The page navigates away next, possibly before the effect saves.
+            if (storageKey !== null) saveOfflineExports(storageKey, EMPTY_OFFLINE_EXPORTS);
             upload.onComplete?.(response, txHash, feePayer);
           }}
         />
@@ -414,7 +441,6 @@ export function UploadSignedResponse({
     txJson: string;
     fee: number;
     feePayer: string;
-    matchedExport: boolean;
     config: string;
   } | null>(null);
   const processingRef = useRef(false);
@@ -486,7 +512,7 @@ export function UploadSignedResponse({
       if (typeof feePayer !== 'string' || !feePayer) {
         throw new Error('Signed transaction has no fee payer. Not broadcasting.');
       }
-      setPending({ response, txJson, fee, feePayer, matchedExport: expectedFee !== undefined,
+      setPending({ response, txJson, fee, feePayer,
         config: JSON.stringify(getMinaGuardConfig()) });
     } catch (err) {
       if (!(err instanceof Error && err.message === PREFLIGHT_CANCELLED)) setError(err instanceof Error ? err.message : String(err));
@@ -593,7 +619,7 @@ export function UploadSignedResponse({
           <p className="font-semibold">Review the signed transaction before broadcast</p>
           <p>Action: {pending.response.action}. Fee payer: <code>{pending.feePayer}</code>.</p>
           <p>Signed transaction fee: {formatMina(String(pending.fee))} MINA.</p>
-          {!pending.matchedExport && (
+          {expectedFees?.[pending.response.action] === undefined && (
             <p className="text-amber-400">No request fee is available in this page session. Compare this fee with the exported request and offline CLI summary.</p>
           )}
           <div className="flex gap-2">
