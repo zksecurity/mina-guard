@@ -126,9 +126,10 @@ type ContractConfigChanges = Partial<ContractConfigFields>;
 
 /** Each first-scan step is one archive events request. A tick takes at most
  *  this many steps across all unready vaults, so importing an old vault paces
- *  itself (about 40 requests a minute at the default 15 s poll) instead of
- *  tripping an endpoint's rate limit. */
-const FIRST_SCAN_STEPS_PER_TICK = 10;
+ *  itself (about 20 requests a minute at the default 15 s poll). The hosted
+ *  endpoints allow 60 node and archive requests a minute per IP, and the
+ *  indexer's other calls and the app's own transactions share that budget. */
+const FIRST_SCAN_STEPS_PER_TICK = 5;
 
 /** Polling indexer that discovers MinaGuard contracts and ingests lifecycle events. */
 export class MinaGuardIndexer {

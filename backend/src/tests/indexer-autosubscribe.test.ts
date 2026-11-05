@@ -587,10 +587,10 @@ describe('tick: rescanUnreadyContracts', () => {
       { address: contract.address, startHeight: 0, scannedHeight: 9_999, finished: false, failedEvents: 0 },
     ]);
     await tick();
-    // Resumes at the failed window, and stops after this tick's ten steps.
-    expect(ranges.slice(3).map((r) => r.from)).toEqual(
-      [10_000, 15_000, 20_000, 25_000, 30_000, 35_000, 40_000, 45_000, 50_000, 55_000],
-    );
+    // Resumes at the failed window, and stops after this tick's five steps.
+    expect(ranges.slice(3).map((r) => r.from)).toEqual([10_000, 15_000, 20_000, 25_000, 30_000]);
+    await tick();
+    expect(ranges.slice(8).map((r) => r.from)).toEqual([35_000, 40_000, 45_000, 50_000, 55_000]);
     let updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(false);
     expect(updated.lastSyncedAt).toBeNull();
@@ -615,7 +615,7 @@ describe('tick: rescanUnreadyContracts', () => {
     stubMinaClient(() => ({ fetchLatestBlockHeight: async () => 60_000 }));
     await runSingleTick(liteConfig);
     await runSingleTick(liteConfig);
-    expect(starts.slice(10, 11)).toEqual([0]);
+    expect(starts.slice(5, 6)).toEqual([0]);
   });
 
   test('events applied before a restart still ready the vault when the scan finishes', async () => {
@@ -629,7 +629,7 @@ describe('tick: rescanUnreadyContracts', () => {
     await runSingleTick(liteConfig);
     // A new process replays the early step; its event is now a duplicate.
     const restarted = new MinaGuardIndexer(liteConfig);
-    for (let i = 0; i < 2; i++) { await restarted.start(); restarted.stop(); }
+    for (let i = 0; i < 3; i++) { await restarted.start(); restarted.stop(); }
     const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.lastSyncedAt).not.toBeNull();
     expect(updated.ready).toBe(true);
