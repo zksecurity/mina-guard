@@ -85,8 +85,11 @@ export interface IndexerStatus {
   discoveredContracts: number;
   /** Lite mode only: history scans of tracked vaults that are not ready yet.
    *  Each has read the archive from `startHeight` through `scannedHeight`;
-   *  `finished` means it reached the tip without finding a vault event. */
-  firstScans: Array<{ address: string; startHeight: number; scannedHeight: number; finished: boolean }>;
+   *  `finished` means it reached the tip without applying a vault event;
+   *  `failedEvents` counts events it found but could not apply. */
+  firstScans: Array<{
+    address: string; startHeight: number; scannedHeight: number; finished: boolean; failedEvents: number;
+  }>;
   indexerMode: 'full' | 'lite';
 }
 
@@ -135,7 +138,7 @@ export class MinaGuardIndexer {
    *  process restart only repeats work: event ingestion is idempotent. */
   private readonly firstScans = new Map<number, { address: string; start: number; next: number }>();
   /** Unready vaults whose first scan already reached the tip, as of the last tick. */
-  private scannedUnready: Array<{ address: string; start: number }> = [];
+  private scannedUnready: Array<{ address: string; start: number; failedEvents: number }> = [];
   private intervalHandle: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
@@ -232,11 +235,12 @@ export class MinaGuardIndexer {
     // Full mode can track many unready deploys; only lite mode imports by hand.
     const firstScans = this.config.indexerMode !== 'lite' ? [] : [
       ...[...this.firstScans.values()].map((scan) => ({
-        address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1, finished: false,
+        address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1,
+        finished: false, failedEvents: 0,
       })),
       ...this.scannedUnready.map((scan) => ({
         address: scan.address, startHeight: scan.start,
-        scannedHeight: this.status.latestChainHeight, finished: true,
+        scannedHeight: this.status.latestChainHeight, finished: true, failedEvents: scan.failedEvents,
       })),
     ];
     return { ...this.status, firstScans };
@@ -530,9 +534,15 @@ export class MinaGuardIndexer {
       select: { id: true, address: true, discoveredAtBlock: true, lastSyncedAt: true },
     });
     const pending = new Set(unready.filter((c) => c.lastSyncedAt === null).map((c) => c.id));
-    this.scannedUnready = unready
-      .filter((c) => c.lastSyncedAt !== null)
-      .map((c) => ({ address: c.address, start: c.discoveredAtBlock ?? this.config.indexStartHeight }));
+    const scanned = unready.filter((c) => c.lastSyncedAt !== null);
+    const failed = this.config.indexerMode === 'lite' && scanned.length > 0
+      ? await this.countFailedEvents(scanned.map((c) => c.id))
+      : new Map<number, number>();
+    this.scannedUnready = scanned.map((c) => ({
+      address: c.address,
+      start: c.discoveredAtBlock ?? this.config.indexStartHeight,
+      failedEvents: failed.get(c.id) ?? 0,
+    }));
     for (const id of this.firstScans.keys()) if (!pending.has(id)) this.firstScans.delete(id);
     let steps = FIRST_SCAN_STEPS_PER_TICK;
     for (const c of unready) {
@@ -564,12 +574,25 @@ export class MinaGuardIndexer {
           // The final step returns only its own window's ingestion, so read
           // the readiness it stored.
           const done = await prisma.contract.findUnique({ where: { id: c.id }, select: { ready: true } });
-          if (done && !done.ready) this.scannedUnready.push({ address: c.address, start });
+          if (done && !done.ready) {
+            const failedEvents = (await this.countFailedEvents([c.id])).get(c.id) ?? 0;
+            this.scannedUnready.push({ address: c.address, start, failedEvents });
+          }
           break;
         }
         scan.next = to + 1;
       }
     }
+  }
+
+  /** Events recorded but not applied (malformed or rejected), per contract. */
+  private async countFailedEvents(contractIds: number[]): Promise<Map<number, number>> {
+    const rows = await prisma.eventRaw.groupBy({
+      by: ['contractId'],
+      where: { contractId: { in: contractIds }, applyError: { not: null } },
+      _count: { _all: true },
+    });
+    return new Map(rows.flatMap((row) => row.contractId === null ? [] : [[row.contractId, row._count._all]]));
   }
 
   /** Indexes events for all tracked contracts across the requested block range. */

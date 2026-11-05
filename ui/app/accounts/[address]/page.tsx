@@ -337,7 +337,7 @@ export default function AccountPage() {
 
 /** Shown after "Add existing" until the indexer has read the vault's history. */
 function ImportProgress({ scan, tip }: {
-  scan: { startHeight: number; scannedHeight: number; finished: boolean } | null;
+  scan: { startHeight: number; scannedHeight: number; finished: boolean; failedEvents: number } | null;
   tip: number;
 }) {
   const span = tip - (scan?.startHeight ?? 0);
@@ -350,10 +350,16 @@ function ImportProgress({ scan, tip }: {
       {!scan?.finished && (
         <p className="text-safe-text">
           MinaGuard is reading this vault&apos;s past activity from the archive node. Older vaults take
-          longer, often a few minutes. The vault opens here when the scan finishes.
+          longer, often a few minutes. The vault opens here once the scan finds its setup.
         </p>
       )}
-      {scan?.finished ? (
+      {scan?.finished && scan.failedEvents > 0 ? (
+        <p className="text-xs text-red-400">
+          The scan found {scan.failedEvents} event{scan.failedEvents === 1 ? '' : 's'} for this vault that
+          MinaGuard could not apply, so it cannot open the vault. This app version may not match the
+          vault, or its history may be damaged. Use Report a bug in the page footer to send the details.
+        </p>
+      ) : scan?.finished ? (
         <p className="text-xs text-amber-400">
           The scan reached the current block without finding any activity for this vault, for
           example because it was deployed but never set up. MinaGuard keeps watching and opens it

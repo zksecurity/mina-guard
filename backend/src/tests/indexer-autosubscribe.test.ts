@@ -460,6 +460,25 @@ describe('tick: rescanUnreadyContracts', () => {
     }));
   }
 
+  test('a finished scan reports events it could not apply', async () => {
+    const contract = await prisma.contract.create({
+      data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
+    });
+    await setCursor(1000);
+    stubTicks(async () => [{
+      type: 'malformed', blockHeight: 5, txHash: 'tx-bad', txMemo: null,
+      blockHash: 'h5', parentHash: 'h4',
+      event: { data: ['99', '0'] }, decodeError: 'unknown event type index 99',
+    }]);
+
+    const indexer = await runSingleTick(liteConfig);
+    const updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
+    expect(updated.ready).toBe(false);
+    expect(indexer.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true, failedEvents: 1 },
+    ]);
+  });
+
   test('scans an empty vault history once, then only replays recent blocks', async () => {
     const contract = await prisma.contract.create({
       data: { address: PrivateKey.random().toPublicKey().toBase58(), ready: false, discoveredAtBlock: 0 },
@@ -473,7 +492,7 @@ describe('tick: rescanUnreadyContracts', () => {
     expect(updated.ready).toBe(false);
     expect(updated.lastSyncedAt).not.toBeNull();
     expect(first.getStatus().firstScans).toEqual([
-      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true },
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true, failedEvents: 0 },
     ]);
     const indexer = await runSingleTick(liteConfig);
     updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
@@ -481,7 +500,7 @@ describe('tick: rescanUnreadyContracts', () => {
     expect(ranges).toEqual([{ from: 0, to: 1000 }, { from: 711, to: 1000 }]);
     // The import page can tell a finished, empty scan from one not started.
     expect(indexer.getStatus().firstScans).toEqual([
-      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true },
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true, failedEvents: 0 },
     ]);
     expect((await runSingleTick(fullConfig)).getStatus().firstScans).toEqual([]);
   });
@@ -565,7 +584,7 @@ describe('tick: rescanUnreadyContracts', () => {
     expect(ranges.map((r) => r.from)).toEqual([0, 5_000, 10_000]);
     // Progress is reported through the last window that succeeded.
     expect(indexer.getStatus().firstScans).toEqual([
-      { address: contract.address, startHeight: 0, scannedHeight: 9_999, finished: false },
+      { address: contract.address, startHeight: 0, scannedHeight: 9_999, finished: false, failedEvents: 0 },
     ]);
     await tick();
     // Resumes at the failed window, and stops after this tick's ten steps.
