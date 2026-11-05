@@ -102,7 +102,6 @@ export default function TransactionDetailPage() {
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
   const [actionMode, setActionMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
-  const [exportedFees, setExportedFees] = useState<Partial<Record<'approve' | 'execute', number>>>({});
   const [checkingRecipientFee, setCheckingRecipientFee] = useState(false);
 
   // Per-signer approve self-disable: did *this* wallet submit an approval
@@ -1155,12 +1154,9 @@ export default function TransactionDetailPage() {
                           },
                         }] : []),
                       ]}
-                      onExported={(action, _filename, fee) => {
-                        setExportedFees((current) => ({ ...current, [action]: fee }));
-                      }}
+                      persistKey={`${multisig!.address}:${proposal!.proposalHash}`}
                       upload={{
                         acceptActions: proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve'],
-                        expectedFees: exportedFees,
                         expectedContractAddress: multisig!.address,
                         expectedProposalHash: proposal!.proposalHash,
                         beforeBroadcast: () =>
