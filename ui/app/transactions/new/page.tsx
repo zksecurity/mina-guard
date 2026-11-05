@@ -172,6 +172,9 @@ function NewTransactionPageInner() {
   const [mode, setMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
   const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
+  // What the last offline export in this page load proposed. The form can
+  // change, or be empty after a reload, by the time the signed file comes back.
+  const exportedProposalRef = useRef<{ input: NewProposalInput; configNonce: number } | null>(null);
 
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
@@ -401,6 +404,7 @@ function NewTransactionPageInner() {
                           if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
                             throw new Error('Signer address is not an owner of this multisig');
                           }
+                          exportedProposalRef.current = null;
                           const input = getFormInputRef.current!();
                           const [fresh, security] = await Promise.all([
                             fetchContract(multisig!.address),
@@ -415,12 +419,14 @@ function NewTransactionPageInner() {
                             );
                           }
                           const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
-                          return buildOfflineProposeBundle({
+                          const bundle = await buildOfflineProposeBundle({
                             contractAddress: multisig!.address,
                             feePayerAddress: offlineFeePayerAddress,
                             input,
                             configNonce,
                           });
+                          exportedProposalRef.current = { input, configNonce };
+                          return bundle;
                         },
                       }]}
                       persistKey={`${multisig!.address}:new`}
@@ -430,7 +436,9 @@ function NewTransactionPageInner() {
                         onComplete: (response, txHash, feePayer) => {
                           const hash = response.proposalHash;
                           if (hash && multisig) {
-                            const input = getFormInputRef.current?.();
+                            // No summary after a reload: the proposal page shows
+                            // the indexed proposal once it lands.
+                            const { input, configNonce } = exportedProposalRef.current ?? {};
                             const isRemote = input && (
                               input.txType === 'reclaimChild' ||
                               input.txType === 'destroyChild' ||
@@ -446,7 +454,7 @@ function NewTransactionPageInner() {
                               summary: input ? {
                                 txType: input.txType,
                                 nonce: String(input.nonce),
-                                configNonce: String(multisig.configNonce ?? 0),
+                                configNonce: String(configNonce),
                                 expirySlot: input.expirySlot != null ? String(input.expirySlot) : null,
                                 destination: isRemote ? 'remote' : 'local',
                                 childAccount: input.childAccount ?? null,
