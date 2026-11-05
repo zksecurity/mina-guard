@@ -464,6 +464,14 @@ the endpoints baked in at build time. The proxy to the Next child deletes that
 upstream header before writing the response, so the window enforces only the
 desktop policy above; otherwise the upstream value would replace it and block
 the user's configured nodes.
+Because the policy depends on the configured endpoints, every app, API and
+proxied response is sent `Cache-Control: no-store`, and the proxy drops Next's
+`immutable` caching, `ETag` and `Last-Modified` (`src/proxy-headers.ts`). A
+dedicated worker enforces the policy delivered with its own script, so a
+cached worker script would keep the policy for earlier endpoints after a
+change and block the o1js worker's node requests. Each launch also clears the
+session's HTTP cache, which removes entries cached by earlier releases; the
+compile cache and store checkpoints live in IndexedDB and are not affected.
 
 ---
 

@@ -28,7 +28,7 @@ import { useContractTxLock } from '@/hooks/useContractTxLock';
 import VaultSecurityNotice from '@/components/VaultSecurityNotice';
 import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { savePendingTx } from '@/lib/storage';
-import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse } from '@/components/OfflineSigningFlow';
+import { OfflineSigningPanel } from '@/components/OfflineSigningFlow';
 
 export default function NewTransactionPage() {
   return (
@@ -171,10 +171,11 @@ function NewTransactionPageInner() {
 
   const [mode, setMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
-  const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
-  const [exportedFee, setExportedFee] = useState<number | null>(null);
-  const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
   const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
+  // What the last offline export in this page load proposed, and for which
+  // vault. The form can change, or be empty after a reload, by the time the
+  // signed file comes back.
+  const exportedProposalRef = useRef<{ contractAddress: string; input: NewProposalInput; configNonce: number } | null>(null);
 
   // Children are needed by the form for child-target pickers and allocate hints.
   const [children, setChildren] = useState<ContractSummary[]>([]);
@@ -367,7 +368,6 @@ function NewTransactionPageInner() {
                       />
                       <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                     </div>
-                    <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
                   </>
                 )}
 
@@ -396,70 +396,77 @@ function NewTransactionPageInner() {
 
                 {mode === 'offline' && !deleteMode && (
                   <>
-                    <OfflineSigningFlow
-                      action="propose"
-                      label="Propose"
-                      onExported={(filename, fee) => { setExportedBundleName(filename); setExportedFee(fee); }}
-                      cliBinaryName={cliBinaryName}
-                      onBuildBundle={async () => {
-                        assertValidMinaAddress(offlineFeePayerAddress);
-                        if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
-                          throw new Error('Signer address is not an owner of this multisig');
-                        }
-                        const input = getFormInputRef.current!();
-                        const [fresh, security] = await Promise.all([
-                          fetchContract(multisig!.address),
-                          fetchVaultSecurityStatus(multisig!.address),
-                        ]);
-                        if (
-                          !fresh?.permissionsVerified ||
-                          !isCanonicalVaultSecurity(security)
-                        ) {
-                          throw new Error(
-                            'Vault permissions have not passed the canonical security check'
-                          );
-                        }
-                        const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
-                        return buildOfflineProposeBundle({
-                          contractAddress: multisig!.address,
-                          feePayerAddress: offlineFeePayerAddress,
-                          input,
-                          configNonce,
-                        });
-                      }}
-                    />
-                    <UploadSignedResponse
-                      acceptActions={['propose']}
-                      expectedFees={exportedFee === null ? undefined : { propose: exportedFee }}
-                      expectedContractAddress={multisig!.address}
-                      onComplete={(response, txHash, feePayer) => {
-                        const hash = response.proposalHash;
-                        if (hash && multisig) {
-                          const input = getFormInputRef.current?.();
-                          const isRemote = input && (
-                            input.txType === 'reclaimChild' ||
-                            input.txType === 'destroyChild' ||
-                            input.txType === 'enableChildMultiSig'
-                          );
-                          savePendingTx({
-                            kind: 'create',
-                            contractAddress: multisig.address,
-                            proposalHash: hash,
-                            txHash,
-                            signerPubkey: feePayer,
-                            createdAt: new Date().toISOString(),
-                            summary: input ? {
-                              txType: input.txType,
-                              nonce: String(input.nonce),
-                              configNonce: String(multisig.configNonce ?? 0),
-                              expirySlot: input.expirySlot != null ? String(input.expirySlot) : null,
-                              destination: isRemote ? 'remote' : 'local',
-                              childAccount: input.childAccount ?? null,
-                              receivers: input.receivers ?? [],
-                            } : undefined,
+                    <OfflineSigningPanel
+                      actions={[{
+                        action: 'propose',
+                        label: 'Propose',
+                        onBuildBundle: async () => {
+                          assertValidMinaAddress(offlineFeePayerAddress);
+                          if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
+                            throw new Error('Signer address is not an owner of this multisig');
+                          }
+                          exportedProposalRef.current = null;
+                          const input = getFormInputRef.current!();
+                          const [fresh, security] = await Promise.all([
+                            fetchContract(multisig!.address),
+                            fetchVaultSecurityStatus(multisig!.address),
+                          ]);
+                          if (
+                            !fresh?.permissionsVerified ||
+                            !isCanonicalVaultSecurity(security)
+                          ) {
+                            throw new Error(
+                              'Vault permissions have not passed the canonical security check'
+                            );
+                          }
+                          const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
+                          const bundle = await buildOfflineProposeBundle({
+                            contractAddress: multisig!.address,
+                            feePayerAddress: offlineFeePayerAddress,
+                            input,
+                            configNonce,
                           });
-                        }
-                        router.push(hash ? `/transactions/${hash}` : '/transactions');
+                          exportedProposalRef.current = { contractAddress: multisig!.address, input, configNonce };
+                          return bundle;
+                        },
+                      }]}
+                      upload={{
+                        acceptActions: ['propose'],
+                        expectedContractAddress: multisig!.address,
+                        onComplete: (response, txHash, feePayer) => {
+                          const hash = response.proposalHash;
+                          if (hash && multisig) {
+                            // No summary after a reload or for another vault's
+                            // file: the proposal page shows the indexed proposal
+                            // once it lands.
+                            const exported = exportedProposalRef.current;
+                            const { input, configNonce } =
+                              exported?.contractAddress === response.contractAddress ? exported : {};
+                            const isRemote = input && (
+                              input.txType === 'reclaimChild' ||
+                              input.txType === 'destroyChild' ||
+                              input.txType === 'enableChildMultiSig'
+                            );
+                            savePendingTx({
+                              kind: 'create',
+                              contractAddress: multisig.address,
+                              proposalHash: hash,
+                              txHash,
+                              signerPubkey: feePayer,
+                              createdAt: new Date().toISOString(),
+                              summary: input ? {
+                                txType: input.txType,
+                                nonce: String(input.nonce),
+                                configNonce: String(configNonce),
+                                expirySlot: input.expirySlot != null ? String(input.expirySlot) : null,
+                                destination: isRemote ? 'remote' : 'local',
+                                childAccount: input.childAccount ?? null,
+                                receivers: input.receivers ?? [],
+                              } : undefined,
+                            });
+                          }
+                          router.push(hash ? `/transactions/${hash}` : '/transactions');
+                        },
                       }}
                     />
                   </>

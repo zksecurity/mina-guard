@@ -1,11 +1,12 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { registerConfigIpc } from './config-ipc.js';
 import { handleAuroRoute } from './auro/router.js';
 import { buildHidPickerDialog } from './hid-picker.js';
+import { proxiedUiHeaders } from './proxy-headers.js';
 import { startEmbeddedBackend, type EmbeddedBackendHandle } from './backend-embed.js';
 import {
   deleteDatabase,
@@ -130,8 +131,10 @@ async function startHttpServer(
       return;
     }
     if (handleAuroRoute(req, res)) return;
-    // CSP on the app + api responses, not the Auro pages handled above.
+    // CSP on the app + api responses, not the Auro pages handled above. It
+    // depends on the configured endpoints, so these responses are never cached.
     res.setHeader('Content-Security-Policy', contentSecurityPolicy());
+    res.setHeader('Cache-Control', 'no-store');
     // Express app is itself a (req, res, next) handler. If no /api/* or /health
     // route matches, Express calls next() and we fall through to the Next
     // standalone server via the proxy below.
@@ -145,12 +148,9 @@ async function startHttpServer(
           headers: req.headers,
         },
         (up) => {
-          // The web build sends its own Content-Security-Policy, which only
-          // allows the endpoints baked in at build time. Drop it so the policy
-          // set above, which allows the user's configured nodes, is the one
-          // the window enforces.
-          delete up.headers['content-security-policy'];
-          res.writeHead(up.statusCode ?? 502, up.headers);
+          // The web build's own policy only allows the endpoints baked in at
+          // build time; the one set above allows the configured nodes.
+          res.writeHead(up.statusCode ?? 502, proxiedUiHeaders(up.headers));
           up.pipe(res);
         },
       );
@@ -372,6 +372,11 @@ app.whenReady().then(async () => {
   // Applies to every window (setup + main). On macOS this also removes the
   // in-window menu bar; the app's own top menu bar is left minimal.
   Menu.setApplicationMenu(null);
+
+  // Earlier releases let Chromium cache UI responses, including a worker
+  // script whose Content-Security-Policy named the endpoints configured then.
+  // Nothing the app serves needs a cache, so start every launch without one.
+  await session.defaultSession.clearCache();
 
   registerIpcHandlers();
   registerConfigIpc({

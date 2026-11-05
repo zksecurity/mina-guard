@@ -154,13 +154,16 @@ offline CLI's bundle-domain checks.
 ### 2. Sign (`offline-cli/src/`)
 
 ```
-MINA_NETWORK_DOMAIN=testnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
+MINA_NETWORK_DOMAIN=mainnet MINA_PRIVATE_KEY=EKE... ./mina-guard-cli <bundle.json> [--yes] > signed.json
 ```
 
-For mainnet bundles, use `MINA_NETWORK_DOMAIN=mainnet`. For a testnet bundle,
-use either `testnet` or `devnet` (both select `Field(2)`). The domain is required;
-unset, invalid, and mainnet/test-network mismatches fail closed. Offline
-bundles encode devnet as `testnet`.
+`MINA_NETWORK_DOMAIN` defaults to `mainnet` in the CLI
+(`offline-cli/src/default-network.ts`, loaded before `contracts`). For a testnet
+bundle, set `testnet` or `devnet` (both select `Field(2)`). Invalid values and
+mainnet/test-network mismatches fail closed, so a testnet bundle run with the
+default is rejected before signing. Offline bundles encode devnet as `testnet`.
+The UI's offline panel shows the full command with the domain of the network it
+is connected to and the binary for the platform the user picks.
 The CLI checks the bundle against the domain captured when contracts were
 imported, before reading the bundle's state (`assertBundleNetwork`).
 Progress goes to stderr; stdout stays pure JSON. The flow
@@ -281,12 +284,15 @@ the proposal being viewed — a signed file for a different vault or proposal
 is rejected. (The propose page can only bind by contract: its hash is new by
 definition.) The UI reads `feePayer.body.fee` from the actual signed command,
 requires a canonical integer string in the 0.01–0.1 MINA range, and rejects a
-mismatch with the most recent request exported for the same action in the current
-page session. It shows the signed fee and fee payer in a review panel and does
+mismatch with the most recent request exported for the same action in the page
+session. On a proposal's page, approve and execute exports are kept in
+`sessionStorage`, keyed by vault and proposal hash, across reloads until a
+broadcast or **Start over**. It shows the signed fee and fee payer in a review panel and does
 not broadcast on upload. The user must click **Broadcast signed transaction**.
-After a reload, the page no longer has the exported fee to compare automatically;
-the panel instead asks the user to compare the signed fee with the saved request
-and offline CLI summary. At the click, the UI checks the fee again and performs
+Without an export (another tab, a new proposal after a reload, or after
+**Start over**), the panel instead
+asks the user to compare the signed fee with the saved request and offline CLI
+summary. At the click, the UI checks the fee again and performs
 the existing network, policy, and live-state checks before POSTing `sendZkapp`
 to the configured Mina endpoint. It maps common node rejections to actionable
 messages and, on success, records a pending tx for normal reconciliation.

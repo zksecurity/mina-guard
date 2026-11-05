@@ -310,7 +310,7 @@ function AccountsListPageInner() {
           onClose={() => setShowAddExisting(false)}
           onSubmitted={(address) => {
             setShowAddExisting(false);
-            router.push(`/accounts/${address}?pending=1`);
+            router.push(`/accounts/${address}?importing=1`);
           }}
         />
       )}

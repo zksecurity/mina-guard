@@ -48,7 +48,7 @@ import { useVaultSecurity } from '@/hooks/useVaultSecurity';
 import { assertValidMinaAddress, buildOfflineApproveBundle, buildOfflineExecuteBundle } from '@/lib/offline-signing';
 import { fetchVerifiedChildConfig, loadChildReservation } from '@/lib/child-reservation';
 import { countNewRecipientSlots } from '@/lib/recipient-account-fee';
-import { DownloadCLILink, OfflineSigningFlow, UploadSignedResponse, downloadOfflineBundle } from '@/components/OfflineSigningFlow';
+import { OfflineSigningPanel, downloadOfflineBundle } from '@/components/OfflineSigningFlow';
 
 /**
  * Re-authenticates every account involved in a proposal immediately before an
@@ -102,9 +102,6 @@ export default function TransactionDetailPage() {
   const [approvalAddresses, setApprovalAddresses] = useState<string[]>([]);
   const [actionMode, setActionMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
-  const [exportedBundleName, setExportedBundleName] = useState<string | null>(null);
-  const [exportedFees, setExportedFees] = useState<Partial<Record<'approve' | 'execute', number>>>({});
-  const [cliBinaryName, setCliBinaryName] = useState<string | null>(null);
   const [checkingRecipientFee, setCheckingRecipientFee] = useState(false);
 
   // Per-signer approve self-disable: did *this* wallet submit an approval
@@ -1072,19 +1069,13 @@ export default function TransactionDetailPage() {
                     />
                     <p className="text-xs text-amber-400">This must be the public key corresponding to the MINA_PRIVATE_KEY used on the air-gapped machine.</p>
                   </div>
-                  <DownloadCLILink exportedBundleName={exportedBundleName} onPlatformSelect={setCliBinaryName} />
                   {permissionsSafe && childPermissionsSafe && !targetUnindexed ? (
-                    <div className="flex flex-wrap gap-3">
-                      {proposal.approvalCount < owners.length && (
-                        <OfflineSigningFlow
-                          action="approve"
-                          label="Approve"
-                          onExported={(filename, fee) => {
-                            setExportedBundleName(filename);
-                            setExportedFees((current) => ({ ...current, approve: fee }));
-                          }}
-                          cliBinaryName={cliBinaryName}
-                          onBuildBundle={async () => {
+                    <OfflineSigningPanel
+                      actions={[
+                        ...(proposal.approvalCount < owners.length ? [{
+                          action: 'approve' as const,
+                          label: 'Approve',
+                          onBuildBundle: async () => {
                             assertValidMinaAddress(offlineFeePayerAddress);
                             if (!owners.some((o) => o.address === offlineFeePayerAddress)) {
                               throw new Error('Signer address is not an owner of this multisig');
@@ -1136,19 +1127,12 @@ export default function TransactionDetailPage() {
                               feePayerAddress: offlineFeePayerAddress,
                               proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
                             });
-                          }}
-                        />
-                      )}
-                      {proposal.approvalCount >= threshold && (
-                        <OfflineSigningFlow
-                          action="execute"
-                          label="Execute"
-                          onExported={(filename, fee) => {
-                            setExportedBundleName(filename);
-                            setExportedFees((current) => ({ ...current, execute: fee }));
-                          }}
-                          cliBinaryName={cliBinaryName}
-                          onBuildBundle={async () => {
+                          },
+                        }] : []),
+                        ...(proposal.approvalCount >= threshold ? [{
+                          action: 'execute' as const,
+                          label: 'Execute',
+                          onBuildBundle: async () => {
                             assertValidMinaAddress(offlineFeePayerAddress);
                             // The offline signer checks this again; stop here first so a
                             // bundle with a swapped memo is never exported.
@@ -1167,10 +1151,50 @@ export default function TransactionDetailPage() {
                               feePayerAddress: offlineFeePayerAddress,
                               proposal: { ...p, receivers: p.receivers.map((r) => ({ address: r.address, amount: r.amount })) },
                             });
-                          }}
-                        />
-                      )}
-                    </div>
+                          },
+                        }] : []),
+                      ]}
+                      persistKey={`${multisig!.address}:${proposal!.proposalHash}`}
+                      upload={{
+                        acceptActions: proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve'],
+                        expectedContractAddress: multisig!.address,
+                        expectedProposalHash: proposal!.proposalHash,
+                        beforeBroadcast: () =>
+                          assertProposalVaultSecurity(multisig!.address, proposal!.childAccount),
+                        onRecreate: async (response) => {
+                          // Keep the original signed action and signer. Never turn an
+                          // obsolete approve/execute into a newly proposed operation.
+                          const signed = typeof response.transaction === 'string'
+                            ? JSON.parse(response.transaction) : response.transaction;
+                          const feePayerAddress = (signed as { feePayer?: { body?: { publicKey?: string } } }).feePayer?.body?.publicKey ?? '';
+                          assertValidMinaAddress(feePayerAddress);
+                          await assertProposalVaultSecurity(multisig!.address, proposal!.childAccount);
+                          const params = { contractAddress: multisig!.address, feePayerAddress,
+                            proposal: { ...proposal!, receivers: proposal!.receivers.map(r => ({ address: r.address, amount: r.amount })) } };
+                          const bundle = response.action === 'approve'
+                            ? await buildOfflineApproveBundle(params)
+                            : await buildOfflineExecuteBundle(params);
+                          return { filename: downloadOfflineBundle(response.action, bundle), fee: bundle.fee };
+                        },
+                        onComplete: (response, txHash, feePayer) => {
+                          const kind = response.action as 'approve' | 'execute';
+                          savePendingTx({
+                            kind,
+                            contractAddress: multisig!.address,
+                            proposalHash: proposal!.proposalHash,
+                            txHash,
+                            signerPubkey: feePayer,
+                            createdAt: new Date().toISOString(),
+                          });
+                          reportSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
+                          if (kind === 'execute') {
+                            router.push(`/accounts/${multisig!.address}`);
+                          } else {
+                            router.push('/transactions');
+                          }
+                        },
+                      }}
+                    />
                   ) : (
                     <p className="text-sm text-red-400">
                       {targetUnindexed
@@ -1178,53 +1202,6 @@ export default function TransactionDetailPage() {
                         : 'Offline bundle creation and broadcast are blocked until ' +
                           'the Vault and target SubVault pass their live permission checks.'}
                     </p>
-                  )}
-                  {permissionsSafe && childPermissionsSafe && !targetUnindexed && (
-                    <UploadSignedResponse
-                      acceptActions={proposal.approvalCount >= threshold ? ['approve', 'execute'] : ['approve']}
-                      expectedFees={exportedFees}
-                      expectedContractAddress={multisig!.address}
-                      expectedProposalHash={proposal!.proposalHash}
-                      beforeBroadcast={() =>
-                        assertProposalVaultSecurity(
-                          multisig!.address,
-                          proposal!.childAccount,
-                        )
-                      }
-                      onRecreate={async (response) => {
-                        // Keep the original signed action and signer. Never turn an
-                        // obsolete approve/execute into a newly proposed operation.
-                        const signed = typeof response.transaction === 'string'
-                          ? JSON.parse(response.transaction) : response.transaction;
-                        const feePayerAddress = (signed as { feePayer?: { body?: { publicKey?: string } } }).feePayer?.body?.publicKey ?? '';
-                        assertValidMinaAddress(feePayerAddress);
-                        await assertProposalVaultSecurity(multisig!.address, proposal!.childAccount);
-                        const params = { contractAddress: multisig!.address, feePayerAddress,
-                          proposal: { ...proposal!, receivers: proposal!.receivers.map(r => ({ address: r.address, amount: r.amount })) } };
-                        const bundle = response.action === 'approve'
-                          ? await buildOfflineApproveBundle(params)
-                          : await buildOfflineExecuteBundle(params);
-                        setExportedBundleName(downloadOfflineBundle(response.action, bundle));
-                        setExportedFees((current) => ({ ...current, [response.action]: bundle.fee }));
-                      }}
-                      onComplete={(response, txHash, feePayer) => {
-                        const kind = response.action as 'approve' | 'execute';
-                        savePendingTx({
-                          kind,
-                          contractAddress: multisig!.address,
-                          proposalHash: proposal!.proposalHash,
-                          txHash,
-                          signerPubkey: feePayer,
-                          createdAt: new Date().toISOString(),
-                        });
-                        reportSubmission(multisig!.address, proposal!.proposalHash, kind, txHash);
-                        if (kind === 'execute') {
-                          router.push(`/accounts/${multisig!.address}`);
-                        } else {
-                          router.push('/transactions');
-                        }
-                      }}
-                    />
                   )}
                 </>
               )}
