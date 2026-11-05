@@ -24,6 +24,7 @@ const status: Omit<IndexerStatus, 'indexerMode'> = {
   lastErrorAt: '2026-07-01T12:00:30.000Z',
   lastWarning: null,
   discoveredContracts: 3,
+  firstScans: [],
 };
 
 const indexer = { getStatus: () => ({ ...status }) } as unknown as MinaGuardIndexer;
@@ -69,6 +70,7 @@ describe('GET /api/indexer/status', () => {
       lastErrorAt: '2026-07-01T12:00:30.000Z',
       lastWarning: null,
       discoveredContracts: 3,
+      firstScans: [],
       indexerMode: 'lite',
     });
   });

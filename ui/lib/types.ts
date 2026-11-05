@@ -138,6 +138,12 @@ export interface IndexerStatus {
   lastRunFailed: boolean;
   lastErrorAt: string | null;
   discoveredContracts: number;
+  /** Lite mode: history scans of vaults not ready yet; `finished` means the
+   *  scan reached the tip without applying a vault event, and `failedEvents`
+   *  counts events it could not apply. Absent from older backends. */
+  firstScans?: Array<{
+    address: string; startHeight: number; scannedHeight: number; finished: boolean; failedEvents: number;
+  }>;
   indexerMode: 'full' | 'lite';
 }
 

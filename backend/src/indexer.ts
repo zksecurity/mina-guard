@@ -83,6 +83,13 @@ export interface IndexerStatus {
   /** Latest recovery warning; retained across successful ticks until restart. */
   lastWarning: string | null;
   discoveredContracts: number;
+  /** Lite mode only: history scans of tracked vaults that are not ready yet.
+   *  Each has read the archive from `startHeight` through `scannedHeight`;
+   *  `finished` means it reached the tip without applying a vault event;
+   *  `failedEvents` counts events it found but could not apply. */
+  firstScans: Array<{
+    address: string; startHeight: number; scannedHeight: number; finished: boolean; failedEvents: number;
+  }>;
   indexerMode: 'full' | 'lite';
 }
 
@@ -119,9 +126,10 @@ type ContractConfigChanges = Partial<ContractConfigFields>;
 
 /** Each first-scan step is one archive events request. A tick takes at most
  *  this many steps across all unready vaults, so importing an old vault paces
- *  itself (about 40 requests a minute at the default 15 s poll) instead of
- *  tripping an endpoint's rate limit. */
-const FIRST_SCAN_STEPS_PER_TICK = 10;
+ *  itself (about 20 requests a minute at the default 15 s poll). The hosted
+ *  endpoints allow 60 node and archive requests a minute per IP, and the
+ *  indexer's other calls and the app's own transactions share that budget. */
+const FIRST_SCAN_STEPS_PER_TICK = 5;
 
 /** Polling indexer that discovers MinaGuard contracts and ingests lifecycle events. */
 export class MinaGuardIndexer {
@@ -129,12 +137,14 @@ export class MinaGuardIndexer {
   /** First-scan progress of unready vaults, by contract id. Kept across ticks
    *  so a long history resumes where it stopped instead of restarting. A
    *  process restart only repeats work: event ingestion is idempotent. */
-  private readonly firstScans = new Map<number, { start: number; next: number }>();
+  private readonly firstScans = new Map<number, { address: string; start: number; next: number }>();
+  /** Unready vaults whose first scan already reached the tip, as of the last tick. */
+  private scannedUnready: Array<{ address: string; start: number; failedEvents: number }> = [];
   private intervalHandle: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private genesis: GenesisConstants | null = null;
   private archivePool: pg.Pool | null = null;
-  private status: Omit<IndexerStatus, 'indexerMode'> = {
+  private status: Omit<IndexerStatus, 'indexerMode' | 'firstScans'> = {
     running: false,
     lastRunAt: null,
     lastSuccessfulRunAt: null,
@@ -223,7 +233,20 @@ export class MinaGuardIndexer {
 
   /** Returns the latest in-memory indexer status snapshot. Does not include `indexerMode` — the route layer adds it from config. */
   getStatus(): Omit<IndexerStatus, 'indexerMode'> {
-    return { ...this.status };
+    // Full mode can track many unready deploys; only lite mode imports by hand.
+    const firstScans = this.config.indexerMode !== 'lite' ? [] : [
+      ...[...this.firstScans.values()].map((scan) => ({
+        address: scan.address, startHeight: scan.start, scannedHeight: scan.next - 1,
+        finished: false, failedEvents: 0,
+      })),
+      // A finished scan's later replays are complete through the indexed
+      // height, which advances only after a tick, replays included, succeeds.
+      ...this.scannedUnready.map((scan) => ({
+        address: scan.address, startHeight: scan.start,
+        scannedHeight: this.status.indexedHeight, finished: true, failedEvents: scan.failedEvents,
+      })),
+    ];
+    return { ...this.status, firstScans };
   }
 
   /** Runs one complete indexing loop: discovery, ingestion, and cursor advancement. */
@@ -514,6 +537,15 @@ export class MinaGuardIndexer {
       select: { id: true, address: true, discoveredAtBlock: true, lastSyncedAt: true },
     });
     const pending = new Set(unready.filter((c) => c.lastSyncedAt === null).map((c) => c.id));
+    const scanned = unready.filter((c) => c.lastSyncedAt !== null);
+    const failed = this.config.indexerMode === 'lite' && scanned.length > 0
+      ? await this.countFailedEvents(scanned.map((c) => c.id))
+      : new Map<number, number>();
+    this.scannedUnready = scanned.map((c) => ({
+      address: c.address,
+      start: c.discoveredAtBlock ?? this.config.indexStartHeight,
+      failedEvents: failed.get(c.id) ?? 0,
+    }));
     for (const id of this.firstScans.keys()) if (!pending.has(id)) this.firstScans.delete(id);
     let steps = FIRST_SCAN_STEPS_PER_TICK;
     for (const c of unready) {
@@ -527,7 +559,7 @@ export class MinaGuardIndexer {
       if (start > latestHeight) continue;
       let scan = this.firstScans.get(c.id);
       if (!scan || scan.start !== start) {
-        scan = { start, next: start };
+        scan = { address: c.address, start, next: start };
         this.firstScans.set(c.id, scan);
       }
       while (steps > 0) {
@@ -541,11 +573,29 @@ export class MinaGuardIndexer {
         if (result === null) break;
         if (finish) {
           this.firstScans.delete(c.id);
+          // Report an empty finished scan now, not from the next tick's query.
+          // The final step returns only its own window's ingestion, so read
+          // the readiness it stored.
+          const done = await prisma.contract.findUnique({ where: { id: c.id }, select: { ready: true } });
+          if (done && !done.ready) {
+            const failedEvents = (await this.countFailedEvents([c.id])).get(c.id) ?? 0;
+            this.scannedUnready.push({ address: c.address, start, failedEvents });
+          }
           break;
         }
         scan.next = to + 1;
       }
     }
+  }
+
+  /** Events recorded but not applied (malformed or rejected), per contract. */
+  private async countFailedEvents(contractIds: number[]): Promise<Map<number, number>> {
+    const rows = await prisma.eventRaw.groupBy({
+      by: ['contractId'],
+      where: { contractId: { in: contractIds }, applyError: { not: null } },
+      _count: { _all: true },
+    });
+    return new Map(rows.flatMap((row) => row.contractId === null ? [] : [[row.contractId, row._count._all]]));
   }
 
   /** Indexes events for all tracked contracts across the requested block range. */
