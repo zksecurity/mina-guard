@@ -560,6 +560,11 @@ export class MinaGuardIndexer {
         if (result === null) break;
         if (finish) {
           this.firstScans.delete(c.id);
+          // Report an empty finished scan now, not from the next tick's query.
+          // The final step returns only its own window's ingestion, so read
+          // the readiness it stored.
+          const done = await prisma.contract.findUnique({ where: { id: c.id }, select: { ready: true } });
+          if (done && !done.ready) this.scannedUnready.push({ address: c.address, start });
           break;
         }
         scan.next = to + 1;

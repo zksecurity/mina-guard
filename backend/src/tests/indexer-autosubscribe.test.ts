@@ -468,10 +468,13 @@ describe('tick: rescanUnreadyContracts', () => {
     const ranges: Array<{ from: number; to: number }> = [];
     stubTicks(async (_address, from, to) => { ranges.push({ from, to }); return []; });
 
-    await runSingleTick(liteConfig);
+    const first = await runSingleTick(liteConfig);
     let updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(false);
     expect(updated.lastSyncedAt).not.toBeNull();
+    expect(first.getStatus().firstScans).toEqual([
+      { address: contract.address, startHeight: 0, scannedHeight: 1000, finished: true },
+    ]);
     const indexer = await runSingleTick(liteConfig);
     updated = await prisma.contract.findUniqueOrThrow({ where: { id: contract.id } });
     expect(updated.ready).toBe(false);
