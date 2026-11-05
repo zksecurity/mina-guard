@@ -171,7 +171,6 @@ function NewTransactionPageInner() {
 
   const [mode, setMode] = useState<'online' | 'offline'>('online');
   const [offlineFeePayerAddress, setOfflineFeePayerAddress] = useState('');
-  const [exportedFee, setExportedFee] = useState<number | null>(null);
   const getFormInputRef = useRef<(() => NewProposalInput) | null>(null);
 
   // Children are needed by the form for child-target pickers and allocate hints.
@@ -424,10 +423,9 @@ function NewTransactionPageInner() {
                           });
                         },
                       }]}
-                      onExported={(_action, _filename, fee) => setExportedFee(fee)}
+                      persistKey={`${multisig!.address}:new`}
                       upload={{
                         acceptActions: ['propose'],
-                        expectedFees: exportedFee === null ? undefined : { propose: exportedFee },
                         expectedContractAddress: multisig!.address,
                         onComplete: (response, txHash, feePayer) => {
                           const hash = response.proposalHash;
