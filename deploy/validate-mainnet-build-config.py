@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Reject missing or testnet build inputs before publishing mainnet images."""
+"""Reject missing or testnet build inputs before publishing mainnet images or installers.
+
+Run without arguments for the hosted image build. Run with `--desktop` for the
+desktop installer build, which talks to the backend embedded in the Electron
+app instead of a hosted API.
+"""
 
 import importlib.util
 import ipaddress
@@ -8,6 +13,10 @@ import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
+
+# The desktop UI only ever reaches the backend embedded in the Electron app,
+# which listens on this loopback address (desktop/src/main.ts).
+DESKTOP_API_BASE_URL = "http://127.0.0.1:5050"
 
 
 def reviewed_mainnet_vk_hash() -> str:
@@ -29,6 +38,15 @@ URL_VARS = (
 )
 # Endpoints the browser connects to. The block explorer is only linked.
 SAME_ORIGIN_VARS = URL_VARS[:3]
+
+
+def parse_target(argv: list[str]) -> str:
+    """No flag validates an image build; `--desktop` validates a desktop build."""
+    if not argv:
+        return "image"
+    if argv == ["--desktop"]:
+        return "desktop"
+    raise ValueError(f"usage: {Path(__file__).name} [--desktop]")
 
 
 def validate_url(name: str, value: str) -> None:
@@ -65,11 +83,49 @@ def validate_url(name: str, value: str) -> None:
         raise ValueError(f"{name} appears to point to a non-mainnet service")
 
 
-def main() -> int:
+def validate_image_urls() -> None:
+    for name in URL_VARS:
+        validate_url(name, os.environ.get(name, ""))
+    # The mainnet Content-Security-Policy (ui/content-security-policy.mjs)
+    # only lets the page connect to its own origin. The API, node and
+    # archive must therefore be served from one origin, the app's.
+    origins = {
+        urlsplit(os.environ[name])._replace(path="", query="", fragment="").geturl().lower()
+        for name in SAME_ORIGIN_VARS
+    }
+    if len(origins) != 1:
+        raise ValueError(
+            "NEXT_PUBLIC_API_BASE_URL, NEXT_PUBLIC_MINA_ENDPOINT and NEXT_PUBLIC_ARCHIVE_ENDPOINT "
+            "must share one origin, because the mainnet Content-Security-Policy allows only "
+            "same-origin connections"
+        )
+
+
+def validate_desktop_urls() -> None:
+    # The desktop replaces the UI's Content-Security-Policy with one built from
+    # the node and archive endpoints saved at setup, so those two need not
+    # share an origin. The API base URL is fixed: the embedded backend.
+    api_base_url = os.environ.get("NEXT_PUBLIC_API_BASE_URL", "")
+    if api_base_url != DESKTOP_API_BASE_URL:
+        raise ValueError(
+            f"NEXT_PUBLIC_API_BASE_URL must be {DESKTOP_API_BASE_URL}, the embedded backend, "
+            "for a desktop build"
+        )
+    for name in URL_VARS[1:]:
+        validate_url(name, os.environ.get(name, ""))
+
+
+def main(argv: list[str]) -> int:
     try:
+        target = parse_target(argv)
         if os.environ.get("NEXT_PUBLIC_MINA_NETWORK") != "mainnet":
             raise ValueError("NEXT_PUBLIC_MINA_NETWORK must be mainnet")
-        if os.environ.get("MINA_NETWORK_DOMAIN") != "mainnet":
+        # The image build compiles the backend for one network. The desktop
+        # sets the backend's domain at run time from the verified node and pins
+        # its circuit domain in desktop/src/config-store.ts, so the variable is
+        # not a desktop build input; a stray non-mainnet value still fails.
+        domain = os.environ.get("MINA_NETWORK_DOMAIN")
+        if domain != "mainnet" and (target == "image" or domain is not None):
             raise ValueError("MINA_NETWORK_DOMAIN must be mainnet")
         hash_value = os.environ.get("NEXT_PUBLIC_MINAGUARD_VK_HASH", "")
         if not re.fullmatch(r"[1-9][0-9]{0,77}", hash_value):
@@ -86,28 +142,17 @@ def main() -> int:
         if os.environ.get("NEXT_PUBLIC_E2E_TEST", ""):
             raise ValueError("NEXT_PUBLIC_E2E_TEST is a test-only setting and must not be set for mainnet")
         if os.environ.get("NEXT_PUBLIC_BASE_PATH", ""):
-            raise ValueError("This AWS mainnet build expects the app at / (no base path)")
-        for name in URL_VARS:
-            validate_url(name, os.environ.get(name, ""))
-        # The mainnet Content-Security-Policy (ui/content-security-policy.mjs)
-        # only lets the page connect to its own origin. The API, node and
-        # archive must therefore be served from one origin, the app's.
-        origins = {
-            urlsplit(os.environ[name])._replace(path="", query="", fragment="").geturl().lower()
-            for name in SAME_ORIGIN_VARS
-        }
-        if len(origins) != 1:
-            raise ValueError(
-                "NEXT_PUBLIC_API_BASE_URL, NEXT_PUBLIC_MINA_ENDPOINT and NEXT_PUBLIC_ARCHIVE_ENDPOINT "
-                "must share one origin, because the mainnet Content-Security-Policy allows only "
-                "same-origin connections"
-            )
+            raise ValueError("This mainnet build expects the app at / (no base path)")
+        if target == "desktop":
+            validate_desktop_urls()
+        else:
+            validate_image_urls()
     except ValueError as error:
         print(f"Mainnet build config error: {error}", file=sys.stderr)
         return 1
-    print("Mainnet build config validated")
+    print(f"Mainnet {target} build config validated")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
