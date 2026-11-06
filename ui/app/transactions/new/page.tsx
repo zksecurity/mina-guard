@@ -23,6 +23,7 @@ import {
   fetchContract,
   fetchVaultSecurityStatus,
   isCanonicalVaultSecurity,
+  vaultSecurityError,
 } from '@/lib/api';
 import { useContractTxLock } from '@/hooks/useContractTxLock';
 import VaultSecurityNotice from '@/components/VaultSecurityNotice';
@@ -67,6 +68,8 @@ function NewTransactionPageInner() {
   const liveSecurity = useVaultSecurity(multisig?.address ?? null);
   const permissionsSafe =
     multisig?.permissionsVerified === true && liveSecurity === 'safe';
+  const securityUnavailable =
+    multisig?.permissionsVerified === true && liveSecurity === 'unavailable';
 
   // Available tx types: LOCAL on every guard; subaccount actions only on roots.
   // CREATE_CHILD is shown on roots so the action is discoverable here, but it
@@ -196,9 +199,7 @@ function NewTransactionPageInner() {
   const handleSubmit = async (data: NewProposalInput) => {
     if (!wallet.address || !multisig) return;
     if (!permissionsSafe) {
-      throw new Error(
-        'Vault permissions have not passed the canonical security check'
-      );
+      throw new Error(vaultSecurityError(securityUnavailable));
     }
 
     const contractAddress = multisig.address;
@@ -213,9 +214,7 @@ function NewTransactionPageInner() {
         fetchVaultSecurityStatus(contractAddress),
       ]);
       if (!fresh?.permissionsVerified || !isCanonicalVaultSecurity(security)) {
-        throw new Error(
-          'Vault permissions have not passed the canonical security check'
-        );
+        throw new Error(vaultSecurityError(!!fresh?.permissionsVerified && security === null));
       }
       const configNonce = fresh?.configNonce ?? fallbackConfigNonce;
       const result = await createOnchainProposal({
@@ -277,6 +276,7 @@ function NewTransactionPageInner() {
         ) : !permissionsSafe ? (
           <VaultSecurityNotice
             checking={liveSecurity === null || liveSecurity === 'checking'}
+            unavailable={securityUnavailable}
             message="Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Proposal creation is blocked."
           />
         ) : multisig.ownersCommitment == null ? (
@@ -415,9 +415,7 @@ function NewTransactionPageInner() {
                             !fresh?.permissionsVerified ||
                             !isCanonicalVaultSecurity(security)
                           ) {
-                            throw new Error(
-                              'Vault permissions have not passed the canonical security check'
-                            );
+                            throw new Error(vaultSecurityError(!!fresh?.permissionsVerified && security === null));
                           }
                           const configNonce = fresh?.configNonce ?? multisig!.configNonce ?? 0;
                           const bundle = await buildOfflineProposeBundle({
