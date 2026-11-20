@@ -16,7 +16,7 @@ import {
   type TxTypeOption,
 } from '@/lib/types';
 import TxTypeIcon from '@/components/TxTypeIcon';
-import { fetchBalance, fetchChildren } from '@/lib/api';
+import { fetchBalance, fetchChildren, vaultSecurityError } from '@/lib/api';
 import ConnectNotice from '@/components/ConnectNotice';
 import Link from 'next/link';
 import VaultSecurityNotice from '@/components/VaultSecurityNotice';
@@ -66,6 +66,9 @@ export default function AccountPage() {
   const liveSecurity = useVaultSecurity(multisig?.address ?? null);
   const permissionsVerified =
     multisig?.permissionsVerified === true && liveSecurity === 'safe';
+  const securityUnavailable =
+    multisig?.permissionsVerified === true && liveSecurity === 'unavailable';
+  const securityReason = vaultSecurityError(securityUnavailable);
   const localProposalsEnabled =
     permissionsVerified && isOwner && (isRoot || childMultiSigEnabled);
   const childActionsEnabled = permissionsVerified && isRoot && isOwner;
@@ -78,7 +81,7 @@ export default function AccountPage() {
     [],
   );
   const localDisabledReason = !permissionsVerified
-    ? 'Vault permissions have not passed the canonical security check'
+    ? securityReason
     : !isOwner
     ? 'You are not an owner of this Vault'
     : !childMultiSigEnabled
@@ -160,6 +163,7 @@ export default function AccountPage() {
             {!permissionsVerified && (
               <VaultSecurityNotice
                 checking={liveSecurity === null || liveSecurity === 'checking'}
+                unavailable={securityUnavailable}
                 message="Unsafe Vault: its complete on-chain permission vector has not been verified as canonical. Do not fund or use this account; transaction actions are blocked."
               />
             )}
@@ -256,7 +260,7 @@ export default function AccountPage() {
                       enabled={childActionsEnabled}
                       disabledReason={
                         !permissionsVerified
-                          ? 'Vault permissions have not passed the canonical security check'
+                          ? securityReason
                           : !isOwner
                           ? 'You are not an owner of this Vault'
                           : null

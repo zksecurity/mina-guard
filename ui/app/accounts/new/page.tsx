@@ -21,6 +21,7 @@ import {
   fetchContract,
   fetchVaultSecurityStatus,
   isCanonicalVaultSecurity,
+  vaultSecurityError,
   subscribeAddress,
 } from '@/lib/api';
 import { resolveIndexerMode } from '@/lib/indexer-mode';
@@ -72,6 +73,8 @@ function CreateAccountWizard() {
   const parentLiveSecurity = useVaultSecurity(parentContract?.address ?? null);
   const parentPermissionsSafe =
     parentContract?.permissionsVerified === true && parentLiveSecurity === 'safe';
+  const parentSecurityUnavailable =
+    parentContract?.permissionsVerified === true && parentLiveSecurity === 'unavailable';
 
   const [step, setStep] = useState<1 | 2>(1);
 
@@ -302,9 +305,7 @@ function CreateAccountWizard() {
         !freshParent?.permissionsVerified ||
         !isCanonicalVaultSecurity(parentSecurity)
       ) {
-        throw new Error(
-          'Vault permissions have not passed the canonical security check',
-        );
+        throw new Error(vaultSecurityError(!!freshParent?.permissionsVerified && parentSecurity === null));
       }
 
       onProgress('Computing SubVault config hash…');
@@ -559,6 +560,7 @@ function CreateAccountWizard() {
                     {isSubaccount && parentContract && !parentPermissionsSafe && (
                       <VaultSecurityNotice
                         checking={parentLiveSecurity === null || parentLiveSecurity === 'checking'}
+                        unavailable={parentSecurityUnavailable}
                         message="Unsafe parent Vault: its permission vector has not passed the canonical security check."
                       />
                     )}
@@ -603,7 +605,7 @@ function CreateAccountWizard() {
                       !parentContract
                         ? 'Loading Vault…'
                         : !parentPermissionsSafe
-                          ? 'Parent Vault permissions have not passed the canonical security check'
+                          ? vaultSecurityError(parentSecurityUnavailable, 'Parent Vault')
                           : undefined
                     }
                   >

@@ -320,6 +320,20 @@ test('unsafe parent blocks the dedicated SubVault creation wizard', async ({ pag
   ).toBeDisabled();
 });
 
+test('an unreachable node pauses actions without calling the Vault unsafe', async ({ page }) => {
+  await page.route(`**/api/accounts/${TREASURY}/security`, (route) =>
+    route.fulfill({ status: 502, body: 'Upstream unavailable' }),
+  );
+  await openVault(page, TREASURY);
+
+  await expect(page.getByText(/couldn't verify this vault right now/i)).toBeVisible();
+  await expect(page.getByText(/unsafe vault/i)).not.toBeVisible();
+
+  await navigateTo(page, '/transactions/new');
+  await expect(page.getByText(/couldn't verify this vault right now/i)).toBeVisible();
+  await expect(page.getByText(/proposal creation is blocked/i)).not.toBeVisible();
+});
+
 test('offline bundle export rechecks permissions instead of trusting page state', async ({ page }) => {
   let unsafeNow = false;
   await page.route(`**/api/accounts/${TREASURY}/security`, async (route) => {

@@ -248,6 +248,16 @@ export function isCanonicalVaultSecurity(
   );
 }
 
+/**
+ * Reason for a failed check. `nodeUnavailable` (a null status) blocks actions
+ * the same way but says nothing about the Vault itself.
+ */
+export function vaultSecurityError(nodeUnavailable: boolean, label = 'Vault'): string {
+  return nodeUnavailable
+    ? `Could not reach the Mina node to check the ${label}'s permissions; try again in a minute`
+    : `${label} permissions have not passed the canonical security check`;
+}
+
 /** Lists direct subaccounts of a parent contract. */
 export async function fetchChildren(parentAddress: string): Promise<ContractSummary[]> {
   const data = await getJson<Array<Record<string, unknown>>>(

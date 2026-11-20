@@ -25,6 +25,7 @@ import {
   fetchVaultSecurityStatus,
   isCanonicalVaultSecurity,
   reportSubmission,
+  vaultSecurityError,
 } from '@/lib/api';
 import {
   approveProposalOnchain,
@@ -70,14 +71,10 @@ async function assertProposalVaultSecurity(
     !freshParent?.permissionsVerified ||
     !isCanonicalVaultSecurity(parentSecurity)
   ) {
-    throw new Error(
-      'Vault permissions have not passed the canonical security check',
-    );
+    throw new Error(vaultSecurityError(!!freshParent?.permissionsVerified && parentSecurity === null));
   }
   if (childAddress && !isCanonicalVaultSecurity(childSecurity)) {
-    throw new Error(
-      'SubVault permissions have not passed the canonical security check',
-    );
+    throw new Error(vaultSecurityError(childSecurity === null, 'SubVault'));
   }
 }
 
@@ -201,32 +198,16 @@ export default function TransactionDetailPage() {
   const childConfigStatus = childCheck ? childCheck.status : childConfigCheck;
   const childConfig = childCheck && childCheck.status !== 'invalid' ? childCheck : null;
   const childReservationError = childCheck?.status === 'invalid' ? childCheck.reason : null;
-  const [childPermissionCheck, setChildPermissionCheck] = useState<
-    'checking' | 'match' | 'mismatch' | null
-  >(null);
-
   // Child-targeting approvals must authenticate the deployed child account
   // itself. Its VK can be canonical while its signature-authorized deployment
   // update installed a creator withdrawal permission.
-  useEffect(() => {
-    if (!proposal?.childAccount) {
-      setChildPermissionCheck(null);
-      return;
-    }
-    if (proposal._localPending) return;
-    let cancelled = false;
-    setChildPermissionCheck('checking');
-    void fetchVaultSecurityStatus(proposal.childAccount).then((status) => {
-      if (!cancelled) {
-        setChildPermissionCheck(
-          isCanonicalVaultSecurity(status) ? 'match' : 'mismatch'
-        );
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [proposal?.txType, proposal?.childAccount, proposal?._localPending]);
+  const childLiveSecurity = useVaultSecurity(
+    proposal?.childAccount && !proposal._localPending ? proposal.childAccount : null,
+  );
+  const childPermissionCheck =
+    childLiveSecurity === 'safe' ? 'match'
+    : childLiveSecurity === 'unsafe' ? 'mismatch'
+    : childLiveSecurity;
 
   // For pending ADD_OWNER only: executed proposals already changed the owner
   // list, so checking them against current owners would report a false conflict.
@@ -361,6 +342,13 @@ export default function TransactionDetailPage() {
   const parentPermissionCheck = useVaultSecurity(multisig?.address ?? null);
   const permissionsSafe =
     multisig?.permissionsVerified === true && parentPermissionCheck === 'safe';
+  const parentSecurityUnavailable =
+    multisig?.permissionsVerified === true && parentPermissionCheck === 'unavailable';
+  // Only node outages are failing: say so instead of calling the Vault unsafe.
+  const securityUnavailable =
+    (permissionsSafe || parentSecurityUnavailable) &&
+    childPermissionCheck !== 'mismatch' &&
+    (parentSecurityUnavailable || childPermissionCheck === 'unavailable');
   const childPermissionsSafe =
     !proposal?.childAccount || childPermissionCheck === 'match';
   // A REMOTE proposal needs the backend's view of its SubVault to judge
@@ -729,10 +717,11 @@ export default function TransactionDetailPage() {
           </div>
         )}
 
-        {(!permissionsSafe || childPermissionCheck === 'mismatch') && (
+        {(!permissionsSafe || childPermissionCheck === 'mismatch' || childPermissionCheck === 'unavailable') && (
           <VaultSecurityNotice
             checking={childPermissionCheck !== 'mismatch' &&
               (parentPermissionCheck === null || parentPermissionCheck === 'checking')}
+            unavailable={securityUnavailable}
             message={
               (childPermissionCheck === 'mismatch'
                 ? 'The proposed SubVault has a missing or non-canonical on-chain permission field.'
