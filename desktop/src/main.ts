@@ -9,6 +9,7 @@ import { buildHidPickerDialog } from './hid-picker.js';
 import { proxiedUiHeaders } from './proxy-headers.js';
 import { startEmbeddedBackend, type EmbeddedBackendHandle } from './backend-embed.js';
 import {
+  BUILD_NETWORK_DOMAIN,
   deleteDatabase,
   describeError,
   verifyEndpoints,
@@ -17,6 +18,11 @@ import {
   writeConfig,
   type UserConfig,
 } from './config-store.js';
+import {
+  refusesUnsandboxedStart,
+  UNSANDBOXED_START_MESSAGE,
+  UNSANDBOXED_START_TITLE,
+} from './sandbox-check.js';
 
 const PORT = 5050;
 const NEXT_PORT = 5051;
@@ -368,6 +374,21 @@ async function changeEndpointsAndRelaunch(cfg: {
 }
 
 app.whenReady().then(async () => {
+  // A packaged build stops here when Chromium's sandbox is off, before any
+  // window, server or IPC handler exists. See sandbox-check.ts. The check
+  // waits for `ready` because Linux only prints an earlier error box to stderr.
+  if (refusesUnsandboxedStart({
+    isPackaged: app.isPackaged,
+    noSandbox: app.commandLine.hasSwitch('no-sandbox'),
+    buildNetworkDomain: BUILD_NETWORK_DOMAIN,
+    env: process.env,
+  })) {
+    console.error(`[desktop] ${UNSANDBOXED_START_TITLE}\n${UNSANDBOXED_START_MESSAGE}`);
+    dialog.showErrorBox(UNSANDBOXED_START_TITLE, UNSANDBOXED_START_MESSAGE);
+    app.exit(1);
+    return;
+  }
+
   // No app menu — the default File/Edit/View/Window/Help bar isn't needed.
   // Applies to every window (setup + main). On macOS this also removes the
   // in-window menu bar; the app's own top menu bar is left minimal.
