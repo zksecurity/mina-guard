@@ -244,6 +244,7 @@ run `bunx --no-install electron-builder --dir --publish never` there, then run
 throwaway profile and loopback node fixture, checks startup/native SQLite/runtime
 endpoint/CSP, and closes only its own app. Ports 5050, 5051 and 5099 must be free.
 This is a packaging smoke, not a Ledger or live-chain transaction test.
+The script starts the app with `--no-sandbox` and sets `MINAGUARD_E2E_ALLOW_NO_SANDBOX=1`. Only a build that is not for mainnet accepts that; a mainnet build shows its sandbox error and exits.
 
 ## Browser polling regression tests
 
