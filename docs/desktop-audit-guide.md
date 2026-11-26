@@ -199,7 +199,7 @@ back this up:
 - electron-builder's `afterPack` hook (`desktop/scripts/check-packaged-versions.mjs`)
   reads the unpacked app on every platform, before installers are built or
   published. It fails unless the app holds exactly one Next.js copy at
-  `>=16.4.1 <17` and Electron at `>=43.5.0 <44`, the first releases on those
+  `>=16.4.1 <17` and Electron at `>=43.8.1 <44`, the first releases on those
   lines with no known advisory, and only while each line is still supported
   (Next 16 until 2027-10-21, Electron 43 until 2027-01-05). After either date a
   release fails until the app moves to a supported line and the list in that
