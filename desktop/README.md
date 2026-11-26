@@ -171,6 +171,12 @@ the `build` block in `package.json`. Output lands in `desktop/release/`:
 Windows artifacts on Windows, so a single machine builds only its own
 platform's installers. Cross-platform builds happen in CI (below).
 
+**Linux sandbox.** A packaged build shows an error and exits when it is started with `--no-sandbox`, before it opens a window or starts a server (`src/sandbox-check.ts`). That option turns off Chromium's sandbox, which keeps a compromised page away from the user's files.
+
+- **AppImage:** its launcher adds `--no-sandbox` by itself when the system blocks unprivileged user namespaces, as Ubuntu 24.04 and later do. On those systems the AppImage now shows the error instead of running unprotected. The AppImage's desktop entry passes no arguments because `appImage.executableArgs` is empty in `package.json`; electron-builder's default entry would pass `--no-sandbox` on every system.
+- **`.deb`:** use this on Debian and Ubuntu. Its install script adds an AppArmor profile that allows user namespaces for the app's binary, so the sandbox works.
+- **`bun run dev`** still passes `--no-sandbox`; the check only applies to packaged builds.
+
 The app icon is `build/icon.png` (1024×1024); electron-builder derives the
 `.icns`/`.ico` from it. **It is a placeholder** — swap in the real brand icon
 before a public release.
@@ -219,7 +225,7 @@ Release.
 - **Packaged-version check:** electron-builder's `afterPack` hook
   (`scripts/check-packaged-versions.mjs`) checks the unpacked app before any
   installer is built or published, and fails unless it holds one Next.js copy
-  at `>=16.4.1 <17` and Electron at `>=43.5.0 <44`, each only until its vendor
+  at `>=16.4.1 <17` and Electron at `>=43.8.1 <44`, each only until its vendor
   support ends (Next 16: 2027-10-21, Electron 43: 2027-01-05). Local
   `electron-builder` runs check too.
 

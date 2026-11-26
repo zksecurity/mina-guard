@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 /** Builds a fake unpacked app with the given Next.js copies, like electron-builder's appOutDir. */
-function fakeApp(platform: 'win32' | 'linux' | 'darwin', nextCopies: Record<string, string>, electron = '43.7.6') {
+function fakeApp(platform: 'win32' | 'linux' | 'darwin', nextCopies: Record<string, string>, electron = '43.8.10') {
   const appOutDir = mkdtempSync(path.join(tmpdir(), 'packaged-'));
   dirs.push(appOutDir);
   const resources = platform === 'darwin'
@@ -37,15 +37,15 @@ describe('packaged framework versions', () => {
     for (const v of ['14.2.35', '15.5.27', '16.3.3', '16.3.8', '16.4.0', '17.0.0', '16.4.5-canary.1', '', 'latest']) {
       expect(isAllowedVersion(v, ALLOWED_VERSIONS.next, NOW)).toBe(false);
     }
-    for (const v of ['43.5.0', '43.7.6']) expect(isAllowedVersion(v, ALLOWED_VERSIONS.electron, NOW)).toBe(true);
-    for (const v of ['43.4.1', '44.0.0']) expect(isAllowedVersion(v, ALLOWED_VERSIONS.electron, NOW)).toBe(false);
+    for (const v of ['43.8.1', '43.8.10']) expect(isAllowedVersion(v, ALLOWED_VERSIONS.electron, NOW)).toBe(true);
+    for (const v of ['43.5.0', '43.7.6', '43.8.0', '44.0.0']) expect(isAllowedVersion(v, ALLOWED_VERSIONS.electron, NOW)).toBe(false);
   });
 
   it('refuses a line once its vendor support has ended', () => {
     expect(isAllowedVersion('16.4.5', ALLOWED_VERSIONS.next, new Date('2027-10-21T20:00:00Z'))).toBe(true);
     expect(isAllowedVersion('16.4.5', ALLOWED_VERSIONS.next, new Date('2027-10-22T00:00:01Z'))).toBe(false);
-    expect(isAllowedVersion('43.7.6', ALLOWED_VERSIONS.electron, new Date('2027-01-05T20:00:00Z'))).toBe(true);
-    expect(isAllowedVersion('43.7.6', ALLOWED_VERSIONS.electron, new Date('2027-01-06T00:00:01Z'))).toBe(false);
+    expect(isAllowedVersion('43.8.10', ALLOWED_VERSIONS.electron, new Date('2027-01-05T20:00:00Z'))).toBe(true);
+    expect(isAllowedVersion('43.8.10', ALLOWED_VERSIONS.electron, new Date('2027-01-06T00:00:01Z'))).toBe(false);
   });
 
   it('accepts a package with one allowed Next.js copy on every platform', () => {
