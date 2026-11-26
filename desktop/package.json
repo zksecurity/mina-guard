@@ -82,6 +82,9 @@
       "target": ["AppImage", "deb"],
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     },
+    "appImage": {
+      "executableArgs": []
+    },
     "win": {
       "target": [
         { "target": "nsis", "arch": ["x64"] }

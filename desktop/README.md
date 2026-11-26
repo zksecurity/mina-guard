@@ -171,6 +171,12 @@ the `build` block in `package.json`. Output lands in `desktop/release/`:
 Windows artifacts on Windows, so a single machine builds only its own
 platform's installers. Cross-platform builds happen in CI (below).
 
+**Linux sandbox.** A packaged build shows an error and exits when it is started with `--no-sandbox`, before it opens a window or starts a server (`src/sandbox-check.ts`). That option turns off Chromium's sandbox, which keeps a compromised page away from the user's files.
+
+- **AppImage:** its launcher adds `--no-sandbox` by itself when the system blocks unprivileged user namespaces, as Ubuntu 24.04 and later do. On those systems the AppImage now shows the error instead of running unprotected. The AppImage's desktop entry passes no arguments because `appImage.executableArgs` is empty in `package.json`; electron-builder's default entry would pass `--no-sandbox` on every system.
+- **`.deb`:** use this on Debian and Ubuntu. Its install script adds an AppArmor profile that allows user namespaces for the app's binary, so the sandbox works.
+- **`bun run dev`** still passes `--no-sandbox`; the check only applies to packaged builds.
+
 The app icon is `build/icon.png` (1024×1024); electron-builder derives the
 `.icns`/`.ico` from it. **It is a placeholder** — swap in the real brand icon
 before a public release.

@@ -433,6 +433,12 @@ Deliberate loosenings: `setPermissionCheckHandler(() => true)`,
 `electron --no-sandbox`, and ad-hoc-only macOS signing
 (`scripts/adhoc-sign.mjs`; see `desktop/README.md`).
 
+Sandboxed renderers only hold while the app is not started with `--no-sandbox`, and on Linux the packaging can add that flag without the user asking. electron-builder's AppImage launcher adds it when unprivileged user namespaces are unavailable (Ubuntu 24.04 and later restrict them through AppArmor), and its default desktop entry always passes it. Two things stop a packaged build from running that way:
+- `src/sandbox-check.ts` makes a packaged build show an error and exit when `--no-sandbox` is present. `main.ts` runs the check first in its `ready` handler, before any window, server or IPC handler exists.
+- `appImage.executableArgs` is empty in `desktop/package.json`, so the AppImage's desktop entry passes no arguments.
+
+The `.deb` keeps the sandbox on Ubuntu because its install script adds an AppArmor profile that allows user namespaces for the app's binary. The one exception to the check is the packaging smoke test (`e2e/preflight/desktop.ts`): a build that is not for mainnet continues when `MINAGUARD_E2E_ALLOW_NO_SANDBOX=1` is set, and a mainnet build ignores that variable. The check covers `--no-sandbox` only; it does not look for switches that weaken a single sandbox layer, such as `--disable-gpu-sandbox`.
+
 **5. Packaged-content integrity.**
 At runtime the app executes artifacts staged at build time: the backend
 bundle, `schema.sql` (run through `$executeRawUnsafe`), `.vk-hash`, and
