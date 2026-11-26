@@ -39,7 +39,9 @@ let child: ReturnType<typeof spawn> | undefined;
 try {
   child = spawn(join(root, 'desktop/release/linux-unpacked/desktop'), ['--no-sandbox',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`], {
-    env: { ...process.env }, stdio: 'inherit',
+    // A packaged build refuses --no-sandbox unless a non-mainnet build is told
+    // it is under this smoke test (desktop/src/sandbox-check.ts).
+    env: { ...process.env, MINAGUARD_E2E_ALLOW_NO_SANDBOX: '1' }, stdio: 'inherit',
   });
   const portFile = join(profile, 'DevToolsActivePort');
   await expect.poll(() => existsSync(portFile), { timeout: 30000 }).toBe(true);

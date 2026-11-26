@@ -199,7 +199,7 @@ back this up:
 - electron-builder's `afterPack` hook (`desktop/scripts/check-packaged-versions.mjs`)
   reads the unpacked app on every platform, before installers are built or
   published. It fails unless the app holds exactly one Next.js copy at
-  `>=16.4.1 <17` and Electron at `>=43.5.0 <44`, the first releases on those
+  `>=16.4.1 <17` and Electron at `>=43.8.1 <44`, the first releases on those
   lines with no known advisory, and only while each line is still supported
   (Next 16 until 2027-10-21, Electron 43 until 2027-01-05). After either date a
   release fails until the app moves to a supported line and the list in that
@@ -432,6 +432,12 @@ Deliberate loosenings: `setPermissionCheckHandler(() => true)`,
 `setDevicePermissionHandler` granting every non-HID device type, dev-only
 `electron --no-sandbox`, and ad-hoc-only macOS signing
 (`scripts/adhoc-sign.mjs`; see `desktop/README.md`).
+
+Sandboxed renderers only hold while the app is not started with `--no-sandbox`, and on Linux the packaging can add that flag without the user asking. electron-builder's AppImage launcher adds it when unprivileged user namespaces are unavailable (Ubuntu 24.04 and later restrict them through AppArmor), and its default desktop entry always passes it. Two things stop a packaged build from running that way:
+- `src/sandbox-check.ts` makes a packaged build show an error and exit when `--no-sandbox` is present. `main.ts` runs the check first in its `ready` handler, before any window, server or IPC handler exists.
+- `appImage.executableArgs` is empty in `desktop/package.json`, so the AppImage's desktop entry passes no arguments.
+
+The `.deb` keeps the sandbox on Ubuntu because its install script adds an AppArmor profile that allows user namespaces for the app's binary. The one exception to the check is the packaging smoke test (`e2e/preflight/desktop.ts`): a build that is not for mainnet continues when `MINAGUARD_E2E_ALLOW_NO_SANDBOX=1` is set, and a mainnet build ignores that variable. The check covers `--no-sandbox` only; it does not look for switches that weaken a single sandbox layer, such as `--disable-gpu-sandbox`.
 
 **5. Packaged-content integrity.**
 At runtime the app executes artifacts staged at build time: the backend
